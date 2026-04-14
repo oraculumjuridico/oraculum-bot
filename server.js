@@ -229,20 +229,23 @@ function iniciarTimer(from) {
   const u = users[from]
   if (!u) return
   limparTimer(u)
+  // Se cliente está gravando áudio ou descrevendo o caso, dar mais tempo antes de interromper
+  const estaDescrevendo = u.stage === "coleta_desc_audio" || u.stage === "coleta_desc"
+  const t1 = estaDescrevendo ? 5 * 60 * 1000 : 2 * 60 * 1000
   u.timer = setTimeout(async () => {
     if (!users[from]) return
-    await enviar(from, "Oi, fiquei te esperando... posso te ajudar a continuar?", null)
+    await enviar(from, "Oi 😊 fiquei te esperando... posso te ajudar a continuar?", null)
     u.timer = setTimeout(async () => {
       if (!users[from]) return
-      await enviar(from, "Vou pausar por agora. Se precisar, e so responder.", null)
+      await enviar(from, "Vou pausar por agora, tudo bem? Se precisar, é só responder. 😊", null)
       u.timer = setTimeout(async () => {
         if (!users[from]) return
-        await enviar(from, "Encerrando atendimento. Quando quiser continuar, e so enviar uma mensagem.", null)
+        await enviar(from, "Encerrando atendimento. Quando quiser continuar, é só enviar uma mensagem. 👋", null)
         const nomeWA = users[from].nomeWA
         users[from] = novoUsuario(nomeWA)
       }, 2 * 60 * 1000)
     }, 3 * 60 * 1000)
-  }, 2 * 60 * 1000)
+  }, t1)
 }
 
 const HS = () => ({ Authorization: `Bearer ${HUBSPOT_TOKEN}`, "Content-Type": "application/json" })
@@ -526,17 +529,23 @@ async function finalizarCadastro(from, u) {
 
 function tela_confirmacao(u) {
   return {
-    texto: `Confira suas informacoes:\n\n${resumoCaso(u)}\n\nTudo esta correto?`,
-    opcoes: [{ id: "conf_ok", title: "Confirmar" }, { id: "conf_corrigir", title: "Corrigir dados" }]
+    texto: `✅ *Confira seus dados antes de confirmar:*\n\n${resumoCaso(u)}\n\nTudo está correto?`,
+    opcoes: [{ id: "conf_ok", title: "✅ Confirmar" }, { id: "conf_corrigir", title: "✏️ Corrigir dados" }]
   }
 }
 
 function menuCliente(u) {
   const partes = (u.nome || u.nomeWA).split(" ")
   const nomeExib = partes.length > 1 ? `${partes[0]} ${partes[partes.length - 1]}` : partes[0]
+  const prioridade = u.urgencia === "alta" ? "\n🔴 Prioridade: Alta" : ""
   return {
-    texto: `Ola, ${nomeExib}!\n\nBem-vindo de volta a Oraculum Advocacia.\n\nCaso: ${u.numeroCaso}\nArea: ${u.area}${u.urgencia === "alta" ? "\nPrioridade: Alta" : ""}\n\nComo posso ajudar?`,
-    opcoes: [{ id: "m_status", title: "Status do caso" }, { id: "m_docs", title: "Enviar documentos" }, { id: "m_adv", title: "Falar com advogado" }, { id: "m_encerrar", title: "Encerrar atendimento" }]
+    texto: `👋 Olá, *${nomeExib}*!\n\nBem-vindo de volta à *Oraculum Advocacia* ⚖️\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}${prioridade}\n\nComo posso te ajudar hoje?`,
+    opcoes: [
+      { id: "m_status", title: "📊 Status do caso" },
+      { id: "m_docs",   title: "📎 Enviar documentos" },
+      { id: "m_adv",    title: "👨‍⚖️ Falar c/ advogado" },
+      { id: "m_encerrar", title: "👋 Encerrar" }
+    ]
   }
 }
 
@@ -603,7 +612,7 @@ async function processar(from, nomeWA, text, msgObj) {
   const ehDoc   = tipo === "document" || tipo === "image"
 
   // MIDIA
-  if ((ehAudio || ehDoc) && (u.stage === "cliente" || u.stage === "aguardando_urgente")) {
+  if ((ehAudio || ehDoc) && (u.stage === "cliente" || u.stage === "aguardando_urgente" || u.stage === "coleta_desc_audio")) {
     const mediaId  = msgObj?.[tipo]?.id
     const nomeArq  = msgObj?.document?.filename || (tipo === "image" ? `imagem_${Date.now()}.jpg` : `audio_${Date.now()}`)
     const mimeType = msgObj?.[tipo]?.mime_type || "application/octet-stream"
@@ -755,8 +764,8 @@ async function processar(from, nomeWA, text, msgObj) {
       const docs = getDocumentos(u.area, u.tipo || u.situacao)
       iniciarTimer(from)
       return {
-        texto: `Cadastro realizado!\n\nNumero do caso: ${numeroCaso}\n\nUm especialista em ${u.area} vai analisar e entrar em contato em breve.\n\nDocumentos que podem ser necessarios:\n${docs}\n\nVoce pode enviar os documentos agora ou depois.`,
-        opcoes: [{ id: "m_docs", title: "Enviar documentos" }, { id: "m_inicio", title: "Menu principal" }, { id: "m_encerrar", title: "Encerrar atendimento" }]
+        texto: `🎉 *Cadastro realizado com sucesso!*\n\n📄 *Número do caso:* \`${numeroCaso}\`\n\nUm especialista em *${u.area}* vai analisar sua solicitação e entrará em contato em breve pelo WhatsApp. 💬\n\n⏱️ Prazo estimado: *2 dias úteis*\n\n---\n📋 *Documentos que podem ser necessários:*\n${docs}\n\nVocê pode enviar agora ou depois — fica à vontade!`,
+        opcoes: [{ id: "m_docs", title: "📎 Enviar documentos" }, { id: "m_inicio", title: "Menu principal" }, { id: "m_encerrar", title: "👋 Encerrar" }]
       }
     }
     if (text === "conf_corrigir") {
@@ -843,19 +852,46 @@ async function processar(from, nomeWA, text, msgObj) {
   // INICIO
   if (u.stage === "inicio") {
     if (u.numeroCaso) {
-      u.stage = "cliente"; iniciarTimer(from)
-      return menuCliente(u)
+      // Cliente retornando — perguntar se quer acompanhar ou abrir novo caso
+      u.stage = "inicio_retorno"; iniciarTimer(from)
+      const partes = (u.nome || u.nomeWA).split(" ")
+      const nomeExib = partes.length > 1 ? `${partes[0]} ${partes[partes.length - 1]}` : partes[0]
+      return {
+        texto: `👋 Olá, ${nomeExib}! Que bom te ver por aqui novamente!\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
+        opcoes: [
+          { id: "ret_acompanhar", title: "📊 Acompanhar meu caso" },
+          { id: "ret_novo",       title: "➕ Abrir novo caso" }
+        ]
+      }
     }
     u.stage = "area"; iniciarTimer(from)
     return {
-      texto: "Bem-vindo a Oraculum Advocacia.\n\nMe chamo Beatriz, sou sua assistente virtual.\n\nComo posso te ajudar hoje?",
-      opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }]
+      texto: "⚖️ Bem-vindo à *Oraculum Advocacia*!\n\nMe chamo *Beatriz*, sou sua assistente virtual 😊\n\nComo posso te ajudar hoje?",
+      opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
+    }
+  }
+
+  // RETORNO — cliente escolhe entre acompanhar ou novo caso
+  if (u.stage === "inicio_retorno") {
+    if (text === "ret_acompanhar") {
+      u.stage = "cliente"; iniciarTimer(from)
+      return menuCliente(u)
+    }
+    if (text === "ret_novo") {
+      // Preserva dados do cliente (nome, cidade, contato) mas reinicia o fluxo do caso
+      const dadosPessoais = { nome: u.nome, cidade: u.cidade, uf: u.uf, nomeWA: u.nomeWA, contatoId: u.contatoId }
+      users[from] = { ...novoUsuario(u.nomeWA), ...dadosPessoais, stage: "area" }
+      iniciarTimer(from)
+      return {
+        texto: `📋 Certo, ${u.nome ? u.nome.split(" ")[0] : u.nomeWA}! Vamos abrir um novo caso.\n\nQual área precisa de ajuda?`,
+        opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
+      }
     }
   }
 
   // AREA
   if (u.stage === "area") {
-    if (text === "area_inss") { u.area = "INSS"; u.stage = "inss_menu"; iniciarTimer(from); return { texto: "Certo, vamos cuidar do seu caso.\nQual dessas situacoes descreve o que esta acontecendo?", opcoes: [{ id: "i_novo", title: "Novo beneficio" }, { id: "i_negado", title: "Beneficio negado" }, { id: "i_cortado", title: "Beneficio cortado" }] } }
+    if (text === "area_inss") { u.area = "INSS"; u.stage = "inss_menu"; iniciarTimer(from); return { texto: "✅ Certo, vamos cuidar do seu caso!\nQual dessas situações descreve o que está acontecendo?", opcoes: [{ id: "i_novo", title: "🆕 Novo benefício" }, { id: "i_negado", title: "❌ Benefício negado" }, { id: "i_cortado", title: "✂️ Benefício cortado" }] } }
     if (text === "area_trab") { u.area = "Trabalhista"; u.stage = "trab_menu"; iniciarTimer(from); return { texto: "Qual e o seu caso trabalhista?", opcoes: [{ id: "t_dem", title: "Fui demitido" }, { id: "t_dir", title: "Direitos nao pagos" }, { id: "t_acid", title: "Acidente de trabalho" }, { id: "t_ass", title: "Assedio moral" }, { id: "t_out", title: "Outro" }] } }
     if (text === "area_outros") { u.area = "Outros"; u.stage = "outros_menu"; iniciarTimer(from); return { texto: "Como posso te ajudar?", opcoes: [{ id: "o_consul", title: "Consultoria juridica" }, { id: "o_rev", title: "Revisao de documentos" }, { id: "o_out", title: "Outro assunto" }] } }
   }
@@ -1084,9 +1120,16 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     if (text === "adv_ag") {
       await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
-      await hsCriarNota(u.contatoId, "AGENDAMENTO SOLICITADO", `${u.nome} (${from}) solicitou agendamento.\nCaso: ${u.numeroCaso} | Area: ${u.area}\nLink: ${MEETINGS}`)
+      await hsCriarNota(u.contatoId, "AGENDAMENTO SOLICITADO", `${u.nome} (${from}) solicitou agendamento.\nCaso: ${u.numeroCaso} | Área: ${u.area}\nLink: ${MEETINGS}`)
       iniciarTimer(from)
-      return { texto: `Agendamento\n\nClique no link para escolher o horario:\n\n${MEETINGS}\n\nVoce recebera confirmacao por e-mail apos agendar.\n\nCaso: ${u.numeroCaso}`, opcoes: [{ id: "adv_urg", title: "Mensagem urgente" }, { id: "m_status", title: "Status do caso" }, { id: "m_inicio", title: "Menu principal" }] }
+      return {
+        texto: `📅 *Agendar ligação com advogado*\n\nClique no link abaixo para escolher o melhor horário:\n\n🔗 ${MEETINGS}\n\n✅ Após agendar, você receberá uma *confirmação aqui no WhatsApp* com data e horário.\n\n💡 Dica: Escolha um horário em que você esteja disponível para receber a ligação.\n\n📄 Caso: *${u.numeroCaso}*`,
+        opcoes: [
+          { id: "adv_urg",  title: "📩 Mensagem urgente" },
+          { id: "m_status", title: "📊 Status do caso" },
+          { id: "m_inicio", title: "Menu principal" }
+        ]
+      }
     }
     if (text === "adv_urg") {
       u.stage = "aguardando_urgente"; iniciarTimer(from)
@@ -1123,7 +1166,7 @@ async function processar(from, nomeWA, text, msgObj) {
   return { texto: "Vamos recomecar. Como posso te ajudar?", opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }] }
 }
 
-app.get("/", (_, res) => res.send("Oraculum v6.0"))
+app.get("/", (_, res) => res.send("Oraculum v6.1"))
 app.get("/health", (_, res) => res.json({ status: "ok", uptime: Math.floor((Date.now() - monitor.inicio) / 1000), conversas: monitor.conversas, cadastros: monitor.cadastros, ativos: Object.keys(users).length, erros: monitor.erros.slice(-10), ram_mb: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1) }))
 app.get("/webhook", (req, res) => {
   if (req.query["hub.mode"] && req.query["hub.verify_token"] === VERIFY_TOKEN) return res.status(200).send(req.query["hub.challenge"])
@@ -1144,17 +1187,63 @@ app.post("/webhook", async (req, res) => {
 })
 
 const PORT = process.env.PORT || 10000
-// Webhook confirmação agendamento HubSpot
+// ──────────────────────────────────────────────────────────────────
+// ROTA /agendamento — confirmação de ligação agendada
+// Como usar GRATUITAMENTE (sem pagar HubSpot):
+//   Opção 1: Make.com (gratuito, 1000 ops/mês):
+//     - Crie cenário: HubSpot "Meeting Booked" → HTTP POST → https://seu-dominio.onrender.com/agendamento
+//     - Body: { "phone": "{{contact.phone}}", "name": "{{contact.firstname}}", "datetime": "{{meeting.startTime}}", "meetingLink": "{{meeting.joinUrl}}" }
+//   Opção 2: n8n (auto-hospedado, 100% gratuito):
+//     - Trigger HubSpot → HTTP Request para esta rota
+//   Opção 3: Zapier free tier (100 tarefas/mês)
+// ──────────────────────────────────────────────────────────────────
 app.post("/agendamento", async (req, res) => {
   try {
-    const { phone, name, datetime, meetingLink } = req.body
+    const { phone, name, datetime, meetingLink, caseid } = req.body
     if (!phone) return res.sendStatus(400)
     const numero = phone.replace(/\D/g, "")
-    await enviar(numero,
-      `📅 *Agendamento confirmado!*\n\n✅ Olá, ${name||"cliente"}! Sua ligação com um especialista da Oraculum está confirmada.\n\n🗓️ Data/Horário: *${datetime||"em breve"}*\n\nPrecisa reagendar? Acesse:\n🔗 ${meetingLink||MEETINGS}\n\nEstamos à disposição! 💼`,
-      null, false)
+    const nomeCliente = name || "cliente"
+    const dataHora    = datetime || "em breve"
+    const linkReag    = meetingLink || MEETINGS
+
+    // Formatar data se vier em ISO
+    let dataFormatada = dataHora
+    try {
+      if (dataHora.includes("T")) {
+        const d = new Date(dataHora)
+        dataFormatada = d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" })
+      }
+    } catch {}
+
+    const msg = [
+      "📅 *Agendamento confirmado!*",
+      "",
+      `✅ Olá, *${nomeCliente}*! Sua ligação com um especialista da Oraculum está confirmada.`,
+      "",
+      `🗓️ *Data e horário:* ${dataFormatada}`,
+      "",
+      "📞 Nosso advogado vai te ligar no número cadastrado. Deixe o celular por perto!",
+      "",
+      "Precisa reagendar?",
+      `🔗 ${linkReag}`,
+      "",
+      "Estamos à disposição! ⚖️"
+    ].join("\n")
+
+    await enviar(numero, msg, null, false)
+
+    // Se tiver número do caso, atualizar stage no HubSpot
+    if (caseid) {
+      for (const [from, u] of Object.entries(users)) {
+        if (u.numeroCaso === caseid && u.negocioId) {
+          await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
+          break
+        }
+      }
+    }
+
     return res.sendStatus(200)
   } catch (e) { logErro("agendamento", e.message); return res.sendStatus(500) }
 })
 
-app.listen(PORT, () => console.log(`Oraculum v6.0 — porta ${PORT}`))
+app.listen(PORT, () => console.log(`Oraculum v6.1 — porta ${PORT}`))
