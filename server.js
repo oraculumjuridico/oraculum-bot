@@ -48,7 +48,7 @@ function novoUsuario(nomeWA) {
     contatoId: null, negocioId: null, numeroCaso: null,
     pastaDriveId: null, pastaDriveLink: null,
     score: 0, documentosEnviados: false,
-    docsEntregues: [],
+    docsEntregues: [], docPaginaAtual: 0,
     corrigirCampo: null, historiaIA: [],
     timer: null, ultimaMsg: Date.now()
   }
@@ -77,37 +77,78 @@ function calcScore(u) {
 
 function resumoCaso(u) {
   return [
-    `Nome: ${u.nome || "—"}`,
-    `Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
-    `Area: ${u.area || "—"}`,
-    u.tipo      ? `Tipo: ${u.tipo}` : null,
-    u.situacao  ? `Situacao: ${u.situacao}` : null,
-    u.subTipo   ? `Detalhe: ${u.subTipo}` : null,
-    u.detalhe   ? `Info: ${u.detalhe}` : null,
-    `Urgencia: ${u.urgencia === "alta" ? "Alta" : "Normal"}`,
-    `Contribuiu ao INSS: ${u.contribuicao || "—"}`,
-    `Recebe beneficio: ${u.recebeBeneficio || "—"}`,
-    u.descricao ? `Descricao: ${u.descricao}` : null,
+    `👤 Nome: ${u.nome || "—"}`,
+    `📍 Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
+    `⚖️ Área: ${u.area || "—"}`,
+    u.tipo     ? `📌 Tipo: ${u.tipo}` : null,
+    u.situacao ? `📋 Situação: ${u.situacao}` : null,
+    u.subTipo  ? `🔎 Detalhe: ${u.subTipo}` : null,
+    u.detalhe  ? `ℹ️ Info: ${u.detalhe}` : null,
+    `${u.urgencia === "alta" ? "🔴" : "🟡"} Urgência: ${u.urgencia === "alta" ? "Alta" : "Normal"}`,
+    `🏛️ Contribuiu ao INSS: ${u.contribuicao || "—"}`,
+    `💳 Recebe benefício: ${u.recebeBeneficio || "—"}`,
+    u.descricao ? `📝 Descrição: ${u.descricao}` : null,
   ].filter(Boolean).join("\n")
 }
 
 const DOCS_BASE = [
-  { id:"doc_rg",  label:"RG ou CNH" },
-  { id:"doc_cpf", label:"CPF" },
-  { id:"doc_res", label:"Comprovante de residencia" }
+  { id:"doc_rg",  label:"🪪 RG ou CNH", dica:"📸 Fotografe frente e verso em boa iluminação, sem reflexos. Deitado sobre superfície escura." },
+  { id:"doc_cpf", label:"🔢 CPF",       dica:"📸 Foto nítida do documento ou tela do aplicativo Meu CPF." },
+  { id:"doc_res", label:"🏠 Comprovante de residência", dica:"📸 Conta de luz, água ou telefone dos últimos 3 meses. Foto completa, sem cortar bordas." }
 ]
 const DOCS_EXTRA = {
-  "aposentadoria": [{ id:"doc_ctps", label:"Carteira de Trabalho (CTPS)" }, { id:"doc_cnis", label:"Extrato CNIS (Meu INSS)" }, { id:"doc_hol", label:"Holerites ultimos 12 meses" }],
-  "bpc":           [{ id:"doc_laudo", label:"Laudo medico atualizado" }, { id:"doc_renda", label:"Declaracao de renda familiar" }, { id:"doc_nasc", label:"Certidao de nascimento" }],
-  "incapacidade":  [{ id:"doc_atst", label:"Atestado medico recente" }, { id:"doc_exam", label:"Exames e laudos" }, { id:"doc_ctps", label:"Carteira de Trabalho" }],
-  "dependentes":   [{ id:"doc_obito", label:"Certidao de obito" }, { id:"doc_nasc", label:"Certidao de nascimento" }],
-  "negado":        [{ id:"doc_indf", label:"Carta de indeferimento INSS" }, { id:"doc_ant", label:"Documentos do pedido anterior" }],
-  "cortado":       [{ id:"doc_susp", label:"Carta de suspensao do beneficio" }, { id:"doc_laudo", label:"Laudos medicos recentes" }],
-  "demissao":      [{ id:"doc_ctps", label:"Carteira de Trabalho" }, { id:"doc_demit", label:"Carta de demissao" }, { id:"doc_hol", label:"Ultimos 3 holerites" }, { id:"doc_fgts", label:"Extrato FGTS" }],
-  "direitos":      [{ id:"doc_ctps", label:"Carteira de Trabalho" }, { id:"doc_hol", label:"Holerites" }, { id:"doc_fgts", label:"Extrato FGTS" }, { id:"doc_ctr", label:"Contrato de trabalho" }],
-  "acidente":      [{ id:"doc_cat", label:"CAT (Comunicacao de Acidente)" }, { id:"doc_atst", label:"Atestado medico" }, { id:"doc_ctps", label:"Carteira de Trabalho" }],
-  "assedio":       [{ id:"doc_print", label:"Prints ou registros" }, { id:"doc_test", label:"Nomes de testemunhas" }, { id:"doc_hol", label:"Contracheques" }],
-  "revisao":       [{ id:"doc_orig", label:"Documento original (foto/PDF)" }]
+  "aposentadoria": [
+    { id:"doc_ctps", label:"📒 Carteira de Trabalho (CTPS)", dica:"📸 Fotografe a folha de rosto (dados pessoais) e TODAS as folhas com registros de emprego, uma por vez. Frente e verso de cada página." },
+    { id:"doc_cnis", label:"📋 Extrato CNIS (Meu INSS)",    dica:"📱 Acesse o app Meu INSS → Extrato de Contribuições. Tire print de todas as páginas ou salve o PDF." },
+    { id:"doc_hol",  label:"💰 Holerites últimos 12 meses", dica:"📸 Foto legível de cada contracheque. Se digital, print da tela completa." }
+  ],
+  "bpc": [
+    { id:"doc_laudo", label:"🏥 Laudo médico atualizado",      dica:"📸 Foto nítida de todas as páginas do laudo. Não pode estar dobrado. Validade máxima: 6 meses." },
+    { id:"doc_renda", label:"📊 Declaração de renda familiar",  dica:"📄 Declaração de todos que moram na casa. Pode ser feita no CRAS ou pelo app Meu INSS." },
+    { id:"doc_nasc",  label:"📜 Certidão de nascimento",        dica:"📸 Foto do documento original, frente e verso, sobre fundo escuro." }
+  ],
+  "incapacidade": [
+    { id:"doc_atst", label:"🏥 Atestado médico recente",  dica:"📸 Foto do atestado completo com CRM do médico visível. Deve ter no máximo 90 dias." },
+    { id:"doc_exam", label:"🔬 Exames e laudos",           dica:"📸 Todos os exames relacionados à sua condição. Fotografe cada página separadamente." },
+    { id:"doc_ctps", label:"📒 Carteira de Trabalho",      dica:"📸 Folha de rosto + todas as páginas com registros de emprego." }
+  ],
+  "dependentes": [
+    { id:"doc_obito", label:"📜 Certidão de óbito",       dica:"📸 Foto do documento original, frente e verso, sobre fundo escuro." },
+    { id:"doc_nasc",  label:"📜 Certidão de nascimento",  dica:"📸 Foto nítida, sem reflexos, sobre superfície escura." }
+  ],
+  "negado": [
+    { id:"doc_indf", label:"📄 Carta de indeferimento INSS",    dica:"📸 Foto da carta completa. Se for pelo app Meu INSS, print de todas as telas." },
+    { id:"doc_ant",  label:"📁 Documentos do pedido anterior",  dica:"📸 Todos os documentos que você entregou anteriormente ao INSS." }
+  ],
+  "cortado": [
+    { id:"doc_susp",  label:"📄 Carta de suspensão do benefício", dica:"📸 Foto da notificação completa recebida do INSS." },
+    { id:"doc_laudo", label:"🏥 Laudos médicos recentes",         dica:"📸 Laudos com no máximo 6 meses. Fotografe todas as páginas." }
+  ],
+  "demissao": [
+    { id:"doc_ctps",  label:"📒 Carteira de Trabalho",   dica:"📸 Folha de rosto + todas as páginas com anotações de emprego, frente e verso." },
+    { id:"doc_demit", label:"📄 Carta de demissão",      dica:"📸 Foto do documento completo assinado pela empresa." },
+    { id:"doc_hol",   label:"💰 Últimos 3 holerites",   dica:"📸 Foto de cada contracheque separadamente. Todos os dados devem estar legíveis." },
+    { id:"doc_fgts",  label:"🏦 Extrato FGTS",           dica:"📱 Acesse o app FGTS → Extratos. Print de todas as páginas ou PDF completo." }
+  ],
+  "direitos": [
+    { id:"doc_ctps", label:"📒 Carteira de Trabalho",      dica:"📸 Folha de rosto + todas as páginas com registros." },
+    { id:"doc_hol",  label:"💰 Holerites",                 dica:"📸 Todos os contracheques disponíveis, um por foto." },
+    { id:"doc_fgts", label:"🏦 Extrato FGTS",              dica:"📱 App FGTS → Extratos. Todas as páginas." },
+    { id:"doc_ctr",  label:"📝 Contrato de trabalho",      dica:"📸 Todas as páginas do contrato assinado, frente e verso." }
+  ],
+  "acidente": [
+    { id:"doc_cat",  label:"📋 CAT (Comunicação de Acidente)", dica:"📸 Foto do documento CAT completo. Se não tiver, informe ao advogado." },
+    { id:"doc_atst", label:"🏥 Atestado médico",               dica:"📸 Foto nítida com CRM do médico visível." },
+    { id:"doc_ctps", label:"📒 Carteira de Trabalho",          dica:"📸 Folha de rosto + páginas com registros de emprego." }
+  ],
+  "assedio": [
+    { id:"doc_print", label:"📱 Prints ou registros",    dica:"📸 Prints de mensagens, e-mails ou qualquer prova. Organize por data." },
+    { id:"doc_test",  label:"👥 Nomes de testemunhas",   dica:"✍️ Digite os nomes e contatos das pessoas que presenciaram os fatos." },
+    { id:"doc_hol",   label:"💰 Contracheques",           dica:"📸 Foto de cada contracheque separadamente." }
+  ],
+  "revisao": [
+    { id:"doc_orig", label:"📄 Documento original",  dica:"📸 Foto nítida de todas as páginas, frente e verso se necessário. Ou envie o PDF." }
+  ]
 }
 function getDocumentosLista(area, tipo) {
   const chave = (tipo || area || "outros").toLowerCase()
@@ -128,13 +169,13 @@ function iniciarTimer(from) {
   limparTimer(u)
   u.timer = setTimeout(async () => {
     if (!users[from]) return
-    await enviar(from, "Oi, fiquei te esperando... posso te ajudar a continuar?", null)
+    await enviar(from, "👋 Oi, fiquei te esperando... Posso te ajudar a continuar?", null)
     u.timer = setTimeout(async () => {
       if (!users[from]) return
-      await enviar(from, "Vou pausar por agora. Se precisar, e so responder.", null)
+      await enviar(from, "⏸️ Vou pausar por agora. Se precisar, é só responder aqui!", null)
       u.timer = setTimeout(async () => {
         if (!users[from]) return
-        await enviar(from, "Encerrando atendimento. Quando quiser continuar, e so enviar uma mensagem.", null)
+        await enviar(from, "👋 Encerrando o atendimento por inatividade. Quando quiser continuar, é só enviar uma mensagem. Até logo! 😊", null)
         const nomeWA = users[from].nomeWA
         users[from] = novoUsuario(nomeWA)
       }, 2 * 60 * 1000)
@@ -341,7 +382,7 @@ const REGIOES = {
   reg_s:  { label:"Sul",          ufs:[["uf_pr","PR"],["uf_rs","RS"],["uf_sc","SC"]] }
 }
 function telaRegioes() {
-  return { texto:"Selecione sua regiao:", opcoes:[
+  return { texto:"🗺️ Selecione sua região:", opcoes:[
     { id:"reg_n", title:"Norte" }, { id:"reg_ne", title:"Nordeste" },
     { id:"reg_co", title:"Centro-Oeste" }, { id:"reg_se", title:"Sudeste" },
     { id:"reg_s", title:"Sul" }
@@ -383,17 +424,18 @@ async function finalizarCadastro(from, u) {
 
 function tela_confirmacao(u) {
   return {
-    texto: `Confira suas informacoes:\n\n${resumoCaso(u)}\n\nTudo esta correto?`,
-    opcoes: [{ id: "conf_ok", title: "Confirmar" }, { id: "conf_corrigir", title: "Corrigir dados" }]
+    texto: `📋 *Confira suas informações:*\n\n${resumoCaso(u)}\n\n✅ Tudo está correto?`,
+    opcoes: [{ id:"conf_ok", title:"✅ Confirmar" }, { id:"conf_corrigir", title:"✏️ Corrigir dados" }]
   }
 }
 
 function menuCliente(u) {
-  const partes = (u.nome || u.nomeWA).split(" ")
+  const partes   = (u.nome || u.nomeWA).split(" ")
   const nomeExib = partes.length > 1 ? `${partes[0]} ${partes[partes.length - 1]}` : partes[0]
+  const prio     = u.urgencia === "alta" ? "\n🔴 Prioridade: Alta" : ""
   return {
-    texto: `Ola, ${nomeExib}!\n\nBem-vindo de volta a Oraculum Advocacia.\n\nCaso: ${u.numeroCaso}\nArea: ${u.area}${u.urgencia === "alta" ? "\nPrioridade: Alta" : ""}\n\nComo posso ajudar?`,
-    opcoes: [{ id: "m_status", title: "Status do caso" }, { id: "m_docs", title: "Enviar documentos" }, { id: "m_adv", title: "Falar com advogado" }, { id: "m_encerrar", title: "Encerrar atendimento" }]
+    texto: `👋 Olá, ${nomeExib}!\n\nBem-vindo(a) de volta à *Oraculum Advocacia*. 💼\n\n📁 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}${prio}\n\nComo posso te ajudar hoje?`,
+    opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_encerrar", title:"Encerrar atendimento" }]
   }
 }
 
@@ -404,18 +446,32 @@ function getDocsPendentes(u) {
 
 function telaDocs(u) {
   const pendentes = getDocsPendentes(u)
-  const total     = getDocumentosLista(u.area, u.tipo || u.situacao).length
+  const lista     = getDocumentosLista(u.area, u.tipo || u.situacao)
+  const total     = lista.length
   const entregue  = total - pendentes.length
+
   if (pendentes.length === 0) {
     return {
-      texto: `Perfeito! Todos os documentos foram entregues.\nNossa equipe ja pode analisar seu caso.\n\nCaso: ${u.numeroCaso}`,
+      texto: `✅ *Perfeito!* Todos os documentos foram entregues.\n\nNossa equipe já pode analisar seu caso com prioridade. Em breve entraremos em contato! 🎉\n\n📁 Caso: ${u.numeroCaso}`,
       opcoes: [{ id:"m_adv", title:"Falar com advogado" }, { id:"m_status", title:"Status do caso" }, { id:"m_inicio", title:"Menu principal" }]
     }
   }
-  const linhas = pendentes.map((d, i) => i === 0 ? `→ ${d.label}  ← envie agora` : `   ${d.label}`).join("\n")
+
+  const proximo = pendentes[0]
+  const resto   = pendentes.slice(1)
+  const barras  = "🟢".repeat(entregue) + "🔴".repeat(pendentes.length)
+
+  let texto = `📋 *Documentos do caso*\n${barras} ${entregue}/${total} entregues\n\n`
+  texto += `📌 *Envie agora:*\n➡️ ${proximo.label}\n`
+  if (proximo.dica) texto += `\n💡 *Dica:* ${proximo.dica}\n`
+  if (resto.length > 0) {
+    texto += `\n📂 *Próximos:*\n${resto.map(d => `   • ${d.label}`).join("\n")}\n`
+  }
+  texto += `\nEnvie a foto ou PDF do documento acima.\nSe tiver mais de uma página, envie uma de cada vez.`
+
   return {
-    texto: `Documentos — ${entregue} de ${total} entregues\n\n${linhas}\n\nEnvie o documento marcado com → como foto ou PDF.\nSe nao tiver agora, toque em "Enviar depois".`,
-    opcoes: [{ id:"docs_depois", title:"Enviar depois" }, { id:"m_adv", title:"Falar com advogado" }, { id:"m_inicio", title:"Menu principal" }]
+    texto,
+    opcoes: [{ id:"docs_proxpag", title:"➕ Mais páginas" }, { id:"docs_depois", title:"Enviar depois" }, { id:"m_inicio", title:"Menu principal" }]
   }
 }
 
@@ -473,15 +529,31 @@ async function processar(from, nomeWA, text, msgObj) {
 
     // Documento / imagem
     await hsMoverStage(u.negocioId, HS_STAGE.docs)
-    await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${arquivo.name}\nDrive: ${arquivo.webViewLink}`)
-    u.documentosEnviados = true
     if (!u.docsEntregues) u.docsEntregues = []
-    const pend = getDocsPendentes(u)
-    if (pend.length > 0) u.docsEntregues.push(pend[0].id)
+    const pendAntes  = getDocsPendentes(u)
+    const docAtual   = pendAntes[0]
+
+    // Nome formatado: Label + nome do cliente + página
+    const primeiroNome  = (u.nome || u.nomeWA || "cliente").split(" ")[0]
+    const sobrenome     = (u.nome || u.nomeWA || "").split(" ").slice(-1)[0] || ""
+    const nomeCliente   = sobrenome && sobrenome !== primeiroNome ? `${primeiroNome} ${sobrenome}` : primeiroNome
+    const labelDoc      = docAtual ? docAtual.label.replace(/[^\w\s\u00C0-\u017E]/g, "").trim() : "Documento"
+    u.docPaginaAtual    = (u.docPaginaAtual || 0) + 1
+    const ext           = (nomeArq || "").split(".").pop()
+    const nomeArqFinal  = `${labelDoc} p${u.docPaginaAtual} - ${nomeCliente}${ext && ext.length <= 4 ? "." + ext : ""}`
+
+    // Renomear no Drive
+    try { await getDrive().files.update({ fileId: arquivo.id, requestBody: { name: nomeArqFinal } }) }
+    catch (e) { logErro("drive", "renomear: " + e.message) }
+
+    await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nomeArqFinal}\nDrive: ${arquivo.webViewLink}`)
+    u.documentosEnviados = true
     if (u.stage === "aguardando_urgente") u.stage = "cliente"
-    const tela = telaDocs(u)
     iniciarTimer(from)
-    return { texto: `Documento "${arquivo.name}" salvo com sucesso!\n\n` + tela.texto, opcoes: tela.opcoes }
+    return {
+      texto: `✅ *Página ${u.docPaginaAtual} salva com sucesso!*\n📁 ${nomeArqFinal}\n\nDeseja enviar mais uma página deste documento ou avançar para o próximo?`,
+      opcoes: [{ id:"docs_proxpag", title:"➕ Mais uma página" }, { id:"docs_proxdoc", title:"✅ Próximo documento" }, { id:"docs_depois", title:"Enviar depois" }]
+    }
   }
 
   // URGENTE TEXTO — ignora cliques em botão (id curto como "m_inicio")
@@ -531,7 +603,7 @@ async function processar(from, nomeWA, text, msgObj) {
       const docs = getDocumentos(u.area, u.tipo || u.situacao)
       iniciarTimer(from)
       return {
-        texto: `Cadastro realizado!\n\nNumero do caso: ${numeroCaso}\n\nUm especialista em ${u.area} vai analisar e entrar em contato em breve.\n\nDocumentos que podem ser necessarios:\n${docs}\n\nVoce pode enviar os documentos agora ou depois.`,
+        texto: `🎉 *Cadastro realizado com sucesso!*\n\n📁 Número do caso: *${numeroCaso}*\n\nUm especialista em ${u.area} vai analisar seu caso e entrar em contato em breve. ⏱️\n\n📋 *Documentos necessários para o seu caso:*\n${docs}\n\n👆 Você pode enviar agora ou depois, quando estiver pronto.`,
         opcoes: [{ id: "m_docs", title: "Enviar documentos" }, { id: "m_inicio", title: "Menu principal" }, { id: "m_encerrar", title: "Encerrar atendimento" }]
       }
     }
@@ -570,7 +642,7 @@ async function processar(from, nomeWA, text, msgObj) {
   // COLETA
   if (u.stage === "coleta_nome" && text) {
     u.nome = text.trim(); u.stage = "coleta_cidade"; iniciarTimer(from)
-    return { texto: "Em qual cidade voce mora?", opcoes: null }
+    return { texto: "📍 Em qual cidade você mora?", opcoes: null }
   }
   if (u.stage === "coleta_cidade" && text) {
     u.cidade = text.trim(); u.stage = "coleta_regiao"; iniciarTimer(from)
@@ -585,19 +657,19 @@ async function processar(from, nomeWA, text, msgObj) {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
     u.uf = val; u.stage = "coleta_contrib"; iniciarTimer(from)
-    return { texto: "Voce ja contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
+    return { texto: "🏛️ Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca contribuí" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
   }
   if (u.stage === "coleta_contrib") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
     u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
-    return { texto: "Voce ja recebe algum beneficio do INSS?", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] }
+    return { texto: "💳 Você já recebe algum benefício do INSS atualmente?", opcoes: [{ id:"col_b1", title:"Sim, recebo" }, { id:"col_b2", title:"Não recebo" }] }
   }
   if (u.stage === "coleta_benef") {
     const m = { col_b1: "Sim", col_b2: "Nao" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] } }
     u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
-    return { texto: "Me explique brevemente o que esta acontecendo. Quanto mais detalhe, melhor vamos entender seu caso:", opcoes: null }
+    return { texto: "📝 Me explique brevemente o que está acontecendo.\n\nQuanto mais detalhes você der, melhor nossos especialistas vão entender seu caso:", opcoes: null }
   }
   if (u.stage === "coleta_desc" && text) {
     u.descricao = text.trim(); u.stage = "confirmacao"; iniciarTimer(from)
@@ -607,12 +679,12 @@ async function processar(from, nomeWA, text, msgObj) {
   // GATILHO → URGENCIA → COLETA
   if (u.stage === "gatilho") {
     u.stage = "urgencia"; iniciarTimer(from)
-    return { texto: "Isso esta te prejudicando financeiramente hoje?", opcoes: [{ id: "urg_sim", title: "Sim" }, { id: "urg_nao", title: "Nao" }] }
+    return { texto: "💰 Isso está te prejudicando financeiramente hoje?", opcoes: [{ id:"urg_sim", title:"Sim, muito" }, { id:"urg_nao", title:"Ainda não" }] }
   }
   if (u.stage === "urgencia") {
     if (text === "urg_sim") { u.urgencia = "alta"; u.score += 3 }
     u.stage = "coleta_nome"; iniciarTimer(from)
-    return { texto: "Vamos registrar seu caso. Qual e o seu nome completo?", opcoes: null }
+    return { texto: "📝 Ótimo! Vamos registrar seu caso.\n\nQual é o seu nome completo?", opcoes: null }
   }
 
   // INICIO
@@ -623,8 +695,8 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     u.stage = "area"; iniciarTimer(from)
     return {
-      texto: "Bem-vindo a Oraculum Advocacia.\n\nMe chamo Beatriz, sou sua assistente virtual.\n\nComo posso te ajudar hoje?",
-      opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }]
+      texto: "👋 Olá! Bem-vindo(a) à *Oraculum Advocacia*! ⚖️\n\nMeu nome é *Beatriz*, sua assistente virtual. Estou aqui para te ajudar com questões jurídicas de forma rápida e segura. 😊\n\nSobre qual área você precisa de ajuda?",
+      opcoes: [{ id:"area_inss", title:"🏛️ INSS" }, { id:"area_trab", title:"💼 Trabalhista" }, { id:"area_outros", title:"📋 Outros" }]
     }
   }
 
@@ -668,7 +740,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "inss_ja") {
     u.detalhe = text === "ja_s" ? "Entrada realizada" : "Sem entrada"
     u.stage   = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui. Muitas vezes conseguimos resolver mais rapido do que a pessoa imagina.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💪 Casos como o seu são bem comuns aqui! Muitas vezes conseguimos resolver mais rápido do que a pessoa imagina.", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
 
   // INSS NEGADO
@@ -680,7 +752,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "inss_neg_quando") {
     u.detalhe = text === "nq_rec" ? "Negado ha menos de 30 dias" : "Negado ha mais de 30 dias"
     u.stage   = "gatilho"; iniciarTimer(from)
-    return { texto: "Vamos analisar seu caso com cuidado.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "🔍 Vamos analisar seu caso com todo cuidado. Você está no lugar certo!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
 
   // INSS CORTADO
@@ -702,7 +774,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "inss_cort_qdo") {
     u.detalhe += " | " + (text === "cq_r" ? "Cortado ha menos de 30 dias" : "Cortado ha mais de 30 dias")
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Vamos verificar a melhor forma de resolver isso.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "⚡ Vamos verificar a melhor forma de resolver isso o quanto antes!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
 
   // TRABALHISTA
@@ -725,7 +797,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "trab_dem_qdo") {
     u.detalhe += " | " + (text === "dq_r" ? "menos de 30 dias" : "mais de 30 dias")
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💼 Casos como o seu são bem comuns aqui. Vamos te orientar nos próximos passos!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
   if (u.stage === "trab_dir_tipo") {
     const m = { tdr_f: "FGTS", tdr_fe: "Ferias", tdr_13: "13 salario", tdr_h: "Horas extras", tdr_o: "Outro" }
@@ -735,12 +807,12 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "trab_dir_pend") {
     u.detalhe = text === "pnd_s" ? "Pendente" : "Encerrado"
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💼 Casos como o seu são bem comuns aqui. Vamos te orientar nos próximos passos!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
   if (u.stage === "trab_acid_af") {
     u.subTipo = text === "af_s" ? "Com afastamento INSS" : "Sem afastamento"
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💼 Casos como o seu são bem comuns aqui. Vamos te orientar nos próximos passos!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
   if (u.stage === "trab_ass_s") {
     u.subTipo = text === "as_s" ? "Assedio em curso" : "Assedio encerrado"; u.stage = "trab_ass_prov"; iniciarTimer(from)
@@ -749,7 +821,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "trab_ass_prov") {
     u.detalhe = text === "pv_s" ? "Com provas/testemunhas" : "Sem provas"
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💼 Casos como o seu são bem comuns aqui. Vamos te orientar nos próximos passos!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
   if (u.stage === "trab_out_desc" && text) {
     if (!u.descricao) u.descricao = text
@@ -766,12 +838,12 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "out_cons_tipo") {
     const m = { oc_i: "INSS", oc_t: "Trabalhista", oc_o: "Outro" }
     u.subTipo = m[text] || text; u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💼 Casos como o seu são bem comuns aqui. Vamos te orientar nos próximos passos!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
   if (u.stage === "out_rev_tipo") {
     const m = { or_c: "Contrato", or_p: "Processo", or_o: "Outro" }
     u.subTipo = m[text] || text; u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💼 Casos como o seu são bem comuns aqui. Vamos te orientar nos próximos passos!", opcoes: [{ id:"cont", title:"👉 Continuar" }] }
   }
   if (u.stage === "out_desc" && text) {
     if (!u.descricao) u.descricao = text
@@ -783,7 +855,27 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "cliente") {
     if (text === "m_status") {
       iniciarTimer(from)
-      return { texto: `Status do caso\n\nNumero: ${u.numeroCaso}\nArea: ${u.area}\nSituacao: ${u.situacao}${u.subTipo ? " — " + u.subTipo : ""}\nUrgencia: ${u.urgencia === "alta" ? "Alta" : "Normal"}\nScore: ${u.score}\n\nNossa equipe esta avaliando. Em breve entraremos em contato.`, opcoes: [{ id: "m_docs", title: "Enviar documentos" }, { id: "m_adv", title: "Falar com advogado" }, { id: "m_inicio", title: "Menu principal" }] }
+      const statusLabel = u.urgencia === "alta" ? "⚡ Análise prioritária" : "🔍 Em análise"
+      const totalDocs   = getDocumentosLista(u.area, u.tipo || u.situacao).length
+      const entregDocs  = (u.docsEntregues || []).length
+      const docInfo     = entregDocs >= totalDocs
+        ? "\n✅ Documentos: todos entregues"
+        : `\n📋 Documentos: ${entregDocs} de ${totalDocs} entregues`
+      const texto = [
+        "📊 *Status do seu caso*",
+        "",
+        `🔢 Número: *${u.numeroCaso}*`,
+        `⚖️ Área: ${u.area}`,
+        u.subTipo ? `📌 Tipo: ${u.subTipo}` : null,
+        `🚦 Status: ${statusLabel}`,
+        `${u.urgencia === "alta" ? "🔴" : "🟡"} Prioridade: ${u.urgencia === "alta" ? "Alta" : "Normal"}`,
+        docInfo,
+        "",
+        "Sua solicitação está sendo avaliada com toda atenção pela nossa equipe. Assim que houver novidades, entraremos em contato pelo WhatsApp. 💬",
+        "",
+        "⏱️ Prazo estimado de retorno: até *2 dias úteis*."
+      ].filter(v => v !== null).join("\n")
+      return { texto, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_inicio", title:"Menu principal" }] }
     }
     if (text === "m_docs") {
       await hsMoverStage(u.negocioId, HS_STAGE.docs)
@@ -792,29 +884,46 @@ async function processar(from, nomeWA, text, msgObj) {
       iniciarTimer(from)
       return tela
     }
+    if (text === "docs_proxpag") {
+      const pend = getDocsPendentes(u)
+      const doc  = pend[0]
+      iniciarTimer(from)
+      return {
+        texto: `📸 Ok! Envie a próxima página de *${doc ? doc.label : "documento"}*\n\n💡 Mesmas orientações: boa iluminação, sem reflexos, documento bem enquadrado.`,
+        opcoes: null
+      }
+    }
+    if (text === "docs_proxdoc") {
+      const pend = getDocsPendentes(u)
+      if (pend.length > 0) u.docsEntregues.push(pend[0].id)
+      u.docPaginaAtual = 0
+      const tela = telaDocs(u)
+      iniciarTimer(from)
+      return tela
+    }
     if (text === "docs_depois") {
       const nome1 = (u.nome || u.nomeWA).split(" ")[0]
       iniciarTimer(from)
-      return { texto: `Sem problema, ${nome1}! Quando tiver os documentos, e so voltar aqui e tocar em "Enviar documentos".\n\nCaso: ${u.numeroCaso}`, opcoes: [{ id:"m_docs", title:"Enviar documentos" }, { id:"m_status", title:"Status do caso" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: `Sem problema, ${nome1}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em "Enviar documentos".\n\n📁 Caso: ${u.numeroCaso}`, opcoes: [{ id:"m_docs", title:"Enviar documentos" }, { id:"m_status", title:"Status do caso" }, { id:"m_inicio", title:"Menu principal" }] }
     }
     if (text === "m_adv") {
       iniciarTimer(from)
-      return { texto: "Como prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "Agendar ligacao" }, { id: "adv_urg", title: "Mensagem urgente" }, { id: "m_inicio", title: "Menu principal" }] }
+      return { texto: "👨‍⚖️ *Falar com advogado*\n\nComo você prefere ser atendido?", opcoes: [{ id:"adv_ag", title:"📅 Agendar ligação" }, { id:"adv_urg", title:"🚨 Mensagem urgente" }, { id:"m_inicio", title:"Menu principal" }] }
     }
     if (text === "adv_ag") {
       await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
       await hsCriarNota(u.contatoId, "AGENDAMENTO SOLICITADO", `${u.nome} (${from}) solicitou agendamento.\nCaso: ${u.numeroCaso} | Area: ${u.area}\nLink: ${MEETINGS}`)
       iniciarTimer(from)
-      return { texto: `Agendamento\n\nClique no link para escolher o horario:\n\n${MEETINGS}\n\nVoce recebera confirmacao por e-mail apos agendar.\n\nCaso: ${u.numeroCaso}`, opcoes: [{ id: "adv_urg", title: "Mensagem urgente" }, { id: "m_status", title: "Status do caso" }, { id: "m_inicio", title: "Menu principal" }] }
+      return { texto: `📅 *Agendamento de ligação*\n\n1️⃣ Clique no link abaixo\n2️⃣ Escolha o dia e horário disponível\n3️⃣ Preencha seu e-mail para receber a confirmação\n\n🔗 ${MEETINGS}\n\nAssim que confirmar, enviaremos os detalhes aqui no WhatsApp também. 💬\n\n📁 Caso: ${u.numeroCaso}`, opcoes: [{ id:"adv_urg", title:"🚨 Mensagem urgente" }, { id:"m_status", title:"Status do caso" }, { id:"m_inicio", title:"Menu principal" }] }
     }
     if (text === "adv_urg") {
       u.stage = "aguardando_urgente"; iniciarTimer(from)
-      return { texto: `Mensagem urgente\n\nDigite sua mensagem ou envie um audio.\n\nTudo sera registrado imediatamente.\n\nCaso: ${u.numeroCaso}`, opcoes: null }
+      return { texto: `🚨 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio.\nTudo será registrado e notificado imediatamente à equipe.\n\n📁 Caso: ${u.numeroCaso}`, opcoes: null }
     }
     if (text === "m_encerrar") {
       limparTimer(u)
       const nome1 = (u.nome || u.nomeWA).split(" ")[0]
-      return { texto: `Foi um prazer te atender, ${nome1}!\nSeu caso esta registrado conosco sob o numero ${u.numeroCaso}.\n\nSempre que precisar, e so mandar uma mensagem. Ate logo!`, opcoes: null }
+      return { texto: `👋 Foi um prazer te atender, ${nome1}!\n\nSeu caso está registrado sob o número *${u.numeroCaso}*.\n\nSempre que precisar, é só mandar uma mensagem aqui. Até logo! 😊`, opcoes: null }
     }
     if (text === "m_inicio") {
       iniciarTimer(from); return menuCliente(u)
@@ -826,7 +935,7 @@ async function processar(from, nomeWA, text, msgObj) {
       if (palavrasEncerrar.some(p => lower.includes(p))) {
         const nome1 = (u.nome || u.nomeWA).split(" ")[0]
         limparTimer(u)
-        return { texto: `Foi um prazer, ${nome1}! Seu caso ${u.numeroCaso} esta registrado.\n\nQualquer coisa, e so mandar mensagem. Ate logo!`, opcoes: null }
+        return { texto: `👋 Foi um prazer, ${nome1}!\n\nSeu caso *${u.numeroCaso}* está registrado. Qualquer coisa, é só mandar uma mensagem. Até logo! 😊`, opcoes: null }
       }
     }
     // Groq IA para perguntas livres
