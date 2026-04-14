@@ -48,8 +48,7 @@ function novoUsuario(nomeWA) {
     contatoId: null, negocioId: null, numeroCaso: null,
     pastaDriveId: null, pastaDriveLink: null,
     score: 0, documentosEnviados: false,
-    docsEntregues: [], docPaginaAtual: 0,
-    ultimoArquivoId: null, ultimoArquivoNome: null,
+    docsEntregues: [], docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
     corrigirCampo: null, historiaIA: [],
     timer: null, ultimaMsg: Date.now()
   }
@@ -58,6 +57,25 @@ function novoUsuario(nomeWA) {
 function getUser(from, nomeWA) {
   if (!users[from]) { users[from] = novoUsuario(nomeWA); monitor.conversas++ }
   return users[from]
+}
+
+// Formata texto livre para o CRM: Title Case + sem acentos
+function toTitleCase(str) {
+  return str.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
+    .trim()
+}
+function formatarNome(str) {
+  if (!str) return str
+  return str.trim().replace(/\s+/g, " ").toLowerCase()
+    .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
+}
+function formatarCidade(str) {
+  if (!str) return str
+  return str.trim().replace(/\s+/g, " ").toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
+    .normalize()
 }
 
 function gerarCaso() {
@@ -76,97 +94,131 @@ function calcScore(u) {
   return s
 }
 
-function situacaoLegivel(u) {
-  if (!u.situacao) return "—"
-  const map = {
-    "novo":    "Solicitação de novo benefício",
-    "negado":  "Benefício negado pelo INSS",
-    "cortado": "Benefício suspenso/cortado"
-  }
-  const base = map[u.situacao] || u.situacao
-  return u.subTipo ? `${base} — ${u.subTipo}` : base
-}
-
 function resumoCaso(u) {
   return [
-    `👤 Nome: ${u.nome || "—"}`,
-    `📍 Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
-    `⚖️ Área: ${u.area || "—"}`,
-    u.situacao ? `📋 Situação: ${situacaoLegivel(u)}` : null,
-    u.detalhe  ? `ℹ️ Info: ${u.detalhe}` : null,
-    `${u.urgencia === "alta" ? "🔴" : "🟡"} Urgência: ${u.urgencia === "alta" ? "Alta" : "Normal"}`,
-    u.contribuicao    ? `🏛️ Contribuiu ao INSS: ${u.contribuicao}` : null,
-    u.recebeBeneficio ? `💳 Recebe benefício: ${u.recebeBeneficio}` : null,
-    u.descricao       ? `📝 Descrição: ${u.descricao}` : null,
+    `Nome: ${u.nome || "—"}`,
+    `Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
+    `Area: ${u.area || "—"}`,
+    u.tipo      ? `Tipo: ${u.tipo}` : null,
+    u.situacao  ? `Situacao: ${u.situacao}` : null,
+    u.subTipo   ? `Detalhe: ${u.subTipo}` : null,
+    u.detalhe   ? `Info: ${u.detalhe}` : null,
+    `Urgencia: ${u.urgencia === "alta" ? "Alta" : "Normal"}`,
+    `Contribuiu ao INSS: ${u.contribuicao || "—"}`,
+    `Recebe beneficio: ${u.recebeBeneficio || "—"}`,
+    u.descricao ? `Descricao: ${u.descricao}` : null,
   ].filter(Boolean).join("\n")
 }
 
 const DOCS_BASE = [
-  { id:"doc_rg",  label:"RG ou CNH",                   folhas:["Frente","Verso"],         dica:"📸 Coloque o RG/CNH sobre mesa escura. Envie a FRENTE primeiro, depois o VERSO. Sem reflexo, imagem bem enquadrada." },
-  { id:"doc_cpf", label:"CPF",                          folhas:["Frente"],                dica:"📸 Foto nítida do cartão CPF, ou print do app Meu CPF. Tudo visível, sem partes cortadas." },
-  { id:"doc_res", label:"Comprovante de Residência",     folhas:["Página completa"],       dica:"📸 Conta de luz, água ou telefone dos últimos 3 meses. Foto completa, todos os dados visíveis." }
+  {
+    id:"doc_rg", label:"RG ou CNH",
+    folhas:["Frente","Verso"],
+    dica:"📸 Coloque sobre mesa escura. Envie a FRENTE primeiro, depois o VERSO. Sem reflexo, sem partes cortadas."
+  },
+  {
+    id:"doc_cpf", label:"CPF",
+    folhas:["Frente"],
+    opcional: true,
+    dica:"📸 Se o CPF já aparece no RG ou CNH, pode pular. Se tiver o cartão separado, tire foto nítida."
+  },
+  {
+    id:"doc_res", label:"Comprovante de Residência",
+    folhas:["Foto do documento"],
+    dica:"📸 Conta de luz, água ou telefone dos últimos 3 meses. Foto completa, todos os dados visíveis."
+  }
 ]
 const DOCS_EXTRA = {
   "aposentadoria": [
-    { id:"doc_ctps", label:"Carteira de Trabalho (CTPS)", folhas:["Folha de rosto","Páginas com registros de emprego"], dica:"📸 Fotografe a folha de rosto (seus dados pessoais) e TODAS as páginas com anotações de emprego, uma de cada vez. Frente e verso se necessário." },
-    { id:"doc_cnis", label:"Extrato CNIS (Meu INSS)",     folhas:["Todas as páginas"],                                  dica:"📱 Abra o app Meu INSS → Extrato de Contribuições. Tire print de TODAS as páginas ou salve o PDF e envie aqui." },
-    { id:"doc_hol",  label:"Holerites últimos 12 meses",  folhas:["Cada holerite separado"],                            dica:"📸 Envie um holerite por foto. Se digitais, print de cada um. Todos os dados devem estar legíveis." }
+    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos — envie cada uma"],
+      dica:"📒 Fotografe a folha de rosto (seus dados) e TODAS as páginas com registros de emprego, uma foto por página. Frente e verso se tiver anotação dos dois lados." },
+    { id:"doc_cnis", label:"Extrato CNIS (Meu INSS)", folhas:["Todas as páginas"],
+      dica:"📱 App Meu INSS → Extrato de Contribuições. Tire print de TODAS as páginas ou salve como PDF e envie aqui." },
+    { id:"doc_hol", label:"Holerites (12 meses)", folhas:["Cada holerite separado"],
+      dica:"💰 Envie um holerite por foto. Se digitais, print de cada um. Valores devem estar legíveis." }
   ],
   "bpc": [
-    { id:"doc_laudo", label:"Laudo Médico Atualizado",       folhas:["Todas as páginas"],  dica:"📸 Foto nítida de todas as páginas do laudo, sem partes cortadas. Validade máxima: 6 meses." },
-    { id:"doc_renda", label:"Declaração de Renda Familiar",  folhas:["Página completa"],   dica:"📄 Pode ser feita no CRAS ou pelo app Meu INSS. Envie o documento completo." },
-    { id:"doc_nasc",  label:"Certidão de Nascimento",        folhas:["Frente","Verso"],    dica:"📸 Documento original, frente e verso, sobre fundo escuro." }
+    { id:"doc_laudo", label:"Laudo Médico Atualizado", folhas:["Todas as páginas"],
+      dica:"🏥 Todas as páginas do laudo, sem partes cortadas. Validade máxima: 6 meses." },
+    { id:"doc_renda", label:"Declaração de Renda Familiar", folhas:["Foto do documento"],
+      dica:"📄 Pode ser feita no CRAS ou pelo app Meu INSS. Envie completa." },
+    { id:"doc_nasc", label:"Certidão de Nascimento", folhas:["Frente","Verso"],
+      dica:"📜 Documento original, frente e verso, sobre fundo escuro." }
   ],
   "incapacidade": [
-    { id:"doc_atst", label:"Atestado Médico Recente",  folhas:["Página completa"],          dica:"📸 Foto completa com CRM do médico visível. Deve ter no máximo 90 dias." },
-    { id:"doc_exam", label:"Exames e Laudos",           folhas:["Cada exame separado"],     dica:"📸 Fotografe cada exame em foto separada. Resultados devem estar legíveis." },
-    { id:"doc_ctps", label:"Carteira de Trabalho",      folhas:["Folha de rosto","Páginas com registros"], dica:"📸 Folha de rosto + todas as páginas com anotações, uma por vez." }
+    { id:"doc_atst", label:"Atestado Médico Recente", folhas:["Foto do documento"],
+      dica:"🏥 Foto completa com CRM do médico visível. Máximo 90 dias de validade." },
+    { id:"doc_exam", label:"Exames e Laudos", folhas:["Cada exame separado"],
+      dica:"🔬 Um exame por foto. Resultados devem estar completamente legíveis." },
+    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos"],
+      dica:"📒 Folha de rosto + todas as páginas com anotações, uma por vez." }
   ],
   "dependentes": [
-    { id:"doc_obito", label:"Certidão de Óbito",       folhas:["Frente","Verso"], dica:"📸 Documento original, frente e verso, sobre fundo escuro." },
-    { id:"doc_nasc",  label:"Certidão de Nascimento",  folhas:["Frente","Verso"], dica:"📸 Documento original, frente e verso, sobre fundo escuro." }
+    { id:"doc_obito", label:"Certidão de Óbito", folhas:["Frente","Verso"],
+      dica:"📜 Documento original, frente e verso, sobre fundo escuro." },
+    { id:"doc_nasc", label:"Certidão de Nascimento", folhas:["Frente","Verso"],
+      dica:"📜 Documento original, frente e verso." }
   ],
   "negado": [
-    { id:"doc_indf", label:"Carta de Indeferimento do INSS",   folhas:["Todas as páginas"],      dica:"📸 Foto da carta completa. Se pelo app Meu INSS, print de todas as telas." },
-    { id:"doc_ant",  label:"Documentos do Pedido Anterior",    folhas:["Cada documento separado"], dica:"📸 Todos os documentos que você entregou anteriormente ao INSS." }
+    { id:"doc_indf", label:"Carta de Indeferimento do INSS", folhas:["Todas as páginas"],
+      dica:"📄 Foto completa. Se pelo app Meu INSS, print de todas as telas." },
+    { id:"doc_ant", label:"Documentos do Pedido Anterior", folhas:["Cada documento separado"],
+      dica:"📁 Todos os documentos do pedido anterior ao INSS, um por foto." }
   ],
   "cortado": [
-    { id:"doc_susp",  label:"Carta de Suspensão do Benefício", folhas:["Todas as páginas"],  dica:"📸 Foto da notificação completa recebida do INSS." },
-    { id:"doc_laudo", label:"Laudos Médicos Recentes",          folhas:["Cada laudo separado"], dica:"📸 Laudos com no máximo 6 meses. Fotografe todas as páginas de cada laudo." }
+    { id:"doc_susp", label:"Carta de Suspensão do Benefício", folhas:["Todas as páginas"],
+      dica:"📄 Foto da notificação completa recebida do INSS." },
+    { id:"doc_laudo", label:"Laudos Médicos Recentes", folhas:["Cada laudo separado"],
+      dica:"🏥 Laudos com até 6 meses. Todas as páginas de cada laudo." }
   ],
   "demissao": [
-    { id:"doc_ctps",  label:"Carteira de Trabalho",    folhas:["Folha de rosto","Páginas com registros"], dica:"📸 Folha de rosto + todas as páginas com anotações, uma por vez." },
-    { id:"doc_demit", label:"Carta de Demissão",       folhas:["Todas as páginas"],                        dica:"📸 Foto do documento completo, assinado pela empresa." },
-    { id:"doc_hol",   label:"Últimos 3 Holerites",     folhas:["Holerite 1","Holerite 2","Holerite 3"],   dica:"📸 Um holerite por foto. Todos os valores devem estar legíveis." },
-    { id:"doc_fgts",  label:"Extrato FGTS",             folhas:["Todas as páginas"],                        dica:"📱 App FGTS → Extratos. Print de todas as páginas ou PDF completo." }
+    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos"],
+      dica:"📒 Folha de rosto + todas as páginas com anotações de emprego." },
+    { id:"doc_demit", label:"Carta de Demissão", folhas:["Todas as páginas"],
+      dica:"📄 Documento completo, assinado pela empresa." },
+    { id:"doc_hol", label:"Últimos 3 Holerites", folhas:["Holerite mais recente","Holerite 2","Holerite 3"],
+      dica:"💰 Um holerite por foto, valores legíveis." },
+    { id:"doc_fgts", label:"Extrato FGTS", folhas:["Todas as páginas"],
+      dica:"📱 App FGTS → Extratos. Todas as páginas ou PDF." }
   ],
   "direitos": [
-    { id:"doc_ctps", label:"Carteira de Trabalho",   folhas:["Folha de rosto","Páginas com registros"], dica:"📸 Folha de rosto + todas as páginas com registros." },
-    { id:"doc_hol",  label:"Holerites",              folhas:["Cada holerite separado"],                  dica:"📸 Um holerite por foto, todos legíveis." },
-    { id:"doc_fgts", label:"Extrato FGTS",           folhas:["Todas as páginas"],                        dica:"📱 App FGTS → Extratos. Todas as páginas." },
-    { id:"doc_ctr",  label:"Contrato de Trabalho",   folhas:["Cada página separada"],                    dica:"📸 Todas as páginas do contrato assinado, frente e verso." }
+    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos"],
+      dica:"📒 Folha de rosto + todas as páginas com registros." },
+    { id:"doc_hol", label:"Holerites", folhas:["Cada holerite separado"],
+      dica:"💰 Um por foto, todos legíveis." },
+    { id:"doc_fgts", label:"Extrato FGTS", folhas:["Todas as páginas"],
+      dica:"📱 App FGTS → Extratos. Todas as páginas." },
+    { id:"doc_ctr", label:"Contrato de Trabalho", folhas:["Cada página separada"],
+      dica:"📝 Todas as páginas assinadas, frente e verso." }
   ],
   "acidente": [
-    { id:"doc_cat",  label:"CAT (Comunicação de Acidente)", folhas:["Todas as páginas"],                        dica:"📸 Foto do documento CAT completo. Se não tiver, informe ao advogado." },
-    { id:"doc_atst", label:"Atestado Médico",                folhas:["Página completa"],                        dica:"📸 Foto nítida com CRM do médico visível." },
-    { id:"doc_ctps", label:"Carteira de Trabalho",           folhas:["Folha de rosto","Páginas com registros"], dica:"📸 Folha de rosto + páginas com registros." }
+    { id:"doc_cat", label:"CAT (Comunicação de Acidente)", folhas:["Todas as páginas"],
+      dica:"📋 Documento CAT completo. Se não tiver, informe ao advogado." },
+    { id:"doc_atst", label:"Atestado Médico", folhas:["Foto do documento"],
+      dica:"🏥 Foto nítida com CRM do médico visível." },
+    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos"],
+      dica:"📒 Folha de rosto + páginas com registros." }
   ],
   "assedio": [
-    { id:"doc_print", label:"Prints ou Registros",   folhas:["Cada print separado"], dica:"📸 Prints de mensagens, e-mails ou provas. Um por foto, organizados por data." },
-    { id:"doc_test",  label:"Nomes de Testemunhas",  folhas:["Mensagem de texto"],  dica:"✍️ Digite aqui os nomes e telefones das pessoas que presenciaram os fatos." },
-    { id:"doc_hol",   label:"Contracheques",          folhas:["Cada um separado"],   dica:"📸 Um contracheque por foto, todos legíveis." }
+    { id:"doc_print", label:"Prints ou Registros", folhas:["Cada print separado"],
+      dica:"📱 Um print por foto, organizados por data." },
+    { id:"doc_test", label:"Nomes de Testemunhas", folhas:["Mensagem de texto"],
+      dica:"✍️ Digite aqui os nomes e telefones de quem presenciou os fatos." },
+    { id:"doc_hol", label:"Contracheques", folhas:["Cada um separado"],
+      dica:"💰 Um por foto, legíveis." }
   ],
   "revisao": [
-    { id:"doc_orig", label:"Documento para Revisão", folhas:["Cada página separada"], dica:"📸 Foto nítida de todas as páginas. Ou envie como PDF." }
+    { id:"doc_orig", label:"Documento para Revisão", folhas:["Cada página separada"],
+      dica:"📄 Todas as páginas em fotos separadas, ou envie como PDF." }
   ]
 }
 function getDocumentosLista(area, tipo) {
   const chave = (tipo || area || "outros").toLowerCase()
-  const extra = DOCS_EXTRA[chave] || [{ id:"doc_out", label:"Documentos do seu caso", folhas:["Página 1"], dica:"📸 Envie o documento relacionado ao seu caso." }]
+  const extra = DOCS_EXTRA[chave] || [{ id:"doc_out", label:"Documentos do seu caso", folhas:["Cada documento separado"], dica:"📸 Envie os documentos relacionados ao seu caso." }]
   return chave === "revisao" ? extra : [...DOCS_BASE, ...extra]
 }
 function getDocumentos(area, tipo) {
-  return getDocumentosLista(area, tipo).map(d => "• " + d.label).join("\n")
+  return getDocumentosLista(area, tipo).map(d => "- " + d.label).join("\n")
 }
 
 function limparTimer(u) {
@@ -179,13 +231,13 @@ function iniciarTimer(from) {
   limparTimer(u)
   u.timer = setTimeout(async () => {
     if (!users[from]) return
-    await enviar(from, "👋 Oi! Fiquei te esperando... Posso te ajudar a continuar?", null)
+    await enviar(from, "Oi, fiquei te esperando... posso te ajudar a continuar?", null)
     u.timer = setTimeout(async () => {
       if (!users[from]) return
-      await enviar(from, "⏸️ Vou pausar por agora. Se precisar, é só responder aqui!", null)
+      await enviar(from, "Vou pausar por agora. Se precisar, e so responder.", null)
       u.timer = setTimeout(async () => {
         if (!users[from]) return
-        await enviar(from, "👋 Encerrando por inatividade. Quando quiser continuar, é só mandar uma mensagem. Até logo! 😊", null)
+        await enviar(from, "Encerrando atendimento. Quando quiser continuar, e so enviar uma mensagem.", null)
         const nomeWA = users[from].nomeWA
         users[from] = novoUsuario(nomeWA)
       }, 2 * 60 * 1000)
@@ -345,19 +397,33 @@ async function respostaIA(u, pergunta) {
 }
 
 async function excluirDrive(fileId) {
+  if (!fileId) return
   try { await getDrive().files.delete({ fileId }); console.log(`[DRIVE] Excluído: ${fileId}`) }
   catch (e) { logErro("drive", "excluir: " + e.message) }
 }
 
-async function digitando(to) {
+async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mimeType) {
+  // Cria subpasta "Áudios - <nomePasta>" dentro da pasta do cliente
   try {
-    await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      { messaging_product:"whatsapp", to, type:"text", text:{ body:"..." } },
-      { headers:{ Authorization:`Bearer ${WHATSAPP_TOKEN}`, "Content-Type":"application/json" } }
-    )
-  } catch {}
-  await new Promise(r => setTimeout(r, 3200))
+    const drive = getDrive()
+    const pasta = await drive.files.create({
+      requestBody: { name: `Áudios - ${nomePasta}`, mimeType: "application/vnd.google-apps.folder", parents: [pastaDriveId] },
+      fields: "id"
+    })
+    const ext = mimeType?.includes("ogg") ? ".ogg" : mimeType?.includes("mpeg") ? ".mp3" : ".ogg"
+    const nomeArq = `Audio - ${nomeCliente}${ext}`
+    const fs = require("fs"), path = require("path"), os = require("os")
+    const tmp = path.join(os.tmpdir(), `orac_audio_${Date.now()}`)
+    fs.writeFileSync(tmp, buffer)
+    const res = await drive.files.create({
+      requestBody: { name: nomeArq, parents: [pasta.data.id] },
+      media: { mimeType: mimeType || "audio/ogg", body: fs.createReadStream(tmp) },
+      fields: "id,name,webViewLink"
+    })
+    try { fs.unlinkSync(tmp) } catch {}
+    console.log(`[DRIVE] Áudio: ${res.data.name}`)
+    return res.data
+  } catch (e) { logErro("drive", "uploadAudio: " + e.message); return null }
 }
 
 async function baixarMidia(mediaId) {
@@ -366,6 +432,15 @@ async function baixarMidia(mediaId) {
     const file = await axios.get(info.data.url, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }, responseType: "arraybuffer" })
     return { buffer: Buffer.from(file.data), mimeType: info.data.mime_type || "application/octet-stream" }
   } catch (e) { logErro("whatsapp", "baixarMidia: " + e.message); return null }
+}
+
+async function digitando(to) {
+  try {
+    await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      { messaging_product:"whatsapp", to, type:"text", text:{ body:"..." } },
+      { headers:{ Authorization:`Bearer ${WHATSAPP_TOKEN}`, "Content-Type":"application/json" } })
+  } catch {}
+  await new Promise(r => setTimeout(r, 3200))
 }
 
 async function enviar(to, texto, opcoes = null, comDelay = true) {
@@ -423,10 +498,9 @@ function telaUFsRegiao(regId) {
 
 async function finalizarCadastro(from, u) {
   const numeroCaso = gerarCaso()
-  u.numeroCaso      = numeroCaso
-  u.score           = calcScore(u)
-  u.docsEntregues   = []
-  u.docPaginaAtual  = 0
+  u.numeroCaso  = numeroCaso
+  u.score       = calcScore(u)
+  u.docsEntregues = []; u.docAtualIdx = 0; u.ultimoArqId = null
 
   const pasta      = await criarPastaCliente(numeroCaso, u.nome)
   u.pastaDriveId   = pasta?.id || null
@@ -452,18 +526,17 @@ async function finalizarCadastro(from, u) {
 
 function tela_confirmacao(u) {
   return {
-    texto: `📋 *Confira suas informações:*\n\n${resumoCaso(u)}\n\n✅ Tudo está correto?`,
-    opcoes: [{ id:"conf_ok", title:"✅ Confirmar" }, { id:"conf_corrigir", title:"✏️ Corrigir dados" }]
+    texto: `Confira suas informacoes:\n\n${resumoCaso(u)}\n\nTudo esta correto?`,
+    opcoes: [{ id: "conf_ok", title: "Confirmar" }, { id: "conf_corrigir", title: "Corrigir dados" }]
   }
 }
 
 function menuCliente(u) {
-  const partes   = (u.nome || u.nomeWA).split(" ")
+  const partes = (u.nome || u.nomeWA).split(" ")
   const nomeExib = partes.length > 1 ? `${partes[0]} ${partes[partes.length - 1]}` : partes[0]
-  const prio     = u.urgencia === "alta" ? "\n🔴 Prioridade: Alta" : ""
   return {
-    texto: `👋 Olá, ${nomeExib}!\n\nBem-vindo(a) de volta à *Oraculum Advocacia*. 💼\n\n📁 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}${prio}\n\nComo posso te ajudar hoje?`,
-    opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_encerrar", title:"Encerrar atendimento" }]
+    texto: `Ola, ${nomeExib}!\n\nBem-vindo de volta a Oraculum Advocacia.\n\nCaso: ${u.numeroCaso}\nArea: ${u.area}${u.urgencia === "alta" ? "\nPrioridade: Alta" : ""}\n\nComo posso ajudar?`,
+    opcoes: [{ id: "m_status", title: "Status do caso" }, { id: "m_docs", title: "Enviar documentos" }, { id: "m_adv", title: "Falar com advogado" }, { id: "m_encerrar", title: "Encerrar atendimento" }]
   }
 }
 
@@ -475,8 +548,8 @@ function getDocsPendentes(u) {
 function telaConcluido(u) {
   const nome1 = (u.nome || u.nomeWA).split(" ")[0]
   return {
-    texto: `🎉 *Parabéns, ${nome1}!*\n\nTodos os documentos foram enviados com sucesso!\n\nNossa equipe já pode analisar seu caso com prioridade. Em breve entraremos em contato pelo WhatsApp. 💬\n\n📁 Caso: *${u.numeroCaso}*\n⏱️ Prazo de retorno: até *2 dias úteis*.`,
-    opcoes: [{ id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_status", title:"📊 Status do caso" }, { id:"m_inicio", title:"Menu principal" }]
+    texto: `🎉 *Muito bem, ${nome1}!*\n\nTodos os documentos foram enviados com sucesso! Nossa equipe já pode analisar seu caso com prioridade.\n\nEntraremos em contato em breve pelo WhatsApp. 💬\n\n📁 Caso: *${u.numeroCaso}*\n⏱️ Retorno em até *2 dias úteis*.`,
+    opcoes: [{ id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_status", title:"📊 Status" }, { id:"m_inicio", title:"Menu principal" }]
   }
 }
 
@@ -484,34 +557,40 @@ function telaEnvioDoc(u) {
   const pendentes = getDocsPendentes(u)
   if (pendentes.length === 0) return telaConcluido(u)
 
-  const doc      = pendentes[0]
   const lista    = getDocumentosLista(u.area, u.tipo || u.situacao)
   const total    = lista.length
   const entregue = total - pendentes.length
   const barras   = "🟢".repeat(entregue) + "🔴".repeat(pendentes.length)
-
-  const folhas      = doc.folhas || ["Página 1"]
-  const folhaIdx    = u.docPaginaAtual || 0
-  const folhaAtual  = folhas[folhaIdx] || `Página ${folhaIdx + 1}`
-  const totalFolhas = folhas.length
+  const doc      = pendentes[0]
+  const folhas   = doc.folhas || ["Foto do documento"]
+  const fIdx     = u.docAtualIdx || 0
+  const folha    = folhas[fIdx] || `Foto ${fIdx + 1}`
+  const totalF   = folhas.length
 
   let texto = `📋 *Documentos do caso*\n${barras} ${entregue}/${total}\n\n`
-  texto += `📌 *Documento atual:* ${doc.label}\n`
-  texto += `📄 *Envie agora:* ${folhaAtual}`
-  if (totalFolhas > 1) texto += ` (${folhaIdx+1} de ${totalFolhas})`
+  texto += `📌 *Agora:* ${doc.label}\n`
+  texto += `📄 *Envie:* ${folha}`
+  if (totalF > 1) texto += ` (${fIdx + 1} de ${totalF})`
   texto += `\n\n💡 *Dica:* ${doc.dica}`
-  texto += `\n\n📲 *Tire a foto ou envie o PDF agora.*`
-  if (totalFolhas > 1) texto += `\nSe precisar enviar mais de uma foto deste documento, basta enviar aqui.`
+  texto += `\n\n📲 *Tire a foto ou PDF e envie aqui.*`
 
-  const opcoes = []
-  if (folhaIdx + 1 < totalFolhas) {
-    opcoes.push({ id:"docs_proxfolha", title:`✅ Enviei a ${folhaAtual}` })
-  } else {
-    opcoes.push({ id:"docs_proxdoc", title:"✅ Documento concluído" })
+  // CPF é opcional — oferecer opção de pular
+  if (doc.id === "doc_cpf") {
+    texto += "\n\n💡 *Se o seu CPF já aparece no RG ou CNH, pode pular este documento.*"
+    return {
+      texto,
+      opcoes: [
+        { id:"doc_cpf_skip", title:"✅ Já está no RG" },
+        { id:"docs_depois",  title:"⏭️ Enviar depois" },
+        { id:"m_inicio",     title:"Menu principal" }
+      ]
+    }
   }
-  opcoes.push({ id:"docs_depois", title:"⏭️ Enviar depois" })
 
-  return { texto, opcoes }
+  return {
+    texto,
+    opcoes: [{ id:"docs_depois", title:"⏭️ Enviar depois" }, { id:"m_inicio", title:"Menu principal" }]
+  }
 }
 
 async function processar(from, nomeWA, text, msgObj) {
@@ -544,79 +623,88 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: "❌ Não consegui baixar o arquivo. Tente reenviar.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"Menu principal" }] }
     }
 
+    // ── ÁUDIO ─────────────────────────────────────────────────
     if (ehAudio) {
-      await enviar(from, "🎙️ Áudio recebido! Transcrevendo, aguarde um momento...", null, false)
-      const arquivoAudio = await uploadDrive(u.pastaDriveId, `audio_${Date.now()}.ogg`, midia.buffer, midia.mimeType)
+      await enviar(from, "🎙️ Áudio recebido! Transcrevendo, aguarde...", null, false)
+      const eUrg   = u.stage === "aguardando_urgente"
+      // Determina nome da subpasta pelo stage
+      const nomePasta = eUrg ? "Mensagem Urgente" : (u.stage === "coleta_desc_audio" ? "Descrição do Caso" : "Áudio Geral")
+      const prNome = formatarNome(u.nome || u.nomeWA || "cliente").split(" ")[0]
+      const ultNome = formatarNome(u.nome || u.nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
+      const nomeCliente = ultNome && ultNome !== prNome ? `${prNome} ${ultNome}` : prNome
+      const arquivoAud = await uploadPastaAudio(u.pastaDriveId, nomeCliente, nomePasta, midia.buffer, midia.mimeType)
       const trans = await transcrever(midia.buffer, midia.mimeType)
-      const eUrg  = u.stage === "aguardando_urgente"
-      await hsCriarNota(u.contatoId, eUrg ? "ÁUDIO URGENTE" : "ÁUDIO RECEBIDO",
-        `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\n${trans ? `Transcrição:\n"${trans}"` : "Transcrição indisponível"}${arquivoAudio ? `\nDrive: ${arquivoAudio.webViewLink}` : ""}`)
+      await hsCriarNota(u.contatoId, eUrg ? "ÁUDIO URGENTE" : `ÁUDIO — ${nomePasta.toUpperCase()}`,
+        `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\n${trans ? `Transcrição:\n"${trans}"` : "Transcrição indisponível"}${arquivoAud ? `\nDrive: ${arquivoAud.webViewLink}` : ""}`)
       if (eUrg) await hsMoverStage(u.negocioId, HS_STAGE.triagem)
       u.documentosEnviados = true
       if (u.stage === "aguardando_urgente") u.stage = "cliente"
+
+      // Se é descrição do caso por áudio
+      if (u.stage === "coleta_desc_audio") {
+        u.descricao = trans ? `[Áudio transcrito] ${trans.slice(0, 500)}` : "[Áudio enviado — sem transcrição]"
+        u.stage = "confirmacao"
+        iniciarTimer(from)
+        const msg = trans
+          ? `✅ Áudio recebido!\n\n🗣️ Entendemos:\n"${trans.slice(0, 250)}${trans.length > 250 ? "..." : ""}"\n\nVamos registrar isso no seu caso.`
+          : "✅ Áudio salvo! Vamos utilizar ele como descrição do seu caso."
+        return { texto: msg, opcoes: [{ id:"conf_ok", title:"✅ Confirmar" }, { id:"conf_corrigir", title:"✏️ Corrigir" }] }
+      }
+
       const msgAudio = trans
-        ? `✅ Áudio salvo!\n\n🗣️ Entendemos o seguinte:\n"${trans.slice(0, 300)}${trans.length > 300 ? "..." : ""}"`
-        : `✅ Áudio salvo na pasta do caso ${u.numeroCaso}.\nNossa equipe vai ouvir em breve.`
+        ? `✅ Áudio salvo!\n\n🗣️ O que entendemos:\n"${trans.slice(0, 300)}${trans.length > 300 ? "..." : ""}"`
+        : `✅ Áudio salvo na pasta do caso.\nNossa equipe vai ouvir em breve.`
       iniciarTimer(from)
-      return { texto: msgAudio, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: msgAudio, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Advogado" }, { id:"m_inicio", title:"Menu principal" }] }
     }
 
-    // Documento / imagem
+    // ── DOCUMENTO / IMAGEM ────────────────────────────────────
     await hsMoverStage(u.negocioId, HS_STAGE.docs)
     if (!u.docsEntregues) u.docsEntregues = []
 
-    const pendAntes   = getDocsPendentes(u)
-    const docAtual    = pendAntes[0]
-    const folhas      = docAtual?.folhas || ["Página"]
-    const folhaIdx    = u.docPaginaAtual || 0
-    const folhaAtual  = folhas[folhaIdx] || `Página ${folhaIdx + 1}`
-    const totalFolhas = folhas.length
+    const pendentes   = getDocsPendentes(u)
+    const docAtual    = pendentes[0]
+    const folhas      = docAtual?.folhas || ["Foto"]
+    const fIdx        = u.docAtualIdx || 0
+    const folha       = folhas[fIdx] || `Foto ${fIdx + 1}`
 
-    // Nome do arquivo: "RG ou CNH - Frente - José Silva.jpg"
-    const primeiroNome = (u.nome || u.nomeWA || "cliente").split(" ")[0]
-    const sobrenome    = (u.nome || u.nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
-    const nomeCliente  = sobrenome && sobrenome !== primeiroNome ? `${primeiroNome} ${sobrenome}` : primeiroNome
-    const labelDoc     = docAtual ? docAtual.label : "Documento"
-    const ext          = (nomeArq || "").split(".").pop()
-    const nomeArqFinal = `${labelDoc} - ${folhaAtual} - ${nomeCliente}${ext && ext.length <= 4 ? "."+ext : ".jpg"}`
+    // Nome formatado: "RG ou CNH - Frente - José Silva.jpg"
+    const prN  = formatarNome(u.nome || u.nomeWA || "cliente").split(" ")[0]
+    const ulN  = formatarNome(u.nome || u.nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
+    const nCli = ulN && ulN !== prN ? `${prN} ${ulN}` : prN
+    const lblD = docAtual ? docAtual.label : "Documento"
+    const ext2 = (nomeArq || "").split(".").pop()
+    const nArqFinal = `${lblD} - ${folha} - ${nCli}${ext2 && ext2.length <= 4 ? "."+ext2 : ".jpg"}`
 
-    const arquivo = await uploadDrive(u.pastaDriveId, nomeArqFinal, midia.buffer, midia.mimeType)
+    const arquivo = await uploadDrive(u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType)
     if (!arquivo) {
       iniciarTimer(from)
-      return { texto: "❌ Não consegui salvar o arquivo. Pode tentar novamente?", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_adv", title:"Falar com advogado" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: "❌ Não consegui salvar. Pode tentar novamente?", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_adv", title:"Falar com advogado" }, { id:"m_inicio", title:"Menu principal" }] }
     }
 
-    u.ultimoArquivoId   = arquivo.id
-    u.ultimoArquivoNome = nomeArqFinal
-
-    await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO",
-      `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nomeArqFinal}\nDrive: ${arquivo.webViewLink}`)
+    u.ultimoArqId   = arquivo.id
+    u.ultimoArqNome = nArqFinal
     u.documentosEnviados = true
     if (u.stage === "aguardando_urgente") u.stage = "cliente"
 
-    // Avançar página
-    u.docPaginaAtual = folhaIdx + 1
-    const temProximaFolha = u.docPaginaAtual < totalFolhas
-    const proximaFolha    = folhas[u.docPaginaAtual] || `Página ${u.docPaginaAtual + 1}`
+    await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO",
+      `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
+
+    // Avançar índice de folha
+    u.docAtualIdx = fIdx + 1
+    const temProxFolha = docAtual && u.docAtualIdx < (docAtual.folhas || []).length
+    const proxFolha    = docAtual?.folhas?.[u.docAtualIdx] || `Foto ${u.docAtualIdx + 1}`
 
     iniciarTimer(from)
 
-    if (temProximaFolha) {
-      return {
-        texto: `✅ *${folhaAtual} do ${labelDoc} recebida com sucesso!*\n📁 "${nomeArqFinal}"\n\nAgora envie: *${proximaFolha}*\n\n💡 Mesma orientação: boa iluminação, sem reflexo, tudo enquadrado.\n\nSe a foto não ficou boa, pode reenviar antes de continuar.`,
-        opcoes: [{ id:"docs_reenviar", title:"🔄 Reenviar esta foto" }, { id:"docs_depois", title:"⏭️ Enviar depois" }]
-      }
-    } else {
-      // Documento concluído
-      u.docsEntregues.push(docAtual.id)
-      u.docPaginaAtual = 0
-      const novoPendentes = getDocsPendentes(u)
-      if (novoPendentes.length === 0) return telaConcluido(u)
-      const proxDoc = novoPendentes[0]
-      return {
-        texto: `✅ *${labelDoc} concluído!* ${totalFolhas > 1 ? "Todas as "+totalFolhas+" fotos foram" : "A foto foi"} salva(s) com sucesso.\n\n📂 *Próximo documento:*\n➡️ *${proxDoc.label}*\n\n${proxDoc.dica}\n\nQuando estiver pronto, envie a foto ou PDF.`,
-        opcoes: [{ id:"docs_depois", title:"⏭️ Enviar depois" }, { id:"m_inicio", title:"Menu principal" }]
-      }
+    return {
+      texto: `✅ *${lblD} — ${folha}* recebida!\n📁 Salvo como: ${nArqFinal}\n\nO que deseja fazer agora?`,
+      opcoes: [
+        { id:"docs_reenviar",  title:"🔄 Reenviar esta foto" },
+        { id:"docs_maisFotos", title:"📸 Mais fotos deste doc" },
+        { id:"docs_proxdoc",   title:"✅ Próximo documento" },
+        { id:"docs_depois",    title:"⏭️ Enviar depois" }
+      ]
     }
   }
 
@@ -631,7 +719,7 @@ async function processar(from, nomeWA, text, msgObj) {
       await hsMoverStage(u.negocioId, HS_STAGE.triagem)
       u.stage = "cliente"
       iniciarTimer(from)
-      return { texto: `✅ Mensagem registrada com urgência!\n\nNossa equipe será notificada em breve.\n\n📁 Caso: ${u.numeroCaso}`, opcoes: [{ id:"m_status", title:"Status do caso" }, { id:"m_docs", title:"Enviar documentos" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: `Mensagem registrada com urgencia.\nNossa equipe sera notificada em breve.\n\nCaso: ${u.numeroCaso}`, opcoes: [{ id:"m_status", title:"Status do caso" }, { id:"m_docs", title:"Enviar documentos" }, { id:"m_inicio", title:"Menu principal" }] }
     }
   }
 
@@ -667,14 +755,14 @@ async function processar(from, nomeWA, text, msgObj) {
       const docs = getDocumentos(u.area, u.tipo || u.situacao)
       iniciarTimer(from)
       return {
-        texto: `🎉 *Cadastro realizado com sucesso!*\n\n📁 Número do caso: *${numeroCaso}*\n\nUm especialista em ${u.area} vai analisar seu caso e entrar em contato em breve. ⏱️\n\n📋 *Documentos necessários:*\n${docs}\n\nDeseja enviar os documentos agora?`,
+        texto: `Cadastro realizado!\n\nNumero do caso: ${numeroCaso}\n\nUm especialista em ${u.area} vai analisar e entrar em contato em breve.\n\nDocumentos que podem ser necessarios:\n${docs}\n\nVoce pode enviar os documentos agora ou depois.`,
         opcoes: [{ id: "m_docs", title: "Enviar documentos" }, { id: "m_inicio", title: "Menu principal" }, { id: "m_encerrar", title: "Encerrar atendimento" }]
       }
     }
     if (text === "conf_corrigir") {
       u.stage = "menu_correcao"; iniciarTimer(from)
       return {
-        texto: "✏️ Qual informação deseja corrigir?",
+        texto: "Qual informacao deseja corrigir?",
         opcoes: [
           { id: "cor_nome",    title: "Nome" },
           { id: "cor_cidade",  title: "Cidade" },
@@ -705,11 +793,11 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // COLETA
   if (u.stage === "coleta_nome" && text) {
-    u.nome = text.trim(); u.stage = "coleta_cidade"; iniciarTimer(from)
-    return { texto: "📍 Em qual cidade você mora?", opcoes: null }
+    u.nome = formatarNome(text.trim()); u.stage = "coleta_cidade"; iniciarTimer(from)
+    return { texto: "Em qual cidade voce mora?", opcoes: null }
   }
   if (u.stage === "coleta_cidade" && text) {
-    u.cidade = text.trim(); u.stage = "coleta_regiao"; iniciarTimer(from)
+    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
     return telaRegioes()
   }
   if (u.stage === "coleta_regiao") {
@@ -721,34 +809,35 @@ async function processar(from, nomeWA, text, msgObj) {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
     u.uf = val; u.stage = "coleta_contrib"; iniciarTimer(from)
-    return { texto: "🏛️ Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca contribuí" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
+    return { texto: "Voce ja contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
   }
   if (u.stage === "coleta_contrib") {
-    const m = { col_c1:"Nunca contribuí", col_c2:"Pouco tempo", col_c3:"Mais de 1 ano", col_c4:"Muitos anos" }
+    const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
     u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
-    return { texto: "💳 Você já recebe algum benefício do INSS atualmente?", opcoes: [{ id:"col_b1", title:"Sim, recebo" }, { id:"col_b2", title:"Não recebo" }] }
+    return { texto: "Voce ja recebe algum beneficio do INSS?", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] }
   }
   if (u.stage === "coleta_benef") {
     const m = { col_b1: "Sim", col_b2: "Nao" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] } }
     u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
-    return { texto: "📝 Me explique brevemente o que está acontecendo.\n\nQuanto mais detalhes você der, melhor nossos especialistas vão entender seu caso:", opcoes: null }
+    u.stage = "coleta_desc_audio"; iniciarTimer(from)
+    return { texto: "📝 Me explique brevemente o que está acontecendo.\n\nQuanto mais detalhes você der, melhor!\n\n🎙️ Pode *digitar aqui* ou *enviar um áudio* — escolha como preferir.", opcoes: null }
   }
-  if (u.stage === "coleta_desc" && text) {
-    u.descricao = text.trim(); u.stage = "confirmacao"; iniciarTimer(from)
+  if ((u.stage === "coleta_desc" || u.stage === "coleta_desc_audio") && text) {
+    u.descricao = formatarNome(text.trim()); u.stage = "confirmacao"; iniciarTimer(from)
     return tela_confirmacao(u)
   }
 
   // GATILHO → URGENCIA → COLETA
   if (u.stage === "gatilho") {
     u.stage = "urgencia"; iniciarTimer(from)
-    return { texto: "💰 Isso está te prejudicando financeiramente hoje?", opcoes: [{ id:"urg_sim", title:"Sim, muito" }, { id:"urg_nao", title:"Ainda não" }] }
+    return { texto: "Isso esta te prejudicando financeiramente hoje?", opcoes: [{ id: "urg_sim", title: "Sim" }, { id: "urg_nao", title: "Nao" }] }
   }
   if (u.stage === "urgencia") {
     if (text === "urg_sim") { u.urgencia = "alta"; u.score += 3 }
     u.stage = "coleta_nome"; iniciarTimer(from)
-    return { texto: "📝 Ótimo! Vamos registrar seu caso.\n\nQual é o seu nome completo?", opcoes: null }
+    return { texto: "Vamos registrar seu caso. Qual e o seu nome completo?", opcoes: null }
   }
 
   // INICIO
@@ -759,8 +848,8 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     u.stage = "area"; iniciarTimer(from)
     return {
-      texto: "👋 Olá! Bem-vindo(a) à *Oraculum Advocacia*! ⚖️\n\nMeu nome é *Beatriz*, sua assistente virtual. Estou aqui para te ajudar de forma rápida e segura. 😊\n\nSobre qual área você precisa de ajuda?",
-      opcoes: [{ id:"area_inss", title:"🏛️ INSS" }, { id:"area_trab", title:"💼 Trabalhista" }, { id:"area_outros", title:"📋 Outros" }]
+      texto: "Bem-vindo a Oraculum Advocacia.\n\nMe chamo Beatriz, sou sua assistente virtual.\n\nComo posso te ajudar hoje?",
+      opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }]
     }
   }
 
@@ -773,9 +862,9 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // INSS MENU
   if (u.stage === "inss_menu") {
-    if (text === "i_novo")    { u.situacao = "Solicitação de novo benefício"; u.stage = "inss_novo";    iniciarTimer(from); return { texto: "📋 Qual benefício você deseja solicitar?", opcoes: [{ id:"in_apos", title:"🏖️ Aposentadoria" }, { id:"in_bpc", title:"♿ BPC / LOAS" }, { id:"in_incap", title:"🏥 Incapacidade" }, { id:"in_dep", title:"👨‍👩‍👧 Dependentes" }, { id:"in_out", title:"📋 Outros" }] } }
-    if (text === "i_negado")  { u.situacao = "Benefício negado pelo INSS"; u.score += 1; u.stage = "inss_neg_tipo"; iniciarTimer(from); return { texto: "Qual beneficio foi negado?", opcoes: [{ id: "ign_apos", title: "Aposentadoria" }, { id: "ign_bpc", title: "BPC / LOAS" }, { id: "ign_incap", title: "Incapacidade" }, { id: "ign_dep", title: "Dependentes" }, { id: "ign_out", title: "Outros" }] } }
-    if (text === "i_cortado") { u.situacao = "Benefício suspenso/cortado"; u.score += 2; u.stage = "inss_cort_tipo"; iniciarTimer(from); return { texto: "Qual beneficio foi cortado?", opcoes: [{ id: "ic_apos", title: "Aposentadoria" }, { id: "ic_bpc", title: "BPC / LOAS" }, { id: "ic_incap", title: "Incapacidade" }, { id: "ic_dep", title: "Dependentes" }, { id: "ic_out", title: "Outros" }] } }
+    if (text === "i_novo")    { u.situacao = "novo";    u.stage = "inss_novo";    iniciarTimer(from); return { texto: "Qual beneficio voce deseja solicitar?", opcoes: [{ id: "in_apos", title: "Aposentadoria" }, { id: "in_bpc", title: "BPC / LOAS" }, { id: "in_incap", title: "Incapacidade" }, { id: "in_dep", title: "Dependentes" }, { id: "in_out", title: "Outros" }] } }
+    if (text === "i_negado")  { u.situacao = "negado";  u.score += 1; u.stage = "inss_neg_tipo"; iniciarTimer(from); return { texto: "Qual beneficio foi negado?", opcoes: [{ id: "ign_apos", title: "Aposentadoria" }, { id: "ign_bpc", title: "BPC / LOAS" }, { id: "ign_incap", title: "Incapacidade" }, { id: "ign_dep", title: "Dependentes" }, { id: "ign_out", title: "Outros" }] } }
+    if (text === "i_cortado") { u.situacao = "cortado"; u.score += 2; u.stage = "inss_cort_tipo"; iniciarTimer(from); return { texto: "Qual beneficio foi cortado?", opcoes: [{ id: "ic_apos", title: "Aposentadoria" }, { id: "ic_bpc", title: "BPC / LOAS" }, { id: "ic_incap", title: "Incapacidade" }, { id: "ic_dep", title: "Dependentes" }, { id: "ic_out", title: "Outros" }] } }
   }
 
   // INSS NOVO
@@ -799,10 +888,10 @@ async function processar(from, nomeWA, text, msgObj) {
       io_rev: "Revisao de beneficio", io_ctc: "Certidao de tempo de contribuicao", io_pla: "Planejamento de aposentadoria"
     }
     u.subTipo = m[text] || text; u.stage = "inss_ja"; iniciarTimer(from)
-    return { texto: "📋 Você já deu entrada nesse pedido no INSS?", opcoes: [{ id:"ja_s", title:"✅ Sim, já dei entrada" }, { id:"ja_n", title:"❌ Ainda não dei entrada" }] }
+    return { texto: "📋 Você já deu entrada nesse pedido no INSS?", opcoes: [{ id:"ja_s", title:"Sim" }, { id:"ja_n", title:"Não" }] }
   }
   if (u.stage === "inss_ja") {
-    u.detalhe = text === "ja_s" ? "Já deu entrada" : "Ainda não deu entrada"
+    u.detalhe = text === "ja_s" ? "Sim, já deu entrada no INSS" : "Ainda não deu entrada"
     u.stage   = "gatilho"; iniciarTimer(from)
     return { texto: "Casos como o seu sao bem comuns aqui. Muitas vezes conseguimos resolver mais rapido do que a pessoa imagina.", opcoes: [{ id: "cont", title: "Continuar" }] }
   }
@@ -919,79 +1008,94 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "cliente") {
     if (text === "m_status") {
       iniciarTimer(from)
-      const statusLabel = u.urgencia === "alta" ? "⚡ Análise prioritária" : "🔍 Em análise"
-      const totalDocs   = getDocumentosLista(u.area, u.tipo||u.situacao).length
-      const entregDocs  = (u.docsEntregues||[]).length
-      const docInfo     = entregDocs >= totalDocs ? "\n✅ Documentos: todos entregues" : `\n📋 Documentos: ${entregDocs} de ${totalDocs} entregues`
-      const texto = [
+      const stLbl  = u.urgencia === "alta" ? "⚡ Análise prioritária" : "🔍 Em análise"
+      const totD   = getDocumentosLista(u.area, u.tipo || u.situacao).length
+      const entD   = (u.docsEntregues || []).length
+      const dInfo  = entD >= totD ? "\n✅ Documentos: todos entregues" : `\n📋 Documentos: ${entD} de ${totD} entregues`
+      const sitStr = u.situacao ? `${u.situacao}${u.subTipo ? " — " + u.subTipo : ""}` : "—"
+      const txt = [
         "📊 *Status do seu caso*","",
         `🔢 Número: *${u.numeroCaso}*`,
         `⚖️ Área: ${u.area}`,
-        `📋 Situação: ${situacaoLegivel(u)}`,
-        `🚦 Status: ${statusLabel}`,
+        `📋 Situação: ${sitStr}`,
+        `🚦 Status: ${stLbl}`,
         `${u.urgencia==="alta"?"🔴":"🟡"} Prioridade: ${u.urgencia==="alta"?"Alta":"Normal"}`,
-        docInfo,"",
-        "Sua solicitação está sendo avaliada com toda atenção. Assim que houver novidades, entraremos em contato pelo WhatsApp. 💬","",
-        "⏱️ Prazo estimado de retorno: até *2 dias úteis*."
+        dInfo,"",
+        "Nossa equipe está avaliando seu caso com atenção. Assim que houver novidades, entraremos em contato pelo WhatsApp. 💬","",
+        "⏱️ Prazo estimado: até *2 dias úteis*."
       ].join("\n")
-      return { texto, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: txt, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Advogado" }, { id:"m_inicio", title:"Menu principal" }] }
+    }
+    if (text === "doc_cpf_skip") {
+      // Pular CPF — já está no RG
+      if (!u.docsEntregues) u.docsEntregues = []
+      u.docsEntregues.push("doc_cpf")
+      u.docAtualIdx = 0
+      u.ultimoArqId = null
+      const telaCpf = telaEnvioDoc(u)
+      iniciarTimer(from)
+      return telaCpf
     }
     if (text === "m_docs") {
       await hsMoverStage(u.negocioId, HS_STAGE.docs)
       if (!u.docsEntregues) u.docsEntregues = []
-      u.docPaginaAtual = u.docPaginaAtual || 0
+      u.docAtualIdx = u.docAtualIdx || 0
       const tela = telaEnvioDoc(u)
       iniciarTimer(from)
       return tela
     }
     if (text === "docs_reenviar") {
-      if (u.ultimoArquivoId) {
-        await excluirDrive(u.ultimoArquivoId)
-        u.ultimoArquivoId = null; u.ultimoArquivoNome = null
-        u.docPaginaAtual = Math.max(0, (u.docPaginaAtual||1) - 1)
+      if (u.ultimoArqId) {
+        await excluirDrive(u.ultimoArqId)
+        u.ultimoArqId = null; u.ultimoArqNome = null
+        u.docAtualIdx = Math.max(0, (u.docAtualIdx || 1) - 1)
       }
-      const pend = getDocsPendentes(u)
-      const doc  = pend[0]
-      const folhas = doc?.folhas || ["Página 1"]
-      const folha  = folhas[u.docPaginaAtual] || `Página ${u.docPaginaAtual+1}`
+      const pend2 = getDocsPendentes(u)
+      const d2    = pend2[0]
+      const f2    = (d2?.folhas || ["Foto"])[u.docAtualIdx || 0] || "Foto"
       iniciarTimer(from)
-      return { texto: `🔄 Foto anterior removida!\n\nEnvie novamente: *${folha}* do *${doc?.label||"documento"}*\n\n💡 Boa iluminação, sem reflexo, tudo enquadrado.`, opcoes: null }
+      return { texto: `🔄 Foto anterior removida!\n\nEnvie novamente: *${f2}* do *${d2?.label || "documento"}*\n\n💡 Boa iluminação, sem reflexo, tudo enquadrado.`, opcoes: null }
     }
-    if (text === "docs_proxfolha") {
-      u.docPaginaAtual = (u.docPaginaAtual||0) + 1
+    if (text === "docs_maisFotos") {
+      // Não avança para o próximo documento — permanece no atual
+      const pend3  = getDocsPendentes(u)
+      const d3     = pend3[0]
+      const fAtual = (d3?.folhas || ["Foto"])[u.docAtualIdx || 0] || `Foto ${(u.docAtualIdx||0)+1}`
       iniciarTimer(from)
-      return telaEnvioDoc(u)
+      return { texto: `📸 Ok! Envie mais uma foto de *${d3?.label || "documento"}*\n\nFoto atual: *${fAtual}*\n\n💡 Mesmas orientações: boa iluminação, sem reflexo, enquadrado corretamente.`, opcoes: null }
     }
     if (text === "docs_proxdoc") {
-      const pend = getDocsPendentes(u)
-      if (pend.length > 0) u.docsEntregues.push(pend[0].id)
-      u.docPaginaAtual = 0
+      const pend4 = getDocsPendentes(u)
+      if (pend4.length > 0) u.docsEntregues.push(pend4[0].id)
+      u.docAtualIdx = 0
+      u.ultimoArqId = null
+      const tela4 = telaEnvioDoc(u)
       iniciarTimer(from)
-      return telaEnvioDoc(u)
+      return tela4
     }
     if (text === "docs_depois") {
       const nome1 = (u.nome || u.nomeWA).split(" ")[0]
       iniciarTimer(from)
-      return { texto: `Sem problema, ${nome1}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em *"Enviar documentos"*.\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_status", title:"Status do caso" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: `Sem problema, ${nome1}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em *"Enviar documentos"*.\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_status", title:"Status" }, { id:"m_inicio", title:"Menu principal" }] }
     }
     if (text === "m_adv") {
       iniciarTimer(from)
-      return { texto: "👨‍⚖️ *Falar com advogado*\n\nComo você prefere ser atendido?", opcoes: [{ id:"adv_ag", title:"📅 Agendar ligação" }, { id:"adv_urg", title:"🚨 Mensagem urgente" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: "Como prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "Agendar ligacao" }, { id: "adv_urg", title: "Mensagem urgente" }, { id: "m_inicio", title: "Menu principal" }] }
     }
     if (text === "adv_ag") {
       await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
       await hsCriarNota(u.contatoId, "AGENDAMENTO SOLICITADO", `${u.nome} (${from}) solicitou agendamento.\nCaso: ${u.numeroCaso} | Area: ${u.area}\nLink: ${MEETINGS}`)
       iniciarTimer(from)
-      return { texto: `📅 *Agendamento de ligação*\n\n1️⃣ Toque no link abaixo\n2️⃣ Escolha o dia e horário\n3️⃣ Coloque seu e-mail para a confirmação\n\n🔗 ${MEETINGS}\n\nAssim que confirmar, enviaremos os detalhes aqui no WhatsApp também. 💬\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"adv_urg", title:"🚨 Mensagem urgente" }, { id:"m_status", title:"Status do caso" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: `Agendamento\n\nClique no link para escolher o horario:\n\n${MEETINGS}\n\nVoce recebera confirmacao por e-mail apos agendar.\n\nCaso: ${u.numeroCaso}`, opcoes: [{ id: "adv_urg", title: "Mensagem urgente" }, { id: "m_status", title: "Status do caso" }, { id: "m_inicio", title: "Menu principal" }] }
     }
     if (text === "adv_urg") {
       u.stage = "aguardando_urgente"; iniciarTimer(from)
-      return { texto: `🚨 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio.\nTudo será registrado e notificado imediatamente à equipe.\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: null }
+      return { texto: `Mensagem urgente\n\nDigite sua mensagem ou envie um audio.\n\nTudo sera registrado imediatamente.\n\nCaso: ${u.numeroCaso}`, opcoes: null }
     }
     if (text === "m_encerrar") {
       limparTimer(u)
       const nome1 = (u.nome || u.nomeWA).split(" ")[0]
-      return { texto: `👋 Foi um prazer te atender, ${nome1}!\n\nSeu caso está registrado sob o número *${u.numeroCaso}*.\n\nSempre que precisar, é só mandar uma mensagem. Até logo! 😊`, opcoes: null }
+      return { texto: `Foi um prazer te atender, ${nome1}!\nSeu caso esta registrado conosco sob o numero ${u.numeroCaso}.\n\nSempre que precisar, e so mandar uma mensagem. Ate logo!`, opcoes: null }
     }
     if (text === "m_inicio") {
       iniciarTimer(from); return menuCliente(u)
@@ -1003,20 +1107,20 @@ async function processar(from, nomeWA, text, msgObj) {
       if (palavrasEncerrar.some(p => lower.includes(p))) {
         const nome1 = (u.nome || u.nomeWA).split(" ")[0]
         limparTimer(u)
-        return { texto: `👋 Foi um prazer, ${nome1}!\n\nSeu caso *${u.numeroCaso}* está registrado. Qualquer coisa, é só mandar uma mensagem. Até logo! 😊`, opcoes: null }
+        return { texto: `Foi um prazer, ${nome1}! Seu caso ${u.numeroCaso} esta registrado.\n\nQualquer coisa, e so mandar mensagem. Ate logo!`, opcoes: null }
       }
     }
     // Groq IA para perguntas livres
     if (text && GROQ_KEY) {
       const resp = await respostaIA(u, text)
-      if (resp) { iniciarTimer(from); return { texto: resp, opcoes: [{ id:"m_status", title:"📊 Status" }, { id:"m_adv", title:"👨‍⚖️ Advogado" }, { id:"m_encerrar", title:"Encerrar" }, { id:"m_inicio", title:"Menu principal" }] } }
+      if (resp) { iniciarTimer(from); return { texto: resp, opcoes: [{ id:"m_status", title:"Status do caso" }, { id:"m_adv", title:"Falar com advogado" }, { id:"m_encerrar", title:"Encerrar atendimento" }, { id:"m_inicio", title:"Menu principal" }] } }
     }
     iniciarTimer(from); return menuCliente(u)
   }
 
   // FALLBACK
   u.stage = "area"; iniciarTimer(from)
-  return { texto: "👋 Olá! Vamos começar. Como posso te ajudar?", opcoes: [{ id:"area_inss", title:"🏛️ INSS" }, { id:"area_trab", title:"💼 Trabalhista" }, { id:"area_outros", title:"📋 Outros" }] }
+  return { texto: "Vamos recomecar. Como posso te ajudar?", opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }] }
 }
 
 app.get("/", (_, res) => res.send("Oraculum v6.0"))
@@ -1040,15 +1144,14 @@ app.post("/webhook", async (req, res) => {
 })
 
 const PORT = process.env.PORT || 10000
-// Webhook de confirmação de agendamento (HubSpot → WhatsApp)
+// Webhook confirmação agendamento HubSpot
 app.post("/agendamento", async (req, res) => {
   try {
     const { phone, name, datetime, meetingLink } = req.body
     if (!phone) return res.sendStatus(400)
     const numero = phone.replace(/\D/g, "")
-    const dataHora = datetime || "em breve"
     await enviar(numero,
-      `📅 *Agendamento confirmado!*\n\n✅ Olá, ${name||"cliente"}! Sua ligação com um especialista da Oraculum Advocacia está confirmada.\n\n🗓️ Data/Horário: *${dataHora}*\n\nCaso precise reagendar, acesse:\n🔗 ${meetingLink||MEETINGS}\n\nEstamos à disposição! 💼`,
+      `📅 *Agendamento confirmado!*\n\n✅ Olá, ${name||"cliente"}! Sua ligação com um especialista da Oraculum está confirmada.\n\n🗓️ Data/Horário: *${datetime||"em breve"}*\n\nPrecisa reagendar? Acesse:\n🔗 ${meetingLink||MEETINGS}\n\nEstamos à disposição! 💼`,
       null, false)
     return res.sendStatus(200)
   } catch (e) { logErro("agendamento", e.message); return res.sendStatus(500) }
