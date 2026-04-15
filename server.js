@@ -331,20 +331,59 @@ function getDrive() {
 // IDs das subpastas por área — crie estas pastas no Drive e coloque os IDs no .env
 // DRIVE_ID_INSS, DRIVE_ID_TRAB, DRIVE_ID_OUTROS
 // Se não configurados, usa a pasta raiz de clientes
-const DRIVE_IDS_AREA = {
-  "INSS":        process.env.DRIVE_ID_INSS   || DRIVE_PASTA_CLIENTES_ID,
-  "Trabalhista": process.env.DRIVE_ID_TRAB   || DRIVE_PASTA_CLIENTES_ID,
-  "Outros":      process.env.DRIVE_ID_OUTROS || DRIVE_PASTA_CLIENTES_ID
+function escapeDriveQueryValue(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'")
 }
 
-async function criarPastaCliente(numeroCaso, nome, area) {
+function getNomePastaArea(area, situacao, tipo) {
+  if (area === "INSS") return "Previdenciário"
+  if (area === "Trabalhista") return "Trabalhista"
+  if (situacao === "Consultoria juridica") return "Consulta Jurídica"
+  if (situacao === "Revisao de documentos" || tipo === "revisao") return "Revisão de documentos"
+  return "Outros"
+}
+
+async function obterOuCriarPastaArea(area, situacao, tipo) {
+  const drive = getDrive()
+  const nomeArea = getNomePastaArea(area, situacao, tipo)
+  const query = [
+    "mimeType = 'application/vnd.google-apps.folder'",
+    `name = '${escapeDriveQueryValue(nomeArea)}'`,
+    `'${DRIVE_PASTA_CLIENTES_ID}' in parents`,
+    "trashed = false"
+  ].join(" and ")
+
+  const existentes = await drive.files.list({
+    q: query,
+    fields: "files(id,name,webViewLink)",
+    pageSize: 1
+  })
+
+  if (existentes.data.files?.length) return existentes.data.files[0]
+
+  const criada = await drive.files.create({
+    requestBody: {
+      name: nomeArea,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [DRIVE_PASTA_CLIENTES_ID]
+    },
+    fields: "id,name,webViewLink"
+  })
+
+  console.log(`[DRIVE] Pasta da area criada: ${criada.data.name}`)
+  return criada.data
+}
+
+async function criarPastaCliente(numeroCaso, nome, area, situacao, tipo) {
   try {
-    const pastaAreaId = DRIVE_IDS_AREA[area] || DRIVE_PASTA_CLIENTES_ID
+    const nomeArea = getNomePastaArea(area, situacao, tipo)
+    const pastaArea = await obterOuCriarPastaArea(area, situacao, tipo)
+    const pastaAreaId = pastaArea?.id || DRIVE_PASTA_CLIENTES_ID
     const res = await getDrive().files.create({
       requestBody: { name: `${numeroCaso} - ${nome}`, mimeType: "application/vnd.google-apps.folder", parents: [pastaAreaId] },
       fields: "id,name,webViewLink"
     })
-    console.log(`[DRIVE] Pasta criada: ${res.data.name} (área: ${area})`)
+    console.log(`[DRIVE] Pasta criada: ${res.data.name} (área: ${nomeArea})`)
     return res.data
   } catch (e) { logErro("drive", "criarPasta: " + e.message); return null }
 }
@@ -518,7 +557,7 @@ async function finalizarCadastro(from, u) {
   u.score       = calcScore(u)
   u.docsEntregues = []; u.docAtualIdx = 0; u.ultimoArqId = null
 
-  const pasta      = await criarPastaCliente(numeroCaso, u.nome, u.area)
+  const pasta      = await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
   u.pastaDriveId   = pasta?.id || null
   u.pastaDriveLink = pasta?.webViewLink || null
 
