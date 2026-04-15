@@ -1,5 +1,5 @@
 // ================================================================
-//  ORACULUM ADVOCACIA — v5.0
+//  ORACULUM ADVOCACIA — v6.2
 //  WhatsApp · HubSpot · Google Drive · AssemblyAI · Groq AI
 // ================================================================
 require("dotenv").config()
@@ -78,10 +78,13 @@ function formatarCidade(str) {
     .normalize()
 }
 
-function gerarCaso() {
+function gerarCaso(area) {
   const b = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }))
   const p = (n, l = 2) => String(n).padStart(l, "0")
-  return `${String(b.getFullYear()).slice(2)}${p(b.getMonth()+1)}${p(b.getDate())}${p(b.getHours())}${p(b.getMinutes())}${p(Math.floor(Math.random()*1000), 3)}`
+  const prefixos = { "INSS": "PREV", "Trabalhista": "TRAB", "Outros": "CONS", "Revisão": "DOCS", "Revisao": "DOCS" }
+  const prefixo = prefixos[area] || "CASO"
+  const num = `${String(b.getFullYear()).slice(2)}${p(b.getMonth()+1)}${p(b.getDate())}${p(b.getHours())}${p(b.getMinutes())}${p(Math.floor(Math.random()*1000), 3)}`
+  return `${prefixo}-${num}`
 }
 
 function calcScore(u) {
@@ -96,17 +99,17 @@ function calcScore(u) {
 
 function resumoCaso(u) {
   return [
-    `Nome: ${u.nome || "—"}`,
-    `Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
-    `Area: ${u.area || "—"}`,
-    u.tipo      ? `Tipo: ${u.tipo}` : null,
-    u.situacao  ? `Situacao: ${u.situacao}` : null,
-    u.subTipo   ? `Detalhe: ${u.subTipo}` : null,
-    u.detalhe   ? `Info: ${u.detalhe}` : null,
-    `Urgencia: ${u.urgencia === "alta" ? "Alta" : "Normal"}`,
-    `Contribuiu ao INSS: ${u.contribuicao || "—"}`,
-    `Recebe beneficio: ${u.recebeBeneficio || "—"}`,
-    u.descricao ? `Descricao: ${u.descricao}` : null,
+    `👤 Nome: ${u.nome || "—"}`,
+    `📍 Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
+    `⚖️ Área: ${u.area || "—"}`,
+    u.tipo      ? `📋 Tipo: ${u.tipo}` : null,
+    u.situacao  ? `📌 Situação: ${u.situacao}` : null,
+    u.subTipo   ? `🔎 Detalhe: ${u.subTipo}` : null,
+    u.detalhe   ? `ℹ️ Info: ${u.detalhe}` : null,
+    `⚡ Urgência: ${u.urgencia === "alta" ? "Alta 🔴" : "Normal 🟡"}`,
+    `💼 Contribuiu ao INSS: ${u.contribuicao || "—"}`,
+    `🏥 Recebe benefício: ${u.recebeBeneficio || "—"}`,
+    u.descricao ? `💬 Descrição: ${u.descricao}` : null,
   ].filter(Boolean).join("\n")
 }
 
@@ -325,15 +328,25 @@ function getDrive() {
   return google.drive({ version: "v3", auth: oauth2 })
 }
 
-async function criarPastaCliente(numeroCaso, nome) {
+// IDs das subpastas por área — crie estas pastas no Drive e coloque os IDs no .env
+// DRIVE_ID_INSS, DRIVE_ID_TRAB, DRIVE_ID_OUTROS
+// Se não configurados, usa a pasta raiz de clientes
+const DRIVE_IDS_AREA = {
+  "INSS":        process.env.DRIVE_ID_INSS   || DRIVE_PASTA_CLIENTES_ID,
+  "Trabalhista": process.env.DRIVE_ID_TRAB   || DRIVE_PASTA_CLIENTES_ID,
+  "Outros":      process.env.DRIVE_ID_OUTROS || DRIVE_PASTA_CLIENTES_ID
+}
+
+async function criarPastaCliente(numeroCaso, nome, area) {
   try {
+    const pastaAreaId = DRIVE_IDS_AREA[area] || DRIVE_PASTA_CLIENTES_ID
     const res = await getDrive().files.create({
-      requestBody: { name: `${numeroCaso} - ${nome}`, mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_PASTA_CLIENTES_ID] },
+      requestBody: { name: `${numeroCaso} - ${nome}`, mimeType: "application/vnd.google-apps.folder", parents: [pastaAreaId] },
       fields: "id,name,webViewLink"
     })
-    console.log(`[DRIVE] Pasta: ${res.data.name}`)
+    console.log(`[DRIVE] Pasta criada: ${res.data.name} (área: ${area})`)
     return res.data
-  } catch (e) { logErro("drive", e.message); return null }
+  } catch (e) { logErro("drive", "criarPasta: " + e.message); return null }
 }
 
 async function uploadDrive(pastaId, nome, buffer, mimeType) {
@@ -500,12 +513,12 @@ function telaUFsRegiao(regId) {
 }
 
 async function finalizarCadastro(from, u) {
-  const numeroCaso = gerarCaso()
+  const numeroCaso = gerarCaso(u.area)
   u.numeroCaso  = numeroCaso
   u.score       = calcScore(u)
   u.docsEntregues = []; u.docAtualIdx = 0; u.ultimoArqId = null
 
-  const pasta      = await criarPastaCliente(numeroCaso, u.nome)
+  const pasta      = await criarPastaCliente(numeroCaso, u.nome, u.area)
   u.pastaDriveId   = pasta?.id || null
   u.pastaDriveLink = pasta?.webViewLink || null
 
@@ -521,6 +534,15 @@ async function finalizarCadastro(from, u) {
 
   if (contatoId) {
     await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${from}`)
+  }
+
+  // Salvar áudio de descrição guardado antes do cadastro
+  if (u._audioDescBuffer && u.pastaDriveId) {
+    try {
+      await uploadPastaAudio(u.pastaDriveId, u._audioDescNome || "cliente", "Descricao do Caso", u._audioDescBuffer, u._audioDescMime)
+      u._audioDescBuffer = null; u._audioDescMime = null; u._audioDescNome = null
+      console.log("[DRIVE] Áudio de descrição salvo após cadastro")
+    } catch (e) { logErro("drive", "salvarAudioDesc: " + e.message) }
   }
 
   u.stage = "cliente"
@@ -541,10 +563,10 @@ function menuCliente(u) {
   return {
     texto: `👋 Olá, *${nomeExib}*!\n\nBem-vindo de volta à *Oraculum Advocacia* ⚖️\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}${prioridade}\n\nComo posso te ajudar hoje?`,
     opcoes: [
-      { id: "m_status", title: "📊 Status do caso" },
-      { id: "m_docs",   title: "📎 Enviar documentos" },
-      { id: "m_adv",    title: "👨‍⚖️ Falar c/ advogado" },
-      { id: "m_encerrar", title: "👋 Encerrar" }
+      { id: "m_status",  title: "📊 Status do caso" },
+      { id: "m_docs",    title: "📎 Enviar documentos" },
+      { id: "m_adv",     title: "👨‍⚖️ Falar c/ advogado" },
+      { id: "m_novocaso", title: "➕ Novo caso" }
     ]
   }
 }
@@ -621,9 +643,10 @@ async function processar(from, nomeWA, text, msgObj) {
       iniciarTimer(from)
       return { texto: "Nao consegui identificar o arquivo. Tente enviar novamente como foto ou PDF.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"Menu principal" }] }
     }
-    if (!u.pastaDriveId) {
+    // Durante coleta_desc_audio a pasta ainda não existe — áudio é salvo após cadastro
+    if (!u.pastaDriveId && u.stage !== "coleta_desc_audio") {
       iniciarTimer(from)
-      return { texto: "Sua pasta esta sendo preparada. Aguarde um instante e tente novamente.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: "⏳ Sua pasta está sendo preparada. Aguarde um instante e tente novamente.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"Menu principal" }] }
     }
 
     const midia = await baixarMidia(mediaId)
@@ -637,27 +660,41 @@ async function processar(from, nomeWA, text, msgObj) {
       await enviar(from, "🎙️ Áudio recebido! Transcrevendo, aguarde...", null, false)
       const eUrg   = u.stage === "aguardando_urgente"
       // Determina nome da subpasta pelo stage
-      const nomePasta = eUrg ? "Mensagem Urgente" : (u.stage === "coleta_desc_audio" ? "Descrição do Caso" : "Áudio Geral")
+      const eDescricao = u.stage === "coleta_desc_audio"
+      const nomePasta  = eUrg ? "Mensagem Urgente" : (eDescricao ? "Descricao do Caso" : "Audio Geral")
       const prNome = formatarNome(u.nome || u.nomeWA || "cliente").split(" ")[0]
       const ultNome = formatarNome(u.nome || u.nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
       const nomeCliente = ultNome && ultNome !== prNome ? `${prNome} ${ultNome}` : prNome
-      const arquivoAud = await uploadPastaAudio(u.pastaDriveId, nomeCliente, nomePasta, midia.buffer, midia.mimeType)
+
+      // Áudio de descrição: transcrever mas salvar no Drive só após cadastro
+      await enviar(from, "🎙️ Áudio recebido! Transcrevendo, aguarde...", null, false)
       const trans = await transcrever(midia.buffer, midia.mimeType)
-      await hsCriarNota(u.contatoId, eUrg ? "ÁUDIO URGENTE" : `ÁUDIO — ${nomePasta.toUpperCase()}`,
-        `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\n${trans ? `Transcrição:\n"${trans}"` : "Transcrição indisponível"}${arquivoAud ? `\nDrive: ${arquivoAud.webViewLink}` : ""}`)
+
+      let arquivoAud = null
+      if (u.pastaDriveId && !eDescricao) {
+        arquivoAud = await uploadPastaAudio(u.pastaDriveId, nomeCliente, nomePasta, midia.buffer, midia.mimeType)
+      }
+
+      if (!eDescricao) {
+        await hsCriarNota(u.contatoId, eUrg ? "ÁUDIO URGENTE" : `ÁUDIO — ${nomePasta.toUpperCase()}`,
+          `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\n${trans ? `Transcrição:\n"${trans}"` : "Transcrição indisponível"}${arquivoAud ? `\nDrive: ${arquivoAud.webViewLink}` : ""}`)
+      }
       if (eUrg) await hsMoverStage(u.negocioId, HS_STAGE.triagem)
       u.documentosEnviados = true
       if (u.stage === "aguardando_urgente") u.stage = "cliente"
 
-      // Se é descrição do caso por áudio
-      if (u.stage === "coleta_desc_audio") {
+      // Se é descrição do caso por áudio — salvar transcrição e ir para confirmação
+      if (eDescricao) {
         u.descricao = trans ? `[Áudio transcrito] ${trans.slice(0, 500)}` : "[Áudio enviado — sem transcrição]"
+        u._audioDescBuffer  = midia.buffer   // guarda para salvar no Drive após cadastro
+        u._audioDescMime    = midia.mimeType
+        u._audioDescNome    = nomeCliente
         u.stage = "confirmacao"
         iniciarTimer(from)
         const msg = trans
-          ? `✅ Áudio recebido!\n\n🗣️ Entendemos:\n"${trans.slice(0, 250)}${trans.length > 250 ? "..." : ""}"\n\nVamos registrar isso no seu caso.`
-          : "✅ Áudio salvo! Vamos utilizar ele como descrição do seu caso."
-        return { texto: msg, opcoes: [{ id:"conf_ok", title:"✅ Confirmar" }, { id:"conf_corrigir", title:"✏️ Corrigir" }] }
+          ? `✅ Áudio recebido!\n\n🗣️ O que entendemos:\n"${trans.slice(0, 250)}${trans.length > 250 ? "..." : ""}"\n\nVamos confirmar seus dados.`
+          : "✅ Áudio salvo! Será utilizado como descrição do seu caso."
+        return { texto: msg, opcoes: [{ id:"conf_ok", title:"✅ Confirmar" }, { id:"conf_corrigir", title:"✏️ Corrigir dados" }] }
       }
 
       const msgAudio = trans
@@ -728,7 +765,7 @@ async function processar(from, nomeWA, text, msgObj) {
       await hsMoverStage(u.negocioId, HS_STAGE.triagem)
       u.stage = "cliente"
       iniciarTimer(from)
-      return { texto: `Mensagem registrada com urgencia.\nNossa equipe sera notificada em breve.\n\nCaso: ${u.numeroCaso}`, opcoes: [{ id:"m_status", title:"Status do caso" }, { id:"m_docs", title:"Enviar documentos" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: `✅ *Mensagem registrada com urgência!*\n\nNossa equipe será notificada imediatamente. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu principal" }] }
     }
   }
 
@@ -771,14 +808,14 @@ async function processar(from, nomeWA, text, msgObj) {
     if (text === "conf_corrigir") {
       u.stage = "menu_correcao"; iniciarTimer(from)
       return {
-        texto: "Qual informacao deseja corrigir?",
+        texto: "✏️ Qual informação deseja corrigir?",
         opcoes: [
-          { id: "cor_nome",    title: "Nome" },
-          { id: "cor_cidade",  title: "Cidade" },
-          { id: "cor_uf",      title: "Estado" },
-          { id: "cor_contrib", title: "Contrib. INSS" },
-          { id: "cor_benef",   title: "Recebe beneficio" },
-          { id: "cor_desc",    title: "Descricao" }
+          { id: "cor_nome",    title: "👤 Nome" },
+          { id: "cor_cidade",  title: "📍 Cidade" },
+          { id: "cor_uf",      title: "🗺️ Estado" },
+          { id: "cor_contrib", title: "💼 Contribuição INSS" },
+          { id: "cor_benef",   title: "🏥 Recebe benefício" },
+          { id: "cor_desc",    title: "💬 Descrição" }
         ]
       }
     }
@@ -800,10 +837,37 @@ async function processar(from, nomeWA, text, msgObj) {
     }
   }
 
+  // NOVO CASO CONFIRMA — verificar se o telefone é do cliente
+  if (u.stage === "novo_caso_confirma") {
+    if (text === "nc_meu") {
+      u.stage = "area"; iniciarTimer(from)
+      return {
+        texto: `Ótimo! Vamos abrir um novo caso. 😊\n\nQual área precisa de ajuda?`,
+        opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
+      }
+    }
+    if (text === "nc_outro") {
+      u.nome = null; u.cidade = null; u.uf = null
+      u.stage = "coleta_tel_outro"; iniciarTimer(from)
+      return { texto: "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?", opcoes: null }
+    }
+  }
+  if (u.stage === "coleta_tel_outro" && text) {
+    u.nome = formatarNome(text.trim()); u.stage = "coleta_tel_wpp"; iniciarTimer(from)
+    return { texto: `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
+  }
+  if (u.stage === "coleta_tel_wpp" && text) {
+    u.whatsappContato = text.replace(/\D/g, ""); u.stage = "area"; iniciarTimer(from)
+    return {
+      texto: `Anotado! 👍\n\nAgora, qual área precisa de ajuda para *${u.nome}*?`,
+      opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
+    }
+  }
+
   // COLETA
   if (u.stage === "coleta_nome" && text) {
     u.nome = formatarNome(text.trim()); u.stage = "coleta_cidade"; iniciarTimer(from)
-    return { texto: "Em qual cidade voce mora?", opcoes: null }
+    return { texto: "📍 Em qual *cidade* você mora?", opcoes: null }
   }
   if (u.stage === "coleta_cidade" && text) {
     u.cidade = formatarCidade(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
@@ -818,20 +882,20 @@ async function processar(from, nomeWA, text, msgObj) {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
     u.uf = val; u.stage = "coleta_contrib"; iniciarTimer(from)
-    return { texto: "Voce ja contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
+    return { texto: "💼 Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"❌ Nunca" }, { id:"col_c2", title:"⏰ Pouco tempo" }, { id:"col_c3", title:"📅 Mais de 1 ano" }, { id:"col_c4", title:"🏆 Muitos anos" }] }
   }
   if (u.stage === "coleta_contrib") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
     u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
-    return { texto: "Voce ja recebe algum beneficio do INSS?", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] }
+    return { texto: "🏥 Você já recebe algum benefício do INSS?", opcoes: [{ id: "col_b1", title: "✅ Sim, recebo" }, { id: "col_b2", title: "❌ Não recebo" }] }
   }
   if (u.stage === "coleta_benef") {
     const m = { col_b1: "Sim", col_b2: "Nao" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] } }
     u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
     u.stage = "coleta_desc_audio"; iniciarTimer(from)
-    return { texto: "📝 Me explique brevemente o que está acontecendo.\n\nQuanto mais detalhes você der, melhor!\n\n🎙️ Pode *digitar aqui* ou *enviar um áudio* — escolha como preferir.", opcoes: null }
+    return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
   if ((u.stage === "coleta_desc" || u.stage === "coleta_desc_audio") && text) {
     u.descricao = formatarNome(text.trim()); u.stage = "confirmacao"; iniciarTimer(from)
@@ -841,12 +905,31 @@ async function processar(from, nomeWA, text, msgObj) {
   // GATILHO → URGENCIA → COLETA
   if (u.stage === "gatilho") {
     u.stage = "urgencia"; iniciarTimer(from)
-    return { texto: "Isso esta te prejudicando financeiramente hoje?", opcoes: [{ id: "urg_sim", title: "Sim" }, { id: "urg_nao", title: "Nao" }] }
+    return { texto: "💰 Isso está te prejudicando *financeiramente* hoje?", opcoes: [{ id: "urg_sim", title: "⚠️ Sim, está" }, { id: "urg_nao", title: "✅ Não, consigo esperar" }] }
   }
   if (u.stage === "urgencia") {
     if (text === "urg_sim") { u.urgencia = "alta"; u.score += 3 }
+    u.stage = "coleta_verif_tel"; iniciarTimer(from)
+    return {
+      texto: `📱 Esse número *${from}* é o seu WhatsApp?\n\nPreciso saber para que nossa equipe entre em contato corretamente.`,
+      opcoes: [
+        { id: "tel_meu",   title: "✅ Sim, é meu" },
+        { id: "tel_outro", title: "👤 Não, é de outra pessoa" }
+      ]
+    }
+  }
+  if (u.stage === "coleta_verif_tel") {
+    if (text === "tel_outro") {
+      u.stage = "coleta_tel_wpp_contato"; iniciarTimer(from)
+      return { texto: "Qual é o WhatsApp com DDD da pessoa que será atendida?", opcoes: null }
+    }
+    // tel_meu ou qualquer outra resposta — segue normalmente
     u.stage = "coleta_nome"; iniciarTimer(from)
-    return { texto: "Vamos registrar seu caso. Qual e o seu nome completo?", opcoes: null }
+    return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
+  }
+  if (u.stage === "coleta_tel_wpp_contato" && text) {
+    u.whatsappContato = text.replace(/\D/g, ""); u.stage = "coleta_nome"; iniciarTimer(from)
+    return { texto: "✍️ Qual é o *nome completo* da pessoa que será atendida?", opcoes: null }
   }
 
   // INICIO
@@ -892,26 +975,26 @@ async function processar(from, nomeWA, text, msgObj) {
   // AREA
   if (u.stage === "area") {
     if (text === "area_inss") { u.area = "INSS"; u.stage = "inss_menu"; iniciarTimer(from); return { texto: "✅ Certo, vamos cuidar do seu caso!\nQual dessas situações descreve o que está acontecendo?", opcoes: [{ id: "i_novo", title: "🆕 Novo benefício" }, { id: "i_negado", title: "❌ Benefício negado" }, { id: "i_cortado", title: "✂️ Benefício cortado" }] } }
-    if (text === "area_trab") { u.area = "Trabalhista"; u.stage = "trab_menu"; iniciarTimer(from); return { texto: "Qual e o seu caso trabalhista?", opcoes: [{ id: "t_dem", title: "Fui demitido" }, { id: "t_dir", title: "Direitos nao pagos" }, { id: "t_acid", title: "Acidente de trabalho" }, { id: "t_ass", title: "Assedio moral" }, { id: "t_out", title: "Outro" }] } }
-    if (text === "area_outros") { u.area = "Outros"; u.stage = "outros_menu"; iniciarTimer(from); return { texto: "Como posso te ajudar?", opcoes: [{ id: "o_consul", title: "Consultoria juridica" }, { id: "o_rev", title: "Revisao de documentos" }, { id: "o_out", title: "Outro assunto" }] } }
+    if (text === "area_trab") { u.area = "Trabalhista"; u.stage = "trab_menu"; iniciarTimer(from); return { texto: "💼 Qual é o seu caso trabalhista?", opcoes: [{ id: "t_dem", title: "👔 Fui demitido" }, { id: "t_dir", title: "💰 Direitos não pagos" }, { id: "t_acid", title: "🚑 Acidente de trabalho" }, { id: "t_ass", title: "😰 Assédio moral" }, { id: "t_out", title: "📋 Outro" }] } }
+    if (text === "area_outros") { u.area = "Outros"; u.stage = "outros_menu"; iniciarTimer(from); return { texto: "📋 Como posso te ajudar?", opcoes: [{ id: "o_consul", title: "⚖️ Consultoria jurídica" }, { id: "o_rev", title: "📄 Revisão de documentos" }, { id: "o_out", title: "💬 Outro assunto" }] } }
   }
 
   // INSS MENU
   if (u.stage === "inss_menu") {
-    if (text === "i_novo")    { u.situacao = "novo";    u.stage = "inss_novo";    iniciarTimer(from); return { texto: "Qual beneficio voce deseja solicitar?", opcoes: [{ id: "in_apos", title: "Aposentadoria" }, { id: "in_bpc", title: "BPC / LOAS" }, { id: "in_incap", title: "Incapacidade" }, { id: "in_dep", title: "Dependentes" }, { id: "in_out", title: "Outros" }] } }
-    if (text === "i_negado")  { u.situacao = "negado";  u.score += 1; u.stage = "inss_neg_tipo"; iniciarTimer(from); return { texto: "Qual beneficio foi negado?", opcoes: [{ id: "ign_apos", title: "Aposentadoria" }, { id: "ign_bpc", title: "BPC / LOAS" }, { id: "ign_incap", title: "Incapacidade" }, { id: "ign_dep", title: "Dependentes" }, { id: "ign_out", title: "Outros" }] } }
-    if (text === "i_cortado") { u.situacao = "cortado"; u.score += 2; u.stage = "inss_cort_tipo"; iniciarTimer(from); return { texto: "Qual beneficio foi cortado?", opcoes: [{ id: "ic_apos", title: "Aposentadoria" }, { id: "ic_bpc", title: "BPC / LOAS" }, { id: "ic_incap", title: "Incapacidade" }, { id: "ic_dep", title: "Dependentes" }, { id: "ic_out", title: "Outros" }] } }
+    if (text === "i_novo")    { u.situacao = "novo";    u.stage = "inss_novo";    iniciarTimer(from); return { texto: "🏥 Qual benefício você deseja solicitar?", opcoes: [{ id: "in_apos", title: "👴 Aposentadoria" }, { id: "in_bpc", title: "🤝 BPC / LOAS" }, { id: "in_incap", title: "🏥 Incapacidade" }, { id: "in_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "in_out", title: "📋 Outros" }] } }
+    if (text === "i_negado")  { u.situacao = "negado";  u.score += 1; u.stage = "inss_neg_tipo"; iniciarTimer(from); return { texto: "❌ Qual benefício foi negado?", opcoes: [{ id: "ign_apos", title: "👴 Aposentadoria" }, { id: "ign_bpc", title: "🤝 BPC / LOAS" }, { id: "ign_incap", title: "🏥 Incapacidade" }, { id: "ign_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "ign_out", title: "📋 Outros" }] } }
+    if (text === "i_cortado") { u.situacao = "cortado"; u.score += 2; u.stage = "inss_cort_tipo"; iniciarTimer(from); return { texto: "✂️ Qual benefício foi cortado?", opcoes: [{ id: "ic_apos", title: "👴 Aposentadoria" }, { id: "ic_bpc", title: "🤝 BPC / LOAS" }, { id: "ic_incap", title: "🏥 Incapacidade" }, { id: "ic_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "ic_out", title: "📋 Outros" }] } }
   }
 
   // INSS NOVO
   if (u.stage === "inss_novo") {
     const m = { in_apos: "aposentadoria", in_bpc: "bpc", in_incap: "incapacidade", in_dep: "dependentes", in_out: "inss_outros" }
     u.tipo = m[text] || "outros"
-    if (text === "in_apos") { u.stage = "inss_apos"; iniciarTimer(from); return { texto: "Qual tipo de aposentadoria?", opcoes: [{ id: "ia_idade", title: "Por idade" }, { id: "ia_tempo", title: "Tempo contribuicao" }, { id: "ia_esp", title: "Especial" }] } }
-    if (text === "in_bpc")  { u.stage = "inss_bpc";  iniciarTimer(from); return { texto: "Qual opcao?", opcoes: [{ id: "ib_id", title: "Idoso" }, { id: "ib_def", title: "Deficiencia" }] } }
-    if (text === "in_incap"){ u.stage = "inss_inc";  iniciarTimer(from); return { texto: "Qual beneficio?", opcoes: [{ id: "ii_aux", title: "Auxilio-doenca" }, { id: "ii_inv", title: "Invalidez" }] } }
-    if (text === "in_dep")  { u.stage = "inss_dep";  iniciarTimer(from); return { texto: "Qual beneficio?", opcoes: [{ id: "id_pen", title: "Pensao por morte" }, { id: "id_rec", title: "Aux. reclusao" }, { id: "id_out", title: "Outro" }] } }
-    if (text === "in_out")  { u.stage = "inss_out";  iniciarTimer(from); return { texto: "Qual opcao?", opcoes: [{ id: "io_rev", title: "Revisao beneficio" }, { id: "io_ctc", title: "Certidao contrib." }, { id: "io_pla", title: "Planejamento" }] } }
+    if (text === "in_apos") { u.stage = "inss_apos"; iniciarTimer(from); return { texto: "👴 Qual tipo de aposentadoria?", opcoes: [{ id: "ia_idade", title: "📅 Por idade" }, { id: "ia_tempo", title: "📋 Tempo contribuição" }, { id: "ia_esp", title: "⭐ Especial" }] } }
+    if (text === "in_bpc")  { u.stage = "inss_bpc";  iniciarTimer(from); return { texto: "🤝 BPC/LOAS — Qual opção?", opcoes: [{ id: "ib_id", title: "👴 Idoso" }, { id: "ib_def", title: "♿ Deficiência" }] } }
+    if (text === "in_incap"){ u.stage = "inss_inc";  iniciarTimer(from); return { texto: "🏥 Qual benefício por incapacidade?", opcoes: [{ id: "ii_aux", title: "🩺 Auxílio-doença" }, { id: "ii_inv", title: "⚠️ Aposentadoria por invalidez" }] } }
+    if (text === "in_dep")  { u.stage = "inss_dep";  iniciarTimer(from); return { texto: "👨‍👩‍👧 Qual benefício para dependentes?", opcoes: [{ id: "id_pen", title: "🕊️ Pensão por morte" }, { id: "id_rec", title: "🔒 Auxílio-reclusão" }, { id: "id_out", title: "📋 Outro" }] } }
+    if (text === "in_out")  { u.stage = "inss_out";  iniciarTimer(from); return { texto: "📋 Qual opção?", opcoes: [{ id: "io_rev", title: "🔄 Revisão de benefício" }, { id: "io_ctc", title: "📜 Certidão de contribuição" }, { id: "io_pla", title: "🎯 Planejamento" }] } }
   }
 
   // INSS subtipos → INSS_JA
@@ -929,115 +1012,115 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "inss_ja") {
     u.detalhe = text === "ja_s" ? "Sim, já deu entrada no INSS" : "Ainda não deu entrada"
     u.stage   = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui. Muitas vezes conseguimos resolver mais rapido do que a pessoa imagina.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui.\n\nMuitas vezes conseguimos resolver mais rápido do que a pessoa imagina! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // INSS NEGADO
   if (u.stage === "inss_neg_tipo") {
     const m = { ign_apos: "Aposentadoria", ign_bpc: "BPC/LOAS", ign_incap: "Incapacidade", ign_dep: "Dependentes", ign_out: "Outros" }
     u.subTipo = m[text] || text; u.stage = "inss_neg_quando"; iniciarTimer(from)
-    return { texto: "Quando o beneficio foi negado?", opcoes: [{ id: "nq_rec", title: "Menos de 30 dias" }, { id: "nq_ant", title: "Mais de 30 dias" }] }
+    return { texto: "📅 Quando o benefício foi negado?", opcoes: [{ id: "nq_rec", title: "🕐 Menos de 30 dias" }, { id: "nq_ant", title: "📅 Mais de 30 dias" }] }
   }
   if (u.stage === "inss_neg_quando") {
     u.detalhe = text === "nq_rec" ? "Negado ha menos de 30 dias" : "Negado ha mais de 30 dias"
     u.stage   = "gatilho"; iniciarTimer(from)
-    return { texto: "Vamos analisar seu caso com cuidado.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "🔍 Vamos analisar seu caso com muito cuidado!", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // INSS CORTADO
   if (u.stage === "inss_cort_tipo") {
     const m = { ic_apos: "Aposentadoria", ic_bpc: "BPC/LOAS", ic_incap: "Incapacidade", ic_dep: "Dependentes", ic_out: "Outros" }
     u.subTipo = m[text] || text; u.stage = "inss_cort_mot"; iniciarTimer(from)
-    return { texto: "Voce sabe o motivo do corte?", opcoes: [{ id: "cm_n", title: "Nao sei" }, { id: "cm_p", title: "Falta de pericia" }, { id: "cm_r", title: "Renda acima" }, { id: "cm_o", title: "Outro" }] }
+    return { texto: "❓ Você sabe o motivo do corte?", opcoes: [{ id: "cm_n", title: "🤷 Não sei" }, { id: "cm_p", title: "🏥 Falta de perícia" }, { id: "cm_r", title: "💰 Renda acima" }, { id: "cm_o", title: "📋 Outro" }] }
   }
   if (u.stage === "inss_cort_mot") {
     const m = { cm_n: "Motivo desconhecido", cm_p: "Falta de pericia", cm_r: "Renda acima do permitido", cm_o: "Outro" }
     u.detalhe = m[text] || text; u.stage = "inss_cort_rec"; iniciarTimer(from)
-    return { texto: "Voce esta sem receber agora?", opcoes: [{ id: "sr_s", title: "Sim, sem renda" }, { id: "sr_n", title: "Ainda recebo algo" }] }
+    return { texto: "⚠️ Você está sem receber agora?", opcoes: [{ id: "sr_s", title: "🔴 Sim, sem renda" }, { id: "sr_n", title: "🟡 Ainda recebo algo" }] }
   }
   if (u.stage === "inss_cort_rec") {
     if (text === "sr_s") { u.semReceber = true; u.urgencia = "alta"; u.score += 3 }
     u.stage = "inss_cort_qdo"; iniciarTimer(from)
-    return { texto: "Quando o beneficio foi cortado?", opcoes: [{ id: "cq_r", title: "Menos de 30 dias" }, { id: "cq_a", title: "Mais de 30 dias" }] }
+    return { texto: "📅 Quando o benefício foi cortado?", opcoes: [{ id: "cq_r", title: "🕐 Menos de 30 dias" }, { id: "cq_a", title: "📅 Mais de 30 dias" }] }
   }
   if (u.stage === "inss_cort_qdo") {
     u.detalhe += " | " + (text === "cq_r" ? "Cortado ha menos de 30 dias" : "Cortado ha mais de 30 dias")
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Vamos verificar a melhor forma de resolver isso.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💪 Vamos verificar a melhor forma de resolver isso!", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // TRABALHISTA
   if (u.stage === "trab_menu") {
-    if (text === "t_dem")  { u.situacao = "Demissao";          u.tipo = "demissao";  u.stage = "trab_dem_tipo"; iniciarTimer(from); return { texto: "Como foi a demissao?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissao" }] } }
-    if (text === "t_dir")  { u.situacao = "Direitos nao pagos"; u.tipo = "direitos";  u.stage = "trab_dir_tipo"; iniciarTimer(from); return { texto: "Qual direito nao foi pago?", opcoes: [{ id: "tdr_f", title: "FGTS" }, { id: "tdr_fe", title: "Ferias" }, { id: "tdr_13", title: "13 salario" }, { id: "tdr_h", title: "Horas extras" }, { id: "tdr_o", title: "Outro" }] } }
-    if (text === "t_acid") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; u.stage = "trab_acid_af"; iniciarTimer(from); return { texto: "Voce se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "Sim" }, { id: "af_n", title: "Nao" }] } }
-    if (text === "t_ass")  { u.situacao = "Assedio moral";       u.tipo = "assedio";  u.stage = "trab_ass_s"; iniciarTimer(from); return { texto: "O assedio ainda esta acontecendo?", opcoes: [{ id: "as_s", title: "Sim" }, { id: "as_n", title: "Nao" }] } }
-    if (text === "t_out")  { u.situacao = "Outros";              u.tipo = "outros";   u.stage = "trab_out_desc"; iniciarTimer(from); return { texto: "Descreva brevemente seu caso trabalhista:", opcoes: null } }
+    if (text === "t_dem")  { u.situacao = "Demissao";          u.tipo = "demissao";  u.stage = "trab_dem_tipo"; iniciarTimer(from); return { texto: "Como foi a demissão?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissão" }] } }
+    if (text === "t_dir")  { u.situacao = "Direitos nao pagos"; u.tipo = "direitos";  u.stage = "trab_dir_tipo"; iniciarTimer(from); return { texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
+    if (text === "t_acid") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; u.stage = "trab_acid_af"; iniciarTimer(from); return { texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
+    if (text === "t_ass")  { u.situacao = "Assedio moral";       u.tipo = "assedio";  u.stage = "trab_ass_s"; iniciarTimer(from); return { texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
+    if (text === "t_out")  { u.situacao = "Outros";              u.tipo = "outros";   u.stage = "trab_out_desc"; iniciarTimer(from); return { texto: "✍️ Descreva brevemente seu caso trabalhista:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
   }
   if (u.stage === "trab_dem_tipo") {
     const m = { td_s: "Sem justa causa", td_c: "Com justa causa", td_p: "Pedido de demissao" }
     u.subTipo = m[text] || text; u.stage = "trab_dem_verb"; iniciarTimer(from)
-    return { texto: "Voce recebeu todas as verbas rescisórias?", opcoes: [{ id: "tv_s", title: "Sim, recebi" }, { id: "tv_n", title: "Nao recebi" }] }
+    return { texto: "💵 Você recebeu todas as verbas rescisórias?", opcoes: [{ id: "tv_s", title: "✅ Sim, recebi" }, { id: "tv_n", title: "❌ Não recebi" }] }
   }
   if (u.stage === "trab_dem_verb") {
     u.detalhe = text === "tv_s" ? "Verbas pagas" : "Verbas nao pagas"; u.stage = "trab_dem_qdo"; iniciarTimer(from)
-    return { texto: "Ha quanto tempo foi a demissao?", opcoes: [{ id: "dq_r", title: "Menos de 30 dias" }, { id: "dq_a", title: "Mais de 30 dias" }] }
+    return { texto: "⏰ Há quanto tempo foi a demissão?", opcoes: [{ id: "dq_r", title: "🕐 Menos de 30 dias" }, { id: "dq_a", title: "📅 Mais de 30 dias" }] }
   }
   if (u.stage === "trab_dem_qdo") {
     u.detalhe += " | " + (text === "dq_r" ? "menos de 30 dias" : "mais de 30 dias")
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_dir_tipo") {
     const m = { tdr_f: "FGTS", tdr_fe: "Ferias", tdr_13: "13 salario", tdr_h: "Horas extras", tdr_o: "Outro" }
     u.subTipo = m[text] || text; u.stage = "trab_dir_pend"; iniciarTimer(from)
-    return { texto: "Isso ainda esta pendente?", opcoes: [{ id: "pnd_s", title: "Sim, pendente" }, { id: "pnd_n", title: "Ja encerrado" }] }
+    return { texto: "⏳ Isso ainda está pendente?", opcoes: [{ id: "pnd_s", title: "⚠️ Sim, pendente" }, { id: "pnd_n", title: "✅ Já encerrado" }] }
   }
   if (u.stage === "trab_dir_pend") {
     u.detalhe = text === "pnd_s" ? "Pendente" : "Encerrado"
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_acid_af") {
     u.subTipo = text === "af_s" ? "Com afastamento INSS" : "Sem afastamento"
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_ass_s") {
     u.subTipo = text === "as_s" ? "Assedio em curso" : "Assedio encerrado"; u.stage = "trab_ass_prov"; iniciarTimer(from)
-    return { texto: "Voce possui provas ou testemunhas?", opcoes: [{ id: "pv_s", title: "Sim" }, { id: "pv_n", title: "Nao" }] }
+    return { texto: "📂 Você possui provas ou testemunhas?", opcoes: [{ id: "pv_s", title: "✅ Sim, tenho provas" }, { id: "pv_n", title: "❌ Não tenho" }] }
   }
   if (u.stage === "trab_ass_prov") {
     u.detalhe = text === "pv_s" ? "Com provas/testemunhas" : "Sem provas"
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_out_desc" && text) {
     if (!u.descricao) u.descricao = text
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Certo. Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // OUTROS
   if (u.stage === "outros_menu") {
-    if (text === "o_consul") { u.situacao = "Consultoria juridica"; u.stage = "out_cons_tipo"; iniciarTimer(from); return { texto: "Sobre qual area precisa de orientacao?", opcoes: [{ id: "oc_i", title: "INSS" }, { id: "oc_t", title: "Trabalhista" }, { id: "oc_o", title: "Outro" }] } }
-    if (text === "o_rev")    { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.stage = "out_rev_tipo"; iniciarTimer(from); return { texto: "Qual tipo de documento?", opcoes: [{ id: "or_c", title: "Contrato" }, { id: "or_p", title: "Processo" }, { id: "or_o", title: "Outro" }] } }
-    if (text === "o_out")    { u.situacao = "Outro assunto"; u.stage = "out_desc"; iniciarTimer(from); return { texto: "Descreva brevemente o que precisa:", opcoes: null } }
+    if (text === "o_consul") { u.situacao = "Consultoria juridica"; u.stage = "out_cons_tipo"; iniciarTimer(from); return { texto: "⚖️ Sobre qual área precisa de orientação?", opcoes: [{ id: "oc_i", title: "🏥 INSS" }, { id: "oc_t", title: "💼 Trabalhista" }, { id: "oc_o", title: "📋 Outra área" }] } }
+    if (text === "o_rev")    { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.stage = "out_rev_tipo"; iniciarTimer(from); return { texto: "📄 Qual tipo de documento para revisão?", opcoes: [{ id: "or_c", title: "📝 Contrato" }, { id: "or_p", title: "⚖️ Processo" }, { id: "or_o", title: "📋 Outro" }] } }
+    if (text === "o_out")    { u.situacao = "Outro assunto"; u.stage = "out_desc"; iniciarTimer(from); return { texto: "💬 Descreva brevemente o que precisa:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
   }
   if (u.stage === "out_cons_tipo") {
     const m = { oc_i: "INSS", oc_t: "Trabalhista", oc_o: "Outro" }
     u.subTipo = m[text] || text; u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "out_rev_tipo") {
     const m = { or_c: "Contrato", or_p: "Processo", or_o: "Outro" }
     u.subTipo = m[text] || text; u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Casos como o seu sao bem comuns aqui.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "out_desc" && text) {
     if (!u.descricao) u.descricao = text
     u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "Certo. Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    return { texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // MENU CLIENTE
@@ -1116,7 +1199,7 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     if (text === "m_adv") {
       iniciarTimer(from)
-      return { texto: "Como prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "Agendar ligacao" }, { id: "adv_urg", title: "Mensagem urgente" }, { id: "m_inicio", title: "Menu principal" }] }
+      return { texto: "👨‍⚖️ *Falar com advogado*\n\nComo prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "📅 Agendar ligação" }, { id: "adv_urg", title: "⚠️ Mensagem urgente" }, { id: "m_inicio", title: "🏠 Menu principal" }] }
     }
     if (text === "adv_ag") {
       await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
@@ -1133,12 +1216,25 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     if (text === "adv_urg") {
       u.stage = "aguardando_urgente"; iniciarTimer(from)
-      return { texto: `Mensagem urgente\n\nDigite sua mensagem ou envie um audio.\n\nTudo sera registrado imediatamente.\n\nCaso: ${u.numeroCaso}`, opcoes: null }
+      return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
+    }
+    if (text === "m_novocaso") {
+      // Preserva dados pessoais e contatoId, reinicia fluxo do caso
+      const snap = { nome: u.nome, cidade: u.cidade, uf: u.uf, nomeWA: u.nomeWA, contatoId: u.contatoId }
+      users[from] = { ...novoUsuario(u.nomeWA), ...snap, stage: "novo_caso_confirma" }
+      iniciarTimer(from)
+      return {
+        texto: `➕ *Abrir novo caso*\n\nVou usar seus dados cadastrados:\n\n👤 ${snap.nome}\n📍 ${snap.cidade}${snap.uf ? " - " + snap.uf : ""}\n\nEsse telefone *${from}* é o seu número? Ou está entrando em contato por outra pessoa?`,
+        opcoes: [
+          { id: "nc_meu",    title: "✅ É meu número" },
+          { id: "nc_outro",  title: "👤 É de outra pessoa" }
+        ]
+      }
     }
     if (text === "m_encerrar") {
       limparTimer(u)
       const nome1 = (u.nome || u.nomeWA).split(" ")[0]
-      return { texto: `Foi um prazer te atender, ${nome1}!\nSeu caso esta registrado conosco sob o numero ${u.numeroCaso}.\n\nSempre que precisar, e so mandar uma mensagem. Ate logo!`, opcoes: null }
+      return { texto: `Foi um prazer te atender, ${nome1}! 😊\n\nSeu caso está registrado sob o número *${u.numeroCaso}*.\n\nSempre que precisar, é só mandar uma mensagem. Até logo! 👋`, opcoes: null }
     }
     if (text === "m_inicio") {
       iniciarTimer(from); return menuCliente(u)
@@ -1166,7 +1262,7 @@ async function processar(from, nomeWA, text, msgObj) {
   return { texto: "Vamos recomecar. Como posso te ajudar?", opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }] }
 }
 
-app.get("/", (_, res) => res.send("Oraculum v6.1"))
+app.get("/", (_, res) => res.send("Oraculum v6.2"))
 app.get("/health", (_, res) => res.json({ status: "ok", uptime: Math.floor((Date.now() - monitor.inicio) / 1000), conversas: monitor.conversas, cadastros: monitor.cadastros, ativos: Object.keys(users).length, erros: monitor.erros.slice(-10), ram_mb: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1) }))
 app.get("/webhook", (req, res) => {
   if (req.query["hub.mode"] && req.query["hub.verify_token"] === VERIFY_TOKEN) return res.status(200).send(req.query["hub.challenge"])
@@ -1246,4 +1342,4 @@ app.post("/agendamento", async (req, res) => {
   } catch (e) { logErro("agendamento", e.message); return res.sendStatus(500) }
 })
 
-app.listen(PORT, () => console.log(`Oraculum v6.1 — porta ${PORT}`))
+app.listen(PORT, () => console.log(`Oraculum v6.2 — porta ${PORT}`))
