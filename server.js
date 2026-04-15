@@ -41,7 +41,7 @@ const users = {}
 function novoUsuario(nomeWA) {
   return {
     stage: "inicio", nomeWA,
-    nome: null, cidade: null, uf: null,
+    nome: null, regiao: null, cidade: null, uf: null,
     area: null, tipo: null, situacao: null, subTipo: null, detalhe: null,
     urgencia: "normal", semReceber: false,
     contribuicao: null, recebeBeneficio: null, descricao: null,
@@ -539,7 +539,7 @@ const REGIOES = {
   reg_s:  { label:"Sul",          ufs:[["uf_pr","PR"],["uf_rs","RS"],["uf_sc","SC"]] }
 }
 function telaRegioes() {
-  return { texto:"Selecione sua regiao:", opcoes:[
+  return { texto:"Selecione sua Região no Brasil", opcoes:[
     { id:"reg_n", title:"Norte" }, { id:"reg_ne", title:"Nordeste" },
     { id:"reg_co", title:"Centro-Oeste" }, { id:"reg_se", title:"Sudeste" },
     { id:"reg_s", title:"Sul" }
@@ -885,7 +885,7 @@ async function processar(from, nomeWA, text, msgObj) {
       }
     }
     if (text === "nc_outro") {
-      u.nome = null; u.cidade = null; u.uf = null
+      u.nome = null; u.regiao = null; u.cidade = null; u.uf = null
       u.stage = "coleta_tel_outro"; iniciarTimer(from)
       return { texto: "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?", opcoes: null }
     }
@@ -904,19 +904,61 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // COLETA
   if (u.stage === "coleta_nome" && text) {
-    u.nome = formatarNome(text.trim()); u.stage = "coleta_cidade"; iniciarTimer(from)
-    return { texto: "📍 Em qual *cidade* você mora?", opcoes: null }
-  }
-  if (u.stage === "coleta_cidade" && text) {
-    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
+    u.nome = formatarNome(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
     return telaRegioes()
   }
   if (u.stage === "coleta_regiao") {
     if (!REGIOES[text]) { iniciarTimer(from); return telaRegioes() }
-    u._regiao = text; u.stage = "coleta_uf"; iniciarTimer(from)
+    u._regiao = text; u.regiao = REGIOES[text].label; u.stage = "coleta_uf"; iniciarTimer(from)
     return telaUFsRegiao(text)
   }
   if (u.stage === "coleta_uf") {
+    const val = UF_MAP[text]
+    if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
+    u.uf = val; u.stage = "coleta_cidade_regiao"; iniciarTimer(from)
+    return { texto: "Digite a cidade onde você mora", opcoes: null }
+  }
+  if (u.stage === "coleta_cidade_regiao" && text) {
+    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_contrib_regiao_v2"; iniciarTimer(from)
+    return { texto: "Voce ja contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
+  }
+  if (u.stage === "coleta_contrib_regiao_v2") {
+    const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
+    if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
+    u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
+    return { texto: "Voce ja recebe algum beneficio do INSS?", opcoes: [{ id: "col_b1", title: "Sim, recebo" }, { id: "col_b2", title: "Nao recebo" }] }
+  }
+  if (u.stage === "__coleta_benef_regiao_v2__") {
+    const m = { col_b1: "Sim", col_b2: "Nao" }
+    if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Nao" }] } }
+    u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
+    u.stage = "coleta_desc_audio"; iniciarTimer(from)
+    return { texto: "ðŸ“ *Me explique o que estÃ¡ acontecendo.*\n\nQuanto mais detalhes, melhor! ðŸ˜Š\n\nðŸŽ™ï¸ Pode *digitar* ou *enviar um Ã¡udio* â€” escolha como preferir.\n\nðŸ’¡ Se for Ã¡udio, fique Ã  vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
+  }
+  if (u.stage === "coleta_contrib_regiao") {
+    const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
+    if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opcao:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
+    u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
+    return { texto: "ðŸ¥ VocÃª jÃ¡ recebe algum benefÃ­cio do INSS?", opcoes: [{ id: "col_b1", title: "âœ… Sim, recebo" }, { id: "col_b2", title: "âŒ NÃ£o recebo" }] }
+  }
+  if (u.stage === "coleta_cidade" && text) {
+    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_contrib"; iniciarTimer(from)
+    return { texto: "ðŸ’¼ VocÃª jÃ¡ contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"âŒ Nunca" }, { id:"col_c2", title:"â° Pouco tempo" }, { id:"col_c3", title:"ðŸ“… Mais de 1 ano" }, { id:"col_c4", title:"ðŸ† Muitos anos" }] }
+  }
+  if (u.stage === "__coleta_nome_legado__" && text) {
+    u.nome = formatarNome(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
+    return { texto: "📍 Em qual *cidade* você mora?", opcoes: null }
+  }
+  if (u.stage === "__coleta_cidade_legado__" && text) {
+    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
+    return telaRegioes()
+  }
+  if (u.stage === "__coleta_regiao_legado__") {
+    if (!REGIOES[text]) { iniciarTimer(from); return telaRegioes() }
+    u._regiao = text; u.stage = "coleta_uf"; iniciarTimer(from)
+    return telaUFsRegiao(text)
+  }
+  if (u.stage === "__coleta_uf_legado__") {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
     u.uf = val; u.stage = "coleta_contrib"; iniciarTimer(from)
@@ -1030,7 +1072,7 @@ Está correto?`,
     }
     if (text === "ret_novo") {
       // Preserva dados do cliente (nome, cidade, contato) mas reinicia o fluxo do caso
-      const dadosPessoais = { nome: u.nome, cidade: u.cidade, uf: u.uf, nomeWA: u.nomeWA, contatoId: u.contatoId }
+      const dadosPessoais = { nome: u.nome, regiao: u.regiao, cidade: u.cidade, uf: u.uf, nomeWA: u.nomeWA, contatoId: u.contatoId }
       users[from] = { ...novoUsuario(u.nomeWA), ...dadosPessoais, stage: "area" }
       iniciarTimer(from)
       return {
@@ -1288,7 +1330,7 @@ Está correto?`,
     }
     if (text === "m_novocaso") {
       // Preserva dados pessoais e contatoId, reinicia fluxo do caso
-      const snap = { nome: u.nome, cidade: u.cidade, uf: u.uf, nomeWA: u.nomeWA, contatoId: u.contatoId }
+      const snap = { nome: u.nome, regiao: u.regiao, cidade: u.cidade, uf: u.uf, nomeWA: u.nomeWA, contatoId: u.contatoId }
       users[from] = { ...novoUsuario(u.nomeWA), ...snap, stage: "novo_caso_confirma" }
       iniciarTimer(from)
       return {
