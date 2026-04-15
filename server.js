@@ -685,16 +685,15 @@ async function processar(from, nomeWA, text, msgObj) {
 
       // Se é descrição do caso por áudio — salvar transcrição e ir para confirmação
       if (eDescricao) {
-        u.descricao = trans ? `[Áudio transcrito] ${trans.slice(0, 500)}` : "[Áudio enviado — sem transcrição]"
-        u._audioDescBuffer  = midia.buffer   // guarda para salvar no Drive após cadastro
+        u._descTemp         = trans ? `[Áudio transcrito] ${trans.slice(0, 500)}` : "[Áudio enviado — sem transcrição]"
+        u._audioDescBuffer  = midia.buffer
         u._audioDescMime    = midia.mimeType
         u._audioDescNome    = nomeCliente
-        u.stage = "confirmacao"
-        iniciarTimer(from)
+        u.stage = "desc_confirma"; iniciarTimer(from)
         const msg = trans
-          ? `✅ Áudio recebido!\n\n🗣️ O que entendemos:\n"${trans.slice(0, 250)}${trans.length > 250 ? "..." : ""}"\n\nVamos confirmar seus dados.`
-          : "✅ Áudio salvo! Será utilizado como descrição do seu caso."
-        return { texto: msg, opcoes: [{ id:"conf_ok", title:"✅ Confirmar" }, { id:"conf_corrigir", title:"✏️ Corrigir dados" }] }
+          ? `🎙️ *Áudio recebido e transcrito!*\n\n📝 *O que entendemos:*\n\n"${trans.slice(0, 400)}${trans.length > 400 ? "..." : ""}"\n\nEssa descrição está correta?`
+          : `🎙️ *Áudio recebido!*\n\nNão foi possível transcrever automaticamente, mas o áudio foi salvo e nossos advogados vão ouvir.\n\nDeseja confirmar ou gravar novamente?`
+        return { texto: msg, opcoes: [{ id:"desc_ok", title:"✅ Confirmar" }, { id:"desc_corrigir", title:"🔄 Corrigir / Regravar" }] }
       }
 
       const msgAudio = trans
@@ -898,7 +897,37 @@ async function processar(from, nomeWA, text, msgObj) {
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
   if ((u.stage === "coleta_desc" || u.stage === "coleta_desc_audio") && text) {
-    u.descricao = formatarNome(text.trim()); u.stage = "confirmacao"; iniciarTimer(from)
+    // Salva temporariamente e mostra para o cliente confirmar
+    u._descTemp = text.trim()
+    u.stage = "desc_confirma"; iniciarTimer(from)
+    const preview = text.length > 400 ? text.slice(0, 400) + "..." : text
+    return {
+      texto: `📝 *Você descreveu:*
+
+"${preview}"
+
+Está correto?`,
+      opcoes: [
+        { id: "desc_ok",      title: "✅ Confirmar" },
+        { id: "desc_corrigir", title: "✏️ Corrigir" }
+      ]
+    }
+  }
+
+  // DESC_CONFIRMA — confirmar ou voltar para descrição
+  if (u.stage === "desc_confirma") {
+    if (text === "desc_corrigir") {
+      u._descTemp = null
+      u.stage = "coleta_desc_audio"; iniciarTimer(from)
+      return {
+        texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!",
+        opcoes: null
+      }
+    }
+    // desc_ok ou qualquer confirmação
+    u.descricao = formatarNome((u._descTemp || "").trim())
+    u._descTemp  = null
+    u.stage = "confirmacao"; iniciarTimer(from)
     return tela_confirmacao(u)
   }
 
