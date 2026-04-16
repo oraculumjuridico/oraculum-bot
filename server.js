@@ -551,7 +551,8 @@ async function hsCriarNegocio(u) {
       urgencia: u.urgencia || "normal",
       cidade: u.cidade || "",
       pasta_drive: u.pastaDriveLink || "",
-      origem_atendimento: "whatsapp"
+      origem_atendimento: "whatsapp",
+      hubspot_owner_id: "SEU_ID_AQUI"
     }
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/deals",
