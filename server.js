@@ -691,7 +691,7 @@ async function transcrever(audioUrl, contexto = {}) {
     console.log(`[ASSEMBLYAI] Iniciando transcricao via URL | origem=${contexto.origem || "desconhecida"} | mime=${contexto.mimeType || "nao informado"} | url=${audioUrl}`)
     const tr = await axios.post(
       "https://api.assemblyai.com/v2/transcript",
-      { audio_url: audioUrl, language_code: "pt" },
+      { audio_url: audioUrl, language_code: "pt", speech_model: "universal-2" },
       { headers: { authorization: ASSEMBLYAI_KEY } }
     )
     for (let i = 0; i < 18; i++) {
@@ -1338,6 +1338,12 @@ Está correto?`,
 
   // DESC_CONFIRMA — confirmar ou voltar para descrição
   if (u.stage === "desc_confirma") {
+    if (text === "desc_ok") {
+      u.descricao = formatarNome((u._descTemp || "").trim())
+      u._descTemp  = null
+      u.stage = "confirmacao"; iniciarTimer(from)
+      return tela_confirmacao(u)
+    }
     if (text === "desc_corrigir") {
       u._descTemp = null
       u.stage = "coleta_desc_audio"; iniciarTimer(from)
@@ -1346,11 +1352,14 @@ Está correto?`,
         opcoes: null
       }
     }
-    // desc_ok ou qualquer confirmação
-    u.descricao = formatarNome((u._descTemp || "").trim())
-    u._descTemp  = null
-    u.stage = "confirmacao"; iniciarTimer(from)
-    return tela_confirmacao(u)
+    iniciarTimer(from)
+    return {
+      texto: "Use uma das opções abaixo para confirmar ou corrigir a transcrição.",
+      opcoes: [
+        { id: "desc_ok", title: "✅ Confirmar" },
+        { id: "desc_corrigir", title: "✏️ Corrigir" }
+      ]
+    }
   }
 
   // GATILHO → URGENCIA → COLETA
