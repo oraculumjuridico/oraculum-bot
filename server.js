@@ -37,6 +37,8 @@ const STAGES = {
   COLETA_DESC_AUDIO: "coleta_desc_audio",
   DESC_CONFIRMA: "desc_confirma",
   DESC_ERRO_TRANSCRICAO: "desc_erro_transcricao",
+  SUGESTAO_FLUXO_OUTRO: "sugestao_fluxo_outro",
+  EXPLICAR_TUDO_OFERTA: "explicar_tudo_oferta",
   CONFIRMACAO: "confirmacao",
   MENU_CORRECAO: "menu_correcao",
   CORRIGIR_VALOR: "corrigir_valor",
@@ -79,6 +81,10 @@ function novoUsuario(nomeWA) {
     lastPergunta: null, lastPerguntaPayload: null,
     leadIncompletoCapturado: false,
     audiosDescCorrigidos: [],
+    assuntoResumo: null,
+    _sugestaoFluxo: null,
+    _proximoStageAposDescricao: null,
+    _proximaPerguntaAposDescricao: null,
     _descOrigemStage: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
     timer: null, ultimaMsg: Date.now()
@@ -134,6 +140,10 @@ function hidratarUsuarioPersistido(data) {
   hidratado._audioDescBuffer = null
   hidratado._audioDescMime = hidratado._audioDescMime || null
   hidratado._audioDescNome = hidratado._audioDescNome || null
+  hidratado.assuntoResumo = hidratado.assuntoResumo || null
+  hidratado._sugestaoFluxo = hidratado._sugestaoFluxo || null
+  hidratado._proximoStageAposDescricao = hidratado._proximoStageAposDescricao || null
+  hidratado._proximaPerguntaAposDescricao = hidratado._proximaPerguntaAposDescricao || null
   hidratado._urgenteAudioBuffer = null
   hidratado._urgenteAudioMime = hidratado._urgenteAudioMime || null
   hidratado._urgenteAudioNome = hidratado._urgenteAudioNome || null
@@ -373,6 +383,10 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     lastPergunta: null, lastPerguntaPayload: null,
     leadIncompletoCapturado: false,
     audiosDescCorrigidos: [],
+    assuntoResumo: null,
+    _sugestaoFluxo: null,
+    _proximoStageAposDescricao: null,
+    _proximaPerguntaAposDescricao: null,
     _regiao: null, _descTemp: null,
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
     _descOrigemStage: null,
@@ -1000,6 +1014,16 @@ function telaConfirmarUrgente(transcricao) {
   }
 }
 
+function telaExplicarTudo() {
+  return {
+    texto: "Se quiser, agora você pode me contar tudo sobre a solicitação.\n\nPode digitar ou enviar um áudio com os detalhes completos.",
+    opcoes: [
+      { id: "explicar_tudo", title: "📝 Quero explicar tudo" },
+      { id: "seguir_fluxo", title: "➡️ Seguir com perguntas" }
+    ]
+  }
+}
+
 function iniciarConfirmacaoDescricao(from, u, texto, origemStage) {
   u._descTemp = normalizarTextoCRM(texto)
   u._descOrigemStage = origemStage
@@ -1017,16 +1041,101 @@ function iniciarConfirmacaoDescricao(from, u, texto, origemStage) {
 
 function respostaAposConfirmarDescricao(from, u) {
   if (u._descOrigemStage === "trab_out_desc" || u._descOrigemStage === "out_desc") {
-    u.stage = "gatilho"
+    u.assuntoResumo = normalizarTextoCRM(u.descricao || u._descTemp || "")
+    u.descricao = u.assuntoResumo
     u._descOrigemStage = null
+    return prepararFluxoResumoOutro(from, u)
+  }
+
+  if (u._proximoStageAposDescricao) {
+    const proximoStage = u._proximoStageAposDescricao
+    const proximaPergunta = u._proximaPerguntaAposDescricao
+    u._proximoStageAposDescricao = null
+    u._proximaPerguntaAposDescricao = null
+    u._descOrigemStage = null
+    u.stage = proximoStage
     iniciarTimer(from)
-    return { texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+    if (proximaPergunta) return proximaPergunta
+    return { texto: "Perfeito. Vou considerar esses detalhes no atendimento.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   u.stage = "confirmacao"
   u._descOrigemStage = null
   iniciarTimer(from)
   return tela_confirmacao(u)
+}
+
+async function classificarResumoOutro(u, resumo) {
+  if (!GROQ_KEY || !resumo) return null
+  try {
+    const contexto = u.area === "Trabalhista"
+      ? `Categorias possíveis: demissao, direitos, acidente, assedio, generico.`
+      : `Categorias possíveis: consultoria_inss, consultoria_trabalhista, consultoria_outra, revisao_contrato, revisao_processo, revisao_outro, generico.`
+
+    const system = `Classifique resumos curtos de atendimento jurídico. Responda apenas JSON válido com as chaves "categoria", "confianca" e "rotulo". ${contexto}`
+    const user = `Área atual: ${u.area}\nResumo: ${resumo}`
+    const res = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        temperature: 0.1,
+        max_tokens: 120,
+        response_format: { type: "json_object" }
+      },
+      { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+    )
+    const content = res.data.choices?.[0]?.message?.content || "{}"
+    const parsed = JSON.parse(content)
+    if (!parsed?.categoria) return null
+    return parsed
+  } catch (e) {
+    logErro("groq", "classificarResumoOutro: " + e.message)
+    return null
+  }
+}
+
+function aplicarSugestaoFluxoOutro(u, categoria) {
+  if (u.area === "Trabalhista") {
+    if (categoria === "demissao") { u.situacao = "Demissao"; u.tipo = "demissao"; return { stage: "trab_dem_tipo", texto: "Como foi a demissão?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissão" }] } }
+    if (categoria === "direitos") { u.situacao = "Direitos nao pagos"; u.tipo = "direitos"; return { stage: "trab_dir_tipo", texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
+    if (categoria === "acidente") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; return { stage: "trab_acid_af", texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
+    if (categoria === "assedio") { u.situacao = "Assedio moral"; u.tipo = "assedio"; return { stage: "trab_ass_s", texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
+    u.situacao = "Outros"; u.tipo = "outros"
+    return { stage: "gatilho", texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+  }
+
+  if (categoria === "consultoria_inss") { u.situacao = "Consultoria juridica"; u.subTipo = "INSS"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "consultoria_trabalhista") { u.situacao = "Consultoria juridica"; u.subTipo = "Trabalhista"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "consultoria_outra") { u.situacao = "Consultoria juridica"; u.subTipo = "Outra área"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "revisao_contrato") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Contrato"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "revisao_processo") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Processo"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "revisao_outro") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Outro"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  u.situacao = "Outro assunto"
+  return { stage: "gatilho", texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+}
+
+async function prepararFluxoResumoOutro(from, u) {
+  const sugestao = await classificarResumoOutro(u, u.assuntoResumo)
+  if (sugestao?.categoria && Number(sugestao.confianca || 0) >= 0.6 && sugestao.categoria !== "generico") {
+    u._sugestaoFluxo = sugestao
+    u.stage = STAGES.SUGESTAO_FLUXO_OUTRO
+    iniciarTimer(from)
+    return {
+      texto: `Isso parece se encaixar em *${sugestao.rotulo || sugestao.categoria}*.\n\nQuer seguir por esse caminho?`,
+      opcoes: [
+        { id: "sug_fluxo", title: "✅ Seguir por esse caminho" },
+        { id: "sug_nao", title: "✏️ Corrigir categoria" }
+      ]
+    }
+  }
+
+  u._sugestaoFluxo = null
+  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+  u._proximoStageAposDescricao = "gatilho"
+  u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+  iniciarTimer(from)
+  return telaExplicarTudo()
 }
 
 function processarRetomadaOuReinicio(from, u, text) {
@@ -1517,6 +1626,46 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
     }
     return responderComTimer(from, telaConfirmarUrgente(u._urgenteAudioTexto || ""))
+  }
+
+  if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
+    if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
+      const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
+      u._sugestaoFluxo = null
+      u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+      u._proximoStageAposDescricao = proxima.stage
+      u._proximaPerguntaAposDescricao = { texto: proxima.texto, opcoes: proxima.opcoes }
+      iniciarTimer(from)
+      return telaExplicarTudo()
+    }
+    if (text === "sug_nao") {
+      u._sugestaoFluxo = null
+      u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+      u._proximoStageAposDescricao = "gatilho"
+      u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+      iniciarTimer(from)
+      return telaExplicarTudo()
+    }
+  }
+
+  if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
+    if (text === "explicar_tudo") {
+      u._descOrigemStage = "explicar_tudo"
+      u.stage = STAGES.COLETA_DESC_AUDIO
+      iniciarTimer(from)
+      return telaDescreverCaso()
+    }
+    if (text === "seguir_fluxo") {
+      const proximoStage = u._proximoStageAposDescricao || "gatilho"
+      const proximaPergunta = u._proximaPerguntaAposDescricao || { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+      u._proximoStageAposDescricao = null
+      u._proximaPerguntaAposDescricao = null
+      u.stage = proximoStage
+      iniciarTimer(from)
+      return proximaPergunta
+    }
+    iniciarTimer(from)
+    return telaExplicarTudo()
   }
 
   // INICIO
