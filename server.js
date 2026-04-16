@@ -64,6 +64,18 @@ function logErro(tipo, msg) {
 
 const users = {}
 let persistUsersTimeout = null
+const mensagensProcessadas = new Map()
+
+function mensagemJaProcessada(messageId) {
+  if (!messageId) return false
+  const agora = Date.now()
+  for (const [id, ts] of mensagensProcessadas.entries()) {
+    if (agora - ts > 10 * 60 * 1000) mensagensProcessadas.delete(id)
+  }
+  if (mensagensProcessadas.has(messageId)) return true
+  mensagensProcessadas.set(messageId, agora)
+  return false
+}
 
 function novoUsuario(nomeWA) {
   return {
@@ -2372,6 +2384,7 @@ app.post("/webhook", async (req, res) => {
     const value   = req.body.entry?.[0]?.changes?.[0]?.value
     const message = value?.messages?.[0]
     if (!message) return res.sendStatus(200)
+    if (mensagemJaProcessada(message.id)) return res.sendStatus(200)
     const from   = message.from
     const nomeWA = value?.contacts?.[0]?.profile?.name || "Cliente"
     const text   = (message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "").trim()
