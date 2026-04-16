@@ -523,6 +523,33 @@ async function hsCriarNegocio(u) {
   } catch (e) { logErro("hubspot", "criarNegocio: " + (e.response?.data?.message || e.message)); return null }
 }
 
+async function hsCriarNegocio(u) {
+  try {
+    const opts = arguments[1] || {}
+    const stage = opts.stage || (u.urgencia === "alta" ? HS_STAGE.triagem : HS_STAGE.lead)
+    const nomeCliente = u.nome || u.nomeWA || "Cliente"
+    const dealname = opts.dealname || `${nomeCliente} - ${u.area || "Atendimento"}${u.numeroCaso ? " - " + u.numeroCaso : ""}`
+    const properties = {
+      dealname,
+      pipeline: HS_PIPELINE,
+      dealstage: stage,
+      area_juridica: u.area || "",
+      resumo_cliente: u.assuntoResumo || u.descricao || "",
+      descricao_completa: u.descricao || u.assuntoResumo || "",
+      urgencia: u.urgencia || "normal",
+      cidade: u.cidade || "",
+      pasta_drive: u.pastaDriveLink || "",
+      origem_atendimento: "whatsapp"
+    }
+    const res = await axios.post(
+      "https://api.hubapi.com/crm/v3/objects/deals",
+      { properties },
+      { headers: HS() }
+    )
+    return res.data.id
+  } catch (e) { logErro("hubspot", "criarNegocio: " + (e.response?.data?.message || e.message)); return null }
+}
+
 async function hsAssociar(cId, nId) {
   try {
     await axios.put(`https://api.hubapi.com/crm/v3/objects/deals/${nId}/associations/contacts/${cId}/deal_to_contact`, {}, { headers: HS() })
