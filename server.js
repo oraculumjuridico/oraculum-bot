@@ -34,6 +34,7 @@ const STAGES = {
   COLETA_DESC: "coleta_desc",
   COLETA_DESC_AUDIO: "coleta_desc_audio",
   DESC_CONFIRMA: "desc_confirma",
+  DESC_ERRO_TRANSCRICAO: "desc_erro_transcricao",
   CONFIRMACAO: "confirmacao",
   MENU_CORRECAO: "menu_correcao",
   CORRIGIR_VALOR: "corrigir_valor",
@@ -691,7 +692,7 @@ async function transcrever(audioUrl, contexto = {}) {
     console.log(`[ASSEMBLYAI] Iniciando transcricao via URL | origem=${contexto.origem || "desconhecida"} | mime=${contexto.mimeType || "nao informado"} | url=${audioUrl}`)
     const tr = await axios.post(
       "https://api.assemblyai.com/v2/transcript",
-      { audio_url: audioUrl, language_code: "pt", speech_model: "universal-2" },
+      { audio_url: audioUrl, language_code: "pt", speech_models: ["universal-2"] },
       { headers: { authorization: ASSEMBLYAI_KEY } }
     )
     for (let i = 0; i < 18; i++) {
@@ -1046,6 +1047,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
 
     if (eDescricao) {
       if (!trans) {
+        u.stage = STAGES.DESC_ERRO_TRANSCRICAO
         return responderComTimer(from, {
           texto: "Não consegui transcrever o áudio. Tente novamente ou envie por texto.",
           opcoes: [
@@ -1275,6 +1277,24 @@ async function processar(from, nomeWA, text, msgObj) {
     u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
     u.stage = "coleta_desc_audio"; iniciarTimer(from)
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
+  }
+  if (u.stage === STAGES.DESC_ERRO_TRANSCRICAO) {
+    if (text === "desc_corrigir") {
+      u._descTemp = null
+      u.stage = STAGES.COLETA_DESC_AUDIO
+      iniciarTimer(from)
+      return {
+        texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!",
+        opcoes: null
+      }
+    }
+    iniciarTimer(from)
+    return {
+      texto: "Não consegui transcrever o áudio. Toque em *Corrigir* para enviar outro áudio ou digite sua descrição.",
+      opcoes: [
+        { id: "desc_corrigir", title: "✏️ Corrigir" }
+      ]
+    }
   }
   if (u.stage === "coleta_contrib_regiao") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
