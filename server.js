@@ -31,6 +31,8 @@ const STAGES = {
   AREA: "area",
   CLIENTE: "cliente",
   AGUARDANDO_URGENTE: "aguardando_urgente",
+  URGENTE_AUDIO_CONFIRMA: "urgente_audio_confirma",
+  URGENTE_AUDIO_ERRO_TRANSCRICAO: "urgente_audio_erro_transcricao",
   COLETA_DESC: "coleta_desc",
   COLETA_DESC_AUDIO: "coleta_desc_audio",
   DESC_CONFIRMA: "desc_confirma",
@@ -76,6 +78,9 @@ function novoUsuario(nomeWA) {
     corrigirCampo: null, historiaIA: [],
     lastPergunta: null, lastPerguntaPayload: null,
     leadIncompletoCapturado: false,
+    audiosDescCorrigidos: [],
+    _descOrigemStage: null,
+    _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
     timer: null, ultimaMsg: Date.now()
   }
 }
@@ -122,12 +127,17 @@ function hidratarUsuarioPersistido(data) {
   const hidratado = { ...base, ...data, timer: null }
   if (!Array.isArray(hidratado.docsEntregues)) hidratado.docsEntregues = []
   if (!Array.isArray(hidratado.historiaIA)) hidratado.historiaIA = []
+  if (!Array.isArray(hidratado.audiosDescCorrigidos)) hidratado.audiosDescCorrigidos = []
   if (!hidratado.lastPerguntaPayload || typeof hidratado.lastPerguntaPayload.texto !== "string") {
     hidratado.lastPerguntaPayload = null
   }
   hidratado._audioDescBuffer = null
   hidratado._audioDescMime = hidratado._audioDescMime || null
   hidratado._audioDescNome = hidratado._audioDescNome || null
+  hidratado._urgenteAudioBuffer = null
+  hidratado._urgenteAudioMime = hidratado._urgenteAudioMime || null
+  hidratado._urgenteAudioNome = hidratado._urgenteAudioNome || null
+  hidratado._urgenteAudioTexto = hidratado._urgenteAudioTexto || null
   return hidratado
 }
 
@@ -172,6 +182,19 @@ function formatarCidade(str) {
     .normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
     .normalize()
+}
+
+function normalizarTextoCRM(str) {
+  if (!str) return str
+  let texto = String(str)
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/ *\n */g, "\n")
+    .trim()
+
+  texto = texto.replace(/(^|[.!?]\s+|\n+)([a-zà-ÿ])/g, (_, prefixo, letra) => `${prefixo}${letra.toUpperCase()}`)
+  return texto
 }
 
 function gerarCaso(area) {
@@ -349,8 +372,11 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     corrigirCampo: null, historiaIA: [],
     lastPergunta: null, lastPerguntaPayload: null,
     leadIncompletoCapturado: false,
+    audiosDescCorrigidos: [],
     _regiao: null, _descTemp: null,
-    _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null
+    _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
+    _descOrigemStage: null,
+    _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null
   })
   agendarPersistenciaUsers()
 }
@@ -641,58 +667,17 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
   }
 }
 
-function montarDriveDownloadDireto(fileId) {
-  return `https://drive.google.com/uc?export=download&id=${fileId}`
-}
-
-async function tornarArquivoPublicoDrive(fileId) {
+async function transcrever(buffer, mimeType, contexto = {}) {
   try {
-    await getDrive().permissions.create({
-      fileId,
-      requestBody: { role: "reader", type: "anyone" }
-    })
-    return montarDriveDownloadDireto(fileId)
-  } catch (e) {
-    logErro("drive", "publicarAudio: " + (e.response?.data?.error?.message || e.response?.data?.message || e.message))
-    return null
-  }
-}
-
-async function obterOuCriarPastaTempTranscricao() {
-  try {
-    const drive = getDrive()
-    const nomePasta = "_tmp_transcricao_audio"
-    const query = [
-      "mimeType = 'application/vnd.google-apps.folder'",
-      `name = '${escapeDriveQueryValue(nomePasta)}'`,
-      `'${DRIVE_PASTA_CLIENTES_ID}' in parents`,
-      "trashed = false"
-    ].join(" and ")
-
-    const existentes = await drive.files.list({
-      q: query,
-      fields: "files(id,name)",
-      pageSize: 1
-    })
-    if (existentes.data.files?.length) return existentes.data.files[0].id
-
-    const pasta = await drive.files.create({
-      requestBody: { name: nomePasta, mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_PASTA_CLIENTES_ID] },
-      fields: "id"
-    })
-    return pasta.data.id
-  } catch (e) {
-    logErro("drive", "pastaTempTranscricao: " + (e.response?.data?.error?.message || e.response?.data?.message || e.message))
-    return null
-  }
-}
-
-async function transcrever(audioUrl, contexto = {}) {
-  try {
-    console.log(`[ASSEMBLYAI] Iniciando transcricao via URL | origem=${contexto.origem || "desconhecida"} | mime=${contexto.mimeType || "nao informado"} | url=${audioUrl}`)
+    console.log(`[ASSEMBLYAI] Iniciando transcricao | origem=${contexto.origem || "desconhecida"} | mime=${mimeType || "nao informado"} | bytes=${buffer?.length || 0}`)
+    const up = await axios.post(
+      "https://api.assemblyai.com/v2/upload",
+      buffer,
+      { headers: { authorization: ASSEMBLYAI_KEY, "content-type": "application/octet-stream" } }
+    )
     const tr = await axios.post(
       "https://api.assemblyai.com/v2/transcript",
-      { audio_url: audioUrl, language_code: "pt", speech_models: ["universal-2"] },
+      { audio_url: up.data.upload_url, language_code: "pt", speech_models: ["universal-2"] },
       { headers: { authorization: ASSEMBLYAI_KEY } }
     )
     for (let i = 0; i < 18; i++) {
@@ -736,6 +721,23 @@ async function excluirDrive(fileId) {
   catch (e) { logErro("drive", "excluir: " + e.message) }
 }
 
+async function excluirPastaDriveSeVazia(folderId) {
+  if (!folderId) return
+  try {
+    const drive = getDrive()
+    const res = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: "files(id)",
+      pageSize: 1
+    })
+    if (res.data.files?.length) return
+    await drive.files.delete({ fileId: folderId })
+    console.log(`[DRIVE] Pasta temporária excluída: ${folderId}`)
+  } catch (e) {
+    logErro("drive", "excluirPastaVazia: " + e.message)
+  }
+}
+
 async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mimeType) {
   // Cria subpasta "Áudios - <nomePasta>" dentro da pasta do cliente
   try {
@@ -757,14 +759,14 @@ async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mi
     try { fs.unlinkSync(tmp) } catch {}
     const directDownloadUrl = await tornarArquivoPublicoDrive(res.data.id)
     console.log(`[DRIVE] Áudio: ${res.data.name}`)
-    return { ...res.data, directDownloadUrl }
+    return { ...res.data, directDownloadUrl, folderId: pasta.data.id }
   } catch (e) { logErro("drive", "uploadAudio: " + e.message); return null }
 }
 
-async function uploadAudioTempParaTranscricao(nomeCliente, buffer, mimeType) {
-  const pastaTempId = await obterOuCriarPastaTempTranscricao()
-  if (!pastaTempId) return null
-  return uploadPastaAudio(pastaTempId, nomeCliente, "Temp", buffer, mimeType)
+async function salvarAudioTranscritoNoCaso(u, nomeCliente, buffer, mimeType, status) {
+  if (!u?.pastaDriveId || !buffer) return null
+  const nomePasta = status === "corrigido" ? "Áudios Transcritos Corrigidos" : "Áudios Transcritos Confirmados"
+  return uploadPastaAudio(u.pastaDriveId, nomeCliente || "cliente", nomePasta, buffer, mimeType)
 }
 
 async function baixarMidia(mediaId) {
@@ -881,10 +883,21 @@ async function finalizarCadastro(from, u) {
   // Salvar áudio de descrição guardado antes do cadastro
   if (u._audioDescBuffer && u.pastaDriveId) {
     try {
-      await uploadPastaAudio(u.pastaDriveId, u._audioDescNome || "cliente", "Descricao do Caso", u._audioDescBuffer, u._audioDescMime)
+      await uploadPastaAudio(u.pastaDriveId, u._audioDescNome || "cliente", "Áudios Transcritos Confirmados", u._audioDescBuffer, u._audioDescMime)
       u._audioDescBuffer = null; u._audioDescMime = null; u._audioDescNome = null
       console.log("[DRIVE] Áudio de descrição salvo após cadastro")
     } catch (e) { logErro("drive", "salvarAudioDesc: " + e.message) }
+  }
+
+  if (u.audiosDescCorrigidos?.length && u.pastaDriveId) {
+    try {
+      for (const audio of u.audiosDescCorrigidos) {
+        if (!audio?.buffer) continue
+        await uploadPastaAudio(u.pastaDriveId, audio.nome || "cliente", "Áudios Transcritos Corrigidos", audio.buffer, audio.mimeType)
+      }
+      u.audiosDescCorrigidos = []
+      console.log("[DRIVE] Áudios corrigidos salvos após cadastro")
+    } catch (e) { logErro("drive", "salvarAudiosCorrigidos: " + e.message) }
   }
 
   u.stage = "cliente"
@@ -973,6 +986,49 @@ function responderComTimer(from, payload) {
   return payload
 }
 
+function telaDescreverCaso() {
+  return {
+    texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!",
+    opcoes: null
+  }
+}
+
+function telaConfirmarUrgente(transcricao) {
+  return {
+    texto: `🎙️ *Áudio recebido e transcrito!*\n\n📝 *Transcrição:*\n\n"${transcricao.slice(0, 400)}${transcricao.length > 400 ? "..." : ""}"\n\nConfirme ou corrija as informações.`,
+    opcoes: [{ id:"urg_audio_ok", title:"✅ Confirmar" }, { id:"urg_audio_corrigir", title:"✏️ Corrigir" }]
+  }
+}
+
+function iniciarConfirmacaoDescricao(from, u, texto, origemStage) {
+  u._descTemp = normalizarTextoCRM(texto)
+  u._descOrigemStage = origemStage
+  u.stage = STAGES.DESC_CONFIRMA
+  iniciarTimer(from)
+  const preview = u._descTemp.length > 400 ? u._descTemp.slice(0, 400) + "..." : u._descTemp
+  return {
+    texto: `📝 *Você descreveu:*\n\n"${preview}"\n\nEstá correto?`,
+    opcoes: [
+      { id: "desc_ok", title: "✅ Confirmar" },
+      { id: "desc_corrigir", title: "✏️ Corrigir" }
+    ]
+  }
+}
+
+function respostaAposConfirmarDescricao(from, u) {
+  if (u._descOrigemStage === "trab_out_desc" || u._descOrigemStage === "out_desc") {
+    u.stage = "gatilho"
+    u._descOrigemStage = null
+    iniciarTimer(from)
+    return { texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+  }
+
+  u.stage = "confirmacao"
+  u._descOrigemStage = null
+  iniciarTimer(from)
+  return tela_confirmacao(u)
+}
+
 function processarRetomadaOuReinicio(from, u, text) {
   if (text === "cont_retomar") {
     const ultimaPergunta = retomarUltimaPergunta(u)
@@ -993,7 +1049,7 @@ function processarRetomadaOuReinicio(from, u, text) {
 
 async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (!(ehAudio || ehDoc)) return null
-  if (![STAGES.CLIENTE, STAGES.AGUARDANDO_URGENTE, STAGES.COLETA_DESC_AUDIO].includes(u.stage)) return null
+  if (![STAGES.CLIENTE, STAGES.AGUARDANDO_URGENTE, STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) return null
 
   const mediaId  = msgObj?.[tipo]?.id
   const nomeArq  = msgObj?.document?.filename || (tipo === "image" ? `imagem_${Date.now()}.jpg` : `audio_${Date.now()}`)
@@ -1002,7 +1058,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (!mediaId) {
     return responderComTimer(from, { texto: "Nao consegui identificar o arquivo. Tente enviar novamente como foto ou PDF.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"Menu principal" }] })
   }
-  if (!u.pastaDriveId && u.stage !== STAGES.COLETA_DESC_AUDIO) {
+  if (!u.pastaDriveId && ![STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) {
     return responderComTimer(from, { texto: "⏳ Sua pasta está sendo preparada. Aguarde um instante e tente novamente.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"Menu principal" }] })
   }
 
@@ -1015,24 +1071,55 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     await enviar(from, "🎙️ Áudio recebido! Transcrevendo, aguarde...", null, false)
     const eUrg = u.stage === STAGES.AGUARDANDO_URGENTE
     const eDescricao = u.stage === STAGES.COLETA_DESC_AUDIO
+    const eDescricaoLivre = ["trab_out_desc", "out_desc"].includes(u.stage)
     const nomePasta = eUrg ? "Mensagem Urgente" : (eDescricao ? "Descricao do Caso" : "Audio Geral")
     const prNome = formatarNome(u.nome || nomeWA || "cliente").split(" ")[0]
     const ultNome = formatarNome(u.nome || nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
     const nomeCliente = ultNome && ultNome !== prNome ? `${prNome} ${ultNome}` : prNome
 
     let arquivoAud = null
-    if (u.pastaDriveId && !eDescricao) {
+    if (u.pastaDriveId && !eDescricao && !eDescricaoLivre && !eUrg) {
       arquivoAud = await uploadPastaAudio(u.pastaDriveId, nomeCliente, nomePasta, midia.buffer, midia.mimeType)
     }
-    let arquivoAudTemp = null
-    if (eDescricao) {
-      arquivoAudTemp = await uploadAudioTempParaTranscricao(nomeCliente, midia.buffer, midia.mimeType)
+    const trans = await transcrever(midia.buffer, midia.mimeType, { origem: eUrg ? "urgente" : (eDescricao || eDescricaoLivre ? "descricao" : "cliente") })
+
+    if (eUrg) {
+      if (!trans) {
+        u._urgenteAudioBuffer = midia.buffer
+        u._urgenteAudioMime = midia.mimeType
+        u._urgenteAudioNome = nomeCliente
+        u._urgenteAudioTexto = null
+        u.stage = STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO
+        return responderComTimer(from, {
+          texto: "Não consegui transcrever o áudio. Tente novamente ou envie por texto.",
+          opcoes: [{ id: "urg_audio_corrigir", title: "✏️ Corrigir" }]
+        })
+      }
+
+      u._urgenteAudioBuffer = midia.buffer
+      u._urgenteAudioMime = midia.mimeType
+      u._urgenteAudioNome = nomeCliente
+      u._urgenteAudioTexto = normalizarTextoCRM(trans)
+      u.stage = STAGES.URGENTE_AUDIO_CONFIRMA
+      return responderComTimer(from, telaConfirmarUrgente(u._urgenteAudioTexto))
     }
 
-    const audioUrlTranscricao = arquivoAud?.directDownloadUrl || arquivoAudTemp?.directDownloadUrl || null
-    const trans = audioUrlTranscricao
-      ? await transcrever(audioUrlTranscricao, { origem: arquivoAud ? "drive_caso" : "drive_temp", mimeType: midia.mimeType })
-      : null
+    if (eDescricao || eDescricaoLivre) {
+      if (!trans) {
+        const origemDescricao = u.stage
+        u.stage = STAGES.DESC_ERRO_TRANSCRICAO
+        u._descOrigemStage = origemDescricao
+        return responderComTimer(from, {
+          texto: "Não consegui transcrever o áudio. Tente novamente ou envie por texto.",
+          opcoes: [{ id: "desc_corrigir", title: "✏️ Corrigir" }]
+        })
+      }
+
+      u._audioDescBuffer = midia.buffer
+      u._audioDescMime = midia.mimeType
+      u._audioDescNome = nomeCliente
+      return iniciarConfirmacaoDescricao(from, u, trans, eDescricaoLivre ? u.stage : STAGES.COLETA_DESC_AUDIO)
+    }
 
     if (!eDescricao) {
       await hsCriarNota(
@@ -1041,32 +1128,8 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\n${trans ? `Transcrição:\n"${trans}"` : "Transcrição indisponível"}${arquivoAud ? `\nDrive: ${arquivoAud.webViewLink}` : ""}`
       )
     }
-    if (eUrg) await hsMoverStage(u.negocioId, HS_STAGE.triagem)
     u.documentosEnviados = true
     if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
-
-    if (eDescricao) {
-      if (!trans) {
-        u.stage = STAGES.DESC_ERRO_TRANSCRICAO
-        return responderComTimer(from, {
-          texto: "Não consegui transcrever o áudio. Tente novamente ou envie por texto.",
-          opcoes: [
-            { id: "desc_corrigir", title: "✏️ Corrigir" },
-            { id: "m_inicio", title: "Menu principal" }
-          ]
-        })
-      }
-
-      u._descTemp = `[Áudio transcrito] ${trans.slice(0, 500)}`
-      u._audioDescBuffer = midia.buffer
-      u._audioDescMime = midia.mimeType
-      u._audioDescNome = nomeCliente
-      u.stage = STAGES.DESC_CONFIRMA
-      return responderComTimer(from, {
-        texto: `🎙️ *Áudio recebido e transcrito!*\n\n📝 *Transcrição:*\n\n"${trans.slice(0, 400)}${trans.length > 400 ? "..." : ""}"\n\nConfirme ou corrija as informações.`,
-        opcoes: [{ id:"desc_ok", title:"✅ Confirmar" }, { id:"desc_corrigir", title:"✏️ Corrigir" }]
-      })
-    }
 
     const msgAudio = trans
       ? `✅ Áudio salvo!\n\n🗣️ O que entendemos:\n"${trans.slice(0, 300)}${trans.length > 300 ? "..." : ""}"`
@@ -1118,7 +1181,8 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
     if (/^[a-z][a-z0-9_]{1,20}$/.test(text)) {
       u.stage = STAGES.CLIENTE
     } else {
-      await hsCriarNota(u.contatoId, "MENSAGEM URGENTE", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArea: ${u.area}\n\n${text}`)
+      const mensagemUrgente = normalizarTextoCRM(text)
+      await hsCriarNota(u.contatoId, "MENSAGEM URGENTE", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArea: ${u.area}\n\n${mensagemUrgente}`)
       await hsMoverStage(u.negocioId, HS_STAGE.triagem)
       u.stage = STAGES.CLIENTE
       return responderComTimer(from, { texto: `✅ *Mensagem registrada com urgência!*\n\nNossa equipe será notificada imediatamente. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu principal" }] })
@@ -1126,7 +1190,12 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
   }
 
   if (u.stage === STAGES.CORRIGIR_VALOR && text) {
-    if (u.corrigirCampo) { u[u.corrigirCampo] = text.trim(); u.corrigirCampo = null }
+    if (u.corrigirCampo) {
+      if (u.corrigirCampo === "nome") u[u.corrigirCampo] = formatarNome(text.trim())
+      else if (u.corrigirCampo === "cidade") u[u.corrigirCampo] = formatarCidade(text.trim())
+      else u[u.corrigirCampo] = normalizarTextoCRM(text)
+      u.corrigirCampo = null
+    }
     u.stage = STAGES.CONFIRMACAO
     return responderComTimer(from, tela_confirmacao(u))
   }
@@ -1281,12 +1350,9 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === STAGES.DESC_ERRO_TRANSCRICAO) {
     if (text === "desc_corrigir") {
       u._descTemp = null
-      u.stage = STAGES.COLETA_DESC_AUDIO
+      u.stage = u._descOrigemStage || STAGES.COLETA_DESC_AUDIO
       iniciarTimer(from)
-      return {
-        texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!",
-        opcoes: null
-      }
+      return telaDescreverCaso()
     }
     iniciarTimer(from)
     return {
@@ -1339,38 +1405,31 @@ async function processar(from, nomeWA, text, msgObj) {
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
   if ((u.stage === "coleta_desc" || u.stage === "coleta_desc_audio") && text) {
-    // Salva temporariamente e mostra para o cliente confirmar
-    u._descTemp = text.trim()
-    u.stage = "desc_confirma"; iniciarTimer(from)
-    const preview = text.length > 400 ? text.slice(0, 400) + "..." : text
-    return {
-      texto: `📝 *Você descreveu:*
-
-"${preview}"
-
-Está correto?`,
-      opcoes: [
-        { id: "desc_ok",      title: "✅ Confirmar" },
-        { id: "desc_corrigir", title: "✏️ Corrigir" }
-      ]
-    }
+    return iniciarConfirmacaoDescricao(from, u, text, STAGES.COLETA_DESC_AUDIO)
   }
 
   // DESC_CONFIRMA — confirmar ou voltar para descrição
   if (u.stage === "desc_confirma") {
     if (text === "desc_ok") {
-      u.descricao = formatarNome((u._descTemp || "").trim())
+      u.descricao = normalizarTextoCRM((u._descTemp || "").trim())
       u._descTemp  = null
-      u.stage = "confirmacao"; iniciarTimer(from)
-      return tela_confirmacao(u)
+      return respostaAposConfirmarDescricao(from, u)
     }
     if (text === "desc_corrigir") {
-      u._descTemp = null
-      u.stage = "coleta_desc_audio"; iniciarTimer(from)
-      return {
-        texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!",
-        opcoes: null
+      if (u._audioDescBuffer) {
+        u.audiosDescCorrigidos.push({
+          buffer: u._audioDescBuffer,
+          mimeType: u._audioDescMime,
+          nome: u._audioDescNome
+        })
       }
+      u._descTemp = null
+      u._audioDescBuffer = null
+      u._audioDescMime = null
+      u._audioDescNome = null
+      u.stage = u._descOrigemStage || STAGES.COLETA_DESC_AUDIO
+      iniciarTimer(from)
+      return telaDescreverCaso()
     }
     iniciarTimer(from)
     return {
@@ -1414,6 +1473,50 @@ Está correto?`,
   if (u.stage === "coleta_tel_wpp_contato" && text) {
     u.whatsappContato = text.replace(/\D/g, ""); u.stage = "coleta_nome"; iniciarTimer(from)
     return { texto: "✍️ Qual é o *nome completo* da pessoa que será atendida?", opcoes: null }
+  }
+
+  if (u.stage === STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO) {
+    if (text === "urg_audio_corrigir") {
+      if (u._urgenteAudioBuffer) {
+        await salvarAudioTranscritoNoCaso(u, u._urgenteAudioNome, u._urgenteAudioBuffer, u._urgenteAudioMime, "corrigido")
+      }
+      u._urgenteAudioBuffer = null
+      u._urgenteAudioMime = null
+      u._urgenteAudioNome = null
+      u._urgenteAudioTexto = null
+      u.stage = STAGES.AGUARDANDO_URGENTE
+      iniciarTimer(from)
+      return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
+    }
+  }
+
+  if (u.stage === STAGES.URGENTE_AUDIO_CONFIRMA) {
+    if (text === "urg_audio_ok") {
+      await salvarAudioTranscritoNoCaso(u, u._urgenteAudioNome, u._urgenteAudioBuffer, u._urgenteAudioMime, "confirmado")
+      await hsCriarNota(
+        u.contatoId,
+        "ÁUDIO URGENTE",
+        `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\nTranscrição:\n"${u._urgenteAudioTexto || "Transcrição indisponível"}"`
+      )
+      await hsMoverStage(u.negocioId, HS_STAGE.triagem)
+      u._urgenteAudioBuffer = null
+      u._urgenteAudioMime = null
+      u._urgenteAudioNome = null
+      u._urgenteAudioTexto = null
+      u.stage = STAGES.CLIENTE
+      return responderComTimer(from, { texto: `✅ *Mensagem registrada com urgência!*\n\nNossa equipe será notificada imediatamente. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu principal" }] })
+    }
+    if (text === "urg_audio_corrigir") {
+      await salvarAudioTranscritoNoCaso(u, u._urgenteAudioNome, u._urgenteAudioBuffer, u._urgenteAudioMime, "corrigido")
+      u._urgenteAudioBuffer = null
+      u._urgenteAudioMime = null
+      u._urgenteAudioNome = null
+      u._urgenteAudioTexto = null
+      u.stage = STAGES.AGUARDANDO_URGENTE
+      iniciarTimer(from)
+      return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
+    }
+    return responderComTimer(from, telaConfirmarUrgente(u._urgenteAudioTexto || ""))
   }
 
   // INICIO
@@ -1576,9 +1679,7 @@ Está correto?`,
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_out_desc" && text) {
-    if (!u.descricao) u.descricao = text
-    u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+    return iniciarConfirmacaoDescricao(from, u, text, "trab_out_desc")
   }
 
   // OUTROS
@@ -1598,9 +1699,7 @@ Está correto?`,
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "out_desc" && text) {
-    if (!u.descricao) u.descricao = text
-    u.stage = "gatilho"; iniciarTimer(from)
-    return { texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+    return iniciarConfirmacaoDescricao(from, u, text, "out_desc")
   }
 
   // MENU CLIENTE
