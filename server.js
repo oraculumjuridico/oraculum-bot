@@ -640,20 +640,76 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
   }
 }
 
-async function transcrever(buffer, mimeType) {
+function montarDriveDownloadDireto(fileId) {
+  return `https://drive.google.com/uc?export=download&id=${fileId}`
+}
+
+async function tornarArquivoPublicoDrive(fileId) {
   try {
-    const up = await axios.post("https://api.assemblyai.com/v2/upload", buffer, {
-      headers: { authorization: ASSEMBLYAI_KEY, "content-type": mimeType || "audio/ogg", "transfer-encoding": "chunked" }
+    await getDrive().permissions.create({
+      fileId,
+      requestBody: { role: "reader", type: "anyone" }
     })
-    const tr = await axios.post("https://api.assemblyai.com/v2/transcript", { audio_url: up.data.upload_url, language_code: "pt" }, { headers: { authorization: ASSEMBLYAI_KEY } })
-    for (let i = 0; i < 12; i++) {
+    return montarDriveDownloadDireto(fileId)
+  } catch (e) {
+    logErro("drive", "publicarAudio: " + (e.response?.data?.error?.message || e.response?.data?.message || e.message))
+    return null
+  }
+}
+
+async function obterOuCriarPastaTempTranscricao() {
+  try {
+    const drive = getDrive()
+    const nomePasta = "_tmp_transcricao_audio"
+    const query = [
+      "mimeType = 'application/vnd.google-apps.folder'",
+      `name = '${escapeDriveQueryValue(nomePasta)}'`,
+      `'${DRIVE_PASTA_CLIENTES_ID}' in parents`,
+      "trashed = false"
+    ].join(" and ")
+
+    const existentes = await drive.files.list({
+      q: query,
+      fields: "files(id,name)",
+      pageSize: 1
+    })
+    if (existentes.data.files?.length) return existentes.data.files[0].id
+
+    const pasta = await drive.files.create({
+      requestBody: { name: nomePasta, mimeType: "application/vnd.google-apps.folder", parents: [DRIVE_PASTA_CLIENTES_ID] },
+      fields: "id"
+    })
+    return pasta.data.id
+  } catch (e) {
+    logErro("drive", "pastaTempTranscricao: " + (e.response?.data?.error?.message || e.response?.data?.message || e.message))
+    return null
+  }
+}
+
+async function transcrever(audioUrl, contexto = {}) {
+  try {
+    console.log(`[ASSEMBLYAI] Iniciando transcricao via URL | origem=${contexto.origem || "desconhecida"} | mime=${contexto.mimeType || "nao informado"} | url=${audioUrl}`)
+    const tr = await axios.post(
+      "https://api.assemblyai.com/v2/transcript",
+      { audio_url: audioUrl, language_code: "pt" },
+      { headers: { authorization: ASSEMBLYAI_KEY } }
+    )
+    for (let i = 0; i < 18; i++) {
       await new Promise(r => setTimeout(r, 5000))
       const p = await axios.get(`https://api.assemblyai.com/v2/transcript/${tr.data.id}`, { headers: { authorization: ASSEMBLYAI_KEY } })
+      console.log(`[ASSEMBLYAI] Poll ${i + 1}/18 | status=${p.data.status}`)
       if (p.data.status === "completed") return p.data.text || ""
-      if (p.data.status === "error") return null
+      if (p.data.status === "error") {
+        logErro("assemblyai", `transcript error: ${p.data.error || "sem detalhe"}`)
+        return null
+      }
     }
+    logErro("assemblyai", "transcricao expirou aguardando processamento")
     return null
-  } catch (e) { logErro("assemblyai", e.message); return null }
+  } catch (e) {
+    logErro("assemblyai", `HTTP ${e.response?.status || "sem_status"}: ${e.response?.data?.error || e.response?.data?.message || e.message}`)
+    return null
+  }
 }
 
 async function respostaIA(u, pergunta) {
@@ -698,16 +754,25 @@ async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mi
       fields: "id,name,webViewLink"
     })
     try { fs.unlinkSync(tmp) } catch {}
+    const directDownloadUrl = await tornarArquivoPublicoDrive(res.data.id)
     console.log(`[DRIVE] Áudio: ${res.data.name}`)
-    return res.data
+    return { ...res.data, directDownloadUrl }
   } catch (e) { logErro("drive", "uploadAudio: " + e.message); return null }
+}
+
+async function uploadAudioTempParaTranscricao(nomeCliente, buffer, mimeType) {
+  const pastaTempId = await obterOuCriarPastaTempTranscricao()
+  if (!pastaTempId) return null
+  return uploadPastaAudio(pastaTempId, nomeCliente, "Temp", buffer, mimeType)
 }
 
 async function baixarMidia(mediaId) {
   try {
     const info = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } })
     const file = await axios.get(info.data.url, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }, responseType: "arraybuffer" })
-    return { buffer: Buffer.from(file.data), mimeType: info.data.mime_type || "application/octet-stream" }
+    const buffer = Buffer.from(file.data)
+    console.log(`[WHATSAPP] Midia baixada | mime=${info.data.mime_type || "application/octet-stream"} | bytes=${buffer.length}`)
+    return { buffer, mimeType: info.data.mime_type || "application/octet-stream" }
   } catch (e) { logErro("whatsapp", "baixarMidia: " + e.message); return null }
 }
 
@@ -953,12 +1018,20 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     const prNome = formatarNome(u.nome || nomeWA || "cliente").split(" ")[0]
     const ultNome = formatarNome(u.nome || nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
     const nomeCliente = ultNome && ultNome !== prNome ? `${prNome} ${ultNome}` : prNome
-    const trans = await transcrever(midia.buffer, midia.mimeType)
 
     let arquivoAud = null
     if (u.pastaDriveId && !eDescricao) {
       arquivoAud = await uploadPastaAudio(u.pastaDriveId, nomeCliente, nomePasta, midia.buffer, midia.mimeType)
     }
+    let arquivoAudTemp = null
+    if (eDescricao) {
+      arquivoAudTemp = await uploadAudioTempParaTranscricao(nomeCliente, midia.buffer, midia.mimeType)
+    }
+
+    const audioUrlTranscricao = arquivoAud?.directDownloadUrl || arquivoAudTemp?.directDownloadUrl || null
+    const trans = audioUrlTranscricao
+      ? await transcrever(audioUrlTranscricao, { origem: arquivoAud ? "drive_caso" : "drive_temp", mimeType: midia.mimeType })
+      : null
 
     if (!eDescricao) {
       await hsCriarNota(
