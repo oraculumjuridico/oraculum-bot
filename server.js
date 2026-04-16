@@ -39,6 +39,7 @@ const STAGES = {
   DESC_ERRO_TRANSCRICAO: "desc_erro_transcricao",
   SUGESTAO_FLUXO_OUTRO: "sugestao_fluxo_outro",
   EXPLICAR_TUDO_OFERTA: "explicar_tudo_oferta",
+  AUDIO_FLUXO_CONFIRMA: "audio_fluxo_confirma",
   CONFIRMACAO: "confirmacao",
   MENU_CORRECAO: "menu_correcao",
   CORRIGIR_VALOR: "corrigir_valor",
@@ -82,10 +83,12 @@ function novoUsuario(nomeWA) {
     leadIncompletoCapturado: false,
     audiosDescCorrigidos: [],
     assuntoResumo: null,
+    _ofereceuExplicarTudo: false,
     _sugestaoFluxo: null,
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _descOrigemStage: null,
+    _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
     timer: null, ultimaMsg: Date.now()
   }
@@ -141,9 +144,13 @@ function hidratarUsuarioPersistido(data) {
   hidratado._audioDescMime = hidratado._audioDescMime || null
   hidratado._audioDescNome = hidratado._audioDescNome || null
   hidratado.assuntoResumo = hidratado.assuntoResumo || null
+  hidratado._ofereceuExplicarTudo = Boolean(hidratado._ofereceuExplicarTudo)
   hidratado._sugestaoFluxo = hidratado._sugestaoFluxo || null
   hidratado._proximoStageAposDescricao = hidratado._proximoStageAposDescricao || null
   hidratado._proximaPerguntaAposDescricao = hidratado._proximaPerguntaAposDescricao || null
+  hidratado._audioFluxoTexto = hidratado._audioFluxoTexto || null
+  hidratado._audioFluxoAcao = hidratado._audioFluxoAcao || null
+  hidratado._audioFluxoResposta = hidratado._audioFluxoResposta || null
   hidratado._urgenteAudioBuffer = null
   hidratado._urgenteAudioMime = hidratado._urgenteAudioMime || null
   hidratado._urgenteAudioNome = hidratado._urgenteAudioNome || null
@@ -384,12 +391,14 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     leadIncompletoCapturado: false,
     audiosDescCorrigidos: [],
     assuntoResumo: null,
+    _ofereceuExplicarTudo: false,
     _sugestaoFluxo: null,
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _regiao: null, _descTemp: null,
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
     _descOrigemStage: null,
+    _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null
   })
   agendarPersistenciaUsers()
@@ -1024,6 +1033,82 @@ function telaExplicarTudo() {
   }
 }
 
+function telaAudioNoFluxo(transcricao, recomendacao) {
+  const preview = (transcricao || "").length > 320 ? transcricao.slice(0, 320) + "..." : (transcricao || "")
+  return {
+    texto: `ðŸŽ™ï¸ *Entendi este Ã¡udio:*\n\n"${preview}"\n\nMinha recomendaÃ§Ã£o agora Ã© *${recomendacao || "continuar o atendimento"}*.\n\nComo vocÃª quer seguir?`,
+    opcoes: [
+      { id: "audio_fluxo_seguir", title: "âœ… Seguir recomendaÃ§Ã£o" },
+      { id: "audio_fluxo_recomecar", title: "ðŸ”„ RecomeÃ§ar" },
+      { id: "audio_fluxo_encerrar", title: "ðŸ‘‹ Encerrar" }
+    ]
+  }
+}
+
+function executarRecomecoFluxo(from, u) {
+  limparDadosCasoAtual(u)
+  u.stage = STAGES.AREA
+  iniciarTimer(from)
+  return { ...telaArea(), perguntaId: "area" }
+}
+
+function executarEncerramentoFluxo(u) {
+  limparTimer(u)
+  const nome1 = (u.nome || u.nomeWA).split(" ")[0]
+  limparDadosCasoAtual(u)
+  return { texto: `Tudo bem, ${nome1}. Vou encerrar por aqui.\n\nQuando quiser retomar, Ã© sÃ³ me chamar novamente.`, opcoes: null, registrarPergunta: false }
+}
+
+function deveOferecerExplicarTudo(u) {
+  return Boolean(u?.assuntoResumo) && !u?._ofereceuExplicarTudo && u.descricao === u.assuntoResumo
+}
+
+function prepararOfertaExplicarTudo(from, u, proximoStage, proximaPergunta) {
+  u._ofereceuExplicarTudo = true
+  u._proximoStageAposDescricao = proximoStage
+  u._proximaPerguntaAposDescricao = proximaPergunta
+  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+  iniciarTimer(from)
+  return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
+}
+
+function prepararOfertaExplicarTudoFinal(from, u, proximoStage, proximaPergunta) {
+  u._ofereceuExplicarTudo = true
+  u._proximoStageAposDescricao = proximoStage
+  u._proximaPerguntaAposDescricao = proximaPergunta
+  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+  iniciarTimer(from)
+  return telaExplicarTudo()
+}
+
+function telaAudioNoFluxo(transcricao, recomendacao) {
+  const preview = (transcricao || "").length > 320 ? transcricao.slice(0, 320) + "..." : (transcricao || "")
+  return {
+    texto: `Audio transcrito:\n\n"${preview}"\n\nMinha recomendacao agora e *${recomendacao || "continuar o atendimento"}*.\n\nComo voce quer seguir?`,
+    opcoes: [
+      { id: "audio_fluxo_seguir", title: "Seguir recomendacao" },
+      { id: "audio_fluxo_recomecar", title: "Recomecar" },
+      { id: "audio_fluxo_encerrar", title: "Encerrar" }
+    ]
+  }
+}
+
+function executarEncerramentoFluxo(u) {
+  limparTimer(u)
+  const nome1 = (u.nome || u.nomeWA).split(" ")[0]
+  limparDadosCasoAtual(u)
+  return { texto: `Tudo bem, ${nome1}. Vou encerrar por aqui.\n\nQuando quiser retomar, e so me chamar novamente.`, opcoes: null, registrarPergunta: false }
+}
+
+function prepararOfertaExplicarTudo(from, u, proximoStage, proximaPergunta) {
+  u._ofereceuExplicarTudo = true
+  u._proximoStageAposDescricao = proximoStage
+  u._proximaPerguntaAposDescricao = proximaPergunta
+  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+  iniciarTimer(from)
+  return telaExplicarTudo()
+}
+
 function iniciarConfirmacaoDescricao(from, u, texto, origemStage) {
   u._descTemp = normalizarTextoCRM(texto)
   u._descOrigemStage = origemStage
@@ -1055,6 +1140,7 @@ function respostaAposConfirmarDescricao(from, u) {
     u._descOrigemStage = null
     u.stage = proximoStage
     iniciarTimer(from)
+    if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
     if (proximaPergunta) return proximaPergunta
     return { texto: "Perfeito. Vou considerar esses detalhes no atendimento.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
@@ -1131,11 +1217,49 @@ async function prepararFluxoResumoOutro(from, u) {
   }
 
   u._sugestaoFluxo = null
-  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
-  u._proximoStageAposDescricao = "gatilho"
+  u.stage = "gatilho"
   u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   iniciarTimer(from)
   return telaExplicarTudo()
+}
+
+async function classificarAcaoAudioFluxo(u, texto) {
+  const fallback = (() => {
+    const lower = String(texto || "").toLowerCase()
+    if (/(encerrar|encerra|tchau|obrigad|finaliz|fechar|fecha|por hoje|ate logo|atÃ© logo|ate mais|atÃ© mais)/.test(lower)) {
+      return { acao: "encerrar", recomendacao: "encerrar este atendimento" }
+    }
+    if (/(recome|comecar de novo|comeÃ§ar de novo|novo atendimento|do zero|reiniciar|trocar de assunto|outro assunto)/.test(lower)) {
+      return { acao: "recomecar", recomendacao: "recomeÃ§ar o atendimento" }
+    }
+    return { acao: "continuar", recomendacao: "continuar no fluxo atual" }
+  })()
+
+  if (!GROQ_KEY || !texto) return fallback
+  try {
+    const system = `Classifique a intenÃ§Ã£o principal de um Ã¡udio recebido no meio de um atendimento jurÃ­dico. Responda apenas JSON vÃ¡lido com as chaves "acao" e "recomendacao". "acao" deve ser exatamente uma destas: continuar, recomecar, encerrar.`
+    const user = `Stage atual: ${u.stage}\nÃrea: ${u.area || "nÃ£o definida"}\nTexto transcrito: ${texto}`
+    const res = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        temperature: 0.1,
+        max_tokens: 80,
+        response_format: { type: "json_object" }
+      },
+      { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+    )
+    const parsed = JSON.parse(res.data.choices?.[0]?.message?.content || "{}")
+    if (!["continuar", "recomecar", "encerrar"].includes(parsed?.acao)) return fallback
+    return {
+      acao: parsed.acao,
+      recomendacao: parsed.recomendacao || fallback.recomendacao
+    }
+  } catch (e) {
+    logErro("groq", "classificarAcaoAudioFluxo: " + e.message)
+    return fallback
+  }
 }
 
 function processarRetomadaOuReinicio(from, u, text) {
@@ -1151,6 +1275,10 @@ function processarRetomadaOuReinicio(from, u, text) {
     u.stage = STAGES.AREA
     iniciarTimer(from)
     return { ...telaArea(), perguntaId: "area" }
+  }
+
+  if (text === "audio_fluxo_encerrar") {
+    return executarEncerramentoFluxo(u)
   }
 
   return null
@@ -1285,6 +1413,104 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   })
 }
 
+async function processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio) {
+  if (!ehAudio) return null
+  if (u.numeroCaso) return null
+  if ([
+    STAGES.CLIENTE,
+    STAGES.AGUARDANDO_URGENTE,
+    STAGES.COLETA_DESC_AUDIO,
+    STAGES.DESC_CONFIRMA,
+    STAGES.DESC_ERRO_TRANSCRICAO,
+    STAGES.SUGESTAO_FLUXO_OUTRO,
+    STAGES.EXPLICAR_TUDO_OFERTA,
+    STAGES.URGENTE_AUDIO_CONFIRMA,
+    STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO,
+    STAGES.AUDIO_FLUXO_CONFIRMA,
+    "trab_out_desc",
+    "out_desc",
+    "inicio",
+    "inicio_retorno"
+  ].includes(u.stage)) return null
+
+  const mediaId = msgObj?.[tipo]?.id
+  if (!mediaId) return null
+
+  const midia = await baixarMidia(mediaId)
+  if (!midia) return responderComTimer(from, { texto: "NÃ£o consegui baixar esse Ã¡udio. Pode tentar novamente?", opcoes: null })
+
+  await enviar(from, "ðŸŽ™ï¸ Ãudio recebido! Transcrevendo, aguarde...", null, false)
+  const transcricao = await transcrever(midia.buffer, midia.mimeType, { origem: "fluxo" })
+  if (!transcricao) {
+    const ultimaPergunta = retomarUltimaPergunta(u)
+    if (ultimaPergunta) return responderComTimer(from, {
+      texto: "NÃ£o consegui entender esse Ã¡udio agora. Vou te manter no ponto em que estÃ¡vamos.",
+      opcoes: [{ id: "cont_retomar", title: "â–¶ï¸ Continuar" }, { id: "recomecar", title: "ðŸ”„ RecomeÃ§ar" }]
+    })
+    return responderComTimer(from, { texto: "NÃ£o consegui entender esse Ã¡udio agora. Se preferir, responda por texto.", opcoes: null })
+  }
+
+  const decisao = await classificarAcaoAudioFluxo(u, transcricao)
+  u._audioFluxoTexto = normalizarTextoCRM(transcricao)
+  u._audioFluxoAcao = decisao.acao
+  u._audioFluxoResposta = decisao.recomendacao
+  u.stage = STAGES.AUDIO_FLUXO_CONFIRMA
+  return responderComTimer(from, telaAudioNoFluxo(u._audioFluxoTexto, u._audioFluxoResposta))
+}
+
+async function processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio) {
+  if (!ehAudio) return null
+  if (u.numeroCaso) return null
+  if ([
+    STAGES.CLIENTE,
+    STAGES.AGUARDANDO_URGENTE,
+    STAGES.COLETA_DESC_AUDIO,
+    STAGES.DESC_CONFIRMA,
+    STAGES.DESC_ERRO_TRANSCRICAO,
+    STAGES.SUGESTAO_FLUXO_OUTRO,
+    STAGES.EXPLICAR_TUDO_OFERTA,
+    STAGES.URGENTE_AUDIO_CONFIRMA,
+    STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO,
+    STAGES.AUDIO_FLUXO_CONFIRMA,
+    "trab_out_desc",
+    "out_desc",
+    "inicio",
+    "inicio_retorno"
+  ].includes(u.stage)) return null
+
+  const mediaId = msgObj?.[tipo]?.id
+  if (!mediaId) return null
+
+  const midia = await baixarMidia(mediaId)
+  if (!midia) {
+    return responderComTimer(from, { texto: "Nao consegui baixar esse audio. Pode tentar novamente?", opcoes: null })
+  }
+
+  await enviar(from, "Audio recebido! Transcrevendo, aguarde...", null, false)
+  const transcricao = await transcrever(midia.buffer, midia.mimeType, { origem: "fluxo" })
+  if (!transcricao) {
+    const ultimaPergunta = retomarUltimaPergunta(u)
+    if (ultimaPergunta) {
+      return responderComTimer(from, {
+        texto: "Nao consegui entender esse audio agora. Vou te manter no ponto em que estavamos.",
+        opcoes: [
+          { id: "cont_retomar", title: "Continuar" },
+          { id: "recomecar", title: "Recomecar" },
+          { id: "audio_fluxo_encerrar", title: "Encerrar" }
+        ]
+      })
+    }
+    return responderComTimer(from, { texto: "Nao consegui entender esse audio agora. Se preferir, responda por texto.", opcoes: null })
+  }
+
+  const decisao = await classificarAcaoAudioFluxo(u, transcricao)
+  u._audioFluxoTexto = normalizarTextoCRM(transcricao)
+  u._audioFluxoAcao = decisao.acao
+  u._audioFluxoResposta = decisao.recomendacao
+  u.stage = STAGES.AUDIO_FLUXO_CONFIRMA
+  return responderComTimer(from, telaAudioNoFluxo(u._audioFluxoTexto, u._audioFluxoResposta))
+}
+
 async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
   if (u.stage === STAGES.AGUARDANDO_URGENTE && text && !ehDoc && !ehAudio) {
     if (/^[a-z][a-z0-9_]{1,20}$/.test(text)) {
@@ -1388,6 +1614,9 @@ async function processar(from, nomeWA, text, msgObj) {
   const respostaMidia = await processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc)
   if (respostaMidia) return respostaMidia
 
+  const respostaAudioFluxo = await processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio)
+  if (respostaAudioFluxo) return respostaAudioFluxo
+
   const respostaUrgenciaOuCorrecao = await processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio)
   if (respostaUrgenciaOuCorrecao) return respostaUrgenciaOuCorrecao
 
@@ -1452,14 +1681,17 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "__coleta_benef_regiao_v2__") {
     const m = { col_b1: "Sim", col_b2: "Não" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opção:", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Não" }] } }
-    u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
+    u.recebeBeneficio = m[text]
+    if (deveOferecerExplicarTudo(u)) {
+      return prepararOfertaExplicarTudoFinal(from, u, STAGES.CONFIRMACAO, null)
+    }
     u.stage = "coleta_desc_audio"; iniciarTimer(from)
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
   if (u.stage === STAGES.DESC_ERRO_TRANSCRICAO) {
     if (text === "desc_corrigir") {
       u._descTemp = null
-      u.stage = u._descOrigemStage || STAGES.COLETA_DESC_AUDIO
+      u.stage = u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO)
       iniciarTimer(from)
       return telaDescreverCaso()
     }
@@ -1509,7 +1741,10 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "coleta_benef") {
     const m = { col_b1: "Sim", col_b2: "Não" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opção:", opcoes: [{ id: "col_b1", title: "Sim" }, { id: "col_b2", title: "Não" }] } }
-    u.recebeBeneficio = m[text]; u.stage = "coleta_desc"; iniciarTimer(from)
+    u.recebeBeneficio = m[text]
+    if (deveOferecerExplicarTudo(u)) {
+      return prepararOfertaExplicarTudoFinal(from, u, STAGES.CONFIRMACAO, null)
+    }
     u.stage = "coleta_desc_audio"; iniciarTimer(from)
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
@@ -1536,7 +1771,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._audioDescBuffer = null
       u._audioDescMime = null
       u._audioDescNome = null
-      u.stage = u._descOrigemStage || STAGES.COLETA_DESC_AUDIO
+      u.stage = u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO)
       iniciarTimer(from)
       return telaDescreverCaso()
     }
@@ -1628,23 +1863,128 @@ async function processar(from, nomeWA, text, msgObj) {
     return responderComTimer(from, telaConfirmarUrgente(u._urgenteAudioTexto || ""))
   }
 
+  if (u.stage === STAGES.AUDIO_FLUXO_CONFIRMA) {
+    const acao = u._audioFluxoAcao || "continuar"
+    if (text === "audio_fluxo_recomecar") {
+      u._audioFluxoTexto = null
+      u._audioFluxoAcao = null
+      u._audioFluxoResposta = null
+      return executarRecomecoFluxo(from, u)
+    }
+    if (text === "audio_fluxo_encerrar") {
+      u._audioFluxoTexto = null
+      u._audioFluxoAcao = null
+      u._audioFluxoResposta = null
+      return executarEncerramentoFluxo(u)
+    }
+    if (text === "audio_fluxo_seguir") {
+      u._audioFluxoTexto = null
+      u._audioFluxoResposta = null
+      u._audioFluxoAcao = null
+      if (acao === "recomecar") return executarRecomecoFluxo(from, u)
+      if (acao === "encerrar") return executarEncerramentoFluxo(u)
+      const ultimaPergunta = retomarUltimaPergunta(u)
+      if (ultimaPergunta) {
+        iniciarTimer(from)
+        return ultimaPergunta
+      }
+      u.stage = STAGES.AREA
+      iniciarTimer(from)
+      return { ...telaArea(), perguntaId: "area" }
+    }
+    return responderComTimer(from, telaAudioNoFluxo(u._audioFluxoTexto || "", u._audioFluxoResposta || "continuar o atendimento"))
+  }
+
   if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
     if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
       const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
       u._sugestaoFluxo = null
-      u.stage = STAGES.EXPLICAR_TUDO_OFERTA
-      u._proximoStageAposDescricao = proxima.stage
-      u._proximaPerguntaAposDescricao = { texto: proxima.texto, opcoes: proxima.opcoes }
+      u.stage = proxima.stage
       iniciarTimer(from)
-      return telaExplicarTudo()
+      return { texto: proxima.texto, opcoes: proxima.opcoes }
     }
     if (text === "sug_nao") {
       u._sugestaoFluxo = null
-      u.stage = STAGES.EXPLICAR_TUDO_OFERTA
-      u._proximoStageAposDescricao = "gatilho"
+      u.stage = "gatilho"
+      iniciarTimer(from)
+      return { texto: "Certo! Vamos registrar sua solicitacao.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    }
+  }
+
+  if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
+    if (text === "explicar_tudo") {
+      u._descOrigemStage = "explicar_tudo"
+      u.stage = STAGES.COLETA_DESC_AUDIO
+      iniciarTimer(from)
+      return telaDescreverCaso()
+    }
+    if (text === "seguir_fluxo") {
+      const proximoStage = u._proximoStageAposDescricao || "gatilho"
+      const proximaPergunta = u._proximaPerguntaAposDescricao
+      u._proximoStageAposDescricao = null
+      u._proximaPerguntaAposDescricao = null
+      u.stage = proximoStage
+      iniciarTimer(from)
+      if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
+      if (proximaPergunta) return proximaPergunta
+      return { texto: "Certo! Vamos registrar sua solicitacao.", opcoes: [{ id: "cont", title: "Continuar" }] }
+    }
+    iniciarTimer(from)
+    return telaExplicarTudo()
+  }
+
+  if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
+    if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
+      const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
+      u._sugestaoFluxo = null
+      u.stage = proxima.stage
+      iniciarTimer(from)
+      return { texto: proxima.texto, opcoes: proxima.opcoes }
+    }
+    if (text === "sug_nao") {
+      u._sugestaoFluxo = null
+      u.stage = "gatilho"
+      iniciarTimer(from)
+      return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
+    }
+  }
+
+  if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
+    if (text === "explicar_tudo") {
+      u._descOrigemStage = "explicar_tudo"
+      u.stage = STAGES.COLETA_DESC_AUDIO
+      iniciarTimer(from)
+      return telaDescreverCaso()
+    }
+    if (text === "seguir_fluxo") {
+      const proximoStage = u._proximoStageAposDescricao || "gatilho"
+      const proximaPergunta = u._proximaPerguntaAposDescricao
+      u._proximoStageAposDescricao = null
+      u._proximaPerguntaAposDescricao = null
+      u.stage = proximoStage
+      iniciarTimer(from)
+      if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
+      if (proximaPergunta) return proximaPergunta
+      return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
+    }
+    iniciarTimer(from)
+    return telaExplicarTudo()
+  }
+
+  if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
+    if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
+      const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
+      u._sugestaoFluxo = null
+      u.stage = proxima.stage
+      iniciarTimer(from)
+      return { texto: proxima.texto, opcoes: proxima.opcoes }
+    }
+    if (text === "sug_nao") {
+      u._sugestaoFluxo = null
+      u.stage = "gatilho"
       u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
       iniciarTimer(from)
-      return telaExplicarTudo()
+      return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
     }
   }
 
