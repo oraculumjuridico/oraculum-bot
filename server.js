@@ -49,10 +49,15 @@ const STAGES = {
   NOVO_CASO_CONFIRMA: "novo_caso_confirma"
 }
 const HS_STAGE = {
-  lead: "appointmentscheduled", agendamento: "qualifiedtobuy",
-  triagem: "presentationscheduled", docs: "decisionmakerboughtin",
-  protocolo: "contractsent", andamento: "closedwon",
-  finalizado: "closedlost", desistiu: "1337291921", perdido: "1337291922"
+  LEAD: "appointmentscheduled",
+  CADASTRO: "qualifiedtobuy",
+  ANALISE: "presentationscheduled",
+  AGUARDANDO_DOCS: "decisionmakerboughtin",
+  DOCS: "contractsent",
+  AGENDAMENTO: "1343040832",
+  PROTOCOLO: "1343040098",
+  PROCESSO: "1337291921",
+  FINAL: "1343039663"
 }
 
 const monitor = { conversas: 0, cadastros: 0, erros: [], inicio: new Date() }
@@ -488,6 +493,23 @@ function restaurarTimersPersistidos() {
 }
 
 const HS = () => ({ Authorization: `Bearer ${HUBSPOT_TOKEN}`, "Content-Type": "application/json" })
+const hubspotClient = {
+  crm: {
+    deals: {
+      basicApi: {
+        update: async (dealId, body) => {
+          const stageId = body?.properties?.dealstage
+          console.log("Mudando etapa para:", stageId)
+          return axios.patch(
+            `https://api.hubapi.com/crm/v3/objects/deals/${dealId}`,
+            body,
+            { headers: HS() }
+          )
+        }
+      }
+    }
+  }
+}
 
 async function hsBuscarPorPhone(phone) {
   try {
@@ -524,7 +546,7 @@ async function hsCriarContato(from, u) {
 async function hsCriarNegocio(u) {
   try {
     const opts = arguments[1] || {}
-    const stage = opts.stage || (u.urgencia === "alta" ? HS_STAGE.triagem : HS_STAGE.lead)
+    const stage = opts.stage || HS_STAGE.LEAD
     const dealname = opts.dealname || `${u.nome} — ${u.area} — ${u.numeroCaso}`
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/deals",
@@ -538,7 +560,7 @@ async function hsCriarNegocio(u) {
 async function hsCriarNegocio(u) {
   try {
     const opts = arguments[1] || {}
-    const stage = opts.stage || (u.urgencia === "alta" ? HS_STAGE.triagem : HS_STAGE.lead)
+    const stage = opts.stage || HS_STAGE.LEAD
     const nomeCliente = u.nome || u.nomeWA || "Cliente"
     const dealname = opts.dealname || `${nomeCliente} - ${u.area || "Atendimento"}${u.numeroCaso ? " - " + u.numeroCaso : ""}`
     const properties = {
@@ -569,11 +591,18 @@ async function hsAssociar(cId, nId) {
   } catch (e) { logErro("hubspot", "associar: " + (e.response?.data?.message || e.message)) }
 }
 
+async function hsAtualizarEtapaNegocio(dealId, stageId) {
+  if (!dealId) return
+  try {
+    await hubspotClient.crm.deals.basicApi.update(dealId, {
+      properties: { dealstage: stageId }
+    })
+  } catch (e) { logErro("hubspot", "atualizarEtapaNegocio: " + (e.response?.data?.message || e.message)) }
+}
+
 async function hsMoverStage(nId, stage) {
   if (!nId) return
-  try {
-    await axios.patch(`https://api.hubapi.com/crm/v3/objects/deals/${nId}`, { properties: { dealstage: stage } }, { headers: HS() })
-  } catch (e) { logErro("hubspot", "moverStage: " + (e.response?.data?.message || e.message)) }
+  return hsAtualizarEtapaNegocio(nId, stage)
 }
 
 async function capturarLeadIncompleto(from, u) {
@@ -601,7 +630,7 @@ async function capturarLeadIncompleto(from, u) {
       area,
       numeroCaso: "LEAD-INCOMPLETO"
     }, {
-      stage: HS_STAGE.lead,
+      stage: HS_STAGE.LEAD,
       dealname: `${u.nome || u.nomeWA || "Lead incompleto"} — ${area} — Lead recebido`
     })
 
@@ -1414,7 +1443,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     return responderComTimer(from, { texto: msgAudio, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Advogado" }, { id:"m_inicio", title:"Menu principal" }] })
   }
 
-  await hsMoverStage(u.negocioId, HS_STAGE.docs)
+  await hsMoverStage(u.negocioId, HS_STAGE.DOCS)
   if (!u.docsEntregues) u.docsEntregues = []
 
   const pendentes = getDocsPendentes(u)
@@ -1558,7 +1587,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
     } else {
       const mensagemUrgente = normalizarTextoCRM(text)
       await hsCriarNota(u.contatoId, "MENSAGEM URGENTE", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArea: ${u.area}\n\n${mensagemUrgente}`)
-      await hsMoverStage(u.negocioId, HS_STAGE.triagem)
+      await hsMoverStage(u.negocioId, HS_STAGE.ANALISE)
       u.stage = STAGES.CLIENTE
       return responderComTimer(from, { texto: `✅ *Mensagem registrada com urgência!*\n\nNossa equipe será notificada imediatamente. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu principal" }] })
     }
@@ -1882,7 +1911,7 @@ async function processar(from, nomeWA, text, msgObj) {
         "ÁUDIO URGENTE",
         `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\nTranscrição:\n"${u._urgenteAudioTexto || "Transcrição indisponível"}"`
       )
-      await hsMoverStage(u.negocioId, HS_STAGE.triagem)
+      await hsMoverStage(u.negocioId, HS_STAGE.ANALISE)
       u._urgenteAudioBuffer = null
       u._urgenteAudioMime = null
       u._urgenteAudioNome = null
@@ -2264,7 +2293,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return telaCpf
     }
     if (text === "m_docs") {
-      await hsMoverStage(u.negocioId, HS_STAGE.docs)
+      await hsMoverStage(u.negocioId, HS_STAGE.DOCS)
       if (!u.docsEntregues) u.docsEntregues = []
       u.docAtualIdx = u.docAtualIdx || 0
       const tela = telaEnvioDoc(u)
@@ -2310,7 +2339,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: "👨‍⚖️ *Falar com advogado*\n\nComo prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "📅 Agendar ligação" }, { id: "adv_urg", title: "⚠️ Mensagem urgente" }, { id: "m_inicio", title: "🏠 Menu principal" }] }
     }
     if (text === "adv_ag") {
-      await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
+      await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
       await hsCriarNota(u.contatoId, "AGENDAMENTO SOLICITADO", `${u.nome} (${from}) solicitou agendamento.\nCaso: ${u.numeroCaso} | Área: ${u.area}\nLink: ${MEETINGS}`)
       iniciarTimer(from)
       return {
@@ -2450,7 +2479,7 @@ app.post("/agendamento", async (req, res) => {
     if (caseid) {
       for (const [from, u] of Object.entries(users)) {
         if (u.numeroCaso === caseid && u.negocioId) {
-          await hsMoverStage(u.negocioId, HS_STAGE.agendamento)
+          await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
           agendarPersistenciaUsers()
           break
         }
