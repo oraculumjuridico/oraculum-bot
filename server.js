@@ -86,7 +86,7 @@ function mensagemJaProcessada(messageId) {
 
 function novoUsuario(nomeWA) {
   return {
-    stage: "inicio", nomeWA,
+    stage: "inicio", etapa: "inicio", nomeWA,
     nome: null, regiao: null, cidade: null, uf: null,
     area: null, tipo: null, situacao: null, subTipo: null, detalhe: null,
     urgencia: "normal", semReceber: false,
@@ -107,6 +107,7 @@ function novoUsuario(nomeWA) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    jaOfereceuRetomada: false,
     _retomadaEhLeadFrio: false,
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
@@ -173,6 +174,8 @@ function hidratarUsuarioPersistido(data) {
   hidratado._entradaPendenteTipo = hidratado._entradaPendenteTipo || null
   hidratado._entradaPendenteValor = hidratado._entradaPendenteValor || null
   hidratado._entradaPendenteOrigem = hidratado._entradaPendenteOrigem || null
+  hidratado.etapa = hidratado.etapa || hidratado.stage || STAGES.INICIO
+  hidratado.jaOfereceuRetomada = Boolean(hidratado.jaOfereceuRetomada)
   hidratado._retomadaEhLeadFrio = Boolean(hidratado._retomadaEhLeadFrio)
   hidratado._audioFluxoTexto = hidratado._audioFluxoTexto || null
   hidratado._audioFluxoAcao = hidratado._audioFluxoAcao || null
@@ -394,9 +397,11 @@ function getTelefoneContato(from, u) {
 
 function registrarUltimaPergunta(u, payload) {
   if (!u || !payload?.texto || payload.registrarPergunta === false) return
+  if (u.stage === STAGES.RETOMADA_AUTOMATICA) return
   const deveSalvar = payload.opcoes?.length || payload.texto.includes("?") || u.stage !== "cliente"
   if (!deveSalvar) return
   u.lastPergunta = payload.perguntaId || u.stage || "pergunta"
+  u.etapa = u.lastPergunta
   u.lastPerguntaPayload = { texto: payload.texto, opcoes: payload.opcoes || null }
 }
 
@@ -404,6 +409,7 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
   const nomePreservado = preservarNome && u.nomeConfirmado ? u.nome : null
   Object.assign(u, {
     stage: "inicio",
+    etapa: "inicio",
     nome: nomePreservado,
     regiao: null, cidade: null, uf: null,
     area: null, tipo: null, situacao: null, subTipo: null, detalhe: null,
@@ -423,6 +429,7 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    jaOfereceuRetomada: false,
     _retomadaEhLeadFrio: false,
     _regiao: null, _descTemp: null,
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
@@ -558,8 +565,93 @@ function avancarAposTelefoneConfirmado(from, u) {
 }
 
 function retomarUltimaPergunta(u) {
+  if (u.stage === STAGES.RETOMADA_AUTOMATICA) return null
   if (u.lastPerguntaPayload) return u.lastPerguntaPayload
   return null
+}
+
+function retomarFluxo(u) {
+  const etapa = u.etapa || u.lastPergunta || u.stage || STAGES.AREA
+  console.log("🔁 Retomando etapa:", etapa)
+
+  switch (etapa) {
+    case STAGES.AREA:
+    case "area":
+      u.stage = STAGES.AREA
+      return { ...telaArea(), perguntaId: "area" }
+    case "coleta_nome":
+      u.stage = "coleta_nome"
+      return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
+    case "coleta_regiao":
+      u.stage = "coleta_regiao"
+      return telaRegioes()
+    case "coleta_uf":
+      u.stage = "coleta_uf"
+      return telaUFsRegiao(u._regiao || "reg_n")
+    case "coleta_cidade_regiao":
+    case "coleta_cidade":
+      u.stage = etapa
+      return { texto: "Digite a cidade onde você mora", opcoes: null }
+    case "coleta_contrib":
+    case "coleta_contrib_regiao":
+    case "coleta_contrib_regiao_v2":
+      u.stage = etapa
+      return {
+        texto: "Selecione uma opção:",
+        opcoes: [
+          { id: "col_c1", title: "Nunca" },
+          { id: "col_c2", title: "Pouco tempo" },
+          { id: "col_c3", title: "Mais de 1 ano" },
+          { id: "col_c4", title: "Muitos anos" }
+        ]
+      }
+    case "__coleta_benef_regiao_v2__":
+    case "coleta_benef":
+      u.stage = etapa
+      return {
+        texto: "Você já recebe algum benefício do INSS?",
+        opcoes: [
+          { id: "col_b1", title: "Sim" },
+          { id: "col_b2", title: "Não" }
+        ]
+      }
+    case STAGES.COLETA_DESC:
+    case STAGES.COLETA_DESC_AUDIO:
+    case "trab_out_desc":
+    case "out_desc":
+      u.stage = etapa
+      return telaDescreverCaso()
+    case STAGES.DESC_CONFIRMA:
+      u.stage = STAGES.DESC_CONFIRMA
+      if (!u._descTemp) return telaDescreverCaso()
+      return {
+        texto: `Entendi assim:\n\n"${u._descTemp}"\n\nEstá correto?`,
+        opcoes: [
+          { id: "desc_ok", title: "✅ Confirmar" },
+          { id: "desc_corrigir", title: "✏️ Corrigir" }
+        ]
+      }
+    case STAGES.CONFIRMACAO:
+      u.stage = STAGES.CONFIRMACAO
+      return tela_confirmacao(u)
+    case STAGES.CLIENTE:
+    case "cliente":
+      u.stage = STAGES.CLIENTE
+      return menuCliente(u)
+    default: {
+      const ultimaPergunta = retomarUltimaPergunta(u)
+      if (ultimaPergunta) {
+        u.stage = etapa
+        return ultimaPergunta
+      }
+      if (u.numeroCaso) {
+        u.stage = STAGES.CLIENTE
+        return menuCliente(u)
+      }
+      u.stage = STAGES.AREA
+      return { ...telaArea(), perguntaId: "area" }
+    }
+  }
 }
 
 function deveCapturarLeadIncompleto(u) {
@@ -1637,16 +1729,10 @@ async function classificarAcaoAudioFluxo(u, texto) {
 
 function processarRetomadaOuReinicio(from, u, text) {
   if (text === "ret_auto_continuar") {
-    if (u._retomadaEhLeadFrio) {
-      u._retomadaEhLeadFrio = false
-      const ultimaPergunta = retomarUltimaPergunta(u)
-      iniciarTimer(from)
-      if (ultimaPergunta) return ultimaPergunta
-      return { ...telaArea(), perguntaId: "area" }
-    }
-    u.stage = STAGES.CLIENTE
+    u._retomadaEhLeadFrio = false
+    const resposta = retomarFluxo(u)
     iniciarTimer(from)
-    return menuCliente(u)
+    return resposta
   }
 
   if (text === "ret_auto_menu") {
@@ -1662,10 +1748,9 @@ function processarRetomadaOuReinicio(from, u, text) {
   }
 
   if (text === "cont_retomar") {
-    const ultimaPergunta = retomarUltimaPergunta(u)
+    const resposta = retomarFluxo(u)
     iniciarTimer(from)
-    if (ultimaPergunta) return ultimaPergunta
-    return { ...telaArea(), perguntaId: "area" }
+    return resposta
   }
 
   if (text === "recomecar") {
@@ -1684,6 +1769,7 @@ function processarRetomadaOuReinicio(from, u, text) {
 
 async function verificarRetomadaAutomatica(from, u) {
   if (!u) return null
+  if (u.jaOfereceuRetomada) return null
   if (u.negocioId || u.numeroCaso) return null
   if (![STAGES.INICIO, STAGES.AREA].includes(u.stage)) return null
 
@@ -1702,6 +1788,7 @@ async function verificarRetomadaAutomatica(from, u) {
   u.numeroCaso = u.numeroCaso || contato.properties?.numero_caso || "Em andamento"
   u.area = u.area || contato.properties?.area_juridica || "Atendimento em andamento"
   u.stage = STAGES.RETOMADA_AUTOMATICA
+  u.jaOfereceuRetomada = true
   u._retomadaEhLeadFrio = negocio.stageId === HS_STAGE.LEAD
 
   if (u._retomadaEhLeadFrio) {
