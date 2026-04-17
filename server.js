@@ -747,6 +747,7 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
       media: { mimeType: mimeType || "application/octet-stream", body: fs.createReadStream(tmpPath) },
       fields: "id,name,webViewLink"
     })
+    await tornarArquivoPublicoDrive(res.data.id)
     console.log(`[DRIVE] Upload OK: ${res.data.name} (${res.data.id})`)
     return res.data
   } catch (e) {
@@ -757,6 +758,19 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
   } finally {
     try { fs.unlinkSync(tmpPath) } catch {}
   }
+}
+
+async function tornarArquivoPublicoDrive(fileId) {
+  if (!fileId) return null
+  const drive = getDrive()
+  await drive.permissions.create({
+    fileId,
+    requestBody: {
+      role: "reader",
+      type: "anyone"
+    }
+  })
+  return `https://drive.google.com/uc?export=download&id=${fileId}`
 }
 
 async function transcrever(buffer, mimeType, contexto = {}) {
