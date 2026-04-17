@@ -778,17 +778,45 @@ function detalharErroHubspot(e) {
 }
 
 async function capturarLeadIncompleto(from, u) {
-  console.log("🔥 capturarLeadIncompleto DISPARADA:", from)
-  if (!deveCapturarLeadIncompleto(u)) return null
-
-  const telefone = getTelefoneContato(from, u)
-  const area = u.area || "Atendimento inicial"
-
   try {
-    let contatoId = u.contatoId || null
+    console.log("🔥 INICIO captura:", from)
+    const sessao = u || users[from] || null
+    console.log("Sessão encontrada?", !!sessao)
+
+    if (!sessao) {
+      console.log("⚠️ Sem sessão ativa, seguindo captura com fallback pelo telefone")
+    }
+
+    if (sessao && !deveCapturarLeadIncompleto(sessao)) {
+      if (sessao.leadIncompletoCapturado) console.log("❌ Lead já capturado anteriormente, abortando captura")
+      if (sessao.numeroCaso) console.log("❌ Sessão já possui número de caso, abortando captura")
+      if (["inicio", "inicio_retorno", "cliente"].includes(sessao.stage)) {
+        console.log("❌ Stage não elegível para lead incompleto:", sessao.stage)
+      }
+      if (!(sessao.area || sessao.nomeConfirmado || sessao.whatsappContato || sessao.telefoneEhDoCliente !== null)) {
+        console.log("❌ Sessão sem dados mínimos para captura, abortando")
+      }
+      return null
+    }
+
+    const lead = sessao || {
+      nome: null,
+      nomeWA: null,
+      area: null,
+      numeroCaso: null,
+      pastaDriveLink: null,
+      contatoId: null,
+      negocioId: null,
+      stage: "sem_sessao"
+    }
+
+    const telefone = getTelefoneContato(from, lead)
+    const area = lead.area || "Atendimento inicial"
+    let contatoId = lead.contatoId || null
     let negocioId = null
 
     if (!contatoId) {
+      console.log("➡️ Indo criar contato...")
       console.log("Criando contato...")
       let existente = null
       try {
@@ -804,8 +832,8 @@ async function capturarLeadIncompleto(from, u) {
     if (!contatoId) {
       try {
         contatoId = await hsCriarContato(telefone, {
-          ...u,
-          nome: u.nome || u.nomeWA || "Lead incompleto",
+          ...lead,
+          nome: lead.nome || lead.nomeWA || "Lead incompleto",
           area,
           numeroCaso: null,
           pastaDriveLink: null
@@ -817,7 +845,7 @@ async function capturarLeadIncompleto(from, u) {
     } else {
       console.log("Contato reutilizado:", contatoId)
     }
-    u.contatoId = contatoId
+    if (sessao) sessao.contatoId = contatoId
 
     if (contatoId) {
       try {
@@ -827,21 +855,22 @@ async function capturarLeadIncompleto(from, u) {
       }
     }
 
-    if (!negocioId && u.negocioId) {
-      console.log("Negócio presente na sessão sem confirmação no HubSpot, recriando:", u.negocioId)
+    if (!negocioId && lead.negocioId) {
+      console.log("Negócio presente na sessão sem confirmação no HubSpot, recriando:", lead.negocioId)
     }
 
     if (!negocioId) {
+      console.log("➡️ Indo criar negócio...")
       console.log("Criando negócio...")
       try {
         negocioId = await hsCriarNegocio({
-          ...u,
-          nome: u.nome || u.nomeWA || "Lead incompleto",
+          ...lead,
+          nome: lead.nome || lead.nomeWA || "Lead incompleto",
           area,
           numeroCaso: "LEAD-INCOMPLETO"
         }, {
           stage: HS_STAGE.LEAD,
-          dealname: `${u.nome || u.nomeWA || "Lead incompleto"} — ${area} — Lead recebido`
+          dealname: `${lead.nome || lead.nomeWA || "Lead incompleto"} — ${area} — Lead recebido`
         })
       } catch (e) {
         console.error("Erro ao criar negócio no HubSpot:", detalharErroHubspot(e))
@@ -850,24 +879,25 @@ async function capturarLeadIncompleto(from, u) {
     } else {
       console.log("Negócio reutilizado:", negocioId)
     }
-    u.negocioId = negocioId || null
+    if (sessao) sessao.negocioId = negocioId || null
 
     if (contatoId && negocioId) {
       await hsAssociar(contatoId, negocioId)
       await hsCriarNota(
         contatoId,
         "LEAD INCOMPLETO",
-        `Lead capturado por inatividade.\nNome: ${u.nome || "Não informado"}\nTelefone: ${telefone}\nÁrea: ${u.area || "Não informada"}\nStage interno: ${u.stage}`
+        `Lead capturado por inatividade.\nNome: ${lead.nome || "Não informado"}\nTelefone: ${telefone}\nÁrea: ${lead.area || "Não informada"}\nStage interno: ${lead.stage}`
       )
     } else {
       console.log("Captura incompleta no HubSpot:", { contatoId, negocioId, from })
     }
 
-    u.leadIncompletoCapturado = true
+    if (sessao) sessao.leadIncompletoCapturado = true
     return { contatoId, negocioId }
-  } catch (e) {
-    console.error("Erro completo em capturarLeadIncompleto:", detalharErroHubspot(e))
-    logErro("hubspot", "capturarLeadIncompleto: " + (e.response?.data?.message || e.message))
+  } catch (err) {
+    console.log("❌ ERRO capturaLead:", err.response?.data || err.message || err)
+    console.error("Erro completo em capturarLeadIncompleto:", detalharErroHubspot(err))
+    logErro("hubspot", "capturarLeadIncompleto: " + (err.response?.data?.message || err.message))
     return null
   }
 }
