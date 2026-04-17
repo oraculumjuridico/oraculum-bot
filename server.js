@@ -47,7 +47,8 @@ const STAGES = {
   CORRIGIR_UF: "corrigir_uf",
   CORRIGIR_SEL: "corrigir_sel",
   INICIO_RETORNO: "inicio_retorno",
-  NOVO_CASO_CONFIRMA: "novo_caso_confirma"
+  NOVO_CASO_CONFIRMA: "novo_caso_confirma",
+  RETOMADA_AUTOMATICA: "retomada_automatica"
 }
 const HS_STAGE = {
   LEAD: "appointmentscheduled",
@@ -635,7 +636,10 @@ async function hsBuscarPorPhone(phone) {
   try {
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/contacts/search",
-      { filterGroups: [{ filters: [{ propertyName: "phone", operator: "EQ", value: phone }] }] },
+      {
+        filterGroups: [{ filters: [{ propertyName: "phone", operator: "EQ", value: phone }] }],
+        properties: ["firstname", "numero_caso", "area_juridica"]
+      },
       { headers: HS() }
     )
     return res.data.results?.[0] || null
@@ -1620,6 +1624,18 @@ async function classificarAcaoAudioFluxo(u, texto) {
 }
 
 function processarRetomadaOuReinicio(from, u, text) {
+  if (text === "ret_auto_continuar") {
+    u.stage = STAGES.CLIENTE
+    iniciarTimer(from)
+    return menuCliente(u)
+  }
+
+  if (text === "ret_auto_menu") {
+    u.stage = STAGES.CLIENTE
+    iniciarTimer(from)
+    return menuCliente(u)
+  }
+
   if (text === "cont_retomar") {
     const ultimaPergunta = retomarUltimaPergunta(u)
     iniciarTimer(from)
@@ -1639,6 +1655,37 @@ function processarRetomadaOuReinicio(from, u, text) {
   }
 
   return null
+}
+
+async function verificarRetomadaAutomatica(from, u) {
+  if (!u) return null
+  if (u.negocioId || u.numeroCaso) return null
+  if (![STAGES.INICIO, STAGES.AREA].includes(u.stage)) return null
+
+  console.log("🔁 Verificando retomada para:", from)
+  const contato = await hsBuscarPorPhone(getTelefoneContato(from, u))
+  if (!contato?.id) return null
+
+  console.log("Contato encontrado:", contato.id)
+  const negocioId = await hsBuscarNegocioAbertoDoContato(contato.id)
+  if (!negocioId) return null
+
+  console.log("Negócio aberto encontrado:", negocioId)
+  u.contatoId = contato.id
+  u.negocioId = negocioId
+  u.nome = u.nome || contato.properties?.firstname || u.nomeWA
+  u.numeroCaso = u.numeroCaso || contato.properties?.numero_caso || "Em andamento"
+  u.area = u.area || contato.properties?.area_juridica || "Atendimento em andamento"
+  u.stage = STAGES.RETOMADA_AUTOMATICA
+
+  return {
+    texto: "Que bom que você voltou 😊\nQuer continuar seu atendimento de onde parou?",
+    opcoes: [
+      { id: "ret_auto_continuar", title: "Continuar atendimento" },
+      { id: "ret_auto_menu", title: "Menu do cliente" },
+      { id: "m_encerrar", title: "Encerrar" }
+    ]
+  }
 }
 
 async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
@@ -1968,6 +2015,9 @@ async function processar(from, nomeWA, text, msgObj) {
 
   const respostaRetomada = processarRetomadaOuReinicio(from, u, text)
   if (respostaRetomada) return respostaRetomada
+
+  const respostaRetomadaAutomatica = await verificarRetomadaAutomatica(from, u)
+  if (respostaRetomadaAutomatica) return respostaRetomadaAutomatica
 
   const respostaMidia = await processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc)
   if (respostaMidia) return respostaMidia
