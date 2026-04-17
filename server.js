@@ -40,6 +40,7 @@ const STAGES = {
   SUGESTAO_FLUXO_OUTRO: "sugestao_fluxo_outro",
   EXPLICAR_TUDO_OFERTA: "explicar_tudo_oferta",
   AUDIO_FLUXO_CONFIRMA: "audio_fluxo_confirma",
+  CONFIRMAR_ENTRADA: "confirmar_entrada",
   CONFIRMACAO: "confirmacao",
   MENU_CORRECAO: "menu_correcao",
   CORRIGIR_VALOR: "corrigir_valor",
@@ -104,6 +105,7 @@ function novoUsuario(nomeWA) {
     _sugestaoFluxo: null,
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
+    _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
@@ -166,6 +168,9 @@ function hidratarUsuarioPersistido(data) {
   hidratado._sugestaoFluxo = hidratado._sugestaoFluxo || null
   hidratado._proximoStageAposDescricao = hidratado._proximoStageAposDescricao || null
   hidratado._proximaPerguntaAposDescricao = hidratado._proximaPerguntaAposDescricao || null
+  hidratado._entradaPendenteTipo = hidratado._entradaPendenteTipo || null
+  hidratado._entradaPendenteValor = hidratado._entradaPendenteValor || null
+  hidratado._entradaPendenteOrigem = hidratado._entradaPendenteOrigem || null
   hidratado._audioFluxoTexto = hidratado._audioFluxoTexto || null
   hidratado._audioFluxoAcao = hidratado._audioFluxoAcao || null
   hidratado._audioFluxoResposta = hidratado._audioFluxoResposta || null
@@ -414,6 +419,7 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     _sugestaoFluxo: null,
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
+    _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
     _regiao: null, _descTemp: null,
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
     _descOrigemStage: null,
@@ -436,6 +442,93 @@ function deveAtivarModoDigitando(payload) {
     texto.includes("digite sua mensagem ou envie um audio agora") ||
     texto.includes("descreva brevemente")
   )
+}
+
+function enviarOpcoesPadrao(_from, modo = "documentos") {
+  if (modo === "retorno_docs") {
+    return [
+      { id: "m_docs", title: "📎 Enviar documentos" },
+      { id: "m_inicio", title: "Menu do cliente" },
+      { id: "m_encerrar", title: "👋 Encerrar" }
+    ]
+  }
+  return [
+    { id: "docs_depois", title: "⏭️ Enviar depois" },
+    { id: "m_inicio", title: "Menu do cliente" },
+    { id: "m_encerrar", title: "👋 Encerrar" }
+  ]
+}
+
+function formatarTelefoneExibicao(numero) {
+  const n = String(numero || "").replace(/\D/g, "")
+  if (n.length === 11) return `(${n.slice(0,2)}) ${n.slice(2,7)}-${n.slice(7)}`
+  if (n.length === 10) return `(${n.slice(0,2)}) ${n.slice(2,6)}-${n.slice(6)}`
+  return n
+}
+
+function limparTextoSomenteLetras(texto) {
+  return String(texto || "")
+    .replace(/[^A-Za-zÀ-ÿ\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function prepararConfirmacaoEntrada(from, u, tipo, valor, origem) {
+  u._entradaPendenteTipo = tipo
+  u._entradaPendenteValor = valor
+  u._entradaPendenteOrigem = origem
+  u.stage = STAGES.CONFIRMAR_ENTRADA
+  iniciarTimer(from)
+  const label = tipo === "telefone" ? formatarTelefoneExibicao(valor) : valor
+  return {
+    texto: `Você informou: ${label}\nEstá correto?`,
+    opcoes: [
+      { id: "entrada_ok", title: "✅ Confirmar" },
+      { id: "entrada_corrigir", title: "✏️ Corrigir" }
+    ]
+  }
+}
+
+function limparEntradaPendente(u) {
+  u._entradaPendenteTipo = null
+  u._entradaPendenteValor = null
+  u._entradaPendenteOrigem = null
+}
+
+function resetarSessaoAtendimento(u) {
+  const base = novoUsuario(u.nomeWA || "Cliente")
+  Object.assign(u, base)
+  agendarPersistenciaUsers()
+}
+
+function responderEncerramento(u) {
+  limparTimer(u)
+  resetarSessaoAtendimento(u)
+  return {
+    texto: "Perfeito! Seu atendimento foi encerrado. Quando quiser, é só me chamar novamente 🙂",
+    opcoes: null,
+    registrarPergunta: false
+  }
+}
+
+function stageAceitaTextoLivre(stage) {
+  return new Set([
+    "coleta_tel_outro",
+    "coleta_tel_wpp",
+    "coleta_tel_wpp_contato",
+    "coleta_nome",
+    "coleta_cidade_regiao",
+    "coleta_cidade",
+    "__coleta_nome_legado__",
+    "__coleta_cidade_legado__",
+    "trab_out_desc",
+    "out_desc",
+    STAGES.COLETA_DESC,
+    STAGES.COLETA_DESC_AUDIO,
+    STAGES.AGUARDANDO_URGENTE,
+    STAGES.CORRIGIR_VALOR,
+    STAGES.CONFIRMAR_ENTRADA
+  ]).has(stage)
 }
 
 function telaArea() {
@@ -1122,7 +1215,8 @@ function menuCliente(u) {
       { id: "m_status",  title: "📊 Status do caso" },
       { id: "m_docs",    title: "📎 Enviar documentos" },
       { id: "m_adv",     title: "👨‍⚖️ Falar c/ advogado" },
-      { id: "m_novocaso", title: "➕ Novo caso" }
+      { id: "m_novocaso", title: "➕ Novo caso" },
+      { id: "m_encerrar", title: "👋 Encerrar" }
     ]
   }
 }
@@ -1136,7 +1230,7 @@ function telaConcluido(u) {
   const nome1 = (u.nome || u.nomeWA).split(" ")[0]
   return {
     texto: `🎉 *Muito bem, ${nome1}!*\n\nTodos os documentos foram enviados com sucesso! Nossa equipe já pode analisar seu caso com prioridade.\n\nEntraremos em contato em breve pelo WhatsApp. 💬\n\n📁 Caso: *${u.numeroCaso}*\n⏱️ Retorno em até *2 dias úteis*.`,
-    opcoes: [{ id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_status", title:"📊 Status" }, { id:"m_inicio", title:"Menu principal" }]
+    opcoes: [{ id:"m_adv", title:"👨‍⚖️ Falar c/ advogado" }, { id:"m_status", title:"📊 Status" }, { id:"m_inicio", title:"Menu do cliente" }, { id:"m_encerrar", title:"👋 Encerrar" }]
   }
 }
 
@@ -1166,17 +1260,13 @@ function telaEnvioDoc(u) {
     texto += "\n\n💡 *Se o seu CPF já aparece no RG ou CNH, pode pular este documento.*"
     return {
       texto,
-      opcoes: [
-        { id:"doc_cpf_skip", title:"✅ Já está no RG" },
-        { id:"docs_depois",  title:"⏭️ Enviar depois" },
-        { id:"m_inicio",     title:"Menu principal" }
-      ]
+      opcoes: enviarOpcoesPadrao(null)
     }
   }
 
   return {
     texto,
-    opcoes: [{ id:"docs_depois", title:"⏭️ Enviar depois" }, { id:"m_inicio", title:"Menu principal" }]
+    opcoes: enviarOpcoesPadrao(null)
   }
 }
 
@@ -1736,7 +1826,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
       const docs = getDocumentos(u.area, u.tipo || u.situacao)
       return responderComTimer(from, {
         texto: `🎉 *Cadastro realizado com sucesso!*\n\n📄 *Número do caso:* \`${numeroCaso}\`\n\nUm especialista em *${u.area}* vai analisar sua solicitação e entrará em contato em breve pelo WhatsApp. 💬\n\n⏱️ Prazo estimado: *2 dias úteis*\n\n---\n📋 *Documentos que podem ser necessários:*\n${docs}\n\nVocê pode enviar agora ou depois — fica à vontade!`,
-        opcoes: [{ id: "m_docs", title: "📎 Enviar documentos" }, { id: "m_inicio", title: "Menu principal" }, { id: "m_encerrar", title: "👋 Encerrar" }]
+        opcoes: [{ id: "m_docs", title: "📎 Enviar documentos" }, { id: "m_inicio", title: "Menu do cliente" }, { id: "m_encerrar", title: "👋 Encerrar" }]
       })
     }
     if (text === "conf_corrigir") {
@@ -1797,6 +1887,83 @@ async function processar(from, nomeWA, text, msgObj) {
   const respostaUrgenciaOuCorrecao = await processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio)
   if (respostaUrgenciaOuCorrecao) return respostaUrgenciaOuCorrecao
 
+  if (text === "m_encerrar") {
+    return responderEncerramento(u)
+  }
+
+  if (!ehAudio && !ehDoc && text && u.lastPerguntaPayload?.opcoes?.length && !stageAceitaTextoLivre(u.stage)) {
+    const opcoesValidas = new Set((u.lastPerguntaPayload.opcoes || []).map(o => o.id))
+    if (!opcoesValidas.has(text)) {
+      const respLivre = GROQ_KEY ? await respostaIA(u, text) : null
+      return responderComTimer(from, {
+        texto: `${respLivre ? respLivre + "\n\n" : ""}Entendi 👍 Vamos continuar de onde paramos.\n\n${u.lastPerguntaPayload.texto}`,
+        opcoes: u.lastPerguntaPayload.opcoes
+      })
+    }
+  }
+
+  if (u.stage === STAGES.CONFIRMAR_ENTRADA) {
+    if (text === "entrada_corrigir") {
+      const origem = u._entradaPendenteOrigem
+      const tipo = u._entradaPendenteTipo
+      limparEntradaPendente(u)
+      u.stage = origem
+      iniciarTimer(from)
+      if (tipo === "nome") return { texto: origem === "coleta_tel_outro" ? "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?" : "✍️ Qual é o seu *nome completo*?", opcoes: null }
+      if (tipo === "telefone") return { texto: origem === "coleta_tel_wpp_contato" ? "Qual é o WhatsApp com DDD da pessoa que será atendida?" : `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
+      if (tipo === "cidade") return { texto: origem === "coleta_cidade_regiao" ? "Digite a cidade onde você mora" : "📍 Em qual *cidade* você mora?", opcoes: null }
+    }
+    if (text === "entrada_ok") {
+      const origem = u._entradaPendenteOrigem
+      const tipo = u._entradaPendenteTipo
+      const valor = u._entradaPendenteValor
+      limparEntradaPendente(u)
+      if (tipo === "nome") {
+        u.nome = valor
+        u.nomeConfirmado = true
+        if (origem === "coleta_tel_outro") {
+          u.stage = "coleta_tel_wpp"; iniciarTimer(from)
+          return { texto: `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
+        }
+        u.stage = "coleta_regiao"; iniciarTimer(from)
+        return telaRegioes()
+      }
+      if (tipo === "telefone") {
+        u.whatsappContato = valor
+        if (origem === "coleta_tel_wpp_contato") {
+          u.stage = "coleta_nome"; iniciarTimer(from)
+          return { texto: "✍️ Qual é o *nome completo* da pessoa que será atendida?", opcoes: null }
+        }
+        u.stage = "area"; iniciarTimer(from)
+        return {
+          texto: `Anotado! 👍\n\nAgora, qual área precisa de ajuda para *${u.nome}*?`,
+          opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
+        }
+      }
+      if (tipo === "cidade") {
+        u.cidade = valor
+        if (origem === "coleta_cidade_regiao") {
+          u.stage = "coleta_contrib_regiao_v2"; iniciarTimer(from)
+          return { texto: "Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
+        }
+        if (origem === "__coleta_cidade_legado__") {
+          u.stage = "coleta_regiao"; iniciarTimer(from)
+          return telaRegioes()
+        }
+        u.stage = "coleta_contrib"; iniciarTimer(from)
+        return { texto: "💼 Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"❌ Nunca" }, { id:"col_c2", title:"⏰ Pouco tempo" }, { id:"col_c3", title:"📅 Mais de 1 ano" }, { id:"col_c4", title:"🏆 Muitos anos" }] }
+      }
+    }
+    iniciarTimer(from)
+    return {
+      texto: "Use uma das opções abaixo para confirmar ou corrigir.",
+      opcoes: [
+        { id: "entrada_ok", title: "✅ Confirmar" },
+        { id: "entrada_corrigir", title: "✏️ Corrigir" }
+      ]
+    }
+  }
+
   // NOVO CASO CONFIRMA — verificar se o telefone é do cliente
   if (u.stage === "novo_caso_confirma") {
     if (text === "nc_meu") {
@@ -1818,21 +1985,21 @@ async function processar(from, nomeWA, text, msgObj) {
     }
   }
   if (u.stage === "coleta_tel_outro" && text) {
-    u.nome = formatarNome(text.trim()); u.nomeConfirmado = true; u.stage = "coleta_tel_wpp"; iniciarTimer(from)
-    return { texto: `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
+    const nomeLimpo = formatarNome(limparTextoSomenteLetras(text))
+    if (!nomeLimpo || nomeLimpo.length < 3) return responderComTimer(from, { texto: "Informe um nome válido usando apenas letras e espaços.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "nome", nomeLimpo, "coleta_tel_outro")
   }
   if (u.stage === "coleta_tel_wpp" && text) {
-    u.whatsappContato = text.replace(/\D/g, ""); u.stage = "area"; iniciarTimer(from)
-    return {
-      texto: `Anotado! 👍\n\nAgora, qual área precisa de ajuda para *${u.nome}*?`,
-      opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
-    }
+    const telefone = text.replace(/\D/g, "")
+    if (![10,11].includes(telefone.length)) return responderComTimer(from, { texto: "Informe um WhatsApp válido com DDD, contendo 10 ou 11 dígitos.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "telefone", telefone, "coleta_tel_wpp")
   }
 
   // COLETA
   if (u.stage === "coleta_nome" && text) {
-    u.nome = formatarNome(text.trim()); u.nomeConfirmado = true; u.stage = "coleta_regiao"; iniciarTimer(from)
-    return telaRegioes()
+    const nomeLimpo = formatarNome(limparTextoSomenteLetras(text))
+    if (!nomeLimpo || nomeLimpo.length < 3) return responderComTimer(from, { texto: "Informe um nome válido usando apenas letras e espaços.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "nome", nomeLimpo, "coleta_nome")
   }
   if (u.stage === "coleta_regiao") {
     if (!REGIOES[text]) { iniciarTimer(from); return telaRegioes() }
@@ -1846,8 +2013,9 @@ async function processar(from, nomeWA, text, msgObj) {
     return { texto: "Digite a cidade onde você mora", opcoes: null }
   }
   if (u.stage === "coleta_cidade_regiao" && text) {
-    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_contrib_regiao_v2"; iniciarTimer(from)
-    return { texto: "Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
+    const cidadeLimpa = formatarCidade(limparTextoSomenteLetras(text))
+    if (!cidadeLimpa || cidadeLimpa.length < 2) return responderComTimer(from, { texto: "Informe uma cidade válida usando apenas letras e espaços.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "cidade", cidadeLimpa, "coleta_cidade_regiao")
   }
   if (u.stage === "coleta_contrib_regiao_v2") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
@@ -1887,16 +2055,19 @@ async function processar(from, nomeWA, text, msgObj) {
     return { texto: "🏥 Você já recebe algum benefício do INSS?", opcoes: [{ id: "col_b1", title: "✅ Sim, recebo" }, { id: "col_b2", title: "❌ Não recebo" }] }
   }
   if (u.stage === "coleta_cidade" && text) {
-    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_contrib"; iniciarTimer(from)
-    return { texto: "💼 Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"❌ Nunca" }, { id:"col_c2", title:"⏰ Pouco tempo" }, { id:"col_c3", title:"📅 Mais de 1 ano" }, { id:"col_c4", title:"🏆 Muitos anos" }] }
+    const cidadeLimpa = formatarCidade(limparTextoSomenteLetras(text))
+    if (!cidadeLimpa || cidadeLimpa.length < 2) return responderComTimer(from, { texto: "Informe uma cidade válida usando apenas letras e espaços.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "cidade", cidadeLimpa, "coleta_cidade")
   }
   if (u.stage === "__coleta_nome_legado__" && text) {
-    u.nome = formatarNome(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
-    return { texto: "📍 Em qual *cidade* você mora?", opcoes: null }
+    const nomeLimpo = formatarNome(limparTextoSomenteLetras(text))
+    if (!nomeLimpo || nomeLimpo.length < 3) return responderComTimer(from, { texto: "Informe um nome válido usando apenas letras e espaços.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "nome", nomeLimpo, "coleta_nome")
   }
   if (u.stage === "__coleta_cidade_legado__" && text) {
-    u.cidade = formatarCidade(text.trim()); u.stage = "coleta_regiao"; iniciarTimer(from)
-    return telaRegioes()
+    const cidadeLimpa = formatarCidade(limparTextoSomenteLetras(text))
+    if (!cidadeLimpa || cidadeLimpa.length < 2) return responderComTimer(from, { texto: "Informe uma cidade válida usando apenas letras e espaços.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "cidade", cidadeLimpa, "__coleta_cidade_legado__")
   }
   if (u.stage === "__coleta_regiao_legado__") {
     if (!REGIOES[text]) { iniciarTimer(from); return telaRegioes() }
@@ -1992,8 +2163,9 @@ async function processar(from, nomeWA, text, msgObj) {
     return avancarAposTelefoneConfirmado(from, u)
   }
   if (u.stage === "coleta_tel_wpp_contato" && text) {
-    u.whatsappContato = text.replace(/\D/g, ""); u.stage = "coleta_nome"; iniciarTimer(from)
-    return { texto: "✍️ Qual é o *nome completo* da pessoa que será atendida?", opcoes: null }
+    const telefone = text.replace(/\D/g, "")
+    if (![10,11].includes(telefone.length)) return responderComTimer(from, { texto: "Informe um WhatsApp válido com DDD, contendo 10 ou 11 dígitos.", opcoes: null })
+    return prepararConfirmacaoEntrada(from, u, "telefone", telefone, "coleta_tel_wpp_contato")
   }
 
   if (u.stage === STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO) {
@@ -2388,7 +2560,7 @@ async function processar(from, nomeWA, text, msgObj) {
         "Nossa equipe está avaliando seu caso com atenção. Assim que houver novidades, entraremos em contato pelo WhatsApp. 💬","",
         "⏱️ Prazo estimado: até *2 dias úteis*."
       ].join("\n")
-      return { texto: txt, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Advogado" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: txt, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_adv", title:"👨‍⚖️ Advogado" }, { id:"m_inicio", title:"Menu do cliente" }, { id:"m_encerrar", title:"👋 Encerrar" }] }
     }
     if (text === "doc_cpf_skip") {
       // Pular CPF — já está no RG
@@ -2440,11 +2612,11 @@ async function processar(from, nomeWA, text, msgObj) {
     if (text === "docs_depois") {
       const nome1 = (u.nome || u.nomeWA).split(" ")[0]
       iniciarTimer(from)
-      return { texto: `Sem problema, ${nome1}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em *"Enviar documentos"*.\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_status", title:"Status" }, { id:"m_inicio", title:"Menu principal" }] }
+      return { texto: `Sem problema, ${nome1}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em *"Enviar documentos"*.\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: enviarOpcoesPadrao(from, "retorno_docs") }
     }
     if (text === "m_adv") {
       iniciarTimer(from)
-      return { texto: "👨‍⚖️ *Falar com advogado*\n\nComo prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "📅 Agendar ligação" }, { id: "adv_urg", title: "⚠️ Mensagem urgente" }, { id: "m_inicio", title: "🏠 Menu principal" }] }
+      return { texto: "👨‍⚖️ *Falar com advogado*\n\nComo prefere ser atendido?", opcoes: [{ id: "adv_ag", title: "📅 Agendar ligação" }, { id: "adv_urg", title: "⚠️ Mensagem urgente" }, { id: "m_inicio", title: "Menu do cliente" }, { id: "m_encerrar", title: "👋 Encerrar" }] }
     }
     if (text === "adv_ag") {
       await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
@@ -2455,7 +2627,8 @@ async function processar(from, nomeWA, text, msgObj) {
         opcoes: [
           { id: "adv_urg",  title: "📩 Mensagem urgente" },
           { id: "m_status", title: "📊 Status do caso" },
-          { id: "m_inicio", title: "Menu principal" }
+            { id: "m_inicio", title: "Menu do cliente" },
+            { id: "m_encerrar", title: "👋 Encerrar" }
         ]
       }
     }
@@ -2481,9 +2654,7 @@ async function processar(from, nomeWA, text, msgObj) {
       }
     }
     if (text === "m_encerrar") {
-      limparTimer(u)
-      const nome1 = (u.nome || u.nomeWA).split(" ")[0]
-      return { texto: `Foi um prazer te atender, ${nome1}! 😊\n\nSeu caso está registrado sob o número *${u.numeroCaso}*.\n\nSempre que precisar, é só mandar uma mensagem. Até logo! 👋`, opcoes: null }
+      return responderEncerramento(u)
     }
     if (text === "m_inicio") {
       iniciarTimer(from); return menuCliente(u)
