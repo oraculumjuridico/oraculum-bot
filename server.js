@@ -107,6 +107,7 @@ function novoUsuario(nomeWA) {
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
+    modoDigitando: false,
     timer: null, ultimaMsg: Date.now()
   }
 }
@@ -172,6 +173,7 @@ function hidratarUsuarioPersistido(data) {
   hidratado._urgenteAudioMime = hidratado._urgenteAudioMime || null
   hidratado._urgenteAudioNome = hidratado._urgenteAudioNome || null
   hidratado._urgenteAudioTexto = hidratado._urgenteAudioTexto || null
+  hidratado.modoDigitando = Boolean(hidratado.modoDigitando)
   return hidratado
 }
 
@@ -416,9 +418,24 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
-    _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null
+    _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
+    modoDigitando: false
   })
   agendarPersistenciaUsers()
+}
+
+function deveAtivarModoDigitando(payload) {
+  const texto = String(payload?.texto || "").toLowerCase()
+  if (!texto) return false
+  return (
+    texto.includes("me explique o que está acontecendo") ||
+    texto.includes("me explique o que est") ||
+    texto.includes("pode digitar ou enviar um áudio") ||
+    texto.includes("pode digitar ou enviar um audio") ||
+    texto.includes("digite sua mensagem ou envie um áudio agora") ||
+    texto.includes("digite sua mensagem ou envie um audio agora") ||
+    texto.includes("descreva brevemente")
+  )
 }
 
 function telaArea() {
@@ -465,20 +482,33 @@ function iniciarTimer(from) {
   limparTimer(u)
   // Se cliente está gravando áudio ou descrevendo o caso, dar mais tempo antes de interromper
   const estaDescrevendo = u.stage === "coleta_desc_audio" || u.stage === "coleta_desc"
-  const t1 = estaDescrevendo ? 5 * 60 * 1000 : 2 * 60 * 1000
+  const t1Base = estaDescrevendo ? 5 * 60 * 1000 : 5 * 60 * 1000
+  const t1 = t1Base + (u.modoDigitando ? 3 * 60 * 1000 : 0)
   u.timer = setTimeout(async () => {
     if (!users[from]) return
+    if (u.modoDigitando) {
+      console.log("Usuário em modo digitação, não interromper")
+      u.modoDigitando = false
+      iniciarTimer(from)
+      return
+    }
     await enviar(from, "Oi 😊, fiquei te esperando. Quer continuar de onde parou ou recomeçar?", [
       { id: "cont_retomar", title: "▶️ Continuar" },
       { id: "recomecar", title: "🔄 Recomeçar" }
     ], false)
     u.timer = setTimeout(async () => {
       if (!users[from]) return
+      if (u.modoDigitando) {
+        console.log("Usuário em modo digitação, não interromper")
+        u.modoDigitando = false
+        iniciarTimer(from)
+        return
+      }
       await capturarLeadIncompleto(from, u)
       await enviar(from, "Vou pausar por agora, tudo bem? Quando quiser, é só me chamar por aqui. 😊", null, false)
       limparDadosCasoAtual(u)
       agendarPersistenciaUsers()
-    }, 3 * 60 * 1000)
+    }, 5 * 60 * 1000)
   }, t1)
 }
 
@@ -591,6 +621,48 @@ async function hsAssociar(cId, nId) {
   } catch (e) { logErro("hubspot", "associar: " + (e.response?.data?.message || e.message)) }
 }
 
+// Estágios considerados "finalizados" no HubSpot — negócios nesses estágios são ignorados
+const HS_STAGES_FINALIZADOS = new Set([HS_STAGE.FINAL])
+
+async function hsBuscarNegociosDoContato(contactId) {
+  try {
+    const res = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}/associations/deals`,
+      { headers: HS() }
+    )
+    const dealIds = (res.data?.results || []).map(r => r.id)
+    return dealIds
+  } catch (e) {
+    logErro("hubspot", "buscarNegociosDoContato: " + (e.response?.data?.message || e.message))
+    return []
+  }
+}
+
+async function hsBuscarNegocioAbertoDoContato(contactId) {
+  try {
+    const dealIds = await hsBuscarNegociosDoContato(contactId)
+    if (!dealIds.length) return null
+
+    for (const dealId of dealIds) {
+      try {
+        const res = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=dealstage,dealname,closedate`,
+          { headers: HS() }
+        )
+        const stage = res.data?.properties?.dealstage
+        if (stage && !HS_STAGES_FINALIZADOS.has(stage)) {
+          console.log("Negócio existente encontrado:", dealId)
+          return dealId
+        }
+      } catch {}
+    }
+    return null
+  } catch (e) {
+    logErro("hubspot", "buscarNegocioAberto: " + (e.response?.data?.message || e.message))
+    return null
+  }
+}
+
 async function hsAtualizarEtapaNegocio(dealId, stageId) {
   if (!dealId) return
   try {
@@ -607,6 +679,7 @@ async function hsMoverStage(nId, stage) {
 
 async function capturarLeadIncompleto(from, u) {
   if (!deveCapturarLeadIncompleto(u)) return null
+  console.log("CAPTURANDO LEAD INCOMPLETO:", from)
 
   const telefone = getTelefoneContato(from, u)
   const area = u.area || "Atendimento inicial"
@@ -622,6 +695,11 @@ async function capturarLeadIncompleto(from, u) {
         numeroCaso: null,
         pastaDriveLink: null
       })
+    }
+
+    if (u.negocioId) {
+      console.log("Lead já possui negócio, não criar novo:", u.negocioId)
+      return null
     }
 
     const negocioId = await hsCriarNegocio({
@@ -975,11 +1053,26 @@ async function finalizarCadastro(from, u) {
   const existente = await hsBuscarPorPhone(telefoneContato)
   let contatoId   = existente?.id || null
   if (!contatoId) contatoId = await hsCriarContato(telefoneContato, u)
-  else console.log(`[HUBSPOT] Contato existente: ${contatoId}`)
+  else console.log("Contato encontrado no HubSpot:", contatoId)
   u.contatoId = contatoId
 
-  const negocioId = await hsCriarNegocio(u)
-  u.negocioId     = negocioId
+  let negocioId = u.negocioId || null
+  if (!negocioId && contatoId) {
+    // Verificação externa: buscar negócio em aberto no HubSpot mesmo sem sessão ativa
+    const negocioExistente = await hsBuscarNegocioAbertoDoContato(contatoId)
+    if (negocioExistente) {
+      negocioId = negocioExistente
+      u.negocioId = negocioId
+      console.log("Negócio existente encontrado:", negocioId)
+    }
+  }
+  if (!negocioId) {
+    console.log("Nenhum negócio encontrado, criando novo")
+    negocioId = await hsCriarNegocio(u)
+    u.negocioId = negocioId
+  } else {
+    console.log("Negócio já existe, evitando duplicidade:", negocioId)
+  }
   if (contatoId && negocioId) await hsAssociar(contatoId, negocioId)
 
   if (contatoId) {
@@ -1685,6 +1778,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
 async function processar(from, nomeWA, text, msgObj) {
   const u    = getUser(from, nomeWA)
   u.ultimaMsg = Date.now()
+  u.modoDigitando = false
   limparTimer(u)
 
   const tipo    = msgObj?.type
@@ -2433,6 +2527,10 @@ app.post("/webhook", async (req, res) => {
     const nomeWA = value?.contacts?.[0]?.profile?.name || "Cliente"
     const text   = (message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "").trim()
     const resposta = await processar(from, nomeWA, text, message)
+    if (deveAtivarModoDigitando(resposta) && users[from]) {
+      users[from].modoDigitando = true
+      iniciarTimer(from)
+    }
     const { texto, opcoes } = resposta
     registrarUltimaPergunta(users[from], resposta)
     agendarPersistenciaUsers()
