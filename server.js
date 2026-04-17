@@ -107,6 +107,7 @@ function novoUsuario(nomeWA) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    _retomadaEhLeadFrio: false,
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
@@ -172,6 +173,7 @@ function hidratarUsuarioPersistido(data) {
   hidratado._entradaPendenteTipo = hidratado._entradaPendenteTipo || null
   hidratado._entradaPendenteValor = hidratado._entradaPendenteValor || null
   hidratado._entradaPendenteOrigem = hidratado._entradaPendenteOrigem || null
+  hidratado._retomadaEhLeadFrio = Boolean(hidratado._retomadaEhLeadFrio)
   hidratado._audioFluxoTexto = hidratado._audioFluxoTexto || null
   hidratado._audioFluxoAcao = hidratado._audioFluxoAcao || null
   hidratado._audioFluxoResposta = hidratado._audioFluxoResposta || null
@@ -421,6 +423,7 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    _retomadaEhLeadFrio: false,
     _regiao: null, _descTemp: null,
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
     _descOrigemStage: null,
@@ -748,6 +751,11 @@ async function hsBuscarNegociosDoContato(contactId) {
 }
 
 async function hsBuscarNegocioAbertoDoContato(contactId) {
+  const negocio = await hsBuscarNegocioAbertoInfoDoContato(contactId)
+  return negocio?.id || null
+}
+
+async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
   try {
     const dealIds = await hsBuscarNegociosDoContato(contactId)
     if (!dealIds.length) return null
@@ -761,7 +769,11 @@ async function hsBuscarNegocioAbertoDoContato(contactId) {
         const stage = res.data?.properties?.dealstage
         if (stage && !HS_STAGES_FINALIZADOS.has(stage)) {
           console.log("Negócio existente encontrado:", dealId)
-          return dealId
+          return {
+            id: dealId,
+            stageId: stage,
+            dealname: res.data?.properties?.dealname || null
+          }
         }
       } catch {}
     }
@@ -1625,12 +1637,25 @@ async function classificarAcaoAudioFluxo(u, texto) {
 
 function processarRetomadaOuReinicio(from, u, text) {
   if (text === "ret_auto_continuar") {
+    if (u._retomadaEhLeadFrio) {
+      u._retomadaEhLeadFrio = false
+      const ultimaPergunta = retomarUltimaPergunta(u)
+      iniciarTimer(from)
+      if (ultimaPergunta) return ultimaPergunta
+      return { ...telaArea(), perguntaId: "area" }
+    }
     u.stage = STAGES.CLIENTE
     iniciarTimer(from)
     return menuCliente(u)
   }
 
   if (text === "ret_auto_menu") {
+    if (u._retomadaEhLeadFrio) {
+      u._retomadaEhLeadFrio = false
+      u.stage = STAGES.AREA
+      iniciarTimer(from)
+      return { ...telaArea(), perguntaId: "area" }
+    }
     u.stage = STAGES.CLIENTE
     iniciarTimer(from)
     return menuCliente(u)
@@ -1667,16 +1692,28 @@ async function verificarRetomadaAutomatica(from, u) {
   if (!contato?.id) return null
 
   console.log("Contato encontrado:", contato.id)
-  const negocioId = await hsBuscarNegocioAbertoDoContato(contato.id)
-  if (!negocioId) return null
+  const negocio = await hsBuscarNegocioAbertoInfoDoContato(contato.id)
+  if (!negocio?.id) return null
 
-  console.log("Negócio aberto encontrado:", negocioId)
+  console.log("Negócio aberto encontrado:", negocio.id)
   u.contatoId = contato.id
-  u.negocioId = negocioId
+  u.negocioId = negocio.id
   u.nome = u.nome || contato.properties?.firstname || u.nomeWA
   u.numeroCaso = u.numeroCaso || contato.properties?.numero_caso || "Em andamento"
   u.area = u.area || contato.properties?.area_juridica || "Atendimento em andamento"
   u.stage = STAGES.RETOMADA_AUTOMATICA
+  u._retomadaEhLeadFrio = negocio.stageId === HS_STAGE.LEAD
+
+  if (u._retomadaEhLeadFrio) {
+    return {
+      texto: "Que bom que você voltou 😊\nVi que você iniciou um atendimento, mas não concluiu.\n\nComo prefere continuar?",
+      opcoes: [
+        { id: "ret_auto_continuar", title: "Continuar atendimento" },
+        { id: "ret_auto_menu", title: "Menu principal" },
+        { id: "m_encerrar", title: "Encerrar" }
+      ]
+    }
+  }
 
   return {
     texto: "Que bom que você voltou 😊\nQuer continuar seu atendimento de onde parou?",
