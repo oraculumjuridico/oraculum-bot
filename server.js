@@ -560,7 +560,7 @@ function retomarUltimaPergunta(u) {
 
 function deveCapturarLeadIncompleto(u) {
   if (!u || u.leadIncompletoCapturado) return false
-  if (u.numeroCaso || u.negocioId) return false
+  if (u.numeroCaso) return false
   if (["inicio", "inicio_retorno", "cliente"].includes(u.stage)) return false
   return Boolean(u.area || u.nomeConfirmado || u.whatsappContato || u.telefoneEhDoCliente !== null)
 }
@@ -592,13 +592,11 @@ function iniciarTimer(from) {
     u.timer = setTimeout(async () => {
       if (!users[from]) return
       if (u.modoDigitando) {
-        console.log("Usuário em modo digitação, não interromper")
+        console.log("Usuário ainda marcado em modo digitação no abandono final, seguindo com captura:", from)
         u.modoDigitando = false
-        iniciarTimer(from)
-        return
       }
-      await capturarLeadIncompleto(from, u)
       await enviar(from, "Vou pausar por agora, tudo bem? Quando quiser, é só me chamar por aqui. 😊", null, false)
+      await capturarLeadIncompleto(from, u)
       limparDadosCasoAtual(u)
       agendarPersistenciaUsers()
     }, 5 * 60 * 1000)
@@ -770,40 +768,89 @@ async function hsMoverStage(nId, stage) {
   return hsAtualizarEtapaNegocio(nId, stage)
 }
 
+function detalharErroHubspot(e) {
+  return JSON.stringify({
+    message: e?.message || null,
+    status: e?.response?.status || null,
+    data: e?.response?.data || null,
+    stack: e?.stack || null
+  })
+}
+
 async function capturarLeadIncompleto(from, u) {
+  console.log("🔥 capturarLeadIncompleto DISPARADA:", from)
   if (!deveCapturarLeadIncompleto(u)) return null
-  console.log("CAPTURANDO LEAD INCOMPLETO:", from)
 
   const telefone = getTelefoneContato(from, u)
   const area = u.area || "Atendimento inicial"
 
   try {
-    const existente = await hsBuscarPorPhone(telefone)
-    let contatoId = existente?.id || null
+    let contatoId = u.contatoId || null
+    let negocioId = null
+
     if (!contatoId) {
-      contatoId = await hsCriarContato(telefone, {
-        ...u,
-        nome: u.nome || u.nomeWA || "Lead incompleto",
-        area,
-        numeroCaso: null,
-        pastaDriveLink: null
-      })
+      console.log("Criando contato...")
+      let existente = null
+      try {
+        existente = await hsBuscarPorPhone(telefone)
+      } catch (e) {
+        console.error("Erro ao buscar contato no HubSpot:", detalharErroHubspot(e))
+      }
+      contatoId = existente?.id || null
+    } else {
+      console.log("Contato já vinculado na sessão:", contatoId)
     }
 
-    if (u.negocioId) {
-      console.log("Lead já possui negócio, não criar novo:", u.negocioId)
-      return null
+    if (!contatoId) {
+      try {
+        contatoId = await hsCriarContato(telefone, {
+          ...u,
+          nome: u.nome || u.nomeWA || "Lead incompleto",
+          area,
+          numeroCaso: null,
+          pastaDriveLink: null
+        })
+      } catch (e) {
+        console.error("Erro ao criar contato no HubSpot:", detalharErroHubspot(e))
+        throw e
+      }
+    } else {
+      console.log("Contato reutilizado:", contatoId)
+    }
+    u.contatoId = contatoId
+
+    if (contatoId) {
+      try {
+        negocioId = await hsBuscarNegocioAbertoDoContato(contatoId)
+      } catch (e) {
+        console.error("Erro ao buscar negócio aberto no HubSpot:", detalharErroHubspot(e))
+      }
     }
 
-    const negocioId = await hsCriarNegocio({
-      ...u,
-      nome: u.nome || u.nomeWA || "Lead incompleto",
-      area,
-      numeroCaso: "LEAD-INCOMPLETO"
-    }, {
-      stage: HS_STAGE.LEAD,
-      dealname: `${u.nome || u.nomeWA || "Lead incompleto"} — ${area} — Lead recebido`
-    })
+    if (!negocioId && u.negocioId) {
+      console.log("Negócio presente na sessão sem confirmação no HubSpot, recriando:", u.negocioId)
+    }
+
+    if (!negocioId) {
+      console.log("Criando negócio...")
+      try {
+        negocioId = await hsCriarNegocio({
+          ...u,
+          nome: u.nome || u.nomeWA || "Lead incompleto",
+          area,
+          numeroCaso: "LEAD-INCOMPLETO"
+        }, {
+          stage: HS_STAGE.LEAD,
+          dealname: `${u.nome || u.nomeWA || "Lead incompleto"} — ${area} — Lead recebido`
+        })
+      } catch (e) {
+        console.error("Erro ao criar negócio no HubSpot:", detalharErroHubspot(e))
+        throw e
+      }
+    } else {
+      console.log("Negócio reutilizado:", negocioId)
+    }
+    u.negocioId = negocioId || null
 
     if (contatoId && negocioId) {
       await hsAssociar(contatoId, negocioId)
@@ -812,11 +859,14 @@ async function capturarLeadIncompleto(from, u) {
         "LEAD INCOMPLETO",
         `Lead capturado por inatividade.\nNome: ${u.nome || "Não informado"}\nTelefone: ${telefone}\nÁrea: ${u.area || "Não informada"}\nStage interno: ${u.stage}`
       )
+    } else {
+      console.log("Captura incompleta no HubSpot:", { contatoId, negocioId, from })
     }
 
     u.leadIncompletoCapturado = true
     return { contatoId, negocioId }
   } catch (e) {
+    console.error("Erro completo em capturarLeadIncompleto:", detalharErroHubspot(e))
     logErro("hubspot", "capturarLeadIncompleto: " + (e.response?.data?.message || e.message))
     return null
   }
