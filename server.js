@@ -108,12 +108,13 @@ function novoUsuario(nomeWA) {
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
     jaOfereceuRetomada: false,
+    jaIncentivouDescricao: false,
     _retomadaEhLeadFrio: false,
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
     modoDigitando: false,
-    timer: null, ultimaMsg: Date.now()
+    timer: null, timerIncentivoDescricao: null, ultimaMsg: Date.now()
   }
 }
 
@@ -128,6 +129,7 @@ function serializarUsers() {
     saida[from] = {
       ...u,
       timer: null,
+      timerIncentivoDescricao: null,
       _audioDescBuffer: null
     }
   }
@@ -156,7 +158,7 @@ function agendarPersistenciaUsers() {
 
 function hidratarUsuarioPersistido(data) {
   const base = novoUsuario(data?.nomeWA || "Cliente")
-  const hidratado = { ...base, ...data, timer: null }
+  const hidratado = { ...base, ...data, timer: null, timerIncentivoDescricao: null }
   if (!Array.isArray(hidratado.docsEntregues)) hidratado.docsEntregues = []
   if (!Array.isArray(hidratado.historiaIA)) hidratado.historiaIA = []
   if (!Array.isArray(hidratado.audiosDescCorrigidos)) hidratado.audiosDescCorrigidos = []
@@ -176,6 +178,7 @@ function hidratarUsuarioPersistido(data) {
   hidratado._entradaPendenteOrigem = hidratado._entradaPendenteOrigem || null
   hidratado.etapa = hidratado.etapa || hidratado.stage || STAGES.INICIO
   hidratado.jaOfereceuRetomada = Boolean(hidratado.jaOfereceuRetomada)
+  hidratado.jaIncentivouDescricao = Boolean(hidratado.jaIncentivouDescricao)
   hidratado._retomadaEhLeadFrio = Boolean(hidratado._retomadaEhLeadFrio)
   hidratado._audioFluxoTexto = hidratado._audioFluxoTexto || null
   hidratado._audioFluxoAcao = hidratado._audioFluxoAcao || null
@@ -401,12 +404,13 @@ function registrarUltimaPergunta(u, payload) {
   const deveSalvar = payload.opcoes?.length || payload.texto.includes("?") || u.stage !== "cliente"
   if (!deveSalvar) return
   u.lastPergunta = payload.perguntaId || u.stage || "pergunta"
-  u.etapa = u.lastPergunta
+  u.etapa = ehStageDescricaoCaso(u.stage) ? "descricao_caso" : u.lastPergunta
   u.lastPerguntaPayload = { texto: payload.texto, opcoes: payload.opcoes || null }
 }
 
 function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
   const nomePreservado = preservarNome && u.nomeConfirmado ? u.nome : null
+  limparTimerIncentivoDescricao(u)
   Object.assign(u, {
     stage: "inicio",
     etapa: "inicio",
@@ -430,6 +434,7 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
     jaOfereceuRetomada: false,
+    jaIncentivouDescricao: false,
     _retomadaEhLeadFrio: false,
     _regiao: null, _descTemp: null,
     _audioDescBuffer: null, _audioDescMime: null, _audioDescNome: null,
@@ -617,9 +622,10 @@ function retomarFluxo(u) {
       }
     case STAGES.COLETA_DESC:
     case STAGES.COLETA_DESC_AUDIO:
+    case "descricao_caso":
     case "trab_out_desc":
     case "out_desc":
-      u.stage = etapa
+      entrarEtapaDescricao(u, ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO)
       return telaDescreverCaso()
     case STAGES.DESC_CONFIRMA:
       u.stage = STAGES.DESC_CONFIRMA
@@ -654,20 +660,112 @@ function retomarFluxo(u) {
   }
 }
 
+function pularDescricaoPorAgora(from, u) {
+  u.jaIncentivouDescricao = true
+  u._descTemp = null
+  u._audioDescBuffer = null
+  u._audioDescMime = null
+  u._audioDescNome = null
+
+  if (u._descOrigemStage === "trab_out_desc" || u._descOrigemStage === "out_desc" || u.stage === "trab_out_desc" || u.stage === "out_desc") {
+    u._descOrigemStage = null
+    u.stage = "gatilho"
+    iniciarTimer(from)
+    return {
+      texto: "Sem problema. Podemos seguir por agora e você complementa os detalhes depois.",
+      opcoes: [{ id: "cont", title: "▶️ Continuar" }]
+    }
+  }
+
+  if (u._proximoStageAposDescricao) {
+    const proximoStage = u._proximoStageAposDescricao
+    const proximaPergunta = u._proximaPerguntaAposDescricao
+    u._proximoStageAposDescricao = null
+    u._proximaPerguntaAposDescricao = null
+    u._descOrigemStage = null
+    u.stage = proximoStage
+    iniciarTimer(from)
+    if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
+    if (proximaPergunta) return proximaPergunta
+  }
+
+  u._descOrigemStage = null
+  u.stage = STAGES.CONFIRMACAO
+  iniciarTimer(from)
+  return tela_confirmacao(u)
+}
+
 function deveCapturarLeadIncompleto(u) {
   if (u?.leadIncompletoCapturado) return false
   if (u?.numeroCaso) return false
   return true
 }
 
+function ehStageDescricaoCaso(stage) {
+  return [STAGES.COLETA_DESC, STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(stage)
+}
+
+function entrarEtapaDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
+  u.stage = stage
+  u.etapa = "descricao_caso"
+  u.jaIncentivouDescricao = false
+}
+
 function limparTimer(u) {
   if (u.timer) { clearTimeout(u.timer); u.timer = null }
+}
+
+function limparTimerIncentivoDescricao(u) {
+  if (u?.timerIncentivoDescricao) {
+    clearTimeout(u.timerIncentivoDescricao)
+    u.timerIncentivoDescricao = null
+  }
+}
+
+function agendarIncentivoDescricao(from) {
+  const u = users[from]
+  if (!u) return
+
+  limparTimerIncentivoDescricao(u)
+
+  if (u.etapa !== "descricao_caso") return
+  if (!ehStageDescricaoCaso(u.stage)) return
+  if (u.jaIncentivouDescricao) return
+
+  const ultimaMsgBase = Number(u.ultimaMsg || 0)
+  const espera = u.modoDigitando ? 3 * 60 * 1000 : 2 * 60 * 1000
+
+  u.timerIncentivoDescricao = setTimeout(async () => {
+    const atual = users[from]
+    if (!atual) return
+    if (atual.etapa !== "descricao_caso") return
+    if (!ehStageDescricaoCaso(atual.stage)) return
+    if (atual.jaIncentivouDescricao) return
+    if (Number(atual.ultimaMsg || 0) !== ultimaMsgBase) return
+
+    atual.jaIncentivouDescricao = true
+    atual.timerIncentivoDescricao = null
+    agendarPersistenciaUsers()
+
+    await enviar(
+      from,
+      "Posso te ajudar nisso 😊\nSe preferir, pode mandar um áudio ou escrever do seu jeito.\n\nQuer continuar agora ou prefere fazer isso depois?",
+      [
+        { id: "desc_incentivo_continuar", title: "Continuar agora" },
+        { id: "desc_incentivo_depois", title: "Enviar depois" },
+        { id: "desc_incentivo_menu", title: "Menu principal" },
+        { id: "desc_incentivo_encerrar", title: "Encerrar" }
+      ],
+      false
+    )
+  }, espera)
 }
 
 function iniciarTimer(from) {
   const u = users[from]
   if (!u) return
   limparTimer(u)
+  agendarIncentivoDescricao(from)
   // Se cliente está gravando áudio ou descrevendo o caso, dar mais tempo antes de interromper
   const estaDescrevendo = u.stage === "coleta_desc_audio" || u.stage === "coleta_desc"
   const t1Base = estaDescrevendo ? 5 * 60 * 1000 : 5 * 60 * 1000
@@ -1728,6 +1826,29 @@ async function classificarAcaoAudioFluxo(u, texto) {
 }
 
 function processarRetomadaOuReinicio(from, u, text) {
+  if (text === "desc_incentivo_continuar") {
+    const stageDescricao = ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO
+    entrarEtapaDescricao(u, stageDescricao)
+    iniciarTimer(from)
+    return telaDescreverCaso()
+  }
+
+  if (text === "desc_incentivo_depois") {
+    return pularDescricaoPorAgora(from, u)
+  }
+
+  if (text === "desc_incentivo_menu") {
+    u.jaIncentivouDescricao = true
+    u.stage = u.numeroCaso ? STAGES.CLIENTE : STAGES.AREA
+    u.etapa = u.stage
+    iniciarTimer(from)
+    return u.numeroCaso ? menuCliente(u) : { ...telaArea(), perguntaId: "area" }
+  }
+
+  if (text === "desc_incentivo_encerrar") {
+    return executarEncerramentoFluxo(u)
+  }
+
   if (text === "ret_auto_continuar") {
     u._retomadaEhLeadFrio = false
     const resposta = retomarFluxo(u)
@@ -2132,6 +2253,7 @@ async function processar(from, nomeWA, text, msgObj) {
   u.ultimaMsg = Date.now()
   u.modoDigitando = false
   limparTimer(u)
+  limparTimerIncentivoDescricao(u)
 
   const tipo    = msgObj?.type
   const ehAudio = tipo === "audio"
@@ -2295,13 +2417,13 @@ async function processar(from, nomeWA, text, msgObj) {
     if (deveOferecerExplicarTudo(u)) {
       return prepararOfertaExplicarTudoFinal(from, u, STAGES.CONFIRMACAO, null)
     }
-    u.stage = "coleta_desc_audio"; iniciarTimer(from)
+    entrarEtapaDescricao(u, STAGES.COLETA_DESC_AUDIO); iniciarTimer(from)
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
   if (u.stage === STAGES.DESC_ERRO_TRANSCRICAO) {
     if (text === "desc_corrigir") {
       u._descTemp = null
-      u.stage = u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO)
+      entrarEtapaDescricao(u, u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO))
       iniciarTimer(from)
       return telaDescreverCaso()
     }
@@ -2358,7 +2480,7 @@ async function processar(from, nomeWA, text, msgObj) {
     if (deveOferecerExplicarTudo(u)) {
       return prepararOfertaExplicarTudoFinal(from, u, STAGES.CONFIRMACAO, null)
     }
-    u.stage = "coleta_desc_audio"; iniciarTimer(from)
+    entrarEtapaDescricao(u, STAGES.COLETA_DESC_AUDIO); iniciarTimer(from)
     return { texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null }
   }
   if ((u.stage === "coleta_desc" || u.stage === "coleta_desc_audio") && text) {
@@ -2384,7 +2506,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._audioDescBuffer = null
       u._audioDescMime = null
       u._audioDescNome = null
-      u.stage = u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO)
+      entrarEtapaDescricao(u, u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO))
       iniciarTimer(from)
       return telaDescreverCaso()
     }
@@ -2741,7 +2863,7 @@ async function processar(from, nomeWA, text, msgObj) {
     if (text === "t_dir")  { u.situacao = "Direitos nao pagos"; u.tipo = "direitos";  u.stage = "trab_dir_tipo"; iniciarTimer(from); return { texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
     if (text === "t_acid") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; u.stage = "trab_acid_af"; iniciarTimer(from); return { texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
     if (text === "t_ass")  { u.situacao = "Assedio moral";       u.tipo = "assedio";  u.stage = "trab_ass_s"; iniciarTimer(from); return { texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
-    if (text === "t_out")  { u.situacao = "Outros";              u.tipo = "outros";   u.stage = "trab_out_desc"; iniciarTimer(from); return { texto: "✍️ Descreva brevemente seu caso trabalhista:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
+    if (text === "t_out")  { u.situacao = "Outros";              u.tipo = "outros";   entrarEtapaDescricao(u, "trab_out_desc"); iniciarTimer(from); return { texto: "✍️ Descreva brevemente seu caso trabalhista:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
   }
   if (u.stage === "trab_dem_tipo") {
     const m = { td_s: "Sem justa causa", td_c: "Com justa causa", td_p: "Pedido de demissao" }
@@ -2789,7 +2911,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "outros_menu") {
     if (text === "o_consul") { u.situacao = "Consultoria juridica"; u.stage = "out_cons_tipo"; iniciarTimer(from); return { texto: "⚖️ Sobre qual área precisa de orientação?", opcoes: [{ id: "oc_i", title: "🏥 INSS" }, { id: "oc_t", title: "💼 Trabalhista" }, { id: "oc_o", title: "📋 Outra área" }] } }
     if (text === "o_rev")    { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.stage = "out_rev_tipo"; iniciarTimer(from); return { texto: "📄 Qual tipo de documento para revisão?", opcoes: [{ id: "or_c", title: "📝 Contrato" }, { id: "or_p", title: "⚖️ Processo" }, { id: "or_o", title: "📋 Outro" }] } }
-    if (text === "o_out")    { u.situacao = "Outro assunto"; u.stage = "out_desc"; iniciarTimer(from); return { texto: "💬 Descreva brevemente o que precisa:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
+    if (text === "o_out")    { u.situacao = "Outro assunto"; entrarEtapaDescricao(u, "out_desc"); iniciarTimer(from); return { texto: "💬 Descreva brevemente o que precisa:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
   }
   if (u.stage === "out_cons_tipo") {
     const m = { oc_i: "INSS", oc_t: "Trabalhista", oc_o: "Outro" }
