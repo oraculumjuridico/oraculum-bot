@@ -563,7 +563,37 @@ function stageAceitaTextoLivre(stage) {
   ]).has(stage)
 }
 
-function telaArea() {
+function getNomeAtualizado(u) {
+  const nome = (u?.nome && String(u.nome).trim()) || (u?.nomeHubspot && String(u.nomeHubspot).trim()) || "cliente"
+  return nome
+}
+
+function getPrimeiroNome(u) {
+  return getNomeAtualizado(u).split(" ").filter(Boolean)[0] || "cliente"
+}
+
+function temLeadEmAberto(u) {
+  return u?.negocioStageId === HS_STAGE.LEAD
+}
+
+function podeMostrarMenuCliente(u) {
+  return Boolean(u?.numeroCaso) && !temLeadEmAberto(u)
+}
+
+function menuPrincipal(u) {
+  const nome = getPrimeiroNome(u)
+  return {
+    texto: `Que bom te ver novamente, ${nome} 😊\nComo posso te ajudar hoje?`,
+    opcoes: [
+      { id: "area_inss", title: "🏥 INSS" },
+      { id: "area_trab", title: "💼 Trabalhista" },
+      { id: "area_outros", title: "📋 Outros" }
+    ],
+    perguntaId: "area"
+  }
+}
+
+function telaArea(u = null) {
   return {
     texto: "⚖️ Bem-vindo à *Oraculum Advocacia*!\n\nMe chamo *Beatriz*, sou sua assistente virtual 😊\n\nComo posso te ajudar hoje?",
     opcoes: [
@@ -737,7 +767,8 @@ function retomarFluxo(u) {
     case STAGES.AREA:
     case "area":
       u.stage = STAGES.AREA
-      return { ...telaArea(), perguntaId: "area" }
+      u.etapa = "area"
+      return menuPrincipal(u)
     case "nome":
     case "coleta_nome":
       return perguntarNome(u)
@@ -798,6 +829,11 @@ function retomarFluxo(u) {
       return tela_confirmacao(u)
     case STAGES.CLIENTE:
     case "cliente":
+      if (!podeMostrarMenuCliente(u)) {
+        u.stage = STAGES.AREA
+        u.etapa = "area"
+        return menuPrincipal(u)
+      }
       u.stage = STAGES.CLIENTE
       return menuCliente(u)
     default:
@@ -808,6 +844,7 @@ function retomarFluxo(u) {
 
 function pularDescricaoPorAgora(from, u) {
   u.jaIncentivouDescricao = true
+  u.etapa = "descricao_caso"
   u._descTemp = null
   u._audioDescBuffer = null
   u._audioDescMime = null
@@ -818,7 +855,7 @@ function pularDescricaoPorAgora(from, u) {
     u.stage = "gatilho"
     iniciarTimer(from)
     return {
-      texto: "Sem problema. Podemos seguir por agora e você complementa os detalhes depois.",
+      texto: "Sem problemas 😊 podemos continuar e você envia depois",
       opcoes: [{ id: "cont", title: "▶️ Continuar" }]
     }
   }
@@ -831,20 +868,70 @@ function pularDescricaoPorAgora(from, u) {
     u._descOrigemStage = null
     u.stage = proximoStage
     iniciarTimer(from)
-    if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
-    if (proximaPergunta) return proximaPergunta
+    if (proximoStage === STAGES.CONFIRMACAO) {
+      const tela = tela_confirmacao(u)
+      return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${tela.texto}`, opcoes: tela.opcoes }
+    }
+    if (proximaPergunta) {
+      return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${proximaPergunta.texto}`, opcoes: proximaPergunta.opcoes || null }
+    }
   }
 
   u._descOrigemStage = null
   u.stage = STAGES.CONFIRMACAO
   iniciarTimer(from)
-  return tela_confirmacao(u)
+  return {
+    texto: "Sem problemas 😊 podemos continuar e você envia depois",
+    opcoes: [{ id: "cont", title: "▶️ Continuar" }]
+  }
 }
 
 function deveCapturarLeadIncompleto(u) {
   if (u?.leadIncompletoCapturado) return false
   if (u?.numeroCaso) return false
   return true
+}
+
+function pularDescricaoPorAgora(from, u) {
+  u.jaIncentivouDescricao = true
+  u.etapa = "descricao_caso"
+  u._descTemp = null
+  u._audioDescBuffer = null
+  u._audioDescMime = null
+  u._audioDescNome = null
+
+  if (u._descOrigemStage === "trab_out_desc" || u._descOrigemStage === "out_desc" || u.stage === "trab_out_desc" || u.stage === "out_desc") {
+    u._descOrigemStage = null
+    u.stage = "gatilho"
+    iniciarTimer(from)
+    return {
+      texto: "Sem problemas 😊 podemos continuar e você envia depois",
+      opcoes: [{ id: "cont", title: "▶️ Continuar" }]
+    }
+  }
+
+  if (u._proximoStageAposDescricao) {
+    const proximoStage = u._proximoStageAposDescricao
+    const proximaPergunta = u._proximaPerguntaAposDescricao
+    u._proximoStageAposDescricao = null
+    u._proximaPerguntaAposDescricao = null
+    u._descOrigemStage = null
+    u.stage = proximoStage
+    iniciarTimer(from)
+    if (proximoStage === STAGES.CONFIRMACAO) {
+      const tela = tela_confirmacao(u)
+      return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${tela.texto}`, opcoes: tela.opcoes }
+    }
+    if (proximaPergunta) {
+      return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${proximaPergunta.texto}`, opcoes: proximaPergunta.opcoes || null }
+    }
+  }
+
+  u._descOrigemStage = null
+  u.stage = STAGES.CONFIRMACAO
+  iniciarTimer(from)
+  const tela = tela_confirmacao(u)
+  return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${tela.texto}`, opcoes: tela.opcoes }
 }
 
 function ehStageDescricaoCaso(stage) {
@@ -1114,6 +1201,7 @@ async function hsAtualizarNegocio(dealId, props = {}) {
 
 async function sincronizarContatoNegocioHubSpot(u) {
   if (!u) return
+  if (typeof u.nome === "string" && u.nome.trim()) u.nomeHubspot = u.nome.trim()
 
   const contatoProps = filtrarPropsHubSpot({
     firstname: u.nome,
@@ -1247,6 +1335,7 @@ async function capturarLeadIncompleto(from, u) {
       } catch (e) {
         console.error("Erro ao buscar contato no HubSpot:", detalharErroHubspot(e))
       }
+      if (existente?.properties?.firstname && !lead.nomeHubspot) lead.nomeHubspot = existente.properties.firstname
       contatoId = existente?.id || null
     } else {
       console.log("Contato já vinculado na sessão:", contatoId)
@@ -1648,6 +1737,7 @@ async function finalizarCadastro(from, u) {
   u.pastaDriveLink = pasta?.webViewLink || null
 
   const existente = await hsBuscarPorPhone(telefoneContato)
+  if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
   let contatoId   = existente?.id || null
   if (!contatoId) contatoId = await hsCriarContato(telefoneContato, u)
   else console.log("Contato encontrado no HubSpot:", contatoId)
@@ -1710,11 +1800,10 @@ function tela_confirmacao(u) {
 }
 
 function menuCliente(u) {
-  const partes = (u.nome || u.nomeWA).split(" ")
-  const nomeExib = partes.length > 1 ? `${partes[0]} ${partes[partes.length - 1]}` : partes[0]
+  const nomeExib = getPrimeiroNome(u)
   const prioridade = u.urgencia === "alta" ? "\n🔴 Prioridade: Alta" : ""
   return {
-    texto: `👋 Olá, *${nomeExib}*!\n\nBem-vindo de volta à *Oraculum Advocacia* ⚖️\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}${prioridade}\n\nComo posso te ajudar hoje?`,
+    texto: `Que bom te ver novamente, ${nomeExib} 😊\nAqui estão suas opções:${u.numeroCaso ? `\n\n📄 Caso: *${u.numeroCaso}*` : ""}${u.area ? `\n⚖️ Área: ${u.area}` : ""}${prioridade}`,
     opcoes: [
       { id: "m_status",  title: "📊 Status do caso" },
       { id: "m_docs",    title: "📎 Enviar documentos" },
@@ -1781,8 +1870,11 @@ function responderComTimer(from, payload) {
 
 function telaDescreverCaso() {
   return {
-    texto: "📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!",
-    opcoes: null
+    texto: "✍️ Pode me contar um pouco mais sobre seu caso?\nVocê pode digitar ou enviar um áudio 😊",
+    opcoes: [
+      { id: "desc_incentivo_depois", title: "Enviar depois" },
+      { id: "desc_incentivo_menu", title: "Menu principal" }
+    ]
   }
 }
 
@@ -2046,10 +2138,10 @@ function processarRetomadaOuReinicio(from, u, text) {
 
   if (text === "desc_incentivo_menu") {
     u.jaIncentivouDescricao = true
-    u.stage = u.numeroCaso ? STAGES.CLIENTE : STAGES.AREA
-    u.etapa = u.stage
+    u.stage = STAGES.AREA
+    u.etapa = "area"
     iniciarTimer(from)
-    return u.numeroCaso ? menuCliente(u) : { ...telaArea(), perguntaId: "area" }
+    return menuPrincipal(u)
   }
 
   if (text === "desc_incentivo_encerrar") {
@@ -2066,9 +2158,17 @@ function processarRetomadaOuReinicio(from, u, text) {
   if (text === "ret_auto_menu") {
     if (u._retomadaEhLeadFrio) {
       u._retomadaEhLeadFrio = false
+      u.negocioStageId = HS_STAGE.LEAD
       u.stage = STAGES.AREA
+      u.etapa = "area"
       iniciarTimer(from)
-      return { ...telaArea(), perguntaId: "area" }
+      return menuPrincipal(u)
+    }
+    if (!podeMostrarMenuCliente(u)) {
+      u.stage = STAGES.AREA
+      u.etapa = "area"
+      iniciarTimer(from)
+      return menuPrincipal(u)
     }
     u.stage = STAGES.CLIENTE
     iniciarTimer(from)
@@ -2112,16 +2212,18 @@ async function verificarRetomadaAutomatica(from, u) {
   console.log("Negócio aberto encontrado:", negocio.id)
   u.contatoId = contato.id
   u.negocioId = negocio.id
-  u.nome = u.nome || contato.properties?.firstname || u.nomeWA
+  u.nomeHubspot = contato.properties?.firstname || u.nomeHubspot || null
+  u.nome = u.nome || u.nomeHubspot || u.nomeWA
   u.numeroCaso = u.numeroCaso || contato.properties?.numero_caso || "Em andamento"
   u.area = u.area || contato.properties?.area_juridica || "Atendimento em andamento"
+  u.negocioStageId = negocio.stageId || u.negocioStageId || null
   u.stage = STAGES.RETOMADA_AUTOMATICA
   u.jaOfereceuRetomada = true
-  u._retomadaEhLeadFrio = negocio.stageId === HS_STAGE.LEAD
+  u._retomadaEhLeadFrio = u.negocioStageId === HS_STAGE.LEAD
 
   if (u._retomadaEhLeadFrio) {
     return {
-      texto: "Que bom que você voltou 😊\nVi que você iniciou um atendimento, mas não concluiu.\n\nComo prefere continuar?",
+      texto: `Que bom te ver novamente, ${getPrimeiroNome(u)} 😊\nVi que você iniciou um atendimento, mas não concluiu.\n\nComo prefere continuar?`,
       opcoes: [
         { id: "ret_auto_continuar", title: "Continuar atendimento" },
         { id: "ret_auto_menu", title: "Menu principal" },
@@ -2131,10 +2233,10 @@ async function verificarRetomadaAutomatica(from, u) {
   }
 
   return {
-    texto: "Que bom que você voltou 😊\nQuer continuar seu atendimento de onde parou?",
+    texto: `Que bom te ver novamente, ${getPrimeiroNome(u)} 😊\nQuer continuar seu atendimento de onde parou?`,
     opcoes: [
       { id: "ret_auto_continuar", title: "Continuar atendimento" },
-      { id: "ret_auto_menu", title: "Menu do cliente" },
+      { id: "ret_auto_menu", title: "Menu principal" },
       { id: "m_encerrar", title: "Encerrar" }
     ]
   }
@@ -2958,13 +3060,12 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // INICIO
   if (u.stage === "inicio") {
-    if (u.numeroCaso) {
+    if (podeMostrarMenuCliente(u)) {
       // Cliente retornando — perguntar se quer acompanhar ou abrir novo caso
       u.stage = "inicio_retorno"; iniciarTimer(from)
-      const partes = (u.nome || u.nomeWA).split(" ")
-      const nomeExib = partes.length > 1 ? `${partes[0]} ${partes[partes.length - 1]}` : partes[0]
+      const nomeExib = getPrimeiroNome(u)
       return {
-        texto: `👋 Olá, ${nomeExib}! Que bom te ver por aqui novamente!\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
+        texto: `Que bom te ver novamente, ${nomeExib} 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
         opcoes: [
           { id: "ret_acompanhar", title: "📊 Acompanhar meu caso" },
           { id: "ret_novo",       title: "➕ Abrir novo caso" }
@@ -2972,12 +3073,17 @@ async function processar(from, nomeWA, text, msgObj) {
       }
     }
     u.stage = "area"; iniciarTimer(from)
+    if (u.nome || u.nomeHubspot) return menuPrincipal(u)
     return { ...telaArea(), perguntaId: "area" }
   }
 
   // RETORNO — cliente escolhe entre acompanhar ou novo caso
   if (u.stage === "inicio_retorno") {
     if (text === "ret_acompanhar") {
+      if (!podeMostrarMenuCliente(u)) {
+        u.stage = "area"; iniciarTimer(from)
+        return menuPrincipal(u)
+      }
       u.stage = "cliente"; iniciarTimer(from)
       return menuCliente(u)
     }
@@ -3141,6 +3247,12 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // MENU CLIENTE
   if (u.stage === "cliente") {
+    if (!podeMostrarMenuCliente(u)) {
+      u.stage = "area"
+      u.etapa = "area"
+      iniciarTimer(from)
+      return menuPrincipal(u)
+    }
     if (text === "m_status") {
       iniciarTimer(from)
       const stLbl  = u.urgencia === "alta" ? "⚡ Análise prioritária" : "🔍 Em análise"
@@ -3260,7 +3372,11 @@ async function processar(from, nomeWA, text, msgObj) {
       return responderEncerramento(u)
     }
     if (text === "m_inicio") {
-      iniciarTimer(from); return menuCliente(u)
+      iniciarTimer(from)
+      if (podeMostrarMenuCliente(u)) return menuCliente(u)
+      u.stage = "area"
+      u.etapa = "area"
+      return menuPrincipal(u)
     }
     // Detectar intencao de encerrar antes de passar para IA
     if (text) {
