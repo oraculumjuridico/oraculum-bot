@@ -559,10 +559,9 @@ function retomarUltimaPergunta(u) {
 }
 
 function deveCapturarLeadIncompleto(u) {
-  if (!u || u.leadIncompletoCapturado) return false
-  if (u.numeroCaso) return false
-  if (["inicio", "inicio_retorno", "cliente"].includes(u.stage)) return false
-  return Boolean(u.area || u.nomeConfirmado || u.whatsappContato || u.telefoneEhDoCliente !== null)
+  if (u?.leadIncompletoCapturado) return false
+  if (u?.numeroCaso) return false
+  return true
 }
 
 function limparTimer(u) {
@@ -661,6 +660,21 @@ async function hsCriarContato(from, u) {
       monitor.cadastros++
       return res.data.id
     } catch (e) { logErro("hubspot", "criarContato: " + (e.response?.data?.message || e.message)); return null }
+  }
+}
+
+async function hsAtualizarContato(contactId, props = {}) {
+  if (!contactId) return null
+  try {
+    await axios.patch(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
+      { properties: props },
+      { headers: HS() }
+    )
+    return contactId
+  } catch (e) {
+    logErro("hubspot", "atualizarContato: " + (e.response?.data?.message || e.message))
+    return null
   }
 }
 
@@ -790,12 +804,6 @@ async function capturarLeadIncompleto(from, u) {
     if (sessao && !deveCapturarLeadIncompleto(sessao)) {
       if (sessao.leadIncompletoCapturado) console.log("❌ Lead já capturado anteriormente, abortando captura")
       if (sessao.numeroCaso) console.log("❌ Sessão já possui número de caso, abortando captura")
-      if (["inicio", "inicio_retorno", "cliente"].includes(sessao.stage)) {
-        console.log("❌ Stage não elegível para lead incompleto:", sessao.stage)
-      }
-      if (!(sessao.area || sessao.nomeConfirmado || sessao.whatsappContato || sessao.telefoneEhDoCliente !== null)) {
-        console.log("❌ Sessão sem dados mínimos para captura, abortando")
-      }
       return null
     }
 
@@ -811,7 +819,9 @@ async function capturarLeadIncompleto(from, u) {
     }
 
     const telefone = getTelefoneContato(from, lead)
+    const nome = lead.nome || lead.nomeWA || "Lead WhatsApp"
     const area = lead.area || "Atendimento inicial"
+    console.log("📌 Criando lead com nome:", nome, "telefone:", from)
     let contatoId = lead.contatoId || null
     let negocioId = null
 
@@ -833,7 +843,7 @@ async function capturarLeadIncompleto(from, u) {
       try {
         contatoId = await hsCriarContato(telefone, {
           ...lead,
-          nome: lead.nome || lead.nomeWA || "Lead incompleto",
+          nome,
           area,
           numeroCaso: null,
           pastaDriveLink: null
@@ -844,6 +854,7 @@ async function capturarLeadIncompleto(from, u) {
       }
     } else {
       console.log("Contato reutilizado:", contatoId)
+      await hsAtualizarContato(contatoId, { firstname: nome, phone: telefone })
     }
     if (sessao) sessao.contatoId = contatoId
 
@@ -865,12 +876,12 @@ async function capturarLeadIncompleto(from, u) {
       try {
         negocioId = await hsCriarNegocio({
           ...lead,
-          nome: lead.nome || lead.nomeWA || "Lead incompleto",
+          nome,
           area,
           numeroCaso: "LEAD-INCOMPLETO"
         }, {
           stage: HS_STAGE.LEAD,
-          dealname: `${lead.nome || lead.nomeWA || "Lead incompleto"} — ${area} — Lead recebido`
+          dealname: `Lead WhatsApp - ${nome}`
         })
       } catch (e) {
         console.error("Erro ao criar negócio no HubSpot:", detalharErroHubspot(e))
@@ -886,7 +897,7 @@ async function capturarLeadIncompleto(from, u) {
       await hsCriarNota(
         contatoId,
         "LEAD INCOMPLETO",
-        `Lead capturado por inatividade.\nNome: ${lead.nome || "Não informado"}\nTelefone: ${telefone}\nÁrea: ${lead.area || "Não informada"}\nStage interno: ${lead.stage}`
+        `Lead capturado por inatividade.\nNome: ${nome}\nTelefone: ${telefone}\nÁrea: ${lead.area || "Não informada"}\nStage interno: ${lead.stage}`
       )
     } else {
       console.log("Captura incompleta no HubSpot:", { contatoId, negocioId, from })
