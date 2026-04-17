@@ -545,14 +545,14 @@ async function hsCriarNegocio(u) {
       dealname,
       pipeline: HS_PIPELINE,
       dealstage: stage,
+      hubspot_owner_id: "90513737",
       area_juridica: u.area || "",
       resumo_cliente: u.assuntoResumo || u.descricao || "",
       descricao_completa: u.descricao || u.assuntoResumo || "",
       urgencia: u.urgencia || "normal",
       cidade: u.cidade || "",
       pasta_drive: u.pastaDriveLink || "",
-      origem_atendimento: "whatsapp",
-      hubspot_owner_id: "SEU_ID_AQUI"
+      origem_atendimento: "whatsapp"
     }
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/deals",
