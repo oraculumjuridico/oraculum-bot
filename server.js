@@ -398,13 +398,29 @@ function getTelefoneContato(from, u) {
   return u.whatsappContato || from
 }
 
+function identificarEtapaAtual(u, payload) {
+  const origem = payload?.perguntaId || u?.stage || ""
+
+  if (ehStageDescricaoCaso(origem) || ehStageDescricaoCaso(u?.stage)) return "descricao_caso"
+  if (["coleta_nome", "__coleta_nome_legado__", "coleta_tel_outro"].includes(origem) || ["coleta_nome", "__coleta_nome_legado__", "coleta_tel_outro"].includes(u?.stage)) return "nome"
+  if (["coleta_cidade", "coleta_cidade_regiao", "__coleta_cidade_legado__"].includes(origem) || ["coleta_cidade", "coleta_cidade_regiao", "__coleta_cidade_legado__"].includes(u?.stage)) return "cidade"
+  if (
+    origem === "documentos" ||
+    /documentos do caso/i.test(payload?.texto || "") ||
+    (payload?.opcoes || []).some(o => ["docs_reenviar", "docs_maisFotos", "docs_proxdoc", "doc_cpf_skip"].includes(o.id))
+  ) return "documentos"
+  if (origem === STAGES.AREA || origem === "area") return "area"
+
+  return origem || "pergunta"
+}
+
 function registrarUltimaPergunta(u, payload) {
   if (!u || !payload?.texto || payload.registrarPergunta === false) return
   if (u.stage === STAGES.RETOMADA_AUTOMATICA) return
   const deveSalvar = payload.opcoes?.length || payload.texto.includes("?") || u.stage !== "cliente"
   if (!deveSalvar) return
   u.lastPergunta = payload.perguntaId || u.stage || "pergunta"
-  u.etapa = ehStageDescricaoCaso(u.stage) ? "descricao_caso" : u.lastPergunta
+  u.etapa = identificarEtapaAtual(u, payload)
   u.lastPerguntaPayload = { texto: payload.texto, opcoes: payload.opcoes || null }
 }
 
@@ -565,6 +581,7 @@ function avancarAposTelefoneConfirmado(from, u) {
     return telaRegioes()
   }
   u.stage = "coleta_nome"
+  u.etapa = "nome"
   iniciarTimer(from)
   return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
 }
@@ -573,6 +590,32 @@ function retomarUltimaPergunta(u) {
   if (u.stage === STAGES.RETOMADA_AUTOMATICA) return null
   if (u.lastPerguntaPayload) return u.lastPerguntaPayload
   return null
+}
+
+function perguntarNome(u) {
+  u.stage = "coleta_nome"
+  u.etapa = "nome"
+  return { texto: "âœï¸ Qual Ã© o seu *nome completo*?", opcoes: null }
+}
+
+function perguntarCidade(u, stage = null) {
+  const stageCidade = stage || (u?._regiao || u?.uf ? "coleta_cidade_regiao" : "coleta_cidade")
+  u.stage = stageCidade
+  u.etapa = "cidade"
+  if (stageCidade === "coleta_cidade_regiao") {
+    return { texto: "Digite a cidade onde vocÃª mora", opcoes: null }
+  }
+  return { texto: "ðŸ“ Em qual *cidade* vocÃª mora?", opcoes: null }
+}
+
+function perguntarDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
+  entrarEtapaDescricao(u, stage)
+  return telaDescreverCaso()
+}
+
+function perguntarDocumentos(u) {
+  u.etapa = "documentos"
+  return telaEnvioDoc(u)
 }
 
 function retomarFluxo(u) {
@@ -657,6 +700,109 @@ function retomarFluxo(u) {
       u.stage = STAGES.AREA
       return { ...telaArea(), perguntaId: "area" }
     }
+  }
+}
+
+function perguntarNome(u) {
+  u.stage = "coleta_nome"
+  u.etapa = "nome"
+  return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
+}
+
+function perguntarCidade(u, stage = null) {
+  const stageCidade = stage || (u?._regiao || u?.uf ? "coleta_cidade_regiao" : "coleta_cidade")
+  u.stage = stageCidade
+  u.etapa = "cidade"
+  if (stageCidade === "coleta_cidade_regiao") {
+    return { texto: "Digite a cidade onde você mora", opcoes: null }
+  }
+  return { texto: "📍 Em qual *cidade* você mora?", opcoes: null }
+}
+
+function perguntarDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
+  entrarEtapaDescricao(u, stage)
+  return telaDescreverCaso()
+}
+
+function perguntarDocumentos(u) {
+  u.etapa = "documentos"
+  return telaEnvioDoc(u)
+}
+
+function retomarFluxo(u) {
+  const etapa = u.etapa || u.lastPergunta || u.stage || STAGES.AREA
+  console.log("🔁 Retomando etapa:", u.etapa)
+
+  switch (etapa) {
+    case STAGES.AREA:
+    case "area":
+      u.stage = STAGES.AREA
+      return { ...telaArea(), perguntaId: "area" }
+    case "nome":
+    case "coleta_nome":
+      return perguntarNome(u)
+    case "cidade":
+      return perguntarCidade(u)
+    case "coleta_regiao":
+      u.stage = "coleta_regiao"
+      return telaRegioes()
+    case "coleta_uf":
+      u.stage = "coleta_uf"
+      return telaUFsRegiao(u._regiao || "reg_n")
+    case "coleta_cidade_regiao":
+    case "coleta_cidade":
+      return perguntarCidade(u, etapa)
+    case "coleta_contrib":
+    case "coleta_contrib_regiao":
+    case "coleta_contrib_regiao_v2":
+      u.stage = etapa
+      return {
+        texto: "Selecione uma opção:",
+        opcoes: [
+          { id: "col_c1", title: "Nunca" },
+          { id: "col_c2", title: "Pouco tempo" },
+          { id: "col_c3", title: "Mais de 1 ano" },
+          { id: "col_c4", title: "Muitos anos" }
+        ]
+      }
+    case "__coleta_benef_regiao_v2__":
+    case "coleta_benef":
+      u.stage = etapa
+      return {
+        texto: "Você já recebe algum benefício do INSS?",
+        opcoes: [
+          { id: "col_b1", title: "Sim" },
+          { id: "col_b2", title: "Não" }
+        ]
+      }
+    case STAGES.COLETA_DESC:
+    case STAGES.COLETA_DESC_AUDIO:
+    case "descricao_caso":
+    case "trab_out_desc":
+    case "out_desc":
+      return perguntarDescricao(u, ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO)
+    case "documentos":
+      return perguntarDocumentos(u)
+    case STAGES.DESC_CONFIRMA:
+      u.stage = STAGES.DESC_CONFIRMA
+      if (!u._descTemp) return telaDescreverCaso()
+      return {
+        texto: `Entendi assim:\n\n"${u._descTemp}"\n\nEstá correto?`,
+        opcoes: [
+          { id: "desc_ok", title: "✅ Confirmar" },
+          { id: "desc_corrigir", title: "✏️ Corrigir" }
+        ]
+      }
+    case STAGES.CONFIRMACAO:
+      u.stage = STAGES.CONFIRMACAO
+      return tela_confirmacao(u)
+    case STAGES.CLIENTE:
+    case "cliente":
+      u.stage = STAGES.CLIENTE
+      return menuCliente(u)
+    default:
+      console.log("⚠️ Etapa inválida:", u.etapa)
+      return perguntarDescricao(u)
   }
 }
 
@@ -924,6 +1070,67 @@ async function hsAssociar(cId, nId) {
 }
 
 // Estágios considerados "finalizados" no HubSpot — negócios nesses estágios são ignorados
+function filtrarPropsHubSpot(props = {}) {
+  return Object.fromEntries(
+    Object.entries(props).filter(([, value]) => {
+      if (value === null || value === undefined) return false
+      if (typeof value === "string" && !value.trim()) return false
+      return true
+    })
+  )
+}
+
+async function hsAtualizarContato(contactId, props = {}) {
+  const propsValidas = filtrarPropsHubSpot(props)
+  if (!contactId || !Object.keys(propsValidas).length) return null
+  try {
+    await axios.patch(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
+      { properties: propsValidas },
+      { headers: HS() }
+    )
+    return contactId
+  } catch (e) {
+    logErro("hubspot", "atualizarContato: " + (e.response?.data?.message || e.message))
+    return null
+  }
+}
+
+async function hsAtualizarNegocio(dealId, props = {}) {
+  const propsValidas = filtrarPropsHubSpot(props)
+  if (!dealId || !Object.keys(propsValidas).length) return null
+  try {
+    await axios.patch(
+      `https://api.hubapi.com/crm/v3/objects/deals/${dealId}`,
+      { properties: propsValidas },
+      { headers: HS() }
+    )
+    return dealId
+  } catch (e) {
+    logErro("hubspot", "atualizarNegocio: " + (e.response?.data?.message || e.message))
+    return null
+  }
+}
+
+async function sincronizarContatoNegocioHubSpot(u) {
+  if (!u) return
+
+  const contatoProps = filtrarPropsHubSpot({
+    firstname: u.nome,
+    city: u.cidade
+  })
+
+  if (u.contatoId && Object.keys(contatoProps).length) {
+    await hsAtualizarContato(u.contatoId, contatoProps)
+  }
+
+  if (u.negocioId && typeof u.nome === "string" && u.nome.trim()) {
+    await hsAtualizarNegocio(u.negocioId, {
+      dealname: `Lead WhatsApp - ${u.nome.trim()}`
+    })
+  }
+}
+
 const HS_STAGES_FINALIZADOS = new Set([HS_STAGE.FINAL])
 
 async function hsBuscarNegociosDoContato(contactId) {
@@ -2015,6 +2222,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       )
     }
     u.documentosEnviados = true
+    u.etapa = "documentos"
     if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
 
     const msgAudio = trans
@@ -2046,6 +2254,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
+  u.etapa = "documentos"
   if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
 
   await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
@@ -2178,6 +2387,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
       if (u.corrigirCampo === "nome") u[u.corrigirCampo] = formatarNome(text.trim())
       else if (u.corrigirCampo === "cidade") u[u.corrigirCampo] = formatarCidade(text.trim())
       else u[u.corrigirCampo] = normalizarTextoCRM(text)
+      await sincronizarContatoNegocioHubSpot(u)
       u.corrigirCampo = null
     }
     u.stage = STAGES.CONFIRMACAO
@@ -2308,6 +2518,7 @@ async function processar(from, nomeWA, text, msgObj) {
       if (tipo === "nome") {
         u.nome = valor
         u.nomeConfirmado = true
+        await sincronizarContatoNegocioHubSpot(u)
         if (origem === "coleta_tel_outro") {
           u.stage = "coleta_tel_wpp"; iniciarTimer(from)
           return { texto: `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
@@ -2329,6 +2540,7 @@ async function processar(from, nomeWA, text, msgObj) {
       }
       if (tipo === "cidade") {
         u.cidade = valor
+        await sincronizarContatoNegocioHubSpot(u)
         if (origem === "coleta_cidade_regiao") {
           u.stage = "coleta_contrib_regiao_v2"; iniciarTimer(from)
           return { texto: "Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
@@ -2961,6 +3173,7 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     if (text === "m_docs") {
       await hsMoverStage(u.negocioId, HS_STAGE.DOCS)
+      u.etapa = "documentos"
       if (!u.docsEntregues) u.docsEntregues = []
       u.docAtualIdx = u.docAtualIdx || 0
       const tela = telaEnvioDoc(u)
@@ -2968,6 +3181,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return tela
     }
     if (text === "docs_reenviar") {
+      u.etapa = "documentos"
       if (u.ultimoArqId) {
         await excluirDrive(u.ultimoArqId)
         u.ultimoArqId = null; u.ultimoArqNome = null
@@ -2980,6 +3194,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: `🔄 Foto anterior removida!\n\nEnvie novamente: *${f2}* do *${d2?.label || "documento"}*\n\n💡 Boa iluminação, sem reflexo, tudo enquadrado.`, opcoes: null }
     }
     if (text === "docs_maisFotos") {
+      u.etapa = "documentos"
       // Não avança para o próximo documento — permanece no atual
       const pend3  = getDocsPendentes(u)
       const d3     = pend3[0]
@@ -2988,6 +3203,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: `📸 Ok! Envie mais uma foto de *${d3?.label || "documento"}*\n\nFoto atual: *${fAtual}*\n\n💡 Mesmas orientações: boa iluminação, sem reflexo, enquadrado corretamente.`, opcoes: null }
     }
     if (text === "docs_proxdoc") {
+      u.etapa = "documentos"
       const pend4 = getDocsPendentes(u)
       if (pend4.length > 0) u.docsEntregues.push(pend4[0].id)
       u.docAtualIdx = 0
