@@ -482,6 +482,22 @@ function formatarTelefoneExibicao(numero) {
   return n
 }
 
+function perguntarNome(texto = "✍️ Qual é o seu *nome completo*?") {
+  return { texto, opcoes: null, perguntaId: "nome" }
+}
+
+function perguntarCidade(texto = "Digite a cidade onde você mora") {
+  return { texto, opcoes: null, perguntaId: "cidade" }
+}
+
+function perguntarDescricao() {
+  return { ...telaDescreverCaso(), perguntaId: "descricao_caso" }
+}
+
+function perguntarDocumentos(u) {
+  return { ...telaEnvioDoc(u), perguntaId: "documentos" }
+}
+
 function limparTextoSomenteLetras(texto) {
   return String(texto || "")
     .replace(/[^A-Za-zÀ-ÿ\s]/g, " ")
@@ -502,6 +518,31 @@ function prepararConfirmacaoEntrada(from, u, tipo, valor, origem) {
       { id: "entrada_ok", title: "✅ Confirmar" },
       { id: "entrada_corrigir", title: "✏️ Corrigir" }
     ]
+  }
+}
+
+function filtrarPropsHubSpot(props = {}) {
+  return Object.fromEntries(
+    Object.entries(props).filter(([, v]) => v !== null && v !== undefined && v !== "")
+  )
+}
+
+async function sincronizarContatoNegocioHubSpot(u) {
+  if (!u) return
+
+  const contatoProps = filtrarPropsHubSpot({
+    firstname: u.nome,
+    city: u.cidade
+  })
+  if (u.contatoId && Object.keys(contatoProps).length) {
+    await hsAtualizarContato(u.contatoId, contatoProps)
+  }
+
+  const negocioProps = filtrarPropsHubSpot({
+    dealname: u.nome ? "Lead WhatsApp - " + u.nome : null
+  })
+  if (u.negocioId && Object.keys(negocioProps).length) {
+    await hsAtualizarNegocio(u.negocioId, negocioProps)
   }
 }
 
@@ -567,7 +608,7 @@ function avancarAposTelefoneConfirmado(from, u) {
   u.stage = "coleta_nome"
   u.etapa = "nome"
   iniciarTimer(from)
-  return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null, perguntaId: "nome" }
+  return perguntarNome()
 }
 
 function retomarUltimaPergunta(u) {
@@ -578,7 +619,7 @@ function retomarUltimaPergunta(u) {
 
 function retomarFluxo(u) {
   const etapa = u.etapa || u.lastPergunta || u.stage || STAGES.AREA
-  console.log("🔁 Retomando etapa:", etapa)
+  console.log("🔁 Retomando etapa:", u.etapa)
 
   switch (etapa) {
     case STAGES.AREA:
@@ -587,7 +628,8 @@ function retomarFluxo(u) {
       return { ...telaArea(), perguntaId: "area" }
     case "coleta_nome":
       u.stage = "coleta_nome"
-      return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
+      u.etapa = "nome"
+      return perguntarNome()
     case "coleta_regiao":
       u.stage = "coleta_regiao"
       return telaRegioes()
@@ -597,7 +639,8 @@ function retomarFluxo(u) {
     case "coleta_cidade_regiao":
     case "coleta_cidade":
       u.stage = etapa
-      return { texto: "Digite a cidade onde você mora", opcoes: null }
+      u.etapa = "cidade"
+      return perguntarCidade()
     case "coleta_contrib":
     case "coleta_contrib_regiao":
     case "coleta_contrib_regiao_v2":
@@ -627,10 +670,10 @@ function retomarFluxo(u) {
     case "trab_out_desc":
     case "out_desc":
       entrarEtapaDescricao(u, ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     case STAGES.DESC_CONFIRMA:
       u.stage = STAGES.DESC_CONFIRMA
-      if (!u._descTemp) return telaDescreverCaso()
+      if (!u._descTemp) return perguntarDescricao()
       return {
         texto: `Entendi assim:\n\n"${u._descTemp}"\n\nEstá correto?`,
         opcoes: [
@@ -653,13 +696,16 @@ function retomarFluxo(u) {
     case "nome":
     case "coleta_nome":
       u.stage = "coleta_nome"
-      return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null, perguntaId: "nome" }
+      u.etapa = "nome"
+      return perguntarNome()
     case "cidade":
       u.stage = "coleta_cidade_regiao"
-      return { texto: "Digite a cidade onde você mora", opcoes: null, perguntaId: "cidade" }
+      u.etapa = "cidade"
+      return perguntarCidade()
     case "documentos":
       u.stage = STAGES.CLIENTE
-      return menuCliente(u)
+      u.etapa = "documentos"
+      return perguntarDocumentos(u)
     case "urgencia":
     case "gatilho":
       u.stage = "urgencia"
@@ -677,9 +723,8 @@ function retomarFluxo(u) {
         return ultimaPergunta
       }
       console.log("⚠️ Etapa inválida:", u.etapa)
-      // fallback seguro — retomar pela descrição do caso
       entrarEtapaDescricao(u, STAGES.COLETA_DESC_AUDIO)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     }
   }
 }
@@ -886,10 +931,12 @@ async function hsCriarContato(from, u) {
 
 async function hsAtualizarContato(contactId, props = {}) {
   if (!contactId) return null
+  const propsFiltradas = filtrarPropsHubSpot(props)
+  if (!Object.keys(propsFiltradas).length) return null
   try {
     await axios.patch(
       `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
-      { properties: props },
+      { properties: propsFiltradas },
       { headers: HS() }
     )
     return contactId
@@ -901,10 +948,7 @@ async function hsAtualizarContato(contactId, props = {}) {
 
 async function hsAtualizarNegocio(dealId, props = {}) {
   if (!dealId) return null
-  // Nunca sobrescrever com valores vazios
-  const propsFiltradas = Object.fromEntries(
-    Object.entries(props).filter(([, v]) => v !== null && v !== undefined && v !== "")
-  )
+  const propsFiltradas = filtrarPropsHubSpot(props)
   if (!Object.keys(propsFiltradas).length) return null
   try {
     await axios.patch(
@@ -1874,7 +1918,7 @@ function processarRetomadaOuReinicio(from, u, text) {
     const stageDescricao = ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO
     entrarEtapaDescricao(u, stageDescricao)
     iniciarTimer(from)
-    return telaDescreverCaso()
+    return perguntarDescricao()
   }
 
   if (text === "desc_incentivo_depois") {
@@ -2225,13 +2269,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
       else u[campo] = normalizarTextoCRM(text)
       u.corrigirCampo = null
       // Sincronizar no HubSpot apenas se tiver IDs e valor válido
-      if (campo === "nome" && u.nome) {
-        if (u.contatoId) hsAtualizarContato(u.contatoId, { firstname: u.nome })
-        if (u.negocioId) hsAtualizarNegocio(u.negocioId, { dealname: "Lead WhatsApp - " + u.nome })
-      } else if (campo === "cidade" && u.cidade) {
-        if (u.contatoId) hsAtualizarContato(u.contatoId, { city: u.cidade })
-        if (u.negocioId && u.nome) hsAtualizarNegocio(u.negocioId, { dealname: "Lead WhatsApp - " + u.nome })
-      }
+      if (campo === "nome" || campo === "cidade") await sincronizarContatoNegocioHubSpot(u)
     }
     u.stage = STAGES.CONFIRMACAO
     return responderComTimer(from, tela_confirmacao(u))
@@ -2349,9 +2387,9 @@ async function processar(from, nomeWA, text, msgObj) {
       limparEntradaPendente(u)
       u.stage = origem
       iniciarTimer(from)
-      if (tipo === "nome") return { texto: origem === "coleta_tel_outro" ? "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?" : "✍️ Qual é o seu *nome completo*?", opcoes: null }
+      if (tipo === "nome") return perguntarNome(origem === "coleta_tel_outro" ? "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?" : "✍️ Qual é o seu *nome completo*?")
       if (tipo === "telefone") return { texto: origem === "coleta_tel_wpp_contato" ? "Qual é o WhatsApp com DDD da pessoa que será atendida?" : `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
-      if (tipo === "cidade") return { texto: origem === "coleta_cidade_regiao" ? "Digite a cidade onde você mora" : "📍 Em qual *cidade* você mora?", opcoes: null }
+      if (tipo === "cidade") return perguntarCidade(origem === "coleta_cidade_regiao" ? "Digite a cidade onde você mora" : "📍 Em qual *cidade* você mora?")
     }
     if (text === "entrada_ok") {
       const origem = u._entradaPendenteOrigem
@@ -2362,8 +2400,7 @@ async function processar(from, nomeWA, text, msgObj) {
         u.nome = valor
         u.nomeConfirmado = true
         // Atualizar CRM com nome confirmado (só se já tiver IDs e valor válido)
-        if (u.contatoId && u.nome) hsAtualizarContato(u.contatoId, { firstname: u.nome })
-        if (u.negocioId && u.nome) hsAtualizarNegocio(u.negocioId, { dealname: "Lead WhatsApp - " + u.nome })
+        await sincronizarContatoNegocioHubSpot(u)
         if (origem === "coleta_tel_outro") {
           u.stage = "coleta_tel_wpp"; iniciarTimer(from)
           return { texto: `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
@@ -2375,7 +2412,7 @@ async function processar(from, nomeWA, text, msgObj) {
         u.whatsappContato = valor
         if (origem === "coleta_tel_wpp_contato") {
           u.stage = "coleta_nome"; u.etapa = "nome"; iniciarTimer(from)
-          return { texto: "✍️ Qual é o *nome completo* da pessoa que será atendida?", opcoes: null, perguntaId: "nome" }
+          return perguntarNome("✍️ Qual é o *nome completo* da pessoa que será atendida?")
         }
         u.stage = "area"; iniciarTimer(from)
         return {
@@ -2386,8 +2423,7 @@ async function processar(from, nomeWA, text, msgObj) {
       if (tipo === "cidade") {
         u.cidade = valor
         // Atualizar CRM com cidade confirmada
-        if (u.contatoId && u.cidade) hsAtualizarContato(u.contatoId, { city: u.cidade })
-        if (u.negocioId && u.nome) hsAtualizarNegocio(u.negocioId, { dealname: "Lead WhatsApp - " + u.nome })
+        await sincronizarContatoNegocioHubSpot(u)
         if (origem === "coleta_cidade_regiao") {
           u.stage = "coleta_contrib_regiao_v2"; iniciarTimer(from)
           return { texto: "Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
@@ -2427,7 +2463,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u.telefoneEhDoCliente = false
       u.nome = null; u.regiao = null; u.cidade = null; u.uf = null
       u.stage = "coleta_tel_outro"; iniciarTimer(from)
-      return { texto: "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?", opcoes: null }
+      return perguntarNome("Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?")
     }
   }
   if (u.stage === "coleta_tel_outro" && text) {
@@ -2456,7 +2492,7 @@ async function processar(from, nomeWA, text, msgObj) {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
     u.uf = val; u.stage = "coleta_cidade_regiao"; u.etapa = "cidade"; iniciarTimer(from)
-    return { texto: "Digite a cidade onde você mora", opcoes: null, perguntaId: "cidade" }
+    return perguntarCidade()
   }
   if (u.stage === "coleta_cidade_regiao" && text) {
     const cidadeLimpa = formatarCidade(limparTextoSomenteLetras(text))
@@ -2484,7 +2520,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._descTemp = null
       entrarEtapaDescricao(u, u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO))
       iniciarTimer(from)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     }
     iniciarTimer(from)
     return {
@@ -2567,7 +2603,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._audioDescNome = null
       entrarEtapaDescricao(u, u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO))
       iniciarTimer(from)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     }
     iniciarTimer(from)
     return {
@@ -2711,7 +2747,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._descOrigemStage = "explicar_tudo"
       u.stage = STAGES.COLETA_DESC_AUDIO
       iniciarTimer(from)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     }
     if (text === "seguir_fluxo") {
       const proximoStage = u._proximoStageAposDescricao || "gatilho"
@@ -2749,7 +2785,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._descOrigemStage = "explicar_tudo"
       u.stage = STAGES.COLETA_DESC_AUDIO
       iniciarTimer(from)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     }
     if (text === "seguir_fluxo") {
       const proximoStage = u._proximoStageAposDescricao || "gatilho"
@@ -2788,7 +2824,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._descOrigemStage = "explicar_tudo"
       u.stage = STAGES.COLETA_DESC_AUDIO
       iniciarTimer(from)
-      return telaDescreverCaso()
+      return perguntarDescricao()
     }
     if (text === "seguir_fluxo") {
       const proximoStage = u._proximoStageAposDescricao || "gatilho"
@@ -3014,7 +3050,8 @@ async function processar(from, nomeWA, text, msgObj) {
       u.docsEntregues.push("doc_cpf")
       u.docAtualIdx = 0
       u.ultimoArqId = null
-      const telaCpf = telaEnvioDoc(u)
+      u.etapa = "documentos"
+      const telaCpf = perguntarDocumentos(u)
       iniciarTimer(from)
       return telaCpf
     }
@@ -3022,7 +3059,8 @@ async function processar(from, nomeWA, text, msgObj) {
       await hsMoverStage(u.negocioId, HS_STAGE.DOCS)
       if (!u.docsEntregues) u.docsEntregues = []
       u.docAtualIdx = u.docAtualIdx || 0
-      const tela = telaEnvioDoc(u)
+      u.etapa = "documentos"
+      const tela = perguntarDocumentos(u)
       iniciarTimer(from)
       return tela
     }
@@ -3051,7 +3089,8 @@ async function processar(from, nomeWA, text, msgObj) {
       if (pend4.length > 0) u.docsEntregues.push(pend4[0].id)
       u.docAtualIdx = 0
       u.ultimoArqId = null
-      const tela4 = telaEnvioDoc(u)
+      u.etapa = "documentos"
+      const tela4 = perguntarDocumentos(u)
       iniciarTimer(from)
       return tela4
     }
