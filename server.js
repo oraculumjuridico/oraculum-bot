@@ -134,7 +134,9 @@ function logErro(tipo, msg) {
 }
 
 function etapaValida(etapa) {
-  return typeof etapa === "string" && ETAPAS_VALIDAS.has(etapa)
+  if (!etapa) return false
+  const e = String(etapa).toLowerCase().trim()
+  return ETAPAS_VALIDAS.has(e)
 }
 
 const users = {}
@@ -297,11 +299,15 @@ function getUser(from, nomeWA) {
 function salvarEtapa(numero, etapa) {
   const u = users[numero]
   if (!u) return "area"
-  if (!etapaValida(etapa)) {
-    logErro("estado", `Tentativa de salvar etapa invalida para ${numero}: ${etapa}`)
-    return obterEtapaSegura(numero)
-  }
-  u.etapa = etapa
+  
+const etapaNormalizada = String(etapa).toLowerCase().trim()
+
+if (!etapaValida(etapaNormalizada)) {
+  logErro("estado", `Tentativa de salvar etapa invalida para ${numero}: ${etapaNormalizada}`)
+  return obterEtapaSegura(numero)
+}
+
+u.etapa = etapaNormalizada
   console.log("📍 Salvando etapa:", u.etapa)
   return u.etapa
 }
@@ -764,12 +770,14 @@ function retomarFluxo(u) {
   const etapa = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
   console.log("🔁 Retomando etapa:", etapa)
 
-  if (!etapaValida(obterEtapaSegura(u._numero)) && !u.lastPerguntaPayload) {
-    console.log("🔁 Etapa inválida/inicio → redirecionando para área")
-    u.stage = STAGES.AREA
-    salvarEtapa(u._numero, "area")
-    return menuPrincipal(u)
-  }
+const etapaAtual = String(u.etapa || "").toLowerCase().trim()
+
+if (!etapaValida(etapaAtual) && !u.lastPerguntaPayload) {
+  console.log("🔁 Etapa inválida/inicio → redirecionando para área")
+  u.stage = STAGES.AREA
+  salvarEtapa(u._numero, "area")
+  return menuPrincipal(u)
+}
 
   switch (etapa) {
     case STAGES.AREA:
@@ -891,12 +899,14 @@ function retomarFluxo(u) {
   const etapa = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
   console.log("🔁 Retomando etapa:", etapa)
 
-  if (!etapaValida(obterEtapaSegura(u._numero)) && !u.lastPerguntaPayload) {
-    console.log("🔁 Etapa inválida/inicio → redirecionando para área")
-    u.stage = STAGES.AREA
-    salvarEtapa(u._numero, "area")
-    return menuPrincipal(u)
-  }
+const etapaAtual = String(u.etapa || "").toLowerCase().trim()
+
+if (!etapaValida(etapaAtual) && !u.lastPerguntaPayload) {
+  console.log("🔁 Etapa inválida/inicio → redirecionando para área")
+  u.stage = STAGES.AREA
+  salvarEtapa(u._numero, "area")
+  return menuPrincipal(u)
+}
 
   switch (etapa) {
     case STAGES.AREA:
