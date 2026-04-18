@@ -767,7 +767,9 @@ function perguntarDocumentos(u) {
 }
 
 function retomarFluxo(u) {
-  const etapa = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
+  const etapaBruta = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
+  const etapa = String(etapaBruta || "").toLowerCase().trim()
+
   console.log("🔁 Retomando etapa:", etapa)
 
 const etapaAtual = String(u.etapa || "").toLowerCase().trim()
@@ -896,7 +898,9 @@ function respostaRecomecoMenuPrincipal(u) {
 }
 
 function retomarFluxo(u) {
-  const etapa = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
+  const etapaBruta = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
+  const etapa = String(etapaBruta || "").toLowerCase().trim()
+
   console.log("🔁 Retomando etapa:", etapa)
 
 const etapaAtual = String(u.etapa || "").toLowerCase().trim()
