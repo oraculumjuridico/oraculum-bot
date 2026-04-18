@@ -414,13 +414,20 @@ function identificarEtapaAtual(u, payload) {
   return origem || "pergunta"
 }
 
+function salvarEtapa(u, etapa) {
+  if (!u) return etapa
+  u.etapa = etapa
+  console.log("📍 Salvando etapa:", u.etapa)
+  return u.etapa
+}
+
 function registrarUltimaPergunta(u, payload) {
   if (!u || !payload?.texto || payload.registrarPergunta === false) return
   if (u.stage === STAGES.RETOMADA_AUTOMATICA) return
   const deveSalvar = payload.opcoes?.length || payload.texto.includes("?") || u.stage !== "cliente"
   if (!deveSalvar) return
   u.lastPergunta = payload.perguntaId || u.stage || "pergunta"
-  u.etapa = identificarEtapaAtual(u, payload)
+  salvarEtapa(u, identificarEtapaAtual(u, payload))
   u.lastPerguntaPayload = { texto: payload.texto, opcoes: payload.opcoes || null }
 }
 
@@ -735,14 +742,14 @@ function retomarFluxo(u) {
 
 function perguntarNome(u) {
   u.stage = "coleta_nome"
-  u.etapa = "nome"
+  salvarEtapa(u, "nome")
   return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
 }
 
 function perguntarCidade(u, stage = null) {
   const stageCidade = stage || (u?._regiao || u?.uf ? "coleta_cidade_regiao" : "coleta_cidade")
   u.stage = stageCidade
-  u.etapa = "cidade"
+  salvarEtapa(u, "cidade")
   if (stageCidade === "coleta_cidade_regiao") {
     return { texto: "Digite a cidade onde você mora", opcoes: null }
   }
@@ -751,23 +758,32 @@ function perguntarCidade(u, stage = null) {
 
 function perguntarDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
   entrarEtapaDescricao(u, stage)
+  salvarEtapa(u, "descricao_caso")
   return telaDescreverCaso()
 }
 
 function perguntarDocumentos(u) {
-  u.etapa = "documentos"
+  salvarEtapa(u, "documentos")
   return telaEnvioDoc(u)
+}
+
+function respostaRecomecoMenuPrincipal(u) {
+  const tela = menuPrincipal(u)
+  return {
+    ...tela,
+    texto: "Perfeito 😊 então vamos recomeçar.\n\nEscolha uma área que melhor define sua situação 👇"
+  }
 }
 
 function retomarFluxo(u) {
   const etapa = u.etapa || u.lastPergunta || u.stage || STAGES.AREA
-  console.log("🔁 Retomando etapa:", u.etapa)
+  console.log("🔁 Retomando etapa:", etapa)
 
   switch (etapa) {
     case STAGES.AREA:
     case "area":
       u.stage = STAGES.AREA
-      u.etapa = "area"
+      salvarEtapa(u, "area")
       return menuPrincipal(u)
     case "nome":
     case "coleta_nome":
@@ -816,6 +832,7 @@ function retomarFluxo(u) {
       return perguntarDocumentos(u)
     case STAGES.DESC_CONFIRMA:
       u.stage = STAGES.DESC_CONFIRMA
+      salvarEtapa(u, "descricao_caso")
       if (!u._descTemp) return telaDescreverCaso()
       return {
         texto: `Entendi assim:\n\n"${u._descTemp}"\n\nEstá correto?`,
@@ -831,20 +848,25 @@ function retomarFluxo(u) {
     case "cliente":
       if (!podeMostrarMenuCliente(u)) {
         u.stage = STAGES.AREA
-        u.etapa = "area"
+        salvarEtapa(u, "area")
         return menuPrincipal(u)
       }
       u.stage = STAGES.CLIENTE
       return menuCliente(u)
-    default:
-      console.log("⚠️ Etapa inválida:", u.etapa)
-      return perguntarDescricao(u)
+    default: {
+      console.log("⚠️ Etapa inválida:", etapa)
+      const ultimaPergunta = retomarUltimaPergunta(u)
+      if (ultimaPergunta) return ultimaPergunta
+      u.stage = STAGES.AREA
+      salvarEtapa(u, "area")
+      return respostaRecomecoMenuPrincipal(u)
+    }
   }
 }
 
 function pularDescricaoPorAgora(from, u) {
   u.jaIncentivouDescricao = true
-  u.etapa = "descricao_caso"
+  salvarEtapa(u, "descricao_caso")
   u._descTemp = null
   u._audioDescBuffer = null
   u._audioDescMime = null
@@ -1795,7 +1817,11 @@ async function finalizarCadastro(from, u) {
 function tela_confirmacao(u) {
   return {
     texto: `✅ *Confira seus dados antes de confirmar:*\n\n${resumoCaso(u)}\n\nTudo está correto?`,
-    opcoes: [{ id: "conf_ok", title: "✅ Confirmar" }, { id: "conf_corrigir", title: "✏️ Corrigir dados" }]
+    opcoes: [
+      { id: "conf_ok", title: "✅ Confirmar" },
+      { id: "conf_corrigir", title: "✏️ Corrigir dados" },
+      { id: "conf_menu", title: "🏠 Menu principal" }
+    ]
   }
 }
 
@@ -2139,9 +2165,9 @@ function processarRetomadaOuReinicio(from, u, text) {
   if (text === "desc_incentivo_menu") {
     u.jaIncentivouDescricao = true
     u.stage = STAGES.AREA
-    u.etapa = "area"
+    salvarEtapa(u, "area")
     iniciarTimer(from)
-    return menuPrincipal(u)
+    return respostaRecomecoMenuPrincipal(u)
   }
 
   if (text === "desc_incentivo_encerrar") {
@@ -2160,15 +2186,15 @@ function processarRetomadaOuReinicio(from, u, text) {
       u._retomadaEhLeadFrio = false
       u.negocioStageId = HS_STAGE.LEAD
       u.stage = STAGES.AREA
-      u.etapa = "area"
+      salvarEtapa(u, "area")
       iniciarTimer(from)
-      return menuPrincipal(u)
+      return respostaRecomecoMenuPrincipal(u)
     }
     if (!podeMostrarMenuCliente(u)) {
       u.stage = STAGES.AREA
-      u.etapa = "area"
+      salvarEtapa(u, "area")
       iniciarTimer(from)
-      return menuPrincipal(u)
+      return respostaRecomecoMenuPrincipal(u)
     }
     u.stage = STAGES.CLIENTE
     iniciarTimer(from)
@@ -2184,8 +2210,9 @@ function processarRetomadaOuReinicio(from, u, text) {
   if (text === "recomecar") {
     limparDadosCasoAtual(u)
     u.stage = STAGES.AREA
+    salvarEtapa(u, "area")
     iniciarTimer(from)
-    return { ...telaArea(), perguntaId: "area" }
+    return respostaRecomecoMenuPrincipal(u)
   }
 
   if (text === "audio_fluxo_encerrar") {
@@ -2324,7 +2351,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       )
     }
     u.documentosEnviados = true
-    u.etapa = "documentos"
+    salvarEtapa(u, "documentos")
     if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
 
     const msgAudio = trans
@@ -2356,7 +2383,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
-  u.etapa = "documentos"
+  salvarEtapa(u, "documentos")
   if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
 
   await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
@@ -2537,6 +2564,11 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
           { id: "cor_desc", title: "💬 Descrição" }
         ]
       })
+    }
+    if (text === "conf_menu") {
+      u.stage = STAGES.AREA
+      salvarEtapa(u, "area")
+      return responderComTimer(from, respostaRecomecoMenuPrincipal(u))
     }
   }
 
@@ -3249,9 +3281,9 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "cliente") {
     if (!podeMostrarMenuCliente(u)) {
       u.stage = "area"
-      u.etapa = "area"
+      salvarEtapa(u, "area")
       iniciarTimer(from)
-      return menuPrincipal(u)
+      return respostaRecomecoMenuPrincipal(u)
     }
     if (text === "m_status") {
       iniciarTimer(from)
@@ -3285,7 +3317,7 @@ async function processar(from, nomeWA, text, msgObj) {
     }
     if (text === "m_docs") {
       await hsMoverStage(u.negocioId, HS_STAGE.DOCS)
-      u.etapa = "documentos"
+      salvarEtapa(u, "documentos")
       if (!u.docsEntregues) u.docsEntregues = []
       u.docAtualIdx = u.docAtualIdx || 0
       const tela = telaEnvioDoc(u)
@@ -3293,7 +3325,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return tela
     }
     if (text === "docs_reenviar") {
-      u.etapa = "documentos"
+      salvarEtapa(u, "documentos")
       if (u.ultimoArqId) {
         await excluirDrive(u.ultimoArqId)
         u.ultimoArqId = null; u.ultimoArqNome = null
@@ -3306,7 +3338,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: `🔄 Foto anterior removida!\n\nEnvie novamente: *${f2}* do *${d2?.label || "documento"}*\n\n💡 Boa iluminação, sem reflexo, tudo enquadrado.`, opcoes: null }
     }
     if (text === "docs_maisFotos") {
-      u.etapa = "documentos"
+      salvarEtapa(u, "documentos")
       // Não avança para o próximo documento — permanece no atual
       const pend3  = getDocsPendentes(u)
       const d3     = pend3[0]
@@ -3315,7 +3347,7 @@ async function processar(from, nomeWA, text, msgObj) {
       return { texto: `📸 Ok! Envie mais uma foto de *${d3?.label || "documento"}*\n\nFoto atual: *${fAtual}*\n\n💡 Mesmas orientações: boa iluminação, sem reflexo, enquadrado corretamente.`, opcoes: null }
     }
     if (text === "docs_proxdoc") {
-      u.etapa = "documentos"
+      salvarEtapa(u, "documentos")
       const pend4 = getDocsPendentes(u)
       if (pend4.length > 0) u.docsEntregues.push(pend4[0].id)
       u.docAtualIdx = 0
@@ -3375,8 +3407,8 @@ async function processar(from, nomeWA, text, msgObj) {
       iniciarTimer(from)
       if (podeMostrarMenuCliente(u)) return menuCliente(u)
       u.stage = "area"
-      u.etapa = "area"
-      return menuPrincipal(u)
+      salvarEtapa(u, "area")
+      return respostaRecomecoMenuPrincipal(u)
     }
     // Detectar intencao de encerrar antes de passar para IA
     if (text) {
@@ -3398,7 +3430,8 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // FALLBACK
   u.stage = "area"; iniciarTimer(from)
-  return { texto: "Vamos recomeçar. Como posso te ajudar?", opcoes: [{ id: "area_inss", title: "INSS" }, { id: "area_trab", title: "Trabalhista" }, { id: "area_outros", title: "Outros" }] }
+  salvarEtapa(u, "area")
+  return respostaRecomecoMenuPrincipal(u)
 }
 
 app.get("/", (_, res) => res.send("Oraculum v6.2"))
