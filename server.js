@@ -2150,8 +2150,14 @@ async function classificarAcaoAudioFluxo(u, texto) {
   }
 }
 
-function processarRetomadaOuReinicio(from, u, text) {
-  if (text === "desc_incentivo_continuar") {
+function processarRetomadaOuReinicio(from, u, text, buttonId = "") {
+  const msg = String(text || "").toLowerCase().trim()
+  const botao = String(buttonId || "").trim()
+  const opcoesAtuais = new Set((u.lastPerguntaPayload?.opcoes || []).map(o => o.id))
+  const contextoDescricao = opcoesAtuais.has("desc_incentivo_continuar") || opcoesAtuais.has("desc_incentivo_menu") || opcoesAtuais.has("desc_incentivo_encerrar")
+  const contextoRetomada = opcoesAtuais.has("ret_auto_continuar") || opcoesAtuais.has("ret_auto_menu") || opcoesAtuais.has("cont_retomar") || opcoesAtuais.has("recomecar")
+
+  if (botao === "desc_incentivo_continuar" || (contextoDescricao && msg.includes("continuar"))) {
     const stageDescricao = ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO
     entrarEtapaDescricao(u, stageDescricao)
     iniciarTimer(from)
@@ -2162,26 +2168,12 @@ function processarRetomadaOuReinicio(from, u, text) {
     return pularDescricaoPorAgora(from, u)
   }
 
-  if (text === "desc_incentivo_menu") {
+  if (
+    botao === "desc_incentivo_menu" ||
+    botao === "ret_auto_menu" ||
+    ((contextoDescricao || contextoRetomada) && msg.includes("menu"))
+  ) {
     u.jaIncentivouDescricao = true
-    u.stage = STAGES.AREA
-    salvarEtapa(u, "area")
-    iniciarTimer(from)
-    return respostaRecomecoMenuPrincipal(u)
-  }
-
-  if (text === "desc_incentivo_encerrar") {
-    return executarEncerramentoFluxo(u)
-  }
-
-  if (text === "ret_auto_continuar") {
-    u._retomadaEhLeadFrio = false
-    const resposta = retomarFluxo(u)
-    iniciarTimer(from)
-    return resposta
-  }
-
-  if (text === "ret_auto_menu") {
     if (u._retomadaEhLeadFrio) {
       u._retomadaEhLeadFrio = false
       u.negocioStageId = HS_STAGE.LEAD
@@ -2201,7 +2193,20 @@ function processarRetomadaOuReinicio(from, u, text) {
     return menuCliente(u)
   }
 
-  if (text === "cont_retomar") {
+  if (
+    botao === "desc_incentivo_encerrar" ||
+    botao === "m_encerrar" ||
+    ((contextoDescricao || contextoRetomada) && msg.includes("encerrar"))
+  ) {
+    return executarEncerramentoFluxo(u)
+  }
+
+  if (
+    botao === "ret_auto_continuar" ||
+    botao === "cont_retomar" ||
+    (contextoRetomada && msg.includes("continuar"))
+  ) {
+    u._retomadaEhLeadFrio = false
     const resposta = retomarFluxo(u)
     iniciarTimer(from)
     return resposta
@@ -2603,7 +2608,8 @@ async function processar(from, nomeWA, text, msgObj) {
   const ehAudio = tipo === "audio"
   const ehDoc   = tipo === "document" || tipo === "image"
 
-  const respostaRetomada = processarRetomadaOuReinicio(from, u, text)
+  const buttonId = msgObj?.interactive?.button_reply?.id || msgObj?.interactive?.list_reply?.id || ""
+  const respostaRetomada = processarRetomadaOuReinicio(from, u, text, buttonId)
   if (respostaRetomada) return respostaRetomada
 
   const respostaRetomadaAutomatica = await verificarRetomadaAutomatica(from, u)
