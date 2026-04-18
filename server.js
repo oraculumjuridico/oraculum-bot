@@ -2676,8 +2676,12 @@ async function processar(from, nomeWA, text, msgObj) {
   const respostaRetomada = processarRetomadaOuReinicio(from, u, text, buttonId)
   if (respostaRetomada) return respostaRetomada
 
-  const respostaRetomadaAutomatica = await verificarRetomadaAutomatica(from, u)
-  if (respostaRetomadaAutomatica) return respostaRetomadaAutomatica
+  if (u.aguardandoRetomada) {
+    console.log("⛔ Ignorando verificação automática de retomada")
+  } else {
+    const respostaRetomadaAutomatica = await verificarRetomadaAutomatica(from, u)
+    if (respostaRetomadaAutomatica) return respostaRetomadaAutomatica
+  }
 
   const respostaMidia = await processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc)
   if (respostaMidia) return respostaMidia
