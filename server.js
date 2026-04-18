@@ -104,6 +104,7 @@ const ETAPAS_VALIDAS = new Set([
   "trab_dir_tipo",
   "trab_dir_pend",
   "trab_acid_af",
+  "trab_menu",
   "trab_ass_s",
   "trab_ass_prov",
   "trab_out_desc",
