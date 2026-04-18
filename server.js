@@ -416,7 +416,7 @@ function identificarEtapaAtual(u, payload) {
 
 function salvarEtapa(u, etapa) {
   if (!u) return etapa
-  u.etapa = etapa
+  u.etapa = etapa === "inicio" ? "area" : etapa
   console.log("📍 Salvando etapa:", u.etapa)
   return u.etapa
 }
@@ -659,6 +659,13 @@ function retomarFluxo(u) {
   const etapa = u.etapa || u.lastPergunta || u.stage || STAGES.AREA
   console.log("🔁 Retomando etapa:", etapa)
 
+  if (!u.etapa || u.etapa === "inicio") {
+    console.log("🔁 Etapa inválida/inicio → redirecionando para área")
+    u.stage = STAGES.AREA
+    salvarEtapa(u, "area")
+    return menuPrincipal(u)
+  }
+
   switch (etapa) {
     case STAGES.AREA:
     case "area":
@@ -778,6 +785,13 @@ function respostaRecomecoMenuPrincipal(u) {
 function retomarFluxo(u) {
   const etapa = u.etapa || u.lastPergunta || u.stage || STAGES.AREA
   console.log("🔁 Retomando etapa:", etapa)
+
+  if (!u.etapa || u.etapa === "inicio") {
+    console.log("🔁 Etapa inválida/inicio → redirecionando para área")
+    u.stage = STAGES.AREA
+    salvarEtapa(u, "area")
+    return menuPrincipal(u)
+  }
 
   switch (etapa) {
     case STAGES.AREA:
