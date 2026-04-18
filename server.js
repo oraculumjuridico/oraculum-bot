@@ -107,6 +107,8 @@ function novoUsuario(nomeWA) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    aguardandoRetomada: false,
+    temCadastroCompleto: false,
     jaOfereceuRetomada: false,
     jaIncentivouDescricao: false,
     _retomadaEhLeadFrio: false,
@@ -176,6 +178,8 @@ function hidratarUsuarioPersistido(data) {
   hidratado._entradaPendenteTipo = hidratado._entradaPendenteTipo || null
   hidratado._entradaPendenteValor = hidratado._entradaPendenteValor || null
   hidratado._entradaPendenteOrigem = hidratado._entradaPendenteOrigem || null
+  hidratado.aguardandoRetomada = Boolean(hidratado.aguardandoRetomada)
+  hidratado.temCadastroCompleto = Boolean(hidratado.temCadastroCompleto || podeMostrarMenuCliente(hidratado))
   hidratado.etapa = hidratado.etapa || hidratado.stage || STAGES.INICIO
   hidratado.jaOfereceuRetomada = Boolean(hidratado.jaOfereceuRetomada)
   hidratado.jaIncentivouDescricao = Boolean(hidratado.jaIncentivouDescricao)
@@ -456,6 +460,8 @@ function limparDadosCasoAtual(u, { preservarNome = true } = {}) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    aguardandoRetomada: false,
+    temCadastroCompleto: false,
     jaOfereceuRetomada: false,
     jaIncentivouDescricao: false,
     _retomadaEhLeadFrio: false,
@@ -548,6 +554,10 @@ function responderEncerramento(u) {
     opcoes: null,
     registrarPergunta: false
   }
+}
+
+function encerrarAtendimento(u) {
+  return responderEncerramento(u)
 }
 
 function stageAceitaTextoLivre(stage) {
@@ -1047,16 +1057,19 @@ function iniciarTimer(from) {
       iniciarTimer(from)
       return
     }
-    await enviar(from, "Oi 😊, fiquei te esperando. Quer continuar de onde parou ou recomeçar?", [
-      { id: "cont_retomar", title: "▶️ Continuar" },
-      { id: "recomecar", title: "🔄 Recomeçar" }
+    await enviar(from, "Oi 😊, fiquei te esperando.\nQuer continuar de onde parou ou recomeçar?\n\n• Continuar\n• Recomeçar\n• Encerrar", [
+      { id: "cont_retomar", title: "Continuar" },
+      { id: "recomecar", title: "Recomeçar" },
+      { id: "m_encerrar", title: "Encerrar" }
     ], false)
+    u.aguardandoRetomada = true
     u.timer = setTimeout(async () => {
       if (!users[from]) return
       if (u.modoDigitando) {
         console.log("Usuário ainda marcado em modo digitação no abandono final, seguindo com captura:", from)
         u.modoDigitando = false
       }
+      u.aguardandoRetomada = false
       await enviar(from, "Vou pausar por agora, tudo bem? Quando quiser, é só me chamar por aqui. 😊", null, false)
       await capturarLeadIncompleto(from, u)
       limparDadosCasoAtual(u)
@@ -2615,6 +2628,7 @@ async function processar(from, nomeWA, text, msgObj) {
   const u    = getUser(from, nomeWA)
   u.ultimaMsg = Date.now()
   u.modoDigitando = false
+  u.temCadastroCompleto = Boolean(u.temCadastroCompleto || podeMostrarMenuCliente(u))
   limparTimer(u)
   limparTimerIncentivoDescricao(u)
 
@@ -2623,6 +2637,37 @@ async function processar(from, nomeWA, text, msgObj) {
   const ehDoc   = tipo === "document" || tipo === "image"
 
   const buttonId = msgObj?.interactive?.button_reply?.id || msgObj?.interactive?.list_reply?.id || ""
+  const textoRetomada = String(msgObj?.text?.body || msgObj?.interactive?.button_reply?.title || msgObj?.interactive?.list_reply?.title || text || "").toLowerCase().trim()
+
+  if (u.aguardandoRetomada) {
+    const msg = textoRetomada
+
+    if (buttonId === "cont_retomar" || buttonId === "ret_auto_continuar" || msg.includes("continuar")) {
+      u.aguardandoRetomada = false
+      iniciarTimer(from)
+      return retomarFluxo(u)
+    }
+
+    if (buttonId === "recomecar" || msg.includes("recome")) {
+      u.aguardandoRetomada = false
+      if (u.temCadastroCompleto) {
+        u.stage = STAGES.CLIENTE
+        iniciarTimer(from)
+        return menuCliente(u)
+      }
+      limparDadosCasoAtual(u)
+      u.stage = STAGES.AREA
+      salvarEtapa(u, "area")
+      iniciarTimer(from)
+      return menuPrincipal(u)
+    }
+
+    if (buttonId === "m_encerrar" || msg.includes("encerrar")) {
+      u.aguardandoRetomada = false
+      return encerrarAtendimento(u)
+    }
+  }
+
   const respostaRetomada = processarRetomadaOuReinicio(from, u, text, buttonId)
   if (respostaRetomada) return respostaRetomada
 
