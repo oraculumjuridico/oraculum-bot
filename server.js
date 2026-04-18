@@ -2284,7 +2284,7 @@ async function verificarRetomadaAutomatica(from, u) {
     return {
       texto: `Que bom te ver novamente, ${getPrimeiroNome(u)} 😊\nVi que você iniciou um atendimento, mas não concluiu.\n\nComo prefere continuar?`,
       opcoes: [
-        { id: "ret_auto_continuar", title: "Continuar atendimento" },
+        { id: "ret_auto_continuar", title: "Cont. atendimento" },
         { id: "ret_auto_menu", title: "Menu principal" },
         { id: "m_encerrar", title: "Encerrar" }
       ]
@@ -2294,7 +2294,7 @@ async function verificarRetomadaAutomatica(from, u) {
   return {
     texto: `Que bom te ver novamente, ${getPrimeiroNome(u)} 😊\nQuer continuar seu atendimento de onde parou?`,
     opcoes: [
-      { id: "ret_auto_continuar", title: "Continuar atendimento" },
+      { id: "ret_auto_continuar", title: "Cont. atendimento" },
       { id: "ret_auto_menu", title: "Menu principal" },
       { id: "m_encerrar", title: "Encerrar" }
     ]
@@ -2642,7 +2642,12 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.aguardandoRetomada) {
     const msg = textoRetomada
 
-    if (buttonId === "cont_retomar" || buttonId === "ret_auto_continuar" || msg.includes("continuar")) {
+    if (
+      buttonId === "cont_retomar" ||
+      buttonId === "ret_auto_continuar" ||
+      msg.includes("continuar") ||
+      msg.includes("cont")
+    ) {
       u.aguardandoRetomada = false
       iniciarTimer(from)
       return retomarFluxo(u)
