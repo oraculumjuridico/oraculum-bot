@@ -2,6 +2,12 @@
 //  ORACULUM ADVOCACIA — v6.2
 //  WhatsApp · HubSpot · Google Drive · AssemblyAI · Groq AI
 // ================================================================
+
+// ================================================================
+//  CONFIG / INIT
+// ================================================================
+
+// ================================================================
 require("dotenv").config()
 
 const express    = require("express")
@@ -26,111 +32,55 @@ const DATA_DIR = path.join(__dirname, "data")
 const USERS_STATE_FILE = path.join(DATA_DIR, "users-state.json")
 
 const HS_PIPELINE = "default"
-const STAGES = {
-  INICIO: "inicio",
-  AREA: "area",
-  CLIENTE: "cliente",
-  AGUARDANDO_URGENTE: "aguardando_urgente",
-  URGENTE_AUDIO_CONFIRMA: "urgente_audio_confirma",
-  URGENTE_AUDIO_ERRO_TRANSCRICAO: "urgente_audio_erro_transcricao",
-  COLETA_DESC: "coleta_desc",
-  COLETA_DESC_AUDIO: "coleta_desc_audio",
-  DESC_CONFIRMA: "desc_confirma",
-  DESC_ERRO_TRANSCRICAO: "desc_erro_transcricao",
-  SUGESTAO_FLUXO_OUTRO: "sugestao_fluxo_outro",
-  EXPLICAR_TUDO_OFERTA: "explicar_tudo_oferta",
-  AUDIO_FLUXO_CONFIRMA: "audio_fluxo_confirma",
-  CONFIRMAR_ENTRADA: "confirmar_entrada",
-  CONFIRMACAO: "confirmacao",
-  MENU_CORRECAO: "menu_correcao",
-  CORRIGIR_VALOR: "corrigir_valor",
-  CORRIGIR_UF: "corrigir_uf",
-  CORRIGIR_SEL: "corrigir_sel",
-  INICIO_RETORNO: "inicio_retorno",
-  NOVO_CASO_CONFIRMA: "novo_caso_confirma",
-  RETOMADA_AUTOMATICA: "retomada_automatica"
-}
-const ETAPAS_VALIDAS = new Set([
-  STAGES.AREA,
-  STAGES.CLIENTE,
-  STAGES.AGUARDANDO_URGENTE,
-  STAGES.URGENTE_AUDIO_CONFIRMA,
-  STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO,
-  STAGES.COLETA_DESC,
-  STAGES.COLETA_DESC_AUDIO,
-  STAGES.DESC_CONFIRMA,
-  STAGES.DESC_ERRO_TRANSCRICAO,
-  STAGES.SUGESTAO_FLUXO_OUTRO,
-  STAGES.EXPLICAR_TUDO_OFERTA,
-  STAGES.AUDIO_FLUXO_CONFIRMA,
-  STAGES.CONFIRMAR_ENTRADA,
-  STAGES.CONFIRMACAO,
-  STAGES.MENU_CORRECAO,
-  STAGES.CORRIGIR_VALOR,
-  STAGES.CORRIGIR_UF,
-  STAGES.CORRIGIR_SEL,
-  STAGES.INICIO_RETORNO,
-  STAGES.NOVO_CASO_CONFIRMA,
-  "area",
-  "nome",
-  "cidade",
-  "descricao_caso",
-  "documentos",
-  "cliente",
-  "coleta_nome",
-  "coleta_regiao",
-  "coleta_uf",
-  "coleta_cidade",
-  "coleta_cidade_regiao",
-  "coleta_contrib",
-  "coleta_contrib_regiao",
-  "coleta_contrib_regiao_v2",
-  "__coleta_benef_regiao_v2__",
-  "coleta_benef",
-  "__coleta_nome_legado__",
-  "__coleta_cidade_legado__",
-  "__coleta_regiao_legado__",
-  "__coleta_uf_legado__",
-  "coleta_verif_tel",
-  "coleta_tel_outro",
-  "coleta_tel_wpp",
-  "coleta_tel_wpp_contato",
-  "novo_caso_confirma",
-  "gatilho",
-  "urgencia",
-  "trab_dem_tipo",
-  "trab_dem_verb",
-  "trab_dem_qdo",
-  "trab_dir_tipo",
-  "trab_dir_pend",
-  "trab_acid_af",
-  "trab_menu",
-  "trab_ass_s",
-  "trab_ass_prov",
-  "trab_out_desc",
-  "outros_menu",
-  "out_cons_tipo",
-  "out_rev_tipo",
-  "out_desc",
-  "documentos"
-])
-const HS_STAGE = {
-  LEAD: "appointmentscheduled",
-  CADASTRO: "qualifiedtobuy",
-  ANALISE: "presentationscheduled",
-  AGUARDANDO_DOCS: "decisionmakerboughtin",
-  DOCS: "contractsent",
-  AGENDAMENTO: "1343040832",
-  PROTOCOLO: "1343040098",
-  PROCESSO: "1337291921",
-  FINAL: "1343039663"
-}
+
+// ================================================================
+//  STATE (users, persistência)
+// ================================================================
 
 const monitor = { conversas: 0, cadastros: 0, erros: [], inicio: new Date() }
-function logErro(tipo, msg) {
+const FALLBACK_PROCESSAMENTO_TEXTO = "Desculpe, tive um problema ao processar sua solicitação. Vamos tentar novamente."
+const MESSAGE_DEDUPE_WINDOW_MS = 10 * 60 * 1000
+const MESSAGE_DEDUPE_FALLBACK_WINDOW_MS = 15 * 1000
+
+function sanitizarTextoEntrada(valor) {
+  if (typeof valor === "string") return valor.trim()
+  if (valor === null || valor === undefined) return ""
+  return String(valor).trim()
+}
+
+function normalizarStageKey(stage) {
+  return sanitizarTextoEntrada(stage).toLowerCase()
+}
+
+function criarRespostaFallbackProcessamento() {
+  return {
+    texto: FALLBACK_PROCESSAMENTO_TEXTO,
+    opcoes: null,
+    registrarPergunta: false
+  }
+}
+
+function logContextoExecucao({ from = "", stage = "", flow = "", msg = "" } = {}) {
+  console.log(`[USER] ${sanitizarTextoEntrada(from) || "-"}`)
+  console.log(`[STAGE] ${sanitizarTextoEntrada(stage) || "-"}`)
+  console.log(`[FLOW] ${sanitizarTextoEntrada(flow) || "-"}`)
+  console.log(`[MSG] ${sanitizarTextoEntrada(msg) || "-"}`)
+}
+
+function logErro(tipo, msg, err = null) {
   monitor.erros.push({ tipo, msg, ts: new Date().toISOString() })
   if (monitor.erros.length > 100) monitor.erros.shift()
-  console.error(`[${tipo.toUpperCase()}] ${msg}`)
+
+  const tipoNormalizado = sanitizarTextoEntrada(tipo).toUpperCase()
+  if (tipoNormalizado === "STAGE_INVALIDO") {
+    console.error(`[ERRO][STAGE_INVALIDO] ${msg}`)
+  } else if (tipoNormalizado) {
+    console.error(`[ERRO] [${tipoNormalizado}] ${msg}`)
+  } else {
+    console.error(`[ERRO] ${msg}`)
+  }
+
+  if (err?.stack) console.error(`[ERRO] ${err.stack}`)
 }
 
 function etapaValida(etapa) {
@@ -143,14 +93,26 @@ const users = {}
 let persistUsersTimeout = null
 const mensagensProcessadas = new Map()
 
-function mensagemJaProcessada(messageId) {
-  if (!messageId) return false
+function criarChaveMensagemDuplicada(from, text, msgObj = null) {
+  const numero = sanitizarTextoEntrada(from) || "-"
+  const tipo = sanitizarTextoEntrada(msgObj?.type || "text").toLowerCase() || "text"
+  const texto = sanitizarTextoEntrada(text).toLowerCase() || "-"
+  const timestamp = sanitizarTextoEntrada(msgObj?.timestamp)
+  const janela = timestamp || String(Math.floor(Date.now() / MESSAGE_DEDUPE_FALLBACK_WINDOW_MS))
+  return `fallback:${numero}:${tipo}:${texto}:${janela}`
+}
+
+function mensagemJaProcessada(messageId, fallbackKey = "") {
   const agora = Date.now()
   for (const [id, ts] of mensagensProcessadas.entries()) {
-    if (agora - ts > 10 * 60 * 1000) mensagensProcessadas.delete(id)
+    if (agora - ts > MESSAGE_DEDUPE_WINDOW_MS) mensagensProcessadas.delete(id)
   }
-  if (mensagensProcessadas.has(messageId)) return true
-  mensagensProcessadas.set(messageId, agora)
+
+  const chaves = [sanitizarTextoEntrada(messageId), sanitizarTextoEntrada(fallbackKey)].filter(Boolean)
+  if (!chaves.length) return false
+  if (chaves.some(chave => mensagensProcessadas.has(chave))) return true
+
+  for (const chave of chaves) mensagensProcessadas.set(chave, agora)
   return false
 }
 
@@ -185,6 +147,7 @@ function novoUsuario(nomeWA) {
     _descOrigemStage: null,
     _audioFluxoTexto: null, _audioFluxoAcao: null, _audioFluxoResposta: null,
     _urgenteAudioBuffer: null, _urgenteAudioMime: null, _urgenteAudioNome: null, _urgenteAudioTexto: null,
+    processing: false,
     modoDigitando: false,
     aguardandoResposta: false,
     timer: null, timerIncentivoDescricao: null, ultimaMsg: Date.now()
@@ -202,6 +165,7 @@ function serializarUsers() {
     saida[from] = {
       ...u,
       _numero: null,
+      processing: false,
       timer: null,
       timerIncentivoDescricao: null,
       _audioDescBuffer: null
@@ -265,6 +229,7 @@ function hidratarUsuarioPersistido(data) {
   hidratado._urgenteAudioMime = hidratado._urgenteAudioMime || null
   hidratado._urgenteAudioNome = hidratado._urgenteAudioNome || null
   hidratado._urgenteAudioTexto = hidratado._urgenteAudioTexto || null
+  hidratado.processing = false
   hidratado.modoDigitando = Boolean(hidratado.modoDigitando)
   hidratado.aguardandoResposta = Boolean(hidratado.aguardandoResposta)
   hidratado._numero = null
@@ -326,6 +291,125 @@ function podeRetomar(numero) {
 }
 
 // Formata texto livre para o CRM: Title Case + sem acentos
+
+function setStage(u, newStage) {
+  const stageAtual = normalizarStageKey(u?.stage)
+  const stageNormalizado = normalizarStageKey(newStage)
+
+  if (!STAGE_VALUES.has(stageNormalizado)) {
+    logErro("STAGE_INVALIDO", "stage inválido detectado")
+    logContextoExecucao({
+      from: u?._numero,
+      stage: stageAtual || "-",
+      flow: "setStage",
+      msg: stageNormalizado || sanitizarTextoEntrada(newStage) || "-"
+    })
+    return u?.stage
+  }
+
+  console.log(`[TRANSITION] ${stageAtual || "-"} -> ${stageNormalizado} | USER: ${u?._numero || "-"}`)
+  Reflect.set(u, "stage", stageNormalizado)
+  return u.stage
+}
+
+// ================================================================
+//  STAGES
+// ================================================================
+
+const STAGES = {
+  INICIO: "inicio",
+  AREA: "area",
+  NOME: "nome",
+  CIDADE: "cidade",
+  DESCRICAO_CASO: "descricao_caso",
+  DOCUMENTOS: "documentos",
+  CLIENTE: "cliente",
+  AGUARDANDO_URGENTE: "aguardando_urgente",
+  URGENTE_AUDIO_CONFIRMA: "urgente_audio_confirma",
+  URGENTE_AUDIO_ERRO_TRANSCRICAO: "urgente_audio_erro_transcricao",
+  COLETA_DESC: "coleta_desc",
+  COLETA_DESC_AUDIO: "coleta_desc_audio",
+  DESC_CONFIRMA: "desc_confirma",
+  DESC_ERRO_TRANSCRICAO: "desc_erro_transcricao",
+  SUGESTAO_FLUXO_OUTRO: "sugestao_fluxo_outro",
+  EXPLICAR_TUDO_OFERTA: "explicar_tudo_oferta",
+  AUDIO_FLUXO_CONFIRMA: "audio_fluxo_confirma",
+  CONFIRMAR_ENTRADA: "confirmar_entrada",
+  CONFIRMACAO: "confirmacao",
+  MENU_CORRECAO: "menu_correcao",
+  CORRIGIR_VALOR: "corrigir_valor",
+  CORRIGIR_UF: "corrigir_uf",
+  CORRIGIR_SEL: "corrigir_sel",
+  INICIO_RETORNO: "inicio_retorno",
+  NOVO_CASO_CONFIRMA: "novo_caso_confirma",
+  RETOMADA_AUTOMATICA: "retomada_automatica",
+  COLETA_NOME: "coleta_nome",
+  COLETA_REGIAO: "coleta_regiao",
+  COLETA_UF: "coleta_uf",
+  COLETA_CIDADE: "coleta_cidade",
+  COLETA_CIDADE_REGIAO: "coleta_cidade_regiao",
+  COLETA_CONTRIB: "coleta_contrib",
+  COLETA_CONTRIB_REGIAO: "coleta_contrib_regiao",
+  COLETA_CONTRIB_REGIAO_V2: "coleta_contrib_regiao_v2",
+  COLETA_BENEF: "coleta_benef",
+  COLETA_BENEF_REGIAO_V2: "__coleta_benef_regiao_v2__",
+  COLETA_NOME_LEGADO: "__coleta_nome_legado__",
+  COLETA_CIDADE_LEGADO: "__coleta_cidade_legado__",
+  COLETA_REGIAO_LEGADO: "__coleta_regiao_legado__",
+  COLETA_UF_LEGADO: "__coleta_uf_legado__",
+  COLETA_VERIF_TEL: "coleta_verif_tel",
+  COLETA_TEL_OUTRO: "coleta_tel_outro",
+  COLETA_TEL_WPP: "coleta_tel_wpp",
+  COLETA_TEL_WPP_CONTATO: "coleta_tel_wpp_contato",
+  GATILHO: "gatilho",
+  URGENCIA: "urgencia",
+  INSS_MENU: "inss_menu",
+  INSS_NOVO: "inss_novo",
+  INSS_NEG_TIPO: "inss_neg_tipo",
+  INSS_CORT_TIPO: "inss_cort_tipo",
+  INSS_APOS: "inss_apos",
+  INSS_BPC: "inss_bpc",
+  INSS_INC: "inss_inc",
+  INSS_DEP: "inss_dep",
+  INSS_OUT: "inss_out",
+  INSS_JA: "inss_ja",
+  INSS_NEG_QUANDO: "inss_neg_quando",
+  INSS_CORT_MOT: "inss_cort_mot",
+  INSS_CORT_REC: "inss_cort_rec",
+  INSS_CORT_QDO: "inss_cort_qdo",
+  TRAB_MENU: "trab_menu",
+  TRAB_DEM_TIPO: "trab_dem_tipo",
+  TRAB_DEM_VERB: "trab_dem_verb",
+  TRAB_DEM_QDO: "trab_dem_qdo",
+  TRAB_DIR_TIPO: "trab_dir_tipo",
+  TRAB_DIR_PEND: "trab_dir_pend",
+  TRAB_ACID_AF: "trab_acid_af",
+  TRAB_ASS_S: "trab_ass_s",
+  TRAB_ASS_PROV: "trab_ass_prov",
+  TRAB_OUT_DESC: "trab_out_desc",
+  OUTROS_MENU: "outros_menu",
+  OUT_CONS_TIPO: "out_cons_tipo",
+  OUT_REV_TIPO: "out_rev_tipo",
+  OUT_DESC: "out_desc"
+}
+const STAGE_VALUES = new Set(Object.values(STAGES).map(normalizarStageKey))
+const ETAPAS_VALIDAS = STAGE_VALUES
+const HS_STAGE = {
+  LEAD: "appointmentscheduled",
+  CADASTRO: "qualifiedtobuy",
+  ANALISE: "presentationscheduled",
+  AGUARDANDO_DOCS: "decisionmakerboughtin",
+  DOCS: "contractsent",
+  AGENDAMENTO: "1343040832",
+  PROTOCOLO: "1343040098",
+  PROCESSO: "1337291921",
+  FINAL: "1343039663"
+}
+
+// ================================================================
+//  HELPERS
+// ================================================================
+
 function toTitleCase(str) {
   return str.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
@@ -623,7 +707,7 @@ function prepararConfirmacaoEntrada(from, u, tipo, valor, origem) {
   u._entradaPendenteTipo = tipo
   u._entradaPendenteValor = valor
   u._entradaPendenteOrigem = origem
-  u.stage = STAGES.CONFIRMAR_ENTRADA
+  setStage(u, STAGES.CONFIRMAR_ENTRADA)
   iniciarTimer(from)
   const label = tipo === "telefone" ? formatarTelefoneExibicao(valor) : valor
   return {
@@ -724,11 +808,11 @@ function telaArea(u = null) {
 
 function avancarAposTelefoneConfirmado(from, u) {
   if (u.nomeConfirmado && u.nome) {
-    u.stage = "coleta_regiao"
+    setStage(u, "coleta_regiao")
     iniciarTimer(from)
     return telaRegioes()
   }
-  u.stage = "coleta_nome"
+  setStage(u, "coleta_nome")
   salvarEtapa(u._numero, "nome")
   iniciarTimer(from)
   return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
@@ -741,136 +825,14 @@ function retomarUltimaPergunta(u) {
 }
 
 function perguntarNome(u) {
-  u.stage = "coleta_nome"
-  salvarEtapa(u._numero, "nome")
-  return { texto: "âœï¸ Qual Ã© o seu *nome completo*?", opcoes: null }
-}
-
-function perguntarCidade(u, stage = null) {
-  const stageCidade = stage || (u?._regiao || u?.uf ? "coleta_cidade_regiao" : "coleta_cidade")
-  u.stage = stageCidade
-  salvarEtapa(u._numero, "cidade")
-  if (stageCidade === "coleta_cidade_regiao") {
-    return { texto: "Digite a cidade onde vocÃª mora", opcoes: null }
-  }
-  return { texto: "ðŸ“ Em qual *cidade* vocÃª mora?", opcoes: null }
-}
-
-function perguntarDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
-  entrarEtapaDescricao(u, stage)
-  return telaDescreverCaso()
-}
-
-function perguntarDocumentos(u) {
-  salvarEtapa(u._numero, "documentos")
-  return telaEnvioDoc(u)
-}
-
-function retomarFluxo(u) {
-  const etapaBruta = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
-  const etapa = String(etapaBruta || "").toLowerCase().trim()
-
-  console.log("🔁 Retomando etapa:", etapa)
-
-const etapaAtual = String(u.etapa || "").toLowerCase().trim()
-
-if (!etapaValida(etapaAtual) && !u.lastPerguntaPayload) {
-  console.log("🔁 Etapa inválida/inicio → redirecionando para área")
-  u.stage = STAGES.AREA
-  salvarEtapa(u._numero, "area")
-  return menuPrincipal(u)
-}
-
-  switch (etapa) {
-    case STAGES.AREA:
-    case "area":
-      u.stage = STAGES.AREA
-      return { ...telaArea(), perguntaId: "area" }
-    case "coleta_nome":
-      u.stage = "coleta_nome"
-      return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
-    case "coleta_regiao":
-      u.stage = "coleta_regiao"
-      return telaRegioes()
-    case "coleta_uf":
-      u.stage = "coleta_uf"
-      return telaUFsRegiao(u._regiao || "reg_n")
-    case "coleta_cidade_regiao":
-    case "coleta_cidade":
-      u.stage = etapa
-      return { texto: "Digite a cidade onde você mora", opcoes: null }
-    case "coleta_contrib":
-    case "coleta_contrib_regiao":
-    case "coleta_contrib_regiao_v2":
-      u.stage = etapa
-      return {
-        texto: "Selecione uma opção:",
-        opcoes: [
-          { id: "col_c1", title: "Nunca" },
-          { id: "col_c2", title: "Pouco tempo" },
-          { id: "col_c3", title: "Mais de 1 ano" },
-          { id: "col_c4", title: "Muitos anos" }
-        ]
-      }
-    case "__coleta_benef_regiao_v2__":
-    case "coleta_benef":
-      u.stage = etapa
-      return {
-        texto: "Você já recebe algum benefício do INSS?",
-        opcoes: [
-          { id: "col_b1", title: "Sim" },
-          { id: "col_b2", title: "Não" }
-        ]
-      }
-    case STAGES.COLETA_DESC:
-    case STAGES.COLETA_DESC_AUDIO:
-    case "descricao_caso":
-    case "trab_out_desc":
-    case "out_desc":
-      entrarEtapaDescricao(u, ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO)
-      return telaDescreverCaso()
-    case STAGES.DESC_CONFIRMA:
-      u.stage = STAGES.DESC_CONFIRMA
-      if (!u._descTemp) return telaDescreverCaso()
-      return {
-        texto: `Entendi assim:\n\n"${u._descTemp}"\n\nEstá correto?`,
-        opcoes: [
-          { id: "desc_ok", title: "✅ Confirmar" },
-          { id: "desc_corrigir", title: "✏️ Corrigir" }
-        ]
-      }
-    case STAGES.CONFIRMACAO:
-      u.stage = STAGES.CONFIRMACAO
-      return tela_confirmacao(u)
-    case STAGES.CLIENTE:
-    case "cliente":
-      u.stage = STAGES.CLIENTE
-      return menuCliente(u)
-    default: {
-      const ultimaPergunta = retomarUltimaPergunta(u)
-      if (ultimaPergunta) {
-        u.stage = etapa
-        return ultimaPergunta
-      }
-      if (u.numeroCaso) {
-        u.stage = STAGES.CLIENTE
-        return menuCliente(u)
-      }
-      u.stage = STAGES.AREA
-      return { ...telaArea(), perguntaId: "area" }
-    }
-  }
-}
-
-function perguntarNome(u) {
-  u.stage = "coleta_nome"
+  setStage(u, "coleta_nome")
   salvarEtapa(u._numero, "nome")
   return { texto: "✍️ Qual é o seu *nome completo*?", opcoes: null }
 }
 
 function perguntarCidade(u, stage = null) {
   const stageCidade = stage || (u?._regiao || u?.uf ? "coleta_cidade_regiao" : "coleta_cidade")
-  u.stage = stageCidade
+  setStage(u, stageCidade)
   salvarEtapa(u._numero, "cidade")
   if (stageCidade === "coleta_cidade_regiao") {
     return { texto: "Digite a cidade onde você mora", opcoes: null }
@@ -897,150 +859,6 @@ function respostaRecomecoMenuPrincipal(u) {
   }
 }
 
-function retomarFluxo(u) {
-  const etapaBruta = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
-  const etapa = String(etapaBruta || "").toLowerCase().trim()
-
-  console.log("🔁 Retomando etapa:", etapa)
-
-const etapaAtual = String(u.etapa || "").toLowerCase().trim()
-
-if (!etapaValida(etapaAtual) && !u.lastPerguntaPayload) {
-  console.log("🔁 Etapa inválida/inicio → redirecionando para área")
-  u.stage = STAGES.AREA
-  salvarEtapa(u._numero, "area")
-  return menuPrincipal(u)
-}
-
-  switch (etapa) {
-    case STAGES.AREA:
-    case "area":
-      u.stage = STAGES.AREA
-      salvarEtapa(u._numero, "area")
-      return menuPrincipal(u)
-    case "nome":
-    case "coleta_nome":
-      return perguntarNome(u)
-    case "cidade":
-      return perguntarCidade(u)
-    case "coleta_regiao":
-      u.stage = "coleta_regiao"
-      return telaRegioes()
-    case "coleta_uf":
-      u.stage = "coleta_uf"
-      return telaUFsRegiao(u._regiao || "reg_n")
-    case "coleta_cidade_regiao":
-    case "coleta_cidade":
-      return perguntarCidade(u, etapa)
-    case "coleta_contrib":
-    case "coleta_contrib_regiao":
-    case "coleta_contrib_regiao_v2":
-      u.stage = etapa
-      return {
-        texto: "Selecione uma opção:",
-        opcoes: [
-          { id: "col_c1", title: "Nunca" },
-          { id: "col_c2", title: "Pouco tempo" },
-          { id: "col_c3", title: "Mais de 1 ano" },
-          { id: "col_c4", title: "Muitos anos" }
-        ]
-      }
-    case "__coleta_benef_regiao_v2__":
-    case "coleta_benef":
-      u.stage = etapa
-      return {
-        texto: "Você já recebe algum benefício do INSS?",
-        opcoes: [
-          { id: "col_b1", title: "Sim" },
-          { id: "col_b2", title: "Não" }
-        ]
-      }
-    case STAGES.COLETA_DESC:
-    case STAGES.COLETA_DESC_AUDIO:
-    case "descricao_caso":
-    case "trab_out_desc":
-    case "out_desc":
-      return perguntarDescricao(u, ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO)
-    case "documentos":
-      return perguntarDocumentos(u)
-    case STAGES.DESC_CONFIRMA:
-      u.stage = STAGES.DESC_CONFIRMA
-      salvarEtapa(u._numero, "descricao_caso")
-      if (!u._descTemp) return telaDescreverCaso()
-      return {
-        texto: `Entendi assim:\n\n"${u._descTemp}"\n\nEstá correto?`,
-        opcoes: [
-          { id: "desc_ok", title: "✅ Confirmar" },
-          { id: "desc_corrigir", title: "✏️ Corrigir" }
-        ]
-      }
-    case STAGES.CONFIRMACAO:
-      u.stage = STAGES.CONFIRMACAO
-      return tela_confirmacao(u)
-    case STAGES.CLIENTE:
-    case "cliente":
-      if (!podeMostrarMenuCliente(u)) {
-        u.stage = STAGES.AREA
-        salvarEtapa(u._numero, "area")
-        return menuPrincipal(u)
-      }
-      u.stage = STAGES.CLIENTE
-      return menuCliente(u)
-    default: {
-      console.log("⚠️ Etapa inválida:", etapa)
-      const ultimaPergunta = retomarUltimaPergunta(u)
-      if (ultimaPergunta) return ultimaPergunta
-      u.stage = STAGES.AREA
-      salvarEtapa(u._numero, "area")
-      return respostaRecomecoMenuPrincipal(u)
-    }
-  }
-}
-
-function pularDescricaoPorAgora(from, u) {
-  u.jaIncentivouDescricao = true
-  salvarEtapa(u._numero, "descricao_caso")
-  u._descTemp = null
-  u._audioDescBuffer = null
-  u._audioDescMime = null
-  u._audioDescNome = null
-
-  if (u._descOrigemStage === "trab_out_desc" || u._descOrigemStage === "out_desc" || u.stage === "trab_out_desc" || u.stage === "out_desc") {
-    u._descOrigemStage = null
-    u.stage = "gatilho"
-    iniciarTimer(from)
-    return {
-      texto: "Sem problemas 😊 podemos continuar e você envia depois",
-      opcoes: [{ id: "cont", title: "▶️ Continuar" }]
-    }
-  }
-
-  if (u._proximoStageAposDescricao) {
-    const proximoStage = u._proximoStageAposDescricao
-    const proximaPergunta = u._proximaPerguntaAposDescricao
-    u._proximoStageAposDescricao = null
-    u._proximaPerguntaAposDescricao = null
-    u._descOrigemStage = null
-    u.stage = proximoStage
-    iniciarTimer(from)
-    if (proximoStage === STAGES.CONFIRMACAO) {
-      const tela = tela_confirmacao(u)
-      return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${tela.texto}`, opcoes: tela.opcoes }
-    }
-    if (proximaPergunta) {
-      return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${proximaPergunta.texto}`, opcoes: proximaPergunta.opcoes || null }
-    }
-  }
-
-  u._descOrigemStage = null
-  u.stage = STAGES.CONFIRMACAO
-  iniciarTimer(from)
-  return {
-    texto: "Sem problemas 😊 podemos continuar e você envia depois",
-    opcoes: [{ id: "cont", title: "▶️ Continuar" }]
-  }
-}
-
 function deveCapturarLeadIncompleto(u) {
   if (u?.leadIncompletoCapturado) return false
   if (u?.numeroCaso) return false
@@ -1057,7 +875,7 @@ function pularDescricaoPorAgora(from, u) {
 
   if (u._descOrigemStage === "trab_out_desc" || u._descOrigemStage === "out_desc" || u.stage === "trab_out_desc" || u.stage === "out_desc") {
     u._descOrigemStage = null
-    u.stage = "gatilho"
+    setStage(u, "gatilho")
     iniciarTimer(from)
     return {
       texto: "Sem problemas 😊 podemos continuar e você envia depois",
@@ -1071,7 +889,7 @@ function pularDescricaoPorAgora(from, u) {
     u._proximoStageAposDescricao = null
     u._proximaPerguntaAposDescricao = null
     u._descOrigemStage = null
-    u.stage = proximoStage
+    setStage(u, proximoStage)
     iniciarTimer(from)
     if (proximoStage === STAGES.CONFIRMACAO) {
       const tela = tela_confirmacao(u)
@@ -1083,7 +901,7 @@ function pularDescricaoPorAgora(from, u) {
   }
 
   u._descOrigemStage = null
-  u.stage = STAGES.CONFIRMACAO
+  setStage(u, STAGES.CONFIRMACAO)
   iniciarTimer(from)
   const tela = tela_confirmacao(u)
   return { texto: `Sem problemas 😊 podemos continuar e você envia depois\n\n${tela.texto}`, opcoes: tela.opcoes }
@@ -1094,7 +912,7 @@ function ehStageDescricaoCaso(stage) {
 }
 
 function entrarEtapaDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
-  u.stage = stage
+  setStage(u, stage)
   salvarEtapa(u._numero, "descricao_caso")
   u.jaIncentivouDescricao = false
 }
@@ -1190,15 +1008,50 @@ function iniciarTimer(from) {
   }, t1)
 }
 
-function restaurarTimersPersistidos() {
-  const agora = Date.now()
-  for (const [from, u] of Object.entries(users)) {
-    if (!u || !u.stage || u.stage === STAGES.INICIO) continue
-    const ultimaMsg = Number(u.ultimaMsg || 0)
-    if (!ultimaMsg || agora - ultimaMsg > 30 * 60 * 1000) continue
-    iniciarTimer(from)
+const UF_MAP = {
+  uf_ac:"AC", uf_al:"AL", uf_am:"AM", uf_ap:"AP", uf_ba:"BA", uf_ce:"CE",
+  uf_df:"DF", uf_es:"ES", uf_go:"GO", uf_ma:"MA", uf_mg:"MG", uf_ms:"MS",
+  uf_mt:"MT", uf_pa:"PA", uf_pb:"PB", uf_pe:"PE", uf_pi:"PI", uf_pr:"PR",
+  uf_rj:"RJ", uf_rn:"RN", uf_ro:"RO", uf_rr:"RR", uf_rs:"RS", uf_sc:"SC",
+  uf_se:"SE", uf_sp:"SP", uf_to:"TO"
+}
+const REGIOES = {
+  reg_n:  { label:"Norte",        ufs:[["uf_ac","AC"],["uf_am","AM"],["uf_ap","AP"],["uf_pa","PA"],["uf_ro","RO"],["uf_rr","RR"],["uf_to","TO"]] },
+  reg_ne: { label:"Nordeste",     ufs:[["uf_al","AL"],["uf_ba","BA"],["uf_ce","CE"],["uf_ma","MA"],["uf_pb","PB"],["uf_pe","PE"],["uf_pi","PI"],["uf_rn","RN"],["uf_se","SE"]] },
+  reg_co: { label:"Centro-Oeste", ufs:[["uf_df","DF"],["uf_go","GO"],["uf_ms","MS"],["uf_mt","MT"]] },
+  reg_se: { label:"Sudeste",      ufs:[["uf_es","ES"],["uf_mg","MG"],["uf_rj","RJ"],["uf_sp","SP"]] },
+  reg_s:  { label:"Sul",          ufs:[["uf_pr","PR"],["uf_rs","RS"],["uf_sc","SC"]] }
+}
+function telaRegioes() {
+  return { texto:"Selecione sua Região no Brasil", opcoes:[
+    { id:"reg_n", title:"Norte" }, { id:"reg_ne", title:"Nordeste" },
+    { id:"reg_co", title:"Centro-Oeste" }, { id:"reg_se", title:"Sudeste" },
+    { id:"reg_s", title:"Sul" }
+  ]}
+}
+function telaUFsRegiao(regId) {
+  const reg = REGIOES[regId]
+  if (!reg) return telaRegioes()
+  return { texto: reg.label + " — escolha seu estado:", opcoes: reg.ufs.map(([id,title]) => ({ id, title })) }
+}
+
+function criarCtx({ from = "", nomeWA = "", text = "", msgObj = null, buttonId = "", tipo = "", ehAudio = false, ehDoc = false, timestamp = Date.now() } = {}) {
+  return {
+    from: sanitizarTextoEntrada(from),
+    nomeWA: sanitizarTextoEntrada(nomeWA),
+    text: String(text ?? "").trim(),
+    msgObj,
+    buttonId: sanitizarTextoEntrada(buttonId),
+    isAudio: ehAudio,
+    isImage: sanitizarTextoEntrada(tipo) === "image",
+    messageId: sanitizarTextoEntrada(msgObj?.id),
+    timestamp
   }
 }
+
+// ================================================================
+//  SERVICES (IA, áudio, integrações)
+// ================================================================
 
 const HS = () => ({ Authorization: `Bearer ${HUBSPOT_TOKEN}`, "Content-Type": "application/json" })
 const hubspotClient = {
@@ -1254,35 +1107,6 @@ async function hsCriarContato(from, u) {
   }
 }
 
-async function hsAtualizarContato(contactId, props = {}) {
-  if (!contactId) return null
-  try {
-    await axios.patch(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
-      { properties: props },
-      { headers: HS() }
-    )
-    return contactId
-  } catch (e) {
-    logErro("hubspot", "atualizarContato: " + (e.response?.data?.message || e.message))
-    return null
-  }
-}
-
-async function hsCriarNegocio(u) {
-  try {
-    const opts = arguments[1] || {}
-    const stage = opts.stage || HS_STAGE.LEAD
-    const dealname = opts.dealname || `${u.nome} — ${u.area} — ${u.numeroCaso}`
-    const res = await axios.post(
-      "https://api.hubapi.com/crm/v3/objects/deals",
-      { properties: { dealname, pipeline: HS_PIPELINE, dealstage: stage } },
-      { headers: HS() }
-    )
-    return res.data.id
-  } catch (e) { logErro("hubspot", "criarNegocio: " + (e.response?.data?.message || e.message)); return null }
-}
-
 async function hsCriarNegocio(u) {
   try {
     const opts = arguments[1] || {}
@@ -1318,6 +1142,7 @@ async function hsAssociar(cId, nId) {
 }
 
 // Estágios considerados "finalizados" no HubSpot — negócios nesses estágios são ignorados
+
 function filtrarPropsHubSpot(props = {}) {
   return Object.fromEntries(
     Object.entries(props).filter(([, value]) => {
@@ -1858,32 +1683,120 @@ async function enviar(to, texto, opcoes = null, comDelay = true) {
   } catch (e) { logErro("whatsapp", `>${to}: ` + (e.response?.data?.error?.message || e.message)) }
 }
 
-const UF_MAP = {
-  uf_ac:"AC", uf_al:"AL", uf_am:"AM", uf_ap:"AP", uf_ba:"BA", uf_ce:"CE",
-  uf_df:"DF", uf_es:"ES", uf_go:"GO", uf_ma:"MA", uf_mg:"MG", uf_ms:"MS",
-  uf_mt:"MT", uf_pa:"PA", uf_pb:"PB", uf_pe:"PE", uf_pi:"PI", uf_pr:"PR",
-  uf_rj:"RJ", uf_rn:"RN", uf_ro:"RO", uf_rr:"RR", uf_rs:"RS", uf_sc:"SC",
-  uf_se:"SE", uf_sp:"SP", uf_to:"TO"
+async function classificarResumoOutro(u, resumo) {
+  if (!GROQ_KEY || !resumo) return null
+  try {
+    const contexto = u.area === "Trabalhista"
+      ? `Categorias possíveis: demissao, direitos, acidente, assedio, generico.`
+      : `Categorias possíveis: consultoria_inss, consultoria_trabalhista, consultoria_outra, revisao_contrato, revisao_processo, revisao_outro, generico.`
+
+    const system = `Classifique resumos curtos de atendimento jurídico. Responda apenas JSON válido com as chaves "categoria", "confianca" e "rotulo". ${contexto}`
+    const user = `Área atual: ${u.area}\nResumo: ${resumo}`
+    const res = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        temperature: 0.1,
+        max_tokens: 120,
+        response_format: { type: "json_object" }
+      },
+      { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+    )
+    const content = res.data.choices?.[0]?.message?.content || "{}"
+    const parsed = JSON.parse(content)
+    if (!parsed?.categoria) return null
+    return parsed
+  } catch (e) {
+    logErro("groq", "classificarResumoOutro: " + e.message)
+    return null
+  }
 }
-const REGIOES = {
-  reg_n:  { label:"Norte",        ufs:[["uf_ac","AC"],["uf_am","AM"],["uf_ap","AP"],["uf_pa","PA"],["uf_ro","RO"],["uf_rr","RR"],["uf_to","TO"]] },
-  reg_ne: { label:"Nordeste",     ufs:[["uf_al","AL"],["uf_ba","BA"],["uf_ce","CE"],["uf_ma","MA"],["uf_pb","PB"],["uf_pe","PE"],["uf_pi","PI"],["uf_rn","RN"],["uf_se","SE"]] },
-  reg_co: { label:"Centro-Oeste", ufs:[["uf_df","DF"],["uf_go","GO"],["uf_ms","MS"],["uf_mt","MT"]] },
-  reg_se: { label:"Sudeste",      ufs:[["uf_es","ES"],["uf_mg","MG"],["uf_rj","RJ"],["uf_sp","SP"]] },
-  reg_s:  { label:"Sul",          ufs:[["uf_pr","PR"],["uf_rs","RS"],["uf_sc","SC"]] }
+
+function aplicarSugestaoFluxoOutro(u, categoria) {
+  if (u.area === "Trabalhista") {
+    if (categoria === "demissao") { u.situacao = "Demissao"; u.tipo = "demissao"; return { stage: "trab_dem_tipo", texto: "Como foi a demissão?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissão" }] } }
+    if (categoria === "direitos") { u.situacao = "Direitos nao pagos"; u.tipo = "direitos"; return { stage: "trab_dir_tipo", texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
+    if (categoria === "acidente") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; return { stage: "trab_acid_af", texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
+    if (categoria === "assedio") { u.situacao = "Assedio moral"; u.tipo = "assedio"; return { stage: "trab_ass_s", texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
+    u.situacao = "Outros"; u.tipo = "outros"
+    return { stage: "gatilho", texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+  }
+
+  if (categoria === "consultoria_inss") { u.situacao = "Consultoria juridica"; u.subTipo = "INSS"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "consultoria_trabalhista") { u.situacao = "Consultoria juridica"; u.subTipo = "Trabalhista"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "consultoria_outra") { u.situacao = "Consultoria juridica"; u.subTipo = "Outra área"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "revisao_contrato") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Contrato"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "revisao_processo") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Processo"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  if (categoria === "revisao_outro") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Outro"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
+  u.situacao = "Outro assunto"
+  return { stage: "gatilho", texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
 }
-function telaRegioes() {
-  return { texto:"Selecione sua Região no Brasil", opcoes:[
-    { id:"reg_n", title:"Norte" }, { id:"reg_ne", title:"Nordeste" },
-    { id:"reg_co", title:"Centro-Oeste" }, { id:"reg_se", title:"Sudeste" },
-    { id:"reg_s", title:"Sul" }
-  ]}
+
+async function prepararFluxoResumoOutro(from, u) {
+  const sugestao = await classificarResumoOutro(u, u.assuntoResumo)
+  if (sugestao?.categoria && Number(sugestao.confianca || 0) >= 0.6 && sugestao.categoria !== "generico") {
+    u._sugestaoFluxo = sugestao
+    setStage(u, STAGES.SUGESTAO_FLUXO_OUTRO)
+    iniciarTimer(from)
+    return {
+      texto: `Isso parece se encaixar em *${sugestao.rotulo || sugestao.categoria}*.\n\nQuer seguir por esse caminho?`,
+      opcoes: [
+        { id: "sug_fluxo", title: "✅ Seguir por esse caminho" },
+        { id: "sug_nao", title: "✏️ Corrigir categoria" }
+      ]
+    }
+  }
+
+  u._sugestaoFluxo = null
+  setStage(u, "gatilho")
+  u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+  iniciarTimer(from)
+  return telaExplicarTudo()
 }
-function telaUFsRegiao(regId) {
-  const reg = REGIOES[regId]
-  if (!reg) return telaRegioes()
-  return { texto: reg.label + " — escolha seu estado:", opcoes: reg.ufs.map(([id,title]) => ({ id, title })) }
+
+async function classificarAcaoAudioFluxo(u, texto) {
+  const fallback = (() => {
+    const lower = String(texto || "").toLowerCase()
+    if (/(encerrar|encerra|tchau|obrigad|finaliz|fechar|fecha|por hoje|ate logo|atÃ© logo|ate mais|atÃ© mais)/.test(lower)) {
+      return { acao: "encerrar", recomendacao: "encerrar este atendimento" }
+    }
+    if (/(recome|comecar de novo|comeÃ§ar de novo|novo atendimento|do zero|reiniciar|trocar de assunto|outro assunto)/.test(lower)) {
+      return { acao: "recomecar", recomendacao: "recomeÃ§ar o atendimento" }
+    }
+    return { acao: "continuar", recomendacao: "continuar no fluxo atual" }
+  })()
+
+  if (!GROQ_KEY || !texto) return fallback
+  try {
+    const system = `Classifique a intenção principal de um áudio recebido no meio de um atendimento jurídico. Responda apenas JSON válido com as chaves "ação" e "recomendação". "ação" deve ser exatamente uma destas: continuar, recomeçar, encerrar.`
+    const user = `Stage atual: ${u.stage}\nÁrea: ${u.area || "não definida"}\nTexto transcrito: ${texto}`
+    const res = await axios.post(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        temperature: 0.1,
+        max_tokens: 80,
+        response_format: { type: "json_object" }
+      },
+      { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+    )
+    const parsed = JSON.parse(res.data.choices?.[0]?.message?.content || "{}")
+    if (!["continuar", "recomecar", "encerrar"].includes(parsed?.acao)) return fallback
+    return {
+      acao: parsed.acao,
+      recomendacao: parsed.recomendacao || fallback.recomendacao
+    }
+  } catch (e) {
+    logErro("groq", "classificarAcaoAudioFluxo: " + e.message)
+    return fallback
+  }
 }
+
+// ================================================================
+//  FLOWS (funções separadas por etapa)
+// ================================================================
 
 async function finalizarCadastro(from, u) {
   const telefoneContato = getTelefoneContato(from, u)
@@ -1947,7 +1860,7 @@ async function finalizarCadastro(from, u) {
     } catch (e) { logErro("drive", "salvarAudiosCorrigidos: " + e.message) }
   }
 
-  u.stage = "cliente"
+  setStage(u, "cliente")
   u.leadIncompletoCapturado = false
   agendarPersistenciaUsers()
   return numeroCaso
@@ -2060,50 +1973,11 @@ function telaExplicarTudo() {
   }
 }
 
-function telaAudioNoFluxo(transcricao, recomendacao) {
-  const preview = (transcricao || "").length > 320 ? transcricao.slice(0, 320) + "..." : (transcricao || "")
-  return {
-    texto: `ðŸŽ™ï¸ *Entendi este Ã¡udio:*\n\n"${preview}"\n\nMinha recomendaÃ§Ã£o agora Ã© *${recomendacao || "continuar o atendimento"}*.\n\nComo vocÃª quer seguir?`,
-    opcoes: [
-      { id: "audio_fluxo_seguir", title: "âœ… Seguir recomendaÃ§Ã£o" },
-      { id: "audio_fluxo_recomecar", title: "ðŸ”„ RecomeÃ§ar" },
-      { id: "audio_fluxo_encerrar", title: "ðŸ‘‹ Encerrar" }
-    ]
-  }
-}
-
-function executarRecomecoFluxo(from, u) {
-  limparDadosCasoAtual(u)
-  u.stage = STAGES.AREA
-  iniciarTimer(from)
-  return { ...telaArea(), perguntaId: "area" }
-}
-
-function executarEncerramentoFluxo(u) {
-  limparTimer(u)
-  const nome1 = (u.nome || u.nomeWA).split(" ")[0]
-  limparDadosCasoAtual(u)
-  return { texto: `Tudo bem, ${nome1}. Vou encerrar por aqui.\n\nQuando quiser retomar, Ã© sÃ³ me chamar novamente.`, opcoes: null, registrarPergunta: false }
-}
-
-function deveOferecerExplicarTudo(u) {
-  return Boolean(u?.assuntoResumo) && !u?._ofereceuExplicarTudo && u.descricao === u.assuntoResumo
-}
-
-function prepararOfertaExplicarTudo(from, u, proximoStage, proximaPergunta) {
-  u._ofereceuExplicarTudo = true
-  u._proximoStageAposDescricao = proximoStage
-  u._proximaPerguntaAposDescricao = proximaPergunta
-  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
-  iniciarTimer(from)
-  return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
-}
-
 function prepararOfertaExplicarTudoFinal(from, u, proximoStage, proximaPergunta) {
   u._ofereceuExplicarTudo = true
   u._proximoStageAposDescricao = proximoStage
   u._proximaPerguntaAposDescricao = proximaPergunta
-  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+  setStage(u, STAGES.EXPLICAR_TUDO_OFERTA)
   iniciarTimer(from)
   return telaExplicarTudo()
 }
@@ -2131,7 +2005,7 @@ function prepararOfertaExplicarTudo(from, u, proximoStage, proximaPergunta) {
   u._ofereceuExplicarTudo = true
   u._proximoStageAposDescricao = proximoStage
   u._proximaPerguntaAposDescricao = proximaPergunta
-  u.stage = STAGES.EXPLICAR_TUDO_OFERTA
+  setStage(u, STAGES.EXPLICAR_TUDO_OFERTA)
   iniciarTimer(from)
   return telaExplicarTudo()
 }
@@ -2139,7 +2013,7 @@ function prepararOfertaExplicarTudo(from, u, proximoStage, proximaPergunta) {
 function iniciarConfirmacaoDescricao(from, u, texto, origemStage) {
   u._descTemp = normalizarTextoCRM(texto)
   u._descOrigemStage = origemStage
-  u.stage = STAGES.DESC_CONFIRMA
+  setStage(u, STAGES.DESC_CONFIRMA)
   iniciarTimer(from)
   const preview = u._descTemp.length > 400 ? u._descTemp.slice(0, 400) + "..." : u._descTemp
   return {
@@ -2165,131 +2039,208 @@ function respostaAposConfirmarDescricao(from, u) {
     u._proximoStageAposDescricao = null
     u._proximaPerguntaAposDescricao = null
     u._descOrigemStage = null
-    u.stage = proximoStage
+    setStage(u, proximoStage)
     iniciarTimer(from)
     if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
     if (proximaPergunta) return proximaPergunta
     return { texto: "Perfeito. Vou considerar esses detalhes no atendimento.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
-  u.stage = "confirmacao"
+  setStage(u, "confirmacao")
   u._descOrigemStage = null
   iniciarTimer(from)
   return tela_confirmacao(u)
 }
 
-async function classificarResumoOutro(u, resumo) {
-  if (!GROQ_KEY || !resumo) return null
+function flowArea(u, ctx) {
+  setStage(u, STAGES.AREA)
+  salvarEtapa(u._numero, "area")
+  return menuPrincipal(u)
+}
+
+function flowNome(u, ctx) {
+  return perguntarNome(u)
+}
+
+function flowCidade(u, ctx) {
+  return perguntarCidade(u)
+}
+
+function flowColetaRegiao(u, ctx) {
+  setStage(u, "coleta_regiao")
+  return telaRegioes()
+}
+
+function flowColetaUf(u, ctx) {
+  setStage(u, "coleta_uf")
+  return telaUFsRegiao(u._regiao || "reg_n")
+}
+
+function flowColetaCidade(u, ctx) {
+  return perguntarCidade(u, ctx.stageKey)
+}
+
+function flowColetaContrib(u, ctx) {
+  setStage(u, ctx.stageKey)
+  return {
+    texto: "Selecione uma opção:",
+    opcoes: [
+      { id: "col_c1", title: "Nunca" },
+      { id: "col_c2", title: "Pouco tempo" },
+      { id: "col_c3", title: "Mais de 1 ano" },
+      { id: "col_c4", title: "Muitos anos" }
+    ]
+  }
+}
+
+function flowColetaBenef(u, ctx) {
+  setStage(u, ctx.stageKey)
+  return {
+    texto: "Você já recebe algum benefício do INSS?",
+    opcoes: [
+      { id: "col_b1", title: "Sim" },
+      { id: "col_b2", title: "Não" }
+    ]
+  }
+}
+
+function flowDescricao(u, ctx) {
+  return perguntarDescricao(u, ehStageDescricaoCaso(u.stage) ? u.stage : STAGES.COLETA_DESC_AUDIO)
+}
+
+function flowDocumentos(u, ctx) {
+  return perguntarDocumentos(u)
+}
+
+function flowDescConfirma(u, ctx) {
+  setStage(u, STAGES.DESC_CONFIRMA)
+  salvarEtapa(u._numero, "descricao_caso")
+  if (!u._descTemp) return telaDescreverCaso()
+  return {
+    texto: `Entendi assim:
+
+"${u._descTemp}"
+
+Está correto?`,
+    opcoes: [
+      { id: "desc_ok", title: "✅ Confirmar" },
+      { id: "desc_corrigir", title: "✏️ Corrigir" }
+    ]
+  }
+}
+
+function flowConfirmacao(u, ctx) {
+  setStage(u, STAGES.CONFIRMACAO)
+  return tela_confirmacao(u)
+}
+
+function flowCliente(u, ctx) {
+  if (!podeMostrarMenuCliente(u)) {
+    setStage(u, STAGES.AREA)
+    salvarEtapa(u._numero, "area")
+    return menuPrincipal(u)
+  }
+  setStage(u, STAGES.CLIENTE)
+  return menuCliente(u)
+}
+
+function flowRetomadaFallback(u, ctx) {
+  logErro("flow_inexistente", `Stage nao tratado: ${ctx.stageKey || "-"}`)
+  logContextoExecucao({
+    from: u?._numero,
+    stage: ctx?.stageKey || u?.stage,
+    flow: "flowRetomadaFallback",
+    msg: ctx?.text
+  })
+  const ultimaPergunta = retomarUltimaPergunta(u)
+  if (ultimaPergunta) return ultimaPergunta
+  setStage(u, STAGES.AREA)
+  salvarEtapa(u._numero, "area")
+  return respostaRecomecoMenuPrincipal(u)
+}
+
+// ================================================================
+//  FLOW MAP (objeto de roteamento)
+// ================================================================
+
+const flowMap = Object.freeze({
+  [STAGES.AREA]: flowArea,
+  [STAGES.NOME]: flowNome,
+  [STAGES.COLETA_NOME]: flowNome,
+  [STAGES.CIDADE]: flowCidade,
+  [STAGES.COLETA_REGIAO]: flowColetaRegiao,
+  [STAGES.COLETA_UF]: flowColetaUf,
+  [STAGES.COLETA_CIDADE_REGIAO]: flowColetaCidade,
+  [STAGES.COLETA_CIDADE]: flowColetaCidade,
+  [STAGES.COLETA_CONTRIB]: flowColetaContrib,
+  [STAGES.COLETA_CONTRIB_REGIAO]: flowColetaContrib,
+  [STAGES.COLETA_CONTRIB_REGIAO_V2]: flowColetaContrib,
+  [STAGES.COLETA_BENEF_REGIAO_V2]: flowColetaBenef,
+  [STAGES.COLETA_BENEF]: flowColetaBenef,
+  [STAGES.COLETA_DESC]: flowDescricao,
+  [STAGES.COLETA_DESC_AUDIO]: flowDescricao,
+  [STAGES.DESCRICAO_CASO]: flowDescricao,
+  [STAGES.TRAB_OUT_DESC]: flowDescricao,
+  [STAGES.OUT_DESC]: flowDescricao,
+  [STAGES.DOCUMENTOS]: flowDocumentos,
+  [STAGES.DESC_CONFIRMA]: flowDescConfirma,
+  [STAGES.CONFIRMACAO]: flowConfirmacao,
+  [STAGES.CLIENTE]: flowCliente
+})
+
+// ================================================================
+//  DISPATCHER (retomarFluxo)
+// ================================================================
+
+function obterNomeFlow(flow) {
+  return typeof flow === "function" && flow.name ? flow.name : "flow_desconhecido"
+}
+
+function executarFlowSeguro(flow, u, ctx = {}) {
+  const flowName = obterNomeFlow(flow)
+  console.log(`[FLOW] ${flowName} | USER: ${ctx?.from || u?._numero || "-"} | STAGE: ${ctx?.stageKey || u?.stage || "-"}`)
+  logContextoExecucao({
+    from: ctx?.from || u?._numero,
+    stage: ctx?.stageKey || u?.stage,
+    flow: flowName,
+    msg: ctx?.text
+  })
+
   try {
-    const contexto = u.area === "Trabalhista"
-      ? `Categorias possíveis: demissao, direitos, acidente, assedio, generico.`
-      : `Categorias possíveis: consultoria_inss, consultoria_trabalhista, consultoria_outra, revisao_contrato, revisao_processo, revisao_outro, generico.`
-
-    const system = `Classifique resumos curtos de atendimento jurídico. Responda apenas JSON válido com as chaves "categoria", "confianca" e "rotulo". ${contexto}`
-    const user = `Área atual: ${u.area}\nResumo: ${resumo}`
-    const res = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        model: "llama-3.1-8b-instant",
-        messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        temperature: 0.1,
-        max_tokens: 120,
-        response_format: { type: "json_object" }
-      },
-      { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
-    )
-    const content = res.data.choices?.[0]?.message?.content || "{}"
-    const parsed = JSON.parse(content)
-    if (!parsed?.categoria) return null
-    return parsed
-  } catch (e) {
-    logErro("groq", "classificarResumoOutro: " + e.message)
-    return null
+    return flow(u, ctx)
+  } catch (err) {
+    logErro("flow", `Falha ao executar ${flowName}`, err)
+    return criarRespostaFallbackProcessamento()
   }
 }
 
-function aplicarSugestaoFluxoOutro(u, categoria) {
-  if (u.area === "Trabalhista") {
-    if (categoria === "demissao") { u.situacao = "Demissao"; u.tipo = "demissao"; return { stage: "trab_dem_tipo", texto: "Como foi a demissão?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissão" }] } }
-    if (categoria === "direitos") { u.situacao = "Direitos nao pagos"; u.tipo = "direitos"; return { stage: "trab_dir_tipo", texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
-    if (categoria === "acidente") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; return { stage: "trab_acid_af", texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
-    if (categoria === "assedio") { u.situacao = "Assedio moral"; u.tipo = "assedio"; return { stage: "trab_ass_s", texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
-    u.situacao = "Outros"; u.tipo = "outros"
-    return { stage: "gatilho", texto: "✅ Certo! Vamos registrar seu caso.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+function retomarFluxo(u, ctx = criarCtx()) {
+  const etapaBruta = obterEtapaSegura(u._numero) || u.lastPergunta || u.stage || STAGES.AREA
+  const etapa = normalizarStageKey(etapaBruta) || STAGES.AREA
+
+  console.log("🔁 Retomando etapa:", etapa)
+
+  const etapaAtual = normalizarStageKey(u.etapa)
+  if (!etapaValida(etapaAtual) && !u.lastPerguntaPayload) {
+    console.log("🔁 Etapa inválida/inicio → redirecionando para área")
+    setStage(u, STAGES.AREA)
+    salvarEtapa(u._numero, "area")
+    return menuPrincipal(u)
   }
 
-  if (categoria === "consultoria_inss") { u.situacao = "Consultoria juridica"; u.subTipo = "INSS"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
-  if (categoria === "consultoria_trabalhista") { u.situacao = "Consultoria juridica"; u.subTipo = "Trabalhista"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
-  if (categoria === "consultoria_outra") { u.situacao = "Consultoria juridica"; u.subTipo = "Outra área"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com essa consultoria.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
-  if (categoria === "revisao_contrato") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Contrato"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
-  if (categoria === "revisao_processo") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Processo"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
-  if (categoria === "revisao_outro") { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.subTipo = "Outro"; return { stage: "gatilho", texto: "✅ Entendi. Vamos seguir com a revisão.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] } }
-  u.situacao = "Outro assunto"
-  return { stage: "gatilho", texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
+  const flowCtx = { ...ctx, stageKey: etapa }
+  const flow = flowMap[etapa]
+
+  if (flow) return executarFlowSeguro(flow, u, flowCtx)
+  logErro("flow_inexistente", `Nenhum flow encontrado para stage ${etapa || "-"} | USER: ${u?._numero || "-"} — redirecionando para INICIO`)
+  return flowRetomadaFallback(u, flowCtx)
 }
 
-async function prepararFluxoResumoOutro(from, u) {
-  const sugestao = await classificarResumoOutro(u, u.assuntoResumo)
-  if (sugestao?.categoria && Number(sugestao.confianca || 0) >= 0.6 && sugestao.categoria !== "generico") {
-    u._sugestaoFluxo = sugestao
-    u.stage = STAGES.SUGESTAO_FLUXO_OUTRO
-    iniciarTimer(from)
-    return {
-      texto: `Isso parece se encaixar em *${sugestao.rotulo || sugestao.categoria}*.\n\nQuer seguir por esse caminho?`,
-      opcoes: [
-        { id: "sug_fluxo", title: "✅ Seguir por esse caminho" },
-        { id: "sug_nao", title: "✏️ Corrigir categoria" }
-      ]
-    }
-  }
+// ================================================================
+//  PROCESSADOR (processar)
+// ================================================================
 
-  u._sugestaoFluxo = null
-  u.stage = "gatilho"
-  u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
-  iniciarTimer(from)
-  return telaExplicarTudo()
-}
-
-async function classificarAcaoAudioFluxo(u, texto) {
-  const fallback = (() => {
-    const lower = String(texto || "").toLowerCase()
-    if (/(encerrar|encerra|tchau|obrigad|finaliz|fechar|fecha|por hoje|ate logo|atÃ© logo|ate mais|atÃ© mais)/.test(lower)) {
-      return { acao: "encerrar", recomendacao: "encerrar este atendimento" }
-    }
-    if (/(recome|comecar de novo|comeÃ§ar de novo|novo atendimento|do zero|reiniciar|trocar de assunto|outro assunto)/.test(lower)) {
-      return { acao: "recomecar", recomendacao: "recomeÃ§ar o atendimento" }
-    }
-    return { acao: "continuar", recomendacao: "continuar no fluxo atual" }
-  })()
-
-  if (!GROQ_KEY || !texto) return fallback
-  try {
-    const system = `Classifique a intenÃ§Ã£o principal de um Ã¡udio recebido no meio de um atendimento jurÃ­dico. Responda apenas JSON vÃ¡lido com as chaves "acao" e "recomendacao". "acao" deve ser exatamente uma destas: continuar, recomecar, encerrar.`
-    const user = `Stage atual: ${u.stage}\nÃrea: ${u.area || "nÃ£o definida"}\nTexto transcrito: ${texto}`
-    const res = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        model: "llama-3.1-8b-instant",
-        messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        temperature: 0.1,
-        max_tokens: 80,
-        response_format: { type: "json_object" }
-      },
-      { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
-    )
-    const parsed = JSON.parse(res.data.choices?.[0]?.message?.content || "{}")
-    if (!["continuar", "recomecar", "encerrar"].includes(parsed?.acao)) return fallback
-    return {
-      acao: parsed.acao,
-      recomendacao: parsed.recomendacao || fallback.recomendacao
-    }
-  } catch (e) {
-    logErro("groq", "classificarAcaoAudioFluxo: " + e.message)
-    return fallback
-  }
-}
-
-function processarRetomadaOuReinicio(from, u, text, buttonId = "") {
+function processarRetomadaOuReinicio(from, u, text, buttonId = "", ctx = null) {
   const msg = String(text || "").toLowerCase().trim()
   const botao = String(buttonId || "").trim()
   const opcoesAtuais = new Set((u.lastPerguntaPayload?.opcoes || []).map(o => o.id))
@@ -2316,18 +2267,18 @@ function processarRetomadaOuReinicio(from, u, text, buttonId = "") {
     if (u._retomadaEhLeadFrio) {
       u._retomadaEhLeadFrio = false
       u.negocioStageId = HS_STAGE.LEAD
-      u.stage = STAGES.AREA
+      setStage(u, STAGES.AREA)
       salvarEtapa(u._numero, "area")
       iniciarTimer(from)
       return respostaRecomecoMenuPrincipal(u)
     }
     if (!podeMostrarMenuCliente(u)) {
-      u.stage = STAGES.AREA
+      setStage(u, STAGES.AREA)
       salvarEtapa(u._numero, "area")
       iniciarTimer(from)
       return respostaRecomecoMenuPrincipal(u)
     }
-    u.stage = STAGES.CLIENTE
+    setStage(u, STAGES.CLIENTE)
     iniciarTimer(from)
     return menuCliente(u)
   }
@@ -2346,14 +2297,14 @@ function processarRetomadaOuReinicio(from, u, text, buttonId = "") {
     (contextoRetomada && msg.includes("continuar"))
   ) {
     u._retomadaEhLeadFrio = false
-    const resposta = retomarFluxo(u)
+    const resposta = retomarFluxo(u, ctx || criarCtx({ from, nomeWA: u.nomeWA, text, buttonId }))
     iniciarTimer(from)
     return resposta
   }
 
   if (text === "recomecar") {
     limparDadosCasoAtual(u)
-    u.stage = STAGES.AREA
+    setStage(u, STAGES.AREA)
     salvarEtapa(u._numero, "area")
     iniciarTimer(from)
     return respostaRecomecoMenuPrincipal(u)
@@ -2389,7 +2340,7 @@ async function verificarRetomadaAutomatica(from, u) {
   u.numeroCaso = u.numeroCaso || contato.properties?.numero_caso || "Em andamento"
   u.area = u.area || contato.properties?.area_juridica || "Atendimento em andamento"
   u.negocioStageId = negocio.stageId || u.negocioStageId || null
-  u.stage = STAGES.RETOMADA_AUTOMATICA
+  setStage(u, STAGES.RETOMADA_AUTOMATICA)
   u.jaOfereceuRetomada = true
   u._retomadaEhLeadFrio = u.negocioStageId === HS_STAGE.LEAD
 
@@ -2456,7 +2407,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         u._urgenteAudioMime = midia.mimeType
         u._urgenteAudioNome = nomeCliente
         u._urgenteAudioTexto = null
-        u.stage = STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO
+        setStage(u, STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO)
         return responderComTimer(from, {
           texto: "Não consegui transcrever o áudio. Tente novamente ou envie por texto.",
           opcoes: [{ id: "urg_audio_corrigir", title: "✏️ Corrigir" }]
@@ -2467,14 +2418,14 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       u._urgenteAudioMime = midia.mimeType
       u._urgenteAudioNome = nomeCliente
       u._urgenteAudioTexto = normalizarTextoCRM(trans)
-      u.stage = STAGES.URGENTE_AUDIO_CONFIRMA
+      setStage(u, STAGES.URGENTE_AUDIO_CONFIRMA)
       return responderComTimer(from, telaConfirmarUrgente(u._urgenteAudioTexto))
     }
 
     if (eDescricao || eDescricaoLivre) {
       if (!trans) {
         const origemDescricao = u.stage
-        u.stage = STAGES.DESC_ERRO_TRANSCRICAO
+        setStage(u, STAGES.DESC_ERRO_TRANSCRICAO)
         u._descOrigemStage = origemDescricao
         return responderComTimer(from, {
           texto: "Não consegui transcrever o áudio. Tente novamente ou envie por texto.",
@@ -2497,7 +2448,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }
     u.documentosEnviados = true
     salvarEtapa(u._numero, "documentos")
-    if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
+    if (u.stage === STAGES.AGUARDANDO_URGENTE) setStage(u, STAGES.CLIENTE)
 
     const msgAudio = trans
       ? `✅ Áudio salvo!\n\n🗣️ O que entendemos:\n"${trans.slice(0, 300)}${trans.length > 300 ? "..." : ""}"`
@@ -2529,7 +2480,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
   salvarEtapa(u._numero, "documentos")
-  if (u.stage === STAGES.AGUARDANDO_URGENTE) u.stage = STAGES.CLIENTE
+  if (u.stage === STAGES.AGUARDANDO_URGENTE) setStage(u, STAGES.CLIENTE)
 
   await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
 
@@ -2543,51 +2494,6 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       { id:"docs_depois", title:"⏭️ Enviar depois" }
     ]
   })
-}
-
-async function processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio) {
-  if (!ehAudio) return null
-  if (u.numeroCaso) return null
-  if ([
-    STAGES.CLIENTE,
-    STAGES.AGUARDANDO_URGENTE,
-    STAGES.COLETA_DESC_AUDIO,
-    STAGES.DESC_CONFIRMA,
-    STAGES.DESC_ERRO_TRANSCRICAO,
-    STAGES.SUGESTAO_FLUXO_OUTRO,
-    STAGES.EXPLICAR_TUDO_OFERTA,
-    STAGES.URGENTE_AUDIO_CONFIRMA,
-    STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO,
-    STAGES.AUDIO_FLUXO_CONFIRMA,
-    "trab_out_desc",
-    "out_desc",
-    "inicio",
-    "inicio_retorno"
-  ].includes(u.stage)) return null
-
-  const mediaId = msgObj?.[tipo]?.id
-  if (!mediaId) return null
-
-  const midia = await baixarMidia(mediaId)
-  if (!midia) return responderComTimer(from, { texto: "NÃ£o consegui baixar esse Ã¡udio. Pode tentar novamente?", opcoes: null })
-
-  await enviar(from, "ðŸŽ™ï¸ Ãudio recebido! Transcrevendo, aguarde...", null, false)
-  const transcricao = await transcrever(midia.buffer, midia.mimeType, { origem: "fluxo" })
-  if (!transcricao) {
-    const ultimaPergunta = retomarUltimaPergunta(u)
-    if (ultimaPergunta) return responderComTimer(from, {
-      texto: "NÃ£o consegui entender esse Ã¡udio agora. Vou te manter no ponto em que estÃ¡vamos.",
-      opcoes: [{ id: "cont_retomar", title: "â–¶ï¸ Continuar" }, { id: "recomecar", title: "ðŸ”„ RecomeÃ§ar" }]
-    })
-    return responderComTimer(from, { texto: "NÃ£o consegui entender esse Ã¡udio agora. Se preferir, responda por texto.", opcoes: null })
-  }
-
-  const decisao = await classificarAcaoAudioFluxo(u, transcricao)
-  u._audioFluxoTexto = normalizarTextoCRM(transcricao)
-  u._audioFluxoAcao = decisao.acao
-  u._audioFluxoResposta = decisao.recomendacao
-  u.stage = STAGES.AUDIO_FLUXO_CONFIRMA
-  return responderComTimer(from, telaAudioNoFluxo(u._audioFluxoTexto, u._audioFluxoResposta))
 }
 
 async function processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio) {
@@ -2639,19 +2545,19 @@ async function processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio) {
   u._audioFluxoTexto = normalizarTextoCRM(transcricao)
   u._audioFluxoAcao = decisao.acao
   u._audioFluxoResposta = decisao.recomendacao
-  u.stage = STAGES.AUDIO_FLUXO_CONFIRMA
+  setStage(u, STAGES.AUDIO_FLUXO_CONFIRMA)
   return responderComTimer(from, telaAudioNoFluxo(u._audioFluxoTexto, u._audioFluxoResposta))
 }
 
 async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
   if (u.stage === STAGES.AGUARDANDO_URGENTE && text && !ehDoc && !ehAudio) {
     if (/^[a-z][a-z0-9_]{1,20}$/.test(text)) {
-      u.stage = STAGES.CLIENTE
+      setStage(u, STAGES.CLIENTE)
     } else {
       const mensagemUrgente = normalizarTextoCRM(text)
       await hsCriarNota(u.contatoId, "MENSAGEM URGENTE", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArea: ${u.area}\n\n${mensagemUrgente}`)
       await hsMoverStage(u.negocioId, HS_STAGE.ANALISE)
-      u.stage = STAGES.CLIENTE
+      setStage(u, STAGES.CLIENTE)
       return responderComTimer(from, { texto: `✅ *Mensagem registrada com urgência!*\n\nNossa equipe será notificada imediatamente. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu principal" }] })
     }
   }
@@ -2664,14 +2570,14 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
       await sincronizarContatoNegocioHubSpot(u)
       u.corrigirCampo = null
     }
-    u.stage = STAGES.CONFIRMACAO
+    setStage(u, STAGES.CONFIRMACAO)
     return responderComTimer(from, tela_confirmacao(u))
   }
 
   if (u.stage === STAGES.CORRIGIR_UF) {
     if (REGIOES[text]) { u._regiao = text; return responderComTimer(from, telaUFsRegiao(text)) }
     const val = UF_MAP[text]
-    if (val) { u.uf = val; u.stage = STAGES.CONFIRMACAO; return responderComTimer(from, tela_confirmacao(u)) }
+    if (val) { u.uf = val; setStage(u, STAGES.CONFIRMACAO); return responderComTimer(from, tela_confirmacao(u)) }
     return responderComTimer(from, telaRegioes())
   }
 
@@ -2682,7 +2588,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
     if (val && u.corrigirCampo) {
       u[u.corrigirCampo] = val
       u.corrigirCampo = null
-      u.stage = STAGES.CONFIRMACAO
+      setStage(u, STAGES.CONFIRMACAO)
       return responderComTimer(from, tela_confirmacao(u))
     }
   }
@@ -2697,7 +2603,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
       })
     }
     if (text === "conf_corrigir") {
-      u.stage = STAGES.MENU_CORRECAO
+      setStage(u, STAGES.MENU_CORRECAO)
       return responderComTimer(from, {
         texto: "✏️ Qual informação deseja corrigir?",
         opcoes: [
@@ -2711,25 +2617,25 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
       })
     }
     if (text === "conf_menu") {
-      u.stage = STAGES.AREA
+      setStage(u, STAGES.AREA)
       salvarEtapa(u._numero, "area")
       return responderComTimer(from, respostaRecomecoMenuPrincipal(u))
     }
   }
 
   if (u.stage === STAGES.MENU_CORRECAO) {
-    if (text === "cor_nome")   { u.corrigirCampo = "nome"; u.stage = STAGES.CORRIGIR_VALOR; return responderComTimer(from, { texto: "Digite o nome correto:", opcoes: null }) }
-    if (text === "cor_cidade") { u.corrigirCampo = "cidade"; u.stage = STAGES.CORRIGIR_VALOR; return responderComTimer(from, { texto: "Digite a cidade correta:", opcoes: null }) }
-    if (text === "cor_uf")     { u.stage = STAGES.CORRIGIR_UF; return responderComTimer(from, telaRegioes()) }
-    if (text === "cor_desc")   { u.corrigirCampo = "descricao"; u.stage = STAGES.CORRIGIR_VALOR; return responderComTimer(from, { texto: "Digite a descrição correta:", opcoes: null }) }
+    if (text === "cor_nome")   { u.corrigirCampo = "nome"; setStage(u, STAGES.CORRIGIR_VALOR); return responderComTimer(from, { texto: "Digite o nome correto:", opcoes: null }) }
+    if (text === "cor_cidade") { u.corrigirCampo = "cidade"; setStage(u, STAGES.CORRIGIR_VALOR); return responderComTimer(from, { texto: "Digite a cidade correta:", opcoes: null }) }
+    if (text === "cor_uf")     { setStage(u, STAGES.CORRIGIR_UF); return responderComTimer(from, telaRegioes()) }
+    if (text === "cor_desc")   { u.corrigirCampo = "descricao"; setStage(u, STAGES.CORRIGIR_VALOR); return responderComTimer(from, { texto: "Digite a descrição correta:", opcoes: null }) }
     if (text === "cor_contrib") {
       u.corrigirCampo = "contribuicao"
-      u.stage = STAGES.CORRIGIR_SEL
+      setStage(u, STAGES.CORRIGIR_SEL)
       return responderComTimer(from, { texto: "Corrija a informação sobre contribuição ao INSS:", opcoes: [{ id: "cc_nunca", title: "Nunca" }, { id: "cc_pouco", title: "Pouco tempo" }, { id: "cc_1ano", title: "Mais de 1 ano" }, { id: "cc_muito", title: "Muitos anos" }] })
     }
     if (text === "cor_benef") {
       u.corrigirCampo = "recebeBeneficio"
-      u.stage = STAGES.CORRIGIR_SEL
+      setStage(u, STAGES.CORRIGIR_SEL)
       return responderComTimer(from, { texto: "Você recebe algum benefício?", opcoes: [{ id: "cb_sim", title: "Sim" }, { id: "cb_nao", title: "Não" }] })
     }
   }
@@ -2737,21 +2643,24 @@ async function processarUrgenciaOuCorrecao(from, u, text, ehDoc, ehAudio) {
   return null
 }
 
-async function processar(from, nomeWA, text, msgObj) {
-  const u    = getUser(from, nomeWA)
+async function processarInterno(from, nomeWA, text, msgObj, u) {
+  text = sanitizarTextoEntrada(text)
   u.ultimaMsg = Date.now()
   u.modoDigitando = false
   u.temCadastroCompleto = Boolean(u.temCadastroCompleto || podeMostrarMenuCliente(u))
   limparTimer(u)
   limparTimerIncentivoDescricao(u)
 
-  const tipo    = msgObj?.type
+  const tipo    = sanitizarTextoEntrada(msgObj?.type)
   const ehAudio = tipo === "audio"
   const ehDoc   = tipo === "document" || tipo === "image"
 
-  const buttonId = msgObj?.interactive?.button_reply?.id || msgObj?.interactive?.list_reply?.id || ""
-  const textoRetomada = String(msgObj?.text?.body || msgObj?.interactive?.button_reply?.title || msgObj?.interactive?.list_reply?.title || text || "").toLowerCase().trim()
+  const buttonId = sanitizarTextoEntrada(msgObj?.interactive?.button_reply?.id || msgObj?.interactive?.list_reply?.id || "")
+  const textoRetomada = sanitizarTextoEntrada(msgObj?.text?.body || msgObj?.interactive?.button_reply?.title || msgObj?.interactive?.list_reply?.title || text).toLowerCase()
   const usuarioRespondendoAgora = Boolean(u.aguardandoResposta) && Boolean(text || buttonId || ehAudio || ehDoc)
+  const ctx = criarCtx({ from, nomeWA, text, msgObj, buttonId, tipo, ehAudio, ehDoc, timestamp: Date.now() })
+
+  logContextoExecucao({ from: ctx.from, stage: u.stage, flow: "processar", msg: ctx.text })
 
   if (u.aguardandoRetomada || !podeRetomar(from) || usuarioRespondendoAgora) {
     const msg = textoRetomada
@@ -2764,20 +2673,20 @@ async function processar(from, nomeWA, text, msgObj) {
     ) {
       u.aguardandoRetomada = false
       u.aguardandoResposta = false
-      iniciarTimer(from)
-      return retomarFluxo(u)
+      const respostaRetomadaPendente = processarRetomadaOuReinicio(from, u, text, buttonId, ctx)
+      if (respostaRetomadaPendente) return respostaRetomadaPendente
     }
 
     if (buttonId === "recomecar" || msg.includes("recome")) {
       u.aguardandoRetomada = false
       u.aguardandoResposta = false
       if (u.temCadastroCompleto) {
-        u.stage = STAGES.CLIENTE
+        setStage(u, STAGES.CLIENTE)
         iniciarTimer(from)
         return menuCliente(u)
       }
       limparDadosCasoAtual(u)
-      u.stage = STAGES.AREA
+      setStage(u, STAGES.AREA)
       salvarEtapa(u._numero, "area")
       iniciarTimer(from)
       return menuPrincipal(u)
@@ -2790,7 +2699,7 @@ async function processar(from, nomeWA, text, msgObj) {
     }
   }
   if (usuarioRespondendoAgora) u.aguardandoResposta = false
-  const respostaRetomada = processarRetomadaOuReinicio(from, u, text, buttonId)
+  const respostaRetomada = processarRetomadaOuReinicio(from, u, text, buttonId, ctx)
   if (respostaRetomada) return respostaRetomada
 
   if (u.aguardandoRetomada) {
@@ -2831,7 +2740,7 @@ async function processar(from, nomeWA, text, msgObj) {
       const origem = u._entradaPendenteOrigem
       const tipo = u._entradaPendenteTipo
       limparEntradaPendente(u)
-      u.stage = origem
+      setStage(u, origem)
       iniciarTimer(from)
       if (tipo === "nome") return { texto: origem === "coleta_tel_outro" ? "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?" : "✍️ Qual é o seu *nome completo*?", opcoes: null }
       if (tipo === "telefone") return { texto: origem === "coleta_tel_wpp_contato" ? "Qual é o WhatsApp com DDD da pessoa que será atendida?" : `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
@@ -2847,19 +2756,19 @@ async function processar(from, nomeWA, text, msgObj) {
         u.nomeConfirmado = true
         await sincronizarContatoNegocioHubSpot(u)
         if (origem === "coleta_tel_outro") {
-          u.stage = "coleta_tel_wpp"; iniciarTimer(from)
+          setStage(u, "coleta_tel_wpp"); iniciarTimer(from)
           return { texto: `Qual é o WhatsApp com DDD de *${u.nome}* para contato da equipe?`, opcoes: null }
         }
-        u.stage = "coleta_regiao"; iniciarTimer(from)
+        setStage(u, "coleta_regiao"); iniciarTimer(from)
         return telaRegioes()
       }
       if (tipo === "telefone") {
         u.whatsappContato = valor
         if (origem === "coleta_tel_wpp_contato") {
-          u.stage = "coleta_nome"; iniciarTimer(from)
+          setStage(u, "coleta_nome"); iniciarTimer(from)
           return { texto: "✍️ Qual é o *nome completo* da pessoa que será atendida?", opcoes: null }
         }
-        u.stage = "area"; iniciarTimer(from)
+        setStage(u, "area"); iniciarTimer(from)
         return {
           texto: `Anotado! 👍\n\nAgora, qual área precisa de ajuda para *${u.nome}*?`,
           opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
@@ -2869,14 +2778,14 @@ async function processar(from, nomeWA, text, msgObj) {
         u.cidade = valor
         await sincronizarContatoNegocioHubSpot(u)
         if (origem === "coleta_cidade_regiao") {
-          u.stage = "coleta_contrib_regiao_v2"; iniciarTimer(from)
+          setStage(u, "coleta_contrib_regiao_v2"); iniciarTimer(from)
           return { texto: "Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"Nunca" }, { id:"col_c2", title:"Pouco tempo" }, { id:"col_c3", title:"Mais de 1 ano" }, { id:"col_c4", title:"Muitos anos" }] }
         }
         if (origem === "__coleta_cidade_legado__") {
-          u.stage = "coleta_regiao"; iniciarTimer(from)
+          setStage(u, "coleta_regiao"); iniciarTimer(from)
           return telaRegioes()
         }
-        u.stage = "coleta_contrib"; iniciarTimer(from)
+        setStage(u, "coleta_contrib"); iniciarTimer(from)
         return { texto: "💼 Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"❌ Nunca" }, { id:"col_c2", title:"⏰ Pouco tempo" }, { id:"col_c3", title:"📅 Mais de 1 ano" }, { id:"col_c4", title:"🏆 Muitos anos" }] }
       }
     }
@@ -2896,7 +2805,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u.whatsappVerificado = true
       u.telefoneEhDoCliente = true
       u.whatsappContato = from
-      u.stage = "area"; iniciarTimer(from)
+      setStage(u, "area"); iniciarTimer(from)
       return {
         texto: `Ótimo! Vamos abrir um novo caso. 😊\n\nQual área precisa de ajuda?`,
         opcoes: [{ id: "area_inss", title: "🏥 INSS" }, { id: "area_trab", title: "💼 Trabalhista" }, { id: "area_outros", title: "📋 Outros" }]
@@ -2906,7 +2815,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u.whatsappVerificado = true
       u.telefoneEhDoCliente = false
       u.nome = null; u.regiao = null; u.cidade = null; u.uf = null
-      u.stage = "coleta_tel_outro"; iniciarTimer(from)
+      setStage(u, "coleta_tel_outro"); iniciarTimer(from)
       return { texto: "Tudo bem! Qual é o nome completo da pessoa que está sendo atendida?", opcoes: null }
     }
   }
@@ -2929,13 +2838,13 @@ async function processar(from, nomeWA, text, msgObj) {
   }
   if (u.stage === "coleta_regiao") {
     if (!REGIOES[text]) { iniciarTimer(from); return telaRegioes() }
-    u._regiao = text; u.regiao = REGIOES[text].label; u.stage = "coleta_uf"; iniciarTimer(from)
+    u._regiao = text; u.regiao = REGIOES[text].label; setStage(u, "coleta_uf"); iniciarTimer(from)
     return telaUFsRegiao(text)
   }
   if (u.stage === "coleta_uf") {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
-    u.uf = val; u.stage = "coleta_cidade_regiao"; iniciarTimer(from)
+    u.uf = val; setStage(u, "coleta_cidade_regiao"); iniciarTimer(from)
     return { texto: "Digite a cidade onde você mora", opcoes: null }
   }
   if (u.stage === "coleta_cidade_regiao" && text) {
@@ -2946,7 +2855,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "coleta_contrib_regiao_v2") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opção:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
-    u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
+    u.contribuicao = m[text]; setStage(u, "coleta_benef"); iniciarTimer(from)
     return { texto: "Você já recebe algum benefício do INSS?", opcoes: [{ id: "col_b1", title: "Sim, recebo" }, { id: "col_b2", title: "Não recebo" }] }
   }
   if (u.stage === "__coleta_benef_regiao_v2__") {
@@ -2977,7 +2886,7 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "coleta_contrib_regiao") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opção:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
-    u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
+    u.contribuicao = m[text]; setStage(u, "coleta_benef"); iniciarTimer(from)
     return { texto: "🏥 Você já recebe algum benefício do INSS?", opcoes: [{ id: "col_b1", title: "✅ Sim, recebo" }, { id: "col_b2", title: "❌ Não recebo" }] }
   }
   if (u.stage === "coleta_cidade" && text) {
@@ -2997,19 +2906,19 @@ async function processar(from, nomeWA, text, msgObj) {
   }
   if (u.stage === "__coleta_regiao_legado__") {
     if (!REGIOES[text]) { iniciarTimer(from); return telaRegioes() }
-    u._regiao = text; u.stage = "coleta_uf"; iniciarTimer(from)
+    u._regiao = text; setStage(u, "coleta_uf"); iniciarTimer(from)
     return telaUFsRegiao(text)
   }
   if (u.stage === "__coleta_uf_legado__") {
     const val = UF_MAP[text]
     if (!val) { iniciarTimer(from); return telaUFsRegiao(u._regiao || "reg_n") }
-    u.uf = val; u.stage = "coleta_contrib"; iniciarTimer(from)
+    u.uf = val; setStage(u, "coleta_contrib"); iniciarTimer(from)
     return { texto: "💼 Você já contribuiu para o INSS?", opcoes: [{ id:"col_c1", title:"❌ Nunca" }, { id:"col_c2", title:"⏰ Pouco tempo" }, { id:"col_c3", title:"📅 Mais de 1 ano" }, { id:"col_c4", title:"🏆 Muitos anos" }] }
   }
   if (u.stage === "coleta_contrib") {
     const m = { col_c1: "Nunca", col_c2: "Pouco tempo", col_c3: "Mais de 1 ano", col_c4: "Muitos anos" }
     if (!m[text]) { iniciarTimer(from); return { texto: "Selecione uma opção:", opcoes: Object.entries(m).map(([id, title]) => ({ id, title })) } }
-    u.contribuicao = m[text]; u.stage = "coleta_benef"; iniciarTimer(from)
+    u.contribuicao = m[text]; setStage(u, "coleta_benef"); iniciarTimer(from)
     return { texto: "🏥 Você já recebe algum benefício do INSS?", opcoes: [{ id: "col_b1", title: "✅ Sim, recebo" }, { id: "col_b2", title: "❌ Não recebo" }] }
   }
   if (u.stage === "coleta_benef") {
@@ -3061,13 +2970,13 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // GATILHO → URGENCIA → COLETA
   if (u.stage === "gatilho") {
-    u.stage = "urgencia"; iniciarTimer(from)
+    setStage(u, "urgencia"); iniciarTimer(from)
     return { texto: "💰 Isso está te prejudicando *financeiramente* hoje?", opcoes: [{ id: "urg_sim", title: "⚠️ Sim, está" }, { id: "urg_nao", title: "✅ Não, consigo esperar" }] }
   }
   if (u.stage === "urgencia") {
     if (text === "urg_sim") { u.urgencia = "alta"; u.score += 3 }
     if (u.whatsappVerificado) return avancarAposTelefoneConfirmado(from, u)
-    u.stage = "coleta_verif_tel"; iniciarTimer(from)
+    setStage(u, "coleta_verif_tel"); iniciarTimer(from)
     return {
       texto: `📱 Esse número *${from}* é o seu WhatsApp?\n\nPreciso saber para que nossa equipe entre em contato corretamente.`,
       opcoes: [
@@ -3080,7 +2989,7 @@ async function processar(from, nomeWA, text, msgObj) {
     if (text === "tel_outro") {
       u.whatsappVerificado = true
       u.telefoneEhDoCliente = false
-      u.stage = "coleta_tel_wpp_contato"; iniciarTimer(from)
+      setStage(u, "coleta_tel_wpp_contato"); iniciarTimer(from)
       return { texto: "Qual é o WhatsApp com DDD da pessoa que será atendida?", opcoes: null }
     }
     u.whatsappVerificado = true
@@ -3103,7 +3012,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._urgenteAudioMime = null
       u._urgenteAudioNome = null
       u._urgenteAudioTexto = null
-      u.stage = STAGES.AGUARDANDO_URGENTE
+      setStage(u, STAGES.AGUARDANDO_URGENTE)
       iniciarTimer(from)
       return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
     }
@@ -3122,7 +3031,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._urgenteAudioMime = null
       u._urgenteAudioNome = null
       u._urgenteAudioTexto = null
-      u.stage = STAGES.CLIENTE
+      setStage(u, STAGES.CLIENTE)
       return responderComTimer(from, { texto: `✅ *Mensagem registrada com urgência!*\n\nNossa equipe será notificada imediatamente. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: [{ id:"m_status", title:"📊 Status do caso" }, { id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu principal" }] })
     }
     if (text === "urg_audio_corrigir") {
@@ -3131,7 +3040,7 @@ async function processar(from, nomeWA, text, msgObj) {
       u._urgenteAudioMime = null
       u._urgenteAudioNome = null
       u._urgenteAudioTexto = null
-      u.stage = STAGES.AGUARDANDO_URGENTE
+      setStage(u, STAGES.AGUARDANDO_URGENTE)
       iniciarTimer(from)
       return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
     }
@@ -3163,7 +3072,7 @@ async function processar(from, nomeWA, text, msgObj) {
         iniciarTimer(from)
         return ultimaPergunta
       }
-      u.stage = STAGES.AREA
+      setStage(u, STAGES.AREA)
       iniciarTimer(from)
       return { ...telaArea(), perguntaId: "area" }
     }
@@ -3174,99 +3083,22 @@ async function processar(from, nomeWA, text, msgObj) {
     if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
       const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
       u._sugestaoFluxo = null
-      u.stage = proxima.stage
+      setStage(u, proxima.stage)
       iniciarTimer(from)
       return { texto: proxima.texto, opcoes: proxima.opcoes }
     }
     if (text === "sug_nao") {
       u._sugestaoFluxo = null
-      u.stage = "gatilho"
+      setStage(u, "gatilho")
       iniciarTimer(from)
-      return { texto: "Certo! Vamos registrar sua solicitacao.", opcoes: [{ id: "cont", title: "Continuar" }] }
+      return { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
     }
   }
 
   if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
     if (text === "explicar_tudo") {
       u._descOrigemStage = "explicar_tudo"
-      u.stage = STAGES.COLETA_DESC_AUDIO
-      iniciarTimer(from)
-      return telaDescreverCaso()
-    }
-    if (text === "seguir_fluxo") {
-      const proximoStage = u._proximoStageAposDescricao || "gatilho"
-      const proximaPergunta = u._proximaPerguntaAposDescricao
-      u._proximoStageAposDescricao = null
-      u._proximaPerguntaAposDescricao = null
-      u.stage = proximoStage
-      iniciarTimer(from)
-      if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
-      if (proximaPergunta) return proximaPergunta
-      return { texto: "Certo! Vamos registrar sua solicitacao.", opcoes: [{ id: "cont", title: "Continuar" }] }
-    }
-    iniciarTimer(from)
-    return telaExplicarTudo()
-  }
-
-  if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
-    if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
-      const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
-      u._sugestaoFluxo = null
-      u.stage = proxima.stage
-      iniciarTimer(from)
-      return { texto: proxima.texto, opcoes: proxima.opcoes }
-    }
-    if (text === "sug_nao") {
-      u._sugestaoFluxo = null
-      u.stage = "gatilho"
-      iniciarTimer(from)
-      return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
-    }
-  }
-
-  if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
-    if (text === "explicar_tudo") {
-      u._descOrigemStage = "explicar_tudo"
-      u.stage = STAGES.COLETA_DESC_AUDIO
-      iniciarTimer(from)
-      return telaDescreverCaso()
-    }
-    if (text === "seguir_fluxo") {
-      const proximoStage = u._proximoStageAposDescricao || "gatilho"
-      const proximaPergunta = u._proximaPerguntaAposDescricao
-      u._proximoStageAposDescricao = null
-      u._proximaPerguntaAposDescricao = null
-      u.stage = proximoStage
-      iniciarTimer(from)
-      if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
-      if (proximaPergunta) return proximaPergunta
-      return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
-    }
-    iniciarTimer(from)
-    return telaExplicarTudo()
-  }
-
-  if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
-    if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
-      const proxima = aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
-      u._sugestaoFluxo = null
-      u.stage = proxima.stage
-      iniciarTimer(from)
-      return { texto: proxima.texto, opcoes: proxima.opcoes }
-    }
-    if (text === "sug_nao") {
-      u._sugestaoFluxo = null
-      u.stage = "gatilho"
-      u._proximaPerguntaAposDescricao = { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
-      iniciarTimer(from)
-      return { texto: "âœ… Certo! Vamos registrar sua solicitaÃ§Ã£o.", opcoes: [{ id: "cont", title: "â–¶ï¸ Continuar" }] }
-    }
-  }
-
-  if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
-    if (text === "explicar_tudo") {
-      u._descOrigemStage = "explicar_tudo"
-      u.stage = STAGES.COLETA_DESC_AUDIO
+      setStage(u, STAGES.COLETA_DESC_AUDIO)
       iniciarTimer(from)
       return telaDescreverCaso()
     }
@@ -3275,19 +3107,21 @@ async function processar(from, nomeWA, text, msgObj) {
       const proximaPergunta = u._proximaPerguntaAposDescricao || { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
       u._proximoStageAposDescricao = null
       u._proximaPerguntaAposDescricao = null
-      u.stage = proximoStage
+      setStage(u, proximoStage)
       iniciarTimer(from)
+      if (proximoStage === STAGES.CONFIRMACAO) return tela_confirmacao(u)
       return proximaPergunta
     }
     iniciarTimer(from)
     return telaExplicarTudo()
   }
 
+
   // INICIO
   if (u.stage === "inicio") {
     if (podeMostrarMenuCliente(u)) {
       // Cliente retornando — perguntar se quer acompanhar ou abrir novo caso
-      u.stage = "inicio_retorno"; iniciarTimer(from)
+      setStage(u, "inicio_retorno"); iniciarTimer(from)
       const nomeExib = getPrimeiroNome(u)
       return {
         texto: `Que bom te ver novamente, ${nomeExib} 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
@@ -3297,7 +3131,7 @@ async function processar(from, nomeWA, text, msgObj) {
         ]
       }
     }
-    u.stage = "area"; iniciarTimer(from)
+    setStage(u, "area"); iniciarTimer(from)
     if (u.nome || u.nomeHubspot) return menuPrincipal(u)
     return { ...telaArea(), perguntaId: "area" }
   }
@@ -3306,15 +3140,15 @@ async function processar(from, nomeWA, text, msgObj) {
   if (u.stage === "inicio_retorno") {
     if (text === "ret_acompanhar") {
       if (!podeMostrarMenuCliente(u)) {
-        u.stage = "area"; iniciarTimer(from)
+        setStage(u, "area"); iniciarTimer(from)
         return menuPrincipal(u)
       }
-      u.stage = "cliente"; iniciarTimer(from)
+      setStage(u, "cliente"); iniciarTimer(from)
       return menuCliente(u)
     }
     if (text === "ret_novo") {
       limparDadosCasoAtual(u)
-      u.stage = "area"
+      setStage(u, "area")
       iniciarTimer(from)
       return {
         texto: `📋 Certo, ${u.nome ? u.nome.split(" ")[0] : u.nomeWA}! Vamos abrir um novo caso.\n\nQual área precisa de ajuda?`,
@@ -3325,27 +3159,27 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // AREA
   if (u.stage === "area") {
-    if (text === "area_inss") { u.area = "INSS"; u.stage = "inss_menu"; iniciarTimer(from); return { texto: "✅ Certo, vamos cuidar do seu caso!\nQual dessas situações descreve o que está acontecendo?", opcoes: [{ id: "i_novo", title: "🆕 Novo benefício" }, { id: "i_negado", title: "❌ Benefício negado" }, { id: "i_cortado", title: "✂️ Benefício cortado" }] } }
-    if (text === "area_trab") { u.area = "Trabalhista"; u.stage = "trab_menu"; iniciarTimer(from); return { texto: "💼 Qual é o seu caso trabalhista?", opcoes: [{ id: "t_dem", title: "👔 Fui demitido" }, { id: "t_dir", title: "💰 Direitos não pagos" }, { id: "t_acid", title: "🚑 Acidente de trabalho" }, { id: "t_ass", title: "😰 Assédio moral" }, { id: "t_out", title: "📋 Outro" }] } }
-    if (text === "area_outros") { u.area = "Outros"; u.stage = "outros_menu"; iniciarTimer(from); return { texto: "📋 Como posso te ajudar?", opcoes: [{ id: "o_consul", title: "⚖️ Consultoria jurídica" }, { id: "o_rev", title: "📄 Revisão de documentos" }, { id: "o_out", title: "💬 Outro assunto" }] } }
+    if (text === "area_inss") { u.area = "INSS"; setStage(u, "inss_menu"); iniciarTimer(from); return { texto: "✅ Certo, vamos cuidar do seu caso!\nQual dessas situações descreve o que está acontecendo?", opcoes: [{ id: "i_novo", title: "🆕 Novo benefício" }, { id: "i_negado", title: "❌ Benefício negado" }, { id: "i_cortado", title: "✂️ Benefício cortado" }] } }
+    if (text === "area_trab") { u.area = "Trabalhista"; setStage(u, "trab_menu"); iniciarTimer(from); return { texto: "💼 Qual é o seu caso trabalhista?", opcoes: [{ id: "t_dem", title: "👔 Fui demitido" }, { id: "t_dir", title: "💰 Direitos não pagos" }, { id: "t_acid", title: "🚑 Acidente de trabalho" }, { id: "t_ass", title: "😰 Assédio moral" }, { id: "t_out", title: "📋 Outro" }] } }
+    if (text === "area_outros") { u.area = "Outros"; setStage(u, "outros_menu"); iniciarTimer(from); return { texto: "📋 Como posso te ajudar?", opcoes: [{ id: "o_consul", title: "⚖️ Consultoria jurídica" }, { id: "o_rev", title: "📄 Revisão de documentos" }, { id: "o_out", title: "💬 Outro assunto" }] } }
   }
 
   // INSS MENU
   if (u.stage === "inss_menu") {
-    if (text === "i_novo")    { u.situacao = "novo";    u.stage = "inss_novo";    iniciarTimer(from); return { texto: "🏥 Qual benefício você deseja solicitar?", opcoes: [{ id: "in_apos", title: "👴 Aposentadoria" }, { id: "in_bpc", title: "🤝 BPC / LOAS" }, { id: "in_incap", title: "🏥 Incapacidade" }, { id: "in_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "in_out", title: "📋 Outros" }] } }
-    if (text === "i_negado")  { u.situacao = "negado";  u.score += 1; u.stage = "inss_neg_tipo"; iniciarTimer(from); return { texto: "❌ Qual benefício foi negado?", opcoes: [{ id: "ign_apos", title: "👴 Aposentadoria" }, { id: "ign_bpc", title: "🤝 BPC / LOAS" }, { id: "ign_incap", title: "🏥 Incapacidade" }, { id: "ign_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "ign_out", title: "📋 Outros" }] } }
-    if (text === "i_cortado") { u.situacao = "cortado"; u.score += 2; u.stage = "inss_cort_tipo"; iniciarTimer(from); return { texto: "✂️ Qual benefício foi cortado?", opcoes: [{ id: "ic_apos", title: "👴 Aposentadoria" }, { id: "ic_bpc", title: "🤝 BPC / LOAS" }, { id: "ic_incap", title: "🏥 Incapacidade" }, { id: "ic_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "ic_out", title: "📋 Outros" }] } }
+    if (text === "i_novo")    { u.situacao = "novo";    setStage(u, "inss_novo");    iniciarTimer(from); return { texto: "🏥 Qual benefício você deseja solicitar?", opcoes: [{ id: "in_apos", title: "👴 Aposentadoria" }, { id: "in_bpc", title: "🤝 BPC / LOAS" }, { id: "in_incap", title: "🏥 Incapacidade" }, { id: "in_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "in_out", title: "📋 Outros" }] } }
+    if (text === "i_negado")  { u.situacao = "negado";  u.score += 1; setStage(u, "inss_neg_tipo"); iniciarTimer(from); return { texto: "❌ Qual benefício foi negado?", opcoes: [{ id: "ign_apos", title: "👴 Aposentadoria" }, { id: "ign_bpc", title: "🤝 BPC / LOAS" }, { id: "ign_incap", title: "🏥 Incapacidade" }, { id: "ign_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "ign_out", title: "📋 Outros" }] } }
+    if (text === "i_cortado") { u.situacao = "cortado"; u.score += 2; setStage(u, "inss_cort_tipo"); iniciarTimer(from); return { texto: "✂️ Qual benefício foi cortado?", opcoes: [{ id: "ic_apos", title: "👴 Aposentadoria" }, { id: "ic_bpc", title: "🤝 BPC / LOAS" }, { id: "ic_incap", title: "🏥 Incapacidade" }, { id: "ic_dep", title: "👨‍👩‍👧 Dependentes" }, { id: "ic_out", title: "📋 Outros" }] } }
   }
 
   // INSS NOVO
   if (u.stage === "inss_novo") {
     const m = { in_apos: "aposentadoria", in_bpc: "bpc", in_incap: "incapacidade", in_dep: "dependentes", in_out: "inss_outros" }
     u.tipo = m[text] || "outros"
-    if (text === "in_apos") { u.stage = "inss_apos"; iniciarTimer(from); return { texto: "👴 Qual tipo de aposentadoria?", opcoes: [{ id: "ia_idade", title: "📅 Por idade" }, { id: "ia_tempo", title: "📋 Tempo contribuição" }, { id: "ia_esp", title: "⭐ Especial" }] } }
-    if (text === "in_bpc")  { u.stage = "inss_bpc";  iniciarTimer(from); return { texto: "🤝 BPC/LOAS — Qual opção?", opcoes: [{ id: "ib_id", title: "👴 Idoso" }, { id: "ib_def", title: "♿ Deficiência" }] } }
-    if (text === "in_incap"){ u.stage = "inss_inc";  iniciarTimer(from); return { texto: "🏥 Qual benefício por incapacidade?", opcoes: [{ id: "ii_aux", title: "🩺 Auxílio-doença" }, { id: "ii_inv", title: "⚠️ Aposentadoria por invalidez" }] } }
-    if (text === "in_dep")  { u.stage = "inss_dep";  iniciarTimer(from); return { texto: "👨‍👩‍👧 Qual benefício para dependentes?", opcoes: [{ id: "id_pen", title: "🕊️ Pensão por morte" }, { id: "id_rec", title: "🔒 Auxílio-reclusão" }, { id: "id_out", title: "📋 Outro" }] } }
-    if (text === "in_out")  { u.stage = "inss_out";  iniciarTimer(from); return { texto: "📋 Qual opção?", opcoes: [{ id: "io_rev", title: "🔄 Revisão de benefício" }, { id: "io_ctc", title: "📜 Certidão de contribuição" }, { id: "io_pla", title: "🎯 Planejamento" }] } }
+    if (text === "in_apos") { setStage(u, "inss_apos"); iniciarTimer(from); return { texto: "👴 Qual tipo de aposentadoria?", opcoes: [{ id: "ia_idade", title: "📅 Por idade" }, { id: "ia_tempo", title: "📋 Tempo contribuição" }, { id: "ia_esp", title: "⭐ Especial" }] } }
+    if (text === "in_bpc")  { setStage(u, "inss_bpc");  iniciarTimer(from); return { texto: "🤝 BPC/LOAS — Qual opção?", opcoes: [{ id: "ib_id", title: "👴 Idoso" }, { id: "ib_def", title: "♿ Deficiência" }] } }
+    if (text === "in_incap"){ setStage(u, "inss_inc");  iniciarTimer(from); return { texto: "🏥 Qual benefício por incapacidade?", opcoes: [{ id: "ii_aux", title: "🩺 Auxílio-doença" }, { id: "ii_inv", title: "⚠️ Aposentadoria por invalidez" }] } }
+    if (text === "in_dep")  { setStage(u, "inss_dep");  iniciarTimer(from); return { texto: "👨‍👩‍👧 Qual benefício para dependentes?", opcoes: [{ id: "id_pen", title: "🕊️ Pensão por morte" }, { id: "id_rec", title: "🔒 Auxílio-reclusão" }, { id: "id_out", title: "📋 Outro" }] } }
+    if (text === "in_out")  { setStage(u, "inss_out");  iniciarTimer(from); return { texto: "📋 Qual opção?", opcoes: [{ id: "io_rev", title: "🔄 Revisão de benefício" }, { id: "io_ctc", title: "📜 Certidão de contribuição" }, { id: "io_pla", title: "🎯 Planejamento" }] } }
   }
 
   // INSS subtipos → INSS_JA
@@ -3357,93 +3191,93 @@ async function processar(from, nomeWA, text, msgObj) {
       id_pen: "Pensao por morte", id_rec: "Auxilio-reclusao", id_out: "Outro",
       io_rev: "Revisao de beneficio", io_ctc: "Certidao de tempo de contribuicao", io_pla: "Planejamento de aposentadoria"
     }
-    u.subTipo = m[text] || text; u.stage = "inss_ja"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "inss_ja"); iniciarTimer(from)
     return { texto: "📋 Você já deu entrada nesse pedido no INSS?", opcoes: [{ id:"ja_s", title:"Sim" }, { id:"ja_n", title:"Não" }] }
   }
   if (u.stage === "inss_ja") {
     u.detalhe = text === "ja_s" ? "Sim, já deu entrada no INSS" : "Ainda não deu entrada"
-    u.stage   = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui.\n\nMuitas vezes conseguimos resolver mais rápido do que a pessoa imagina! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // INSS NEGADO
   if (u.stage === "inss_neg_tipo") {
     const m = { ign_apos: "Aposentadoria", ign_bpc: "BPC/LOAS", ign_incap: "Incapacidade", ign_dep: "Dependentes", ign_out: "Outros" }
-    u.subTipo = m[text] || text; u.stage = "inss_neg_quando"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "inss_neg_quando"); iniciarTimer(from)
     return { texto: "📅 Quando o benefício foi negado?", opcoes: [{ id: "nq_rec", title: "🕐 Menos de 30 dias" }, { id: "nq_ant", title: "📅 Mais de 30 dias" }] }
   }
   if (u.stage === "inss_neg_quando") {
     u.detalhe = text === "nq_rec" ? "Negado ha menos de 30 dias" : "Negado ha mais de 30 dias"
-    u.stage   = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "🔍 Vamos analisar seu caso com muito cuidado!", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // INSS CORTADO
   if (u.stage === "inss_cort_tipo") {
     const m = { ic_apos: "Aposentadoria", ic_bpc: "BPC/LOAS", ic_incap: "Incapacidade", ic_dep: "Dependentes", ic_out: "Outros" }
-    u.subTipo = m[text] || text; u.stage = "inss_cort_mot"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "inss_cort_mot"); iniciarTimer(from)
     return { texto: "❓ Você sabe o motivo do corte?", opcoes: [{ id: "cm_n", title: "🤷 Não sei" }, { id: "cm_p", title: "🏥 Falta de perícia" }, { id: "cm_r", title: "💰 Renda acima" }, { id: "cm_o", title: "📋 Outro" }] }
   }
   if (u.stage === "inss_cort_mot") {
     const m = { cm_n: "Motivo desconhecido", cm_p: "Falta de pericia", cm_r: "Renda acima do permitido", cm_o: "Outro" }
-    u.detalhe = m[text] || text; u.stage = "inss_cort_rec"; iniciarTimer(from)
+    u.detalhe = m[text] || text; setStage(u, "inss_cort_rec"); iniciarTimer(from)
     return { texto: "⚠️ Você está sem receber agora?", opcoes: [{ id: "sr_s", title: "🔴 Sim, sem renda" }, { id: "sr_n", title: "🟡 Ainda recebo algo" }] }
   }
   if (u.stage === "inss_cort_rec") {
     if (text === "sr_s") { u.semReceber = true; u.urgencia = "alta"; u.score += 3 }
-    u.stage = "inss_cort_qdo"; iniciarTimer(from)
+    setStage(u, "inss_cort_qdo"); iniciarTimer(from)
     return { texto: "📅 Quando o benefício foi cortado?", opcoes: [{ id: "cq_r", title: "🕐 Menos de 30 dias" }, { id: "cq_a", title: "📅 Mais de 30 dias" }] }
   }
   if (u.stage === "inss_cort_qdo") {
     u.detalhe += " | " + (text === "cq_r" ? "Cortado ha menos de 30 dias" : "Cortado ha mais de 30 dias")
-    u.stage = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💪 Vamos verificar a melhor forma de resolver isso!", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
 
   // TRABALHISTA
   if (u.stage === "trab_menu") {
-    if (text === "t_dem")  { u.situacao = "Demissao";          u.tipo = "demissao";  u.stage = "trab_dem_tipo"; iniciarTimer(from); return { texto: "Como foi a demissão?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissão" }] } }
-    if (text === "t_dir")  { u.situacao = "Direitos nao pagos"; u.tipo = "direitos";  u.stage = "trab_dir_tipo"; iniciarTimer(from); return { texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
-    if (text === "t_acid") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; u.stage = "trab_acid_af"; iniciarTimer(from); return { texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
-    if (text === "t_ass")  { u.situacao = "Assedio moral";       u.tipo = "assedio";  u.stage = "trab_ass_s"; iniciarTimer(from); return { texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
+    if (text === "t_dem")  { u.situacao = "Demissao";          u.tipo = "demissao";  setStage(u, "trab_dem_tipo"); iniciarTimer(from); return { texto: "Como foi a demissão?", opcoes: [{ id: "td_s", title: "Sem justa causa" }, { id: "td_c", title: "Com justa causa" }, { id: "td_p", title: "Pedido de demissão" }] } }
+    if (text === "t_dir")  { u.situacao = "Direitos nao pagos"; u.tipo = "direitos";  setStage(u, "trab_dir_tipo"); iniciarTimer(from); return { texto: "💰 Qual direito não foi pago?", opcoes: [{ id: "tdr_f", title: "💼 FGTS" }, { id: "tdr_fe", title: "🏖️ Férias" }, { id: "tdr_13", title: "🎁 13º salário" }, { id: "tdr_h", title: "⏰ Horas extras" }, { id: "tdr_o", title: "📋 Outro" }] } }
+    if (text === "t_acid") { u.situacao = "Acidente de trabalho"; u.tipo = "acidente"; setStage(u, "trab_acid_af"); iniciarTimer(from); return { texto: "🏥 Você se afastou pelo INSS?", opcoes: [{ id: "af_s", title: "✅ Sim" }, { id: "af_n", title: "❌ Não" }] } }
+    if (text === "t_ass")  { u.situacao = "Assedio moral";       u.tipo = "assedio";  setStage(u, "trab_ass_s"); iniciarTimer(from); return { texto: "😰 O assédio ainda está acontecendo?", opcoes: [{ id: "as_s", title: "⚠️ Sim, ainda acontece" }, { id: "as_n", title: "✅ Não, já parou" }] } }
     if (text === "t_out")  { u.situacao = "Outros";              u.tipo = "outros";   entrarEtapaDescricao(u, "trab_out_desc"); iniciarTimer(from); return { texto: "✍️ Descreva brevemente seu caso trabalhista:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
   }
   if (u.stage === "trab_dem_tipo") {
     const m = { td_s: "Sem justa causa", td_c: "Com justa causa", td_p: "Pedido de demissao" }
-    u.subTipo = m[text] || text; u.stage = "trab_dem_verb"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "trab_dem_verb"); iniciarTimer(from)
     return { texto: "💵 Você recebeu todas as verbas rescisórias?", opcoes: [{ id: "tv_s", title: "✅ Sim, recebi" }, { id: "tv_n", title: "❌ Não recebi" }] }
   }
   if (u.stage === "trab_dem_verb") {
-    u.detalhe = text === "tv_s" ? "Verbas pagas" : "Verbas nao pagas"; u.stage = "trab_dem_qdo"; iniciarTimer(from)
+    u.detalhe = text === "tv_s" ? "Verbas pagas" : "Verbas nao pagas"; setStage(u, "trab_dem_qdo"); iniciarTimer(from)
     return { texto: "⏰ Há quanto tempo foi a demissão?", opcoes: [{ id: "dq_r", title: "🕐 Menos de 30 dias" }, { id: "dq_a", title: "📅 Mais de 30 dias" }] }
   }
   if (u.stage === "trab_dem_qdo") {
     u.detalhe += " | " + (text === "dq_r" ? "menos de 30 dias" : "mais de 30 dias")
-    u.stage = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_dir_tipo") {
     const m = { tdr_f: "FGTS", tdr_fe: "Ferias", tdr_13: "13 salario", tdr_h: "Horas extras", tdr_o: "Outro" }
-    u.subTipo = m[text] || text; u.stage = "trab_dir_pend"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "trab_dir_pend"); iniciarTimer(from)
     return { texto: "⏳ Isso ainda está pendente?", opcoes: [{ id: "pnd_s", title: "⚠️ Sim, pendente" }, { id: "pnd_n", title: "✅ Já encerrado" }] }
   }
   if (u.stage === "trab_dir_pend") {
     u.detalhe = text === "pnd_s" ? "Pendente" : "Encerrado"
-    u.stage = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_acid_af") {
     u.subTipo = text === "af_s" ? "Com afastamento INSS" : "Sem afastamento"
-    u.stage = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_ass_s") {
-    u.subTipo = text === "as_s" ? "Assedio em curso" : "Assedio encerrado"; u.stage = "trab_ass_prov"; iniciarTimer(from)
+    u.subTipo = text === "as_s" ? "Assedio em curso" : "Assedio encerrado"; setStage(u, "trab_ass_prov"); iniciarTimer(from)
     return { texto: "📂 Você possui provas ou testemunhas?", opcoes: [{ id: "pv_s", title: "✅ Sim, tenho provas" }, { id: "pv_n", title: "❌ Não tenho" }] }
   }
   if (u.stage === "trab_ass_prov") {
     u.detalhe = text === "pv_s" ? "Com provas/testemunhas" : "Sem provas"
-    u.stage = "gatilho"; iniciarTimer(from)
+    setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "trab_out_desc" && text) {
@@ -3452,18 +3286,18 @@ async function processar(from, nomeWA, text, msgObj) {
 
   // OUTROS
   if (u.stage === "outros_menu") {
-    if (text === "o_consul") { u.situacao = "Consultoria juridica"; u.stage = "out_cons_tipo"; iniciarTimer(from); return { texto: "⚖️ Sobre qual área precisa de orientação?", opcoes: [{ id: "oc_i", title: "🏥 INSS" }, { id: "oc_t", title: "💼 Trabalhista" }, { id: "oc_o", title: "📋 Outra área" }] } }
-    if (text === "o_rev")    { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; u.stage = "out_rev_tipo"; iniciarTimer(from); return { texto: "📄 Qual tipo de documento para revisão?", opcoes: [{ id: "or_c", title: "📝 Contrato" }, { id: "or_p", title: "⚖️ Processo" }, { id: "or_o", title: "📋 Outro" }] } }
+    if (text === "o_consul") { u.situacao = "Consultoria juridica"; setStage(u, "out_cons_tipo"); iniciarTimer(from); return { texto: "⚖️ Sobre qual área precisa de orientação?", opcoes: [{ id: "oc_i", title: "🏥 INSS" }, { id: "oc_t", title: "💼 Trabalhista" }, { id: "oc_o", title: "📋 Outra área" }] } }
+    if (text === "o_rev")    { u.situacao = "Revisao de documentos"; u.tipo = "revisao"; setStage(u, "out_rev_tipo"); iniciarTimer(from); return { texto: "📄 Qual tipo de documento para revisão?", opcoes: [{ id: "or_c", title: "📝 Contrato" }, { id: "or_p", title: "⚖️ Processo" }, { id: "or_o", title: "📋 Outro" }] } }
     if (text === "o_out")    { u.situacao = "Outro assunto"; entrarEtapaDescricao(u, "out_desc"); iniciarTimer(from); return { texto: "💬 Descreva brevemente o que precisa:\n\n💡 Pode digitar ou enviar um áudio.", opcoes: null } }
   }
   if (u.stage === "out_cons_tipo") {
     const m = { oc_i: "INSS", oc_t: "Trabalhista", oc_o: "Outro" }
-    u.subTipo = m[text] || text; u.stage = "gatilho"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "out_rev_tipo") {
     const m = { or_c: "Contrato", or_p: "Processo", or_o: "Outro" }
-    u.subTipo = m[text] || text; u.stage = "gatilho"; iniciarTimer(from)
+    u.subTipo = m[text] || text; setStage(u, "gatilho"); iniciarTimer(from)
     return { texto: "💡 Casos como o seu são bem comuns aqui! 💪", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
   }
   if (u.stage === "out_desc" && text) {
@@ -3473,7 +3307,7 @@ async function processar(from, nomeWA, text, msgObj) {
   // MENU CLIENTE
   if (u.stage === "cliente") {
     if (!podeMostrarMenuCliente(u)) {
-      u.stage = "area"
+      setStage(u, "area")
       salvarEtapa(u._numero, "area")
       iniciarTimer(from)
       return respostaRecomecoMenuPrincipal(u)
@@ -3573,7 +3407,7 @@ async function processar(from, nomeWA, text, msgObj) {
       }
     }
     if (text === "adv_urg") {
-      u.stage = "aguardando_urgente"; iniciarTimer(from)
+      setStage(u, "aguardando_urgente"); iniciarTimer(from)
       return { texto: `📩 *Mensagem urgente*\n\nDigite sua mensagem ou envie um áudio agora.\n\nTudo será registrado imediatamente e um advogado será notificado. ⚡\n\n📄 Caso: *${u.numeroCaso}*`, opcoes: null }
     }
     if (text === "m_novocaso") {
@@ -3583,7 +3417,7 @@ async function processar(from, nomeWA, text, msgObj) {
       limparDadosCasoAtual(u)
       u.nome = nomeExibicao
       u.nomeConfirmado = Boolean(nomeExibicao)
-      u.stage = "novo_caso_confirma"
+      setStage(u, "novo_caso_confirma")
       iniciarTimer(from)
       return {
         texto: `➕ *Abrir novo caso*\n\nVou usar seus dados cadastrados:\n\n👤 ${nomeExibicao || "Nome não informado"}\n📍 ${cidadeExibicao || "Cidade não informada"}${ufExibicao ? " - " + ufExibicao : ""}\n\nEsse telefone *${from}* é o seu número? Ou está entrando em contato por outra pessoa?`,
@@ -3599,7 +3433,7 @@ async function processar(from, nomeWA, text, msgObj) {
     if (text === "m_inicio") {
       iniciarTimer(from)
       if (podeMostrarMenuCliente(u)) return menuCliente(u)
-      u.stage = "area"
+      setStage(u, "area")
       salvarEtapa(u._numero, "area")
       return respostaRecomecoMenuPrincipal(u)
     }
@@ -3622,10 +3456,37 @@ async function processar(from, nomeWA, text, msgObj) {
   }
 
   // FALLBACK
-  u.stage = "area"; iniciarTimer(from)
+  setStage(u, "area"); iniciarTimer(from)
   salvarEtapa(u._numero, "area")
   return respostaRecomecoMenuPrincipal(u)
 }
+
+async function processar(from, nomeWA, text, msgObj) {
+  const u = getUser(from, nomeWA)
+  const textoSanitizado = sanitizarTextoEntrada(text)
+
+  if (u.processing) {
+    console.log(`[LOCK] Mensagem ignorada (usuário em processamento) | USER: ${sanitizarTextoEntrada(from) || "-"} | STAGE: ${u.stage || "-"} | MSG: "${textoSanitizado}"`)
+    return null
+  }
+
+  u.processing = true
+
+  try {
+    return await processarInterno(from, nomeWA, textoSanitizado, msgObj, u)
+  } catch (err) {
+    logContextoExecucao({ from, stage: u.stage, flow: "processar", msg: textoSanitizado })
+    logErro("processar", "Falha ao processar solicitacao", err)
+    return criarRespostaFallbackProcessamento()
+  } finally {
+    u.processing = false
+    agendarPersistenciaUsers()
+  }
+}
+
+// ================================================================
+//  WEBHOOK
+// ================================================================
 
 app.get("/", (_, res) => res.send("Oraculum v6.2"))
 app.get("/health", (_, res) => res.json({ status: "ok", uptime: Math.floor((Date.now() - monitor.inicio) / 1000), conversas: monitor.conversas, cadastros: monitor.cadastros, ativos: Object.keys(users).length, erros: monitor.erros.slice(-10), ram_mb: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1) }))
@@ -3638,11 +3499,13 @@ app.post("/webhook", async (req, res) => {
     const value   = req.body.entry?.[0]?.changes?.[0]?.value
     const message = value?.messages?.[0]
     if (!message) return res.sendStatus(200)
-    if (mensagemJaProcessada(message.id)) return res.sendStatus(200)
     const from   = message.from
     const nomeWA = value?.contacts?.[0]?.profile?.name || "Cliente"
-    const text   = (message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "").trim()
+    const text   = sanitizarTextoEntrada(message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "")
+    const dedupeKey = criarChaveMensagemDuplicada(from, text, message)
+    if (mensagemJaProcessada(message.id, dedupeKey)) return res.sendStatus(200)
     const resposta = await processar(from, nomeWA, text, message)
+    if (!resposta) return res.sendStatus(200)
     if (deveAtivarModoDigitando(resposta) && users[from]) {
       users[from].modoDigitando = true
       iniciarTimer(from)
@@ -3652,12 +3515,12 @@ app.post("/webhook", async (req, res) => {
     agendarPersistenciaUsers()
     if (texto) await enviar(from, texto, opcoes)
     return res.sendStatus(200)
-  } catch (err) { logErro("geral", err.message); return res.sendStatus(500) }
+  } catch (err) { logErro("webhook", err.message, err); return res.sendStatus(500) }
 })
 
 const PORT = process.env.PORT || 10000
 carregarUsersPersistidos()
-restaurarTimersPersistidos()
+// restaurarTimersPersistidos()
 // ──────────────────────────────────────────────────────────────────
 // ROTA /agendamento — confirmação de ligação agendada
 // Como usar GRATUITAMENTE (sem pagar HubSpot):
