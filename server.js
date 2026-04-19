@@ -2649,8 +2649,8 @@ async function processar(from, nomeWA, text, msgObj) {
       msg.includes("cont")
     ) {
       u.aguardandoRetomada = false
-      iniciarTimer(from)
-      return retomarFluxo(u)
+      const respostaRetomadaPendente = processarRetomadaOuReinicio(from, u, text, buttonId)
+      if (respostaRetomadaPendente) return respostaRetomadaPendente
     }
 
     if (buttonId === "recomecar" || msg.includes("recome")) {
