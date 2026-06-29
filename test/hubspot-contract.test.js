@@ -10,7 +10,8 @@ const {
 } = require("../src/domain/hubspot-core")
 const {
   configurarHubSpotSync,
-  sincronizarContatoNegocioHubSpot
+  sincronizarContatoNegocioHubSpot,
+  hsMoverStageSeguro
 } = require("../src/domain/hubspot-sync")
 const { mapearTipoCaso } = require("../src/domain/lead-temperature")
 const {
@@ -188,11 +189,52 @@ async function executar() {
   )
   assert.equal(requests.length, requestsAntesDoDealVazio)
 
+  const stagesTeste = {
+    ANALISE: "presentationscheduled",
+    AGUARDANDO_DOCS: "decisionmakerboughtin",
+    PROTOCOLO: "1343040098",
+    PROCESSO: "1337291921",
+    FINAL: "1343039663"
+  }
   configurarHubSpotSync({
-    HS_STAGE: { FINAL: "closedwon" },
+    HS_STAGE: stagesTeste,
     getNomeDeal: () => "Caso de teste",
     getHubSpotDealProps: (_u, props) => props
   })
+
+  for (const stageProtegido of [
+    stagesTeste.PROTOCOLO,
+    stagesTeste.PROCESSO,
+    stagesTeste.FINAL
+  ]) {
+    const requestsAntesDaProtecao = requests.length
+    assert.equal(
+      await hsMoverStageSeguro(
+        "deal-stage-protegido",
+        stagesTeste.AGUARDANDO_DOCS,
+        stageProtegido,
+        false
+      ),
+      false
+    )
+    assert.equal(requests.length, requestsAntesDaProtecao)
+  }
+
+  const requestsAntesDoStagePermitido = requests.length
+  assert.equal(
+    await hsMoverStageSeguro(
+      "deal-stage-permitido",
+      stagesTeste.AGUARDANDO_DOCS,
+      stagesTeste.ANALISE,
+      false
+    ),
+    true
+  )
+  assert.equal(requests.length, requestsAntesDoStagePermitido + 1)
+  assert.deepEqual(requests.at(-1).body.properties, {
+    dealstage: stagesTeste.AGUARDANDO_DOCS
+  })
+
   await sincronizarContatoNegocioHubSpot({
     contatoId: "contact-2",
     nome: "João",

@@ -6391,8 +6391,13 @@ async function executarIntencaoCliente(from, u, intencao, textoOriginal = "") {
       }
       return telaDocsCompletos
     }
-    await hsMoverStage(u.negocioId, HS_STAGE.AGUARDANDO_DOCS)
-    u.negocioStageId = HS_STAGE.AGUARDANDO_DOCS
+    const moveuParaDocumentos = await hsMoverStageSeguro(
+      u.negocioId,
+      HS_STAGE.AGUARDANDO_DOCS,
+      u.negocioStageId,
+      false
+    )
+    if (moveuParaDocumentos) u.negocioStageId = HS_STAGE.AGUARDANDO_DOCS
     salvarEtapa(u._numero, "documentos")
     setStage(u, STAGES.CLIENTE)
     u.docAtualIdx = u.docAtualIdx || 0
