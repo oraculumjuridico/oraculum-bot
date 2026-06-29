@@ -6361,6 +6361,14 @@ async function proximaEtapaNovoCasoClienteAposModo(from, u) {
   return await flowAcolhimentoCidade(u, { from })
 }
 
+async function executarIntencaoDetectadaCliente(from, u, intencao, textoOriginal = "") {
+  if (["status", "documentos", "advogado"].includes(intencao)) {
+    const selecao = await abrirSelecaoCasoParaAcao(from, u, intencao)
+    if (selecao !== false) return selecao || { texto: null, opcoes: null }
+  }
+  return executarIntencaoCliente(from, u, intencao, textoOriginal)
+}
+
 async function executarIntencaoCliente(from, u, intencao, textoOriginal = "") {
   if (!intencao) return null
   if (intencao !== "documentos") u._docsClienteGuiado = false
@@ -8417,7 +8425,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         return responderComTimer(from, await confirmarAberturaNovoCasoCliente(from, u))
       }
       if (intencaoAudio) {
-        const respostaIntencao = await executarIntencaoCliente(from, u, intencaoAudio, trans)
+        const respostaIntencao = await executarIntencaoDetectadaCliente(from, u, intencaoAudio, trans)
         if (respostaIntencao) return responderComTimer(from, respostaIntencao)
       }
       if (pareceNovaSituacaoCliente(trans)) {
@@ -14593,7 +14601,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         )
         return responderComTimer(from, telaCasoAtualOuNovo)
       }
-      const respostaIntencao = await executarIntencaoCliente(from, u, intencaoTexto, text)
+      const respostaIntencao = await executarIntencaoDetectadaCliente(from, u, intencaoTexto, text)
       if (respostaIntencao) return respostaIntencao
     }
     if (text && !ehMensagemEntradaGlobal(text) && GROQ_KEY) {
