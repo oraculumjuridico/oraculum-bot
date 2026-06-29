@@ -170,8 +170,7 @@ async function sincronizarContatoNegocioHubSpot(u) {
   const contatoProps = filtrarPropsHubSpot({
     firstname: (u.nome && u.nome !== "cliente" && u.nome !== "você" ? u.nome : undefined),
     city: u.cidade,
-    state: u.uf,
-    uf: u.uf
+    state: u.uf
   })
 
   if (u.contatoId && Object.keys(contatoProps).length) {

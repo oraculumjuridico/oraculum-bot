@@ -122,6 +122,7 @@ async function executar() {
   assert.equal(sincronizacaoContato.body.properties.firstname, "João")
   assert.equal(sincronizacaoContato.body.properties.city, "Campinas")
   assert.equal(sincronizacaoContato.body.properties.state, "SP")
+  assert.equal("uf" in sincronizacaoContato.body.properties, false)
 
   assert.equal(
     mapearTipoCaso({ area: "inss", tipo: "aposentadoria" }),
