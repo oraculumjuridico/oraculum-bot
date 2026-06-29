@@ -13,15 +13,26 @@ function normalizarAcoes(acoes = []) {
 function criarTela({
   id,
   titulo,
+  texto,
   textoAudioBase,
-  acoes = []
+  acoes = [],
+  imagemUrl = null
 } = {}) {
-  return {
+  const tela = {
     id: id || "",
     titulo: titulo || "",
+    texto: String(texto || "").trim(),
     textoAudioBase: String(textoAudioBase || "").trim(),
-    acoes: normalizarAcoes(acoes)
+    acoes: normalizarAcoes(acoes),
+    imagemUrl
   }
+  Object.defineProperty(tela, "opcoes", {
+    enumerable: true,
+    get() {
+      return gerarBotoesDaTela(this)
+    }
+  })
+  return tela
 }
 
 function gerarBotoesDaTela(tela = {}) {

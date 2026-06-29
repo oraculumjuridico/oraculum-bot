@@ -46,7 +46,6 @@ const {
 } = require("./src/domain/documents-core")
 const {
   fraseEnvioDocumentoAudio,
-  textoAudioTelaDocumentoCaso,
   imagemPorAreaTipo,
   imagemPorCaso,
   telaDocsPendentesComImagem,
@@ -5041,7 +5040,7 @@ async function enviarGuiaDocs(from, u, tela) {
   try {
     const payload = typeof tela === "string" ? { texto: tela, opcoes: null } : (tela || {})
 
-    await enviarAudioModoVoz(from, u, textoAudioTelaDocumentoCaso(u), "documentos caso")
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(payload), "documentos caso")
     if (u?.modoTexto === false) await new Promise(r => setTimeout(r, 2500))
 
     const imageUrl = payload.imagemUrl || imagemPorCaso(u) || imagemPorAreaTipo(u?.area, u?.tipo, u?.situacao, u?.detalhe)
@@ -5059,23 +5058,30 @@ async function enviarGuiaDocs(from, u, tela) {
   }
 }
 
+async function responderTelaDocumento(from, u, tela) {
+  await enviarAudioModoVoz(from, u, gerarAudioDaTela(tela), `documentos ${tela.id || "tela"}`)
+  return responderComTimer(from, {
+    texto: tela.texto,
+    opcoes: gerarBotoesDaTela(tela)
+  })
+}
+
 async function enviarIntroDocumentos(from, u) {
   const textoIntroDocumentos = `${TEXTO_INTRO_DOCS}\n\n${cabecalhoCasoAtivo(u)}`
-  const opcoes = [
-    { id: "docs_intro_ok", title: "✅ Entendi" },
-    { id: "docs_depois", title: "Continuar depois" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-  ]
+  const telaIntro = criarTela({
+    id: "documentos_introducao",
+    titulo: "Envio de documentos",
+    texto: textoIntroDocumentos,
+    textoAudioBase: AUDIO_GUIA_DOCS_TEXTO,
+    acoes: [
+      { id: "docs_intro_ok", label: "✅ Entendi" },
+      { id: "docs_depois", label: "Continuar depois" },
+      { id: "m_inicio", label: "🏠 Menu do cliente" }
+    ]
+  })
+  const opcoes = gerarBotoesDaTela(telaIntro)
   try {
-    if (!u?.modoTexto && u?.atendente) {
-      try {
-        const ogg = await gerarAudioAtendente(u.atendente, AUDIO_GUIA_DOCS_TEXTO)
-        await enviarAudio(from, urlAudioAtendente(ogg))
-        await new Promise(r => setTimeout(r, 12000))
-      } catch (e) {
-        logErro("tts", "intro docs áudio", e)
-      }
-    }
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaIntro), "introducao documentos")
     const enviada = IMAGEM_GUIA_DOCS_URL
       ? await enviarImagemWhatsApp(from, IMAGEM_GUIA_DOCS_URL, textoIntroDocumentos, opcoes)
       : false
@@ -8371,7 +8377,16 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const mimeType = msgObj?.[tipo]?.mime_type || "application/octet-stream"
 
   if (!mediaId) {
-    return responderComTimer(from, { texto: "Nao consegui identificar o arquivo. Tente enviar novamente como foto ou PDF.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"🏠 Menu do cliente" }] })
+    return responderTelaDocumento(from, u, criarTela({
+      id: "documento_midia_invalida",
+      titulo: "Arquivo não identificado",
+      texto: "Nao consegui identificar o arquivo. Tente enviar novamente como foto ou PDF.",
+      textoAudioBase: "Não consegui identificar o arquivo",
+      acoes: [
+        { id: "m_docs", label: "Tentar novamente" },
+        { id: "m_inicio", label: "🏠 Menu do cliente" }
+      ]
+    }))
   }
   if (
     u.stage === STAGES.CLIENTE &&
@@ -8379,13 +8394,16 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     !u._docsClienteGuiado &&
     (u._docClientePendenteId || u._docClientePendenteArquivo)
   ) {
-    return responderComTimer(from, {
+    return responderTelaDocumento(from, u, criarTela({
+      id: "documento_pendente_preservado",
+      titulo: "Arquivo pendente",
       texto: "📎 Já existe um arquivo aguardando sua confirmação.\n\nConclua ou cancele o arquivo anterior antes de enviar outro. O arquivo pendente foi preservado.",
-      opcoes: [
-        { id: "doc_cliente_anexar", title: "✅ Anexar anterior" },
-        { id: "m_inicio", title: "🏠 Menu do cliente" }
+      textoAudioBase: "Já existe um arquivo aguardando sua confirmação. O arquivo pendente foi preservado",
+      acoes: [
+        { id: "doc_cliente_anexar", label: "✅ Anexar anterior" },
+        { id: "m_inicio", label: "🏠 Menu do cliente" }
       ]
-    })
+    }))
   }
   if (!u.pastaDriveId && ![STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) {
     if (u.numeroCaso) {
@@ -8396,14 +8414,32 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       }
     }
     if (!u.pastaDriveId) {
-      return responderComTimer(from, { texto: "⏳ Sua pasta está sendo preparada. Aguarde um instante e tente novamente.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"🏠 Menu do cliente" }] })
+      return responderTelaDocumento(from, u, criarTela({
+        id: "documento_pasta_indisponivel",
+        titulo: "Pasta em preparação",
+        texto: "⏳ Sua pasta está sendo preparada. Aguarde um instante e tente novamente.",
+        textoAudioBase: "Sua pasta está sendo preparada. Aguarde um instante",
+        acoes: [
+          { id: "m_docs", label: "Tentar novamente" },
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
+        ]
+      }))
     }
   }
 
   await enviar(from, ehAudio ? "👂 Estou ouvindo seu áudio..." : "📎 Recebi seu arquivo. Estou salvando...", null, false)
   const midia = await baixarMidia(mediaId)
   if (!midia) {
-    return responderComTimer(from, { texto: "❌ Não consegui baixar o arquivo. Tente reenviar.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"🏠 Menu do cliente" }] })
+    return responderTelaDocumento(from, u, criarTela({
+      id: "documento_download_falhou",
+      titulo: "Falha ao receber arquivo",
+      texto: "❌ Não consegui baixar o arquivo. Tente reenviar.",
+      textoAudioBase: "Não consegui baixar o arquivo",
+      acoes: [
+        { id: "m_docs", label: "Tentar novamente" },
+        { id: "m_inicio", label: "🏠 Menu do cliente" }
+      ]
+    }))
   }
 
   if (ehAudio) {
@@ -8438,20 +8474,17 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
             "OBSERVACAO EM AUDIO SOBRE DOCUMENTO",
             `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nDocumento atual: ${docAudio.label}\nItem: ${folhaAudio}\n\nTranscricao:\n"${trans}"`
           )
-          await enviarAudioModoVoz(
-            from,
-            u,
-            `Áudio anotado no seu caso. ${fraseEnvioDocumentoAudio(docAudio, folhaAudio)} Se preferir, você pode continuar depois ou voltar ao menu do cliente.`,
-            "audio observacao documento"
-          )
           iniciarTimer(from)
-          return {
+          return responderTelaDocumento(from, u, criarTela({
+            id: "documento_observacao_audio",
+            titulo: "Observação de documento",
             texto: `✅ Áudio anotado no seu caso.\n\nAgora envie *${folhaAudio}* do documento *${docAudio.label}* quando estiver pronto.`,
-            opcoes: [
-              { id: "docs_depois", title: "Continuar depois" },
-              { id: "m_inicio", title: "🏠 Menu do cliente" }
+            textoAudioBase: `Áudio anotado no seu caso. ${fraseEnvioDocumentoAudio(docAudio, folhaAudio)}`,
+            acoes: [
+              { id: "docs_depois", label: "Continuar depois" },
+              { id: "m_inicio", label: "🏠 Menu do cliente" }
             ]
-          }
+          }))
         }
       }
       if (intencaoAudio === "novo_caso" && pareceNovaSituacaoCliente(trans)) {
@@ -8542,7 +8575,16 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     const nomeFinal = `Aguardando classificacao - ${nCli}${ext && ext.length <= 4 ? "." + ext : ".jpg"}`
     const arquivo = await uploadDrive(u.pastaDriveId, nomeFinal, midia.buffer, midia.mimeType)
     if (!arquivo) {
-      return responderComTimer(from, { texto: "❌ Não consegui salvar. Pode tentar novamente?", opcoes: [{ id:"m_docs", title:"📎 Enviar documentos" }, { id:"m_inicio", title:"🏠 Menu do cliente" }] })
+      return responderTelaDocumento(from, u, criarTela({
+        id: "documento_avulso_upload_falhou",
+        titulo: "Falha ao salvar arquivo",
+        texto: "❌ Não consegui salvar. Pode tentar novamente?",
+        textoAudioBase: "Não consegui salvar o arquivo",
+        acoes: [
+          { id: "m_docs", label: "📎 Enviar documentos" },
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
+        ]
+      }))
     }
     u._docClientePendenteArquivo = arquivo.webViewLink || null
     u._docClientePendenteId = arquivo.id || null
@@ -8552,24 +8594,19 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       "DOCUMENTO RECEBIDO - AGUARDANDO CLASSIFICACAO",
       `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinal}\nStatus: aguardando classificacao pelo cliente${arquivo.webViewLink ? `\nDrive: ${arquivo.webViewLink}` : ""}`
     )
-    await enviarAudioModoVoz(
-      from,
-      u,
-      "Recebi um arquivo. Deseja anexar esse documento ao seu caso? Toque em Sim para confirmar ou em Menu do cliente para voltar.",
-      "classificar documento cliente"
-    )
     const casoInfoAvulso = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "—"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
-    const telaAvulso = {
+    const telaAvulso = criarTela({
+      id: "documento_avulso_recebido",
+      titulo: "Arquivo recebido",
       texto: `📎 *Recebi seu arquivo!*${casoInfoAvulso}\n\nDeseja anexar ao seu caso?`,
-      opcoes: [
-        { id: "doc_cliente_anexar", title: "✅ Sim, anexar" },
-        { id: "m_inicio", title: "🏠 Menu do cliente" }
+      textoAudioBase: "Recebi um arquivo. Deseja anexar esse documento ao seu caso?",
+      imagemUrl: IMAGEM_DOC_AVULSO_URL,
+      acoes: [
+        { id: "doc_cliente_anexar", label: "✅ Sim, anexar" },
+        { id: "m_inicio", label: "🏠 Menu do cliente" }
       ]
-    }
-    const enviadaAvulso = IMAGEM_DOC_AVULSO_URL
-      ? await enviarImagemWhatsApp(from, IMAGEM_DOC_AVULSO_URL, telaAvulso.texto, telaAvulso.opcoes)
-      : false
-    if (!enviadaAvulso) return responderComTimer(from, telaAvulso)
+    })
+    await enviarGuiaDocs(from, u, telaAvulso)
     registrarUltimaPergunta(u, telaAvulso)
     iniciarTimer(from)
     return {}
@@ -8592,7 +8629,17 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
 
   const arquivo = await uploadDrive(u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType)
   if (!arquivo) {
-    return responderComTimer(from, { texto: "❌ Não consegui salvar. Pode tentar novamente?", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_adv", title:"👨‍⚖️ Falar com advogado" }, { id:"m_inicio", title:"🏠 Menu do cliente" }] })
+    return responderTelaDocumento(from, u, criarTela({
+      id: "documento_guiado_upload_falhou",
+      titulo: "Falha ao salvar documento",
+      texto: "❌ Não consegui salvar. Pode tentar novamente?",
+      textoAudioBase: "Não consegui salvar o documento",
+      acoes: [
+        { id: "m_docs", label: "Tentar novamente" },
+        { id: "m_adv", label: "👨‍⚖️ Falar com advogado" },
+        { id: "m_inicio", label: "🏠 Menu do cliente" }
+      ]
+    }))
   }
 
   u.ultimoArqId = arquivo.id
@@ -8642,25 +8689,17 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       : temProximoDoc
         ? `${lblD} recebido. Na tela, você pode enviar complemento, seguir para o próximo documento ou continuar depois.`
         : `${lblD} recebido. Todos os documentos foram enviados. Toque em Concluir envio para finalizar ou em Continuar depois para parar por agora.`
-  await enviarAudioModoVoz(
-    from,
-    u,
-    textoAudioRecebido,
-    "documento guiado recebido"
-  )
-  const telaRecebido = {
-    texto: `✅ *${lblD}${docAtualCompleto ? "" : ` — ${folha}`}* recebido!\n\n📊 *Andamento do envio*\n${statusRecebido.texto}\n\n${textoFinalTela}`,
-    opcoes: arquivoEhPdf
+  const opcoesRecebido = arquivoEhPdf
+    ? [
+        { id:"docs_proxdoc", title: proximaAcaoTitle },
+        { id: "docs_depois", title: "Continuar depois" }
+      ]
+    : (rgAguardandoVerso
       ? [
-          { id:"docs_proxdoc", title: proximaAcaoTitle },
+          { id:"docs_rg_verso_junto", title: "Usar mesma foto" },
+          { id:"docs_rg_sem_verso", title: "Seguir sem verso" },
           { id: "docs_depois", title: "Continuar depois" }
         ]
-      : (rgAguardandoVerso
-        ? [
-            { id:"docs_rg_verso_junto", title: "Usar mesma foto" },
-            { id:"docs_rg_sem_verso", title: "Seguir sem verso" },
-            { id: "docs_depois", title: "Continuar depois" }
-          ]
       : (!docAtualCompleto
         ? [
             { id:"docs_proxdoc", title: "Próxima página" },
@@ -8672,12 +8711,18 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
             { id:"docs_proxdoc", title: proximaAcaoTitle },
             { id: "docs_depois", title: "Continuar depois" }
           ]))
-  }
-  const enviadaRecebido = await enviarImagemWhatsApp(from, IMAGEM_DOC_RECEBIDO_URL, telaRecebido.texto, telaRecebido.opcoes)
+  const telaRecebido = criarTela({
+    id: "documento_guiado_recebido",
+    titulo: "Documento recebido",
+    texto: `✅ *${lblD}${docAtualCompleto ? "" : ` — ${folha}`}* recebido!\n\n📊 *Andamento do envio*\n${statusRecebido.texto}\n\n${textoFinalTela}`,
+    textoAudioBase: textoAudioRecebido,
+    imagemUrl: IMAGEM_DOC_RECEBIDO_URL,
+    acoes: opcoesRecebido.map(opcao => ({ id: opcao.id, label: opcao.title }))
+  })
+  await enviarGuiaDocs(from, u, telaRecebido)
   registrarUltimaPergunta(u, telaRecebido)
   iniciarTimer(from)
-  if (enviadaRecebido) return {}
-  return telaRecebido
+  return {}
 }
 
 async function proximaConfirmacaoProgressiva(from, u) {
@@ -14054,39 +14099,33 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u._docClientePendenteId = null
         u._docsClienteGuiado = false
         iniciarTimer(from)
-        return await responderTelaComAudio(
-          from,
-          u,
-          {
-            texto: "📎 Não encontrei um arquivo pendente para anexar.\n\nPode enviar o documento novamente?",
-            opcoes: [
-      { id: "m_docs", title: "📎 Enviar documentos" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-            ]
-          },
-          "Não encontrei um arquivo pendente para anexar. Pode enviar o documento novamente?",
-          "arquivo pendente ausente"
-        )
+        return await responderTelaDocumento(from, u, criarTela({
+          id: "documento_pendente_ausente",
+          titulo: "Arquivo pendente não encontrado",
+          texto: "📎 Não encontrei um arquivo pendente para anexar.\n\nPode enviar o documento novamente?",
+          textoAudioBase: "Não encontrei um arquivo pendente para anexar. Pode enviar o documento novamente",
+          acoes: [
+            { id: "m_docs", label: "📎 Enviar documentos" },
+            { id: "m_inicio", label: "🏠 Menu do cliente" }
+          ]
+        }))
       }
       const nomeRenomeado = `Documento anexado - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
       const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
       if (!arquivoRenomeado?.id) {
-        return await responderTelaComAudio(
-          from,
-          u,
-          {
-            texto: "⚠️ Não consegui concluir o anexo desse arquivo agora.\n\nO arquivo permanece aguardando confirmação. Tente novamente em instantes.",
-            opcoes: [
-              { id: "doc_cliente_anexar", title: "🔄 Tentar novamente" },
-              { id: "m_inicio", title: "🏠 Menu do cliente" }
-            ]
-          },
-          "Não consegui concluir o anexo desse arquivo agora. O arquivo continua aguardando confirmação. Tente novamente em instantes.",
-          "falha ao renomear documento avulso"
-        )
+        return await responderTelaDocumento(from, u, criarTela({
+          id: "documento_avulso_renomeacao_falhou",
+          titulo: "Falha ao anexar documento",
+          texto: "⚠️ Não consegui concluir o anexo desse arquivo agora.\n\nO arquivo permanece aguardando confirmação. Tente novamente em instantes.",
+          textoAudioBase: "Não consegui concluir o anexo desse arquivo agora. O arquivo continua aguardando confirmação. Tente novamente em instantes",
+          acoes: [
+            { id: "doc_cliente_anexar", label: "🔄 Tentar novamente" },
+            { id: "m_inicio", label: "🏠 Menu do cliente" }
+          ]
+        }))
       }
       if (u.negocioId) {
-        const moveu1 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
+        const moveu1 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, u.consultaStatus === "agendada")
         if (moveu1) u.negocioStageId = HS_STAGE.DOCS
       }
       const nomeFinalDoc = arquivoRenomeado?.name || nomeDoc
@@ -14101,25 +14140,20 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._docClientePendenteNome = null
       u._docClientePendenteArquivo = null
       u._docClientePendenteId = null
-      await enviarAudioModoVoz(
-        from,
-        u,
-        "Documento anexado ao caso. Nossa equipe poderá consultar esse arquivo na análise. Você pode enviar outros documentos, falar com nossa equipe ou voltar ao menu do cliente.",
-        "documento anexado cliente"
-      )
       const casoInfoAnexado = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "—"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
-      const telaAnexado = {
+      const telaAnexado = criarTela({
+        id: "documento_avulso_anexado",
+        titulo: "Documento anexado",
         texto: `✅ *Documento anexado ao caso!*${casoInfoAnexado}\n\nNossa equipe poderá consultar esse arquivo na análise.`,
-        opcoes: [
-          { id: "m_docs", title: "📎 Enviar documentos" },
-          { id: "m_adv", title: "👨‍⚖️ Falar com advogado" },
-          { id: "m_inicio", title: "🏠 Menu do cliente" }
+        textoAudioBase: "Documento anexado ao caso. Nossa equipe poderá consultar esse arquivo na análise",
+        imagemUrl: IMAGEM_DOC_ANEXADO_URL,
+        acoes: [
+          { id: "m_docs", label: "📎 Enviar documentos" },
+          { id: "m_adv", label: "👨‍⚖️ Falar com advogado" },
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
         ]
-      }
-      const enviadaAnexado = IMAGEM_DOC_ANEXADO_URL
-        ? await enviarImagemWhatsApp(from, IMAGEM_DOC_ANEXADO_URL, telaAnexado.texto, telaAnexado.opcoes)
-        : false
-      if (!enviadaAnexado) return responderComTimer(from, telaAnexado)
+      })
+      await enviarGuiaDocs(from, u, telaAnexado)
       registrarUltimaPergunta(u, telaAnexado)
       iniciarTimer(from)
       return {}
@@ -14134,19 +14168,16 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u._docClientePendenteId = null
         u._docsClienteGuiado = false
         iniciarTimer(from)
-        return await responderTelaComAudio(
-          from,
-          u,
-          {
-            texto: "📎 Não encontrei um arquivo pendente para anexar.\n\nPode enviar o documento novamente?",
-            opcoes: [
-      { id: "m_docs", title: "📎 Enviar documentos" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-            ]
-          },
-          "Não encontrei um arquivo pendente para anexar. Pode enviar o documento novamente?",
-          "arquivo pendente ausente"
-        )
+        return await responderTelaDocumento(from, u, criarTela({
+          id: "documento_classificacao_pendente_ausente",
+          titulo: "Arquivo pendente não encontrado",
+          texto: "📎 Não encontrei um arquivo pendente para anexar.\n\nPode enviar o documento novamente?",
+          textoAudioBase: "Não encontrei um arquivo pendente para anexar. Pode enviar o documento novamente",
+          acoes: [
+            { id: "m_docs", label: "📎 Enviar documentos" },
+            { id: "m_inicio", label: "🏠 Menu do cliente" }
+          ]
+        }))
       }
       const tiposDocCliente = {
         doc_cliente_tipo_pessoal: "Documento pessoal",
@@ -14157,22 +14188,19 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const nomeRenomeado = `${tipoDoc} - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
       const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
       if (!arquivoRenomeado?.id) {
-        return await responderTelaComAudio(
-          from,
-          u,
-          {
-            texto: "⚠️ Não consegui concluir a classificação desse arquivo agora.\n\nO arquivo permanece aguardando confirmação. Tente novamente em instantes.",
-            opcoes: [
-              { id: text, title: "🔄 Tentar novamente" },
-              { id: "m_inicio", title: "🏠 Menu do cliente" }
-            ]
-          },
-          "Não consegui concluir a classificação desse arquivo agora. O arquivo continua aguardando confirmação. Tente novamente em instantes.",
-          "falha ao classificar documento avulso"
-        )
+        return await responderTelaDocumento(from, u, criarTela({
+          id: "documento_avulso_classificacao_falhou",
+          titulo: "Falha ao classificar documento",
+          texto: "⚠️ Não consegui concluir a classificação desse arquivo agora.\n\nO arquivo permanece aguardando confirmação. Tente novamente em instantes.",
+          textoAudioBase: "Não consegui concluir a classificação desse arquivo agora. O arquivo continua aguardando confirmação. Tente novamente em instantes",
+          acoes: [
+            { id: text, label: "🔄 Tentar novamente" },
+            { id: "m_inicio", label: "🏠 Menu do cliente" }
+          ]
+        }))
       }
       if (u.negocioId) {
-        const moveu2 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
+        const moveu2 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, u.consultaStatus === "agendada")
         if (moveu2) u.negocioStageId = HS_STAGE.DOCS
       }
       const nomeFinalDoc = arquivoRenomeado?.name || nomeDoc
@@ -14188,20 +14216,17 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._docClientePendenteArquivo = null
       u._docClientePendenteId = null
       iniciarTimer(from)
-      await enviarAudioModoVoz(
-        from,
-        u,
-        `${tipoDoc} anexado ao caso. Nossa equipe poderá consultar esse arquivo na análise. Você pode enviar outros documentos, falar com nossa equipe ou voltar ao menu do cliente.`,
-        "documento classificado cliente"
-      )
-      return {
+      return responderTelaDocumento(from, u, criarTela({
+        id: "documento_avulso_classificado",
+        titulo: "Documento classificado",
         texto: `✅ *${tipoDoc}* anexado ao caso.\n\nNossa equipe poderá consultar esse arquivo na análise.`,
-        opcoes: [
-      { id: "m_docs", title: "📎 Enviar documentos" },
-      { id: "m_adv",      title: "👨‍⚖️ Falar com advogado" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
+        textoAudioBase: `${tipoDoc} anexado ao caso. Nossa equipe poderá consultar esse arquivo na análise`,
+        acoes: [
+          { id: "m_docs", label: "📎 Enviar documentos" },
+          { id: "m_adv", label: "👨‍⚖️ Falar com advogado" },
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
         ]
-      }
+      }))
     }
     if (text?.startsWith("m_caso_")) {
       const idx = Number(text.replace("m_caso_", ""))
@@ -14271,23 +14296,18 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       return null
     }
     if (text === "docs_confirmar_envio_extra") {
-      await enviarAudioModoVoz(
-        from,
-        u,
-        "Pode enviar o arquivo agora. Assim que receber, vou salvar no seu caso.",
-        "envio extra documento"
-      )
       const casoInfoExtra = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "—"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
-      const telaEnvioExtra = {
+      const telaEnvioExtra = criarTela({
+        id: "documento_envio_extra",
+        titulo: "Enviar arquivo adicional",
         texto: `📎 *Pode enviar o arquivo agora.*${casoInfoExtra}\n\nAssim que receber, vou salvar no seu caso.`,
-        opcoes: [
-          { id: "m_inicio", title: "🏠 Menu do cliente" }
+        textoAudioBase: "Pode enviar o arquivo agora. Assim que receber, vou salvar no seu caso",
+        imagemUrl: IMAGEM_ENVIO_EXTRA_URL,
+        acoes: [
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
         ]
-      }
-      const enviadaExtra = IMAGEM_ENVIO_EXTRA_URL
-        ? await enviarImagemWhatsApp(from, IMAGEM_ENVIO_EXTRA_URL, telaEnvioExtra.texto, telaEnvioExtra.opcoes)
-        : false
-      if (!enviadaExtra) return responderComTimer(from, telaEnvioExtra)
+      })
+      await enviarGuiaDocs(from, u, telaEnvioExtra)
       registrarUltimaPergunta(u, telaEnvioExtra)
       iniciarTimer(from)
       return {}
@@ -14351,20 +14371,17 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           "OBSERVACAO SOBRE DOCUMENTO",
           `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nDocumento atual: ${docTexto.label}\nItem: ${folhaTexto}\n\n${text}`
         )
-        await enviarAudioModoVoz(
-          from,
-          u,
-          `Anotei essa observação no seu caso. ${fraseEnvioDocumentoAudio(docTexto, folhaTexto)} Se preferir, você pode continuar depois ou voltar ao menu do cliente.`,
-          "observacao documento"
-        )
         iniciarTimer(from)
-        return {
+        return responderTelaDocumento(from, u, criarTela({
+          id: "documento_observacao_texto",
+          titulo: "Observação de documento",
           texto: `Anotei essa observação no seu caso.\n\nAgora envie *${folhaTexto}* do documento *${docTexto.label}* quando estiver pronto.`,
-          opcoes: [
-            { id: "docs_depois", title: "Continuar depois" },
-            { id: "m_inicio", title: "🏠 Menu do cliente" }
+          textoAudioBase: `Anotei essa observação no seu caso. ${fraseEnvioDocumentoAudio(docTexto, folhaTexto)}`,
+          acoes: [
+            { id: "docs_depois", label: "Continuar depois" },
+            { id: "m_inicio", label: "🏠 Menu do cliente" }
           ]
-        }
+        }))
       }
     }
     if (comandoDoc === "doc_cpf_skip") {
@@ -14429,20 +14446,17 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         const arquivoSubstituido = await marcarArquivoDriveSubstituido(u.ultimoArqId, u.ultimoArqNome)
         if (!arquivoSubstituido?.id) {
           iniciarTimer(from)
-          await enviarAudioModoVoz(
-            from,
-            u,
-            "Não consegui preparar a substituição desse arquivo agora. O arquivo atual foi mantido. Tente novamente em instantes.",
-            "falha ao substituir documento"
-          )
-          return {
+          return responderTelaDocumento(from, u, criarTela({
+            id: "documento_reenvio_falhou",
+            titulo: "Falha ao reenviar documento",
             texto: "⚠️ *Não consegui substituir o arquivo agora.*\n\nO arquivo atual foi mantido sem alterações. Tente novamente em instantes.",
-            opcoes: [
-              { id: "docs_reenviar", title: "🔄 Tentar novamente" },
-              { id: "docs_depois", title: "Continuar depois" },
-              { id: "m_inicio", title: "🏠 Menu do cliente" }
+            textoAudioBase: "Não consegui preparar a substituição desse arquivo agora. O arquivo atual foi mantido",
+            acoes: [
+              { id: "docs_reenviar", label: "🔄 Tentar novamente" },
+              { id: "docs_depois", label: "Continuar depois" },
+              { id: "m_inicio", label: "🏠 Menu do cliente" }
             ]
-          }
+          }))
         }
         await hsCriarNota(
           u.contatoId,
@@ -14465,13 +14479,13 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         "",
         "📸 Boa iluminacao, sem reflexo, tudo enquadrado."
       ].join("\n")
-      await enviarAudioModoVoz(
-        from,
-        u,
-        `Arquivo anterior marcado como substituído. ${fraseEnvioDocumentoAudio(d2 || {}, f2).replace(/^Agora envie/, "Envie novamente")} Use boa iluminação, sem reflexo e com tudo enquadrado.`,
-        "reenviar documento"
-      )
-      return { texto: textoReenvio, opcoes: null }
+      return responderTelaDocumento(from, u, criarTela({
+        id: "documento_reenvio_aguardando",
+        titulo: "Reenviar documento",
+        texto: textoReenvio,
+        textoAudioBase: `Arquivo anterior marcado como substituído. ${fraseEnvioDocumentoAudio(d2 || {}, f2).replace(/^Agora envie/, "Envie novamente")} Use boa iluminação, sem reflexo e com tudo enquadrado`,
+        acoes: []
+      }))
     }
     if (comandoDoc === "docs_maisFotos") {
       salvarEtapa(u._numero, "documentos")
@@ -14479,14 +14493,14 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const pend3  = getDocsPendentes(u)
       const d3     = pend3[0]
       const fAtual = (d3?.folhas || ["Foto"])[u.docAtualIdx || 0] || `Foto ${(u.docAtualIdx||0)+1}`
-      await enviarAudioModoVoz(
-        from,
-        u,
-        `Certo. Envie o complemento para ${d3?.label || "o documento"}. O item atual é ${fAtual}. Use boa iluminação, sem reflexo e com tudo enquadrado.`,
-        "complementar documento"
-      )
       iniciarTimer(from)
-      return { texto: `Ok! Envie o complemento do documento *${d3?.label || "documento"}*.\n\nItem atual: *${fAtual}*\n\n💡 Mesmas orientações: boa iluminação, sem reflexo, enquadrado corretamente.`, opcoes: null }
+      return responderTelaDocumento(from, u, criarTela({
+        id: "documento_complemento_aguardando",
+        titulo: "Complementar documento",
+        texto: `Ok! Envie o complemento do documento *${d3?.label || "documento"}*.\n\nItem atual: *${fAtual}*\n\n💡 Mesmas orientações: boa iluminação, sem reflexo, enquadrado corretamente.`,
+        textoAudioBase: `Certo. Envie o complemento para ${d3?.label || "o documento"}. O item atual é ${fAtual}. Use boa iluminação, sem reflexo e com tudo enquadrado`,
+        acoes: []
+      }))
     }
     if (comandoDoc === "docs_rg_verso_junto") {
       salvarEtapa(u._numero, "documentos")
@@ -14595,14 +14609,17 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
       sairContextoDocumentosCliente(u)
       const primeiroNome = primeiroNomeCliente(u) || "você"
-      await enviarAudioModoVoz(
-        from,
-        u,
-        `Sem problema, ${primeiroNome}. Você pode continuar depois. Quando tiver os documentos, volte ao menu e toque em Enviar documentos.`,
-        "continuar documentos depois"
-      )
       iniciarTimer(from)
-      return { texto: `Sem problema, ${primeiroNome}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em *"Enviar documentos"*.\n\n📁 Caso: *${u.numeroCaso}*`, opcoes: enviarOpcoesPadrao(from, "retorno_docs") }
+      return responderTelaDocumento(from, u, criarTela({
+        id: "documentos_continuar_depois",
+        titulo: "Continuar depois",
+        texto: `Sem problema, ${primeiroNome}! 😊\n\nQuando tiver os documentos, é só voltar aqui e tocar em *"Enviar documentos"*.\n\n📁 Caso: *${u.numeroCaso}*`,
+        textoAudioBase: `Sem problema, ${primeiroNome}. Você pode continuar depois`,
+        acoes: enviarOpcoesPadrao(from, "retorno_docs").map(opcao => ({
+          id: opcao.id,
+          label: opcao.title
+        }))
+      }))
     }
     if (text === "m_adv") {
       u._docsClienteGuiado = false

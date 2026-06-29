@@ -8,6 +8,7 @@ const {
 const { primeiroNomeCliente } = require("./phone-name")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { cabecalhoCasoAtivo } = require("./client-menu-ui")
+const { criarTela } = require("./declarative-screen")
 
 const IMAGEM_DOCS_FINAL_URL = process.env.IMAGEM_DOCS_FINAL_URL || "https://i.imgur.com/LRvw2m8.png"
 const IMAGEM_DOCS_PENDENTES_URL = "https://i.imgur.com/mKmFGHO.png"
@@ -126,15 +127,18 @@ function telaDocsPendentesComImagem(u) {
     "recebido parcialmente": "enviado incompleto"
   }
   const lista = faltantes.map(item => `• ${item.doc.label} _(${labelStatus[item.status] || item.status})_`).join("\n")
-  return {
+  return criarTela({
+    id: "documentos_pendentes",
+    titulo: "Documentos pendentes",
     texto: `📎 *Documentos pendentes*\n\n${primeiroNome}, alguns documentos deste caso ficaram faltando ou incompletos.\n\n⚠️ *Ainda precisamos de:*\n${lista}\n\n📲 Quer enviar esses documentos agora?`,
+    textoAudioBase: `Encontrei documentos que ficaram faltando ou incompletos neste caso: ${faltantes.map(item => item.doc.label).join(", ")}`,
     imagemUrl: IMAGEM_DOCS_PENDENTES_URL,
-    opcoes: [
-      { id: "docs_enviar_faltantes", title: "📎 Enviar faltantes" },
-      { id: "docs_ver_status", title: "📊 Ver status" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
+    acoes: [
+      { id: "docs_enviar_faltantes", label: "📎 Enviar faltantes" },
+      { id: "docs_ver_status", label: "📊 Ver status" },
+      { id: "m_inicio", label: "🏠 Menu do cliente" }
     ]
-  }
+  })
 }
 
 function montarStatusDocumentosVisual(u, { docEmAndamentoId = null, docConcluidoId = null } = {}) {
@@ -175,15 +179,18 @@ function telaConcluido(u) {
   const textoBase = faltantes.length
     ? `🎉 *Muito bem, ${primeiroNome}!*\n\nRecebemos os documentos enviados para o caso *${u.numeroCaso}*.${blocoRecebidos}${blocoFaltantes}\n\nNossa equipe já pode organizar o material recebido. Se tiver os documentos faltantes depois, é só voltar em *Enviar documentos*.`
     : `🎉 *Muito bem, ${primeiroNome}!*\n\nRecebemos todos os documentos previstos para o caso *${u.numeroCaso}*.${blocoRecebidos}\n\nNossa equipe já pode analisar tudo com mais segurança.`
-  return {
+  return criarTela({
+    id: "documentos_concluidos",
+    titulo: "Documentos concluídos",
     texto: textoBase,
+    textoAudioBase: textoAudioTelaDocumentoCaso(u),
     imagemUrl: IMAGEM_DOCS_FINAL_URL,
-    opcoes: [
-      { id: "m_docs", title: "📎 Enviar documentos" },
-      { id: "m_adv",      title: "👨‍⚖️ Falar com advogado" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
+    acoes: [
+      { id: "m_docs", label: "📎 Enviar documentos" },
+      { id: "m_adv", label: "👨‍⚖️ Falar com advogado" },
+      { id: "m_inicio", label: "🏠 Menu do cliente" }
     ]
-  }
+  })
 }
 
 function telaEnvioDoc(u, enviarOpcoesPadrao) {
@@ -219,20 +226,29 @@ function telaEnvioDoc(u, enviarOpcoesPadrao) {
 
   // CPF é opcional — oferecer opção de pular
   if (doc.id === "doc_cpf") {
-    return {
+    return criarTela({
+      id: "documento_atual_cpf",
+      titulo: "Documento atual",
       texto,
-      opcoes: [
-        { id: "doc_cpf_skip", title: "CPF no RG/CNH" },
-    { id: "docs_depois", title: "Continuar depois" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
+      textoAudioBase: textoAudioTelaDocumentoCaso(u),
+      acoes: [
+        { id: "doc_cpf_skip", label: "CPF no RG/CNH" },
+        { id: "docs_depois", label: "Continuar depois" },
+        { id: "m_inicio", label: "🏠 Menu do cliente" }
       ]
-    }
+    })
   }
 
-  return {
+  return criarTela({
+    id: "documento_atual",
+    titulo: "Documento atual",
     texto,
-    opcoes: enviarOpcoesPadrao(null)
-  }
+    textoAudioBase: textoAudioTelaDocumentoCaso(u),
+    acoes: enviarOpcoesPadrao(null).map(opcao => ({
+      id: opcao.id,
+      label: opcao.title
+    }))
+  })
 }
 
 module.exports = {
