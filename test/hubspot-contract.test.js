@@ -13,6 +13,11 @@ const {
   sincronizarContatoNegocioHubSpot
 } = require("../src/domain/hubspot-sync")
 const { mapearTipoCaso } = require("../src/domain/lead-temperature")
+const {
+  CONTACT_WRITE_PROPERTIES,
+  DEAL_WRITE_PROPERTIES,
+  validateHubSpotProperties
+} = require("../src/domain/hubspot-contract")
 
 const axiosOriginal = {
   get: axios.get,
@@ -27,6 +32,42 @@ function restaurarAxios() {
 
 async function executar() {
   const requests = []
+  const warnings = []
+
+  assert.equal(CONTACT_WRITE_PROPERTIES.has("firstname"), true)
+  assert.equal(CONTACT_WRITE_PROPERTIES.has("dealstage"), false)
+  assert.equal(DEAL_WRITE_PROPERTIES.has("dealstage"), true)
+  assert.equal(DEAL_WRITE_PROPERTIES.has("phone"), false)
+
+  assert.deepEqual(
+    validateHubSpotProperties("contacts", {
+      firstname: "Maria",
+      dealstage: "appointmentscheduled"
+    }, warning => warnings.push(warning)),
+    { firstname: "Maria" }
+  )
+  assert.deepEqual(
+    validateHubSpotProperties("deals", {
+      dealname: "Caso",
+      phone: "5511999999999",
+      urgencia: "Urgentíssima"
+    }, warning => warnings.push(warning)),
+    { dealname: "Caso" }
+  )
+  assert.deepEqual(warnings, [
+    {
+      event: "hubspot_payload_validation",
+      objectType: "contacts",
+      unknownProperties: ["dealstage"],
+      invalidEnums: []
+    },
+    {
+      event: "hubspot_payload_validation",
+      objectType: "deals",
+      unknownProperties: ["phone"],
+      invalidEnums: ["urgencia"]
+    }
+  ])
 
   axios.post = async (url, body) => {
     requests.push({ method: "post", url, body })
