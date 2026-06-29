@@ -81,7 +81,7 @@ function garantirDiretorioDados() {
 function serializarUsers() {
   const saida = {}
   for (const [from, u] of Object.entries(deps.users)) {
-    saida[from] = {
+    const usuarioSerializado = {
       ...u,
       _numero: null,
       processing: false,
@@ -91,6 +91,11 @@ function serializarUsers() {
       _urgenteAudioBuffer: null,
       audiosDescCorrigidos: []
     }
+    delete usuarioSerializado._menuClienteCasoAtivo
+    delete usuarioSerializado._casosMenuCliente
+    delete usuarioSerializado._acaoPendente
+    delete usuarioSerializado._mostrarPainelCasosCliente
+    saida[from] = usuarioSerializado
   }
   return saida
 }
@@ -201,6 +206,10 @@ function hidratarUsuarioPersistido(data) {
   hidratado.aguardandoResposta = Boolean(hidratado.aguardandoResposta)
   hidratado.nomePerfilWhatsApp = hidratado.nomePerfilWhatsApp || data?.nomeWA || "Cliente"
   hidratado.origemCaptacao = hidratado.origemCaptacao || "whatsapp"
+  hidratado._menuClienteCasoAtivo = false
+  hidratado._casosMenuCliente = null
+  hidratado._acaoPendente = null
+  hidratado._mostrarPainelCasosCliente = false
   // Preservar dados já confirmados/coletados — não resetar na hidratação
   hidratado.contatoId     = data?.contatoId     || null
   hidratado.negocioId     = data?.negocioId     || null
