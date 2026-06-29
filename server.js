@@ -102,10 +102,10 @@ const {
   montarAudioStatusCliente
 } = require("./src/domain/cliente-status-ui")
 const {
-  criarTela,
+  createClientScreen: criarTela,
   gerarBotoesDaTela,
   gerarAudioDaTela
-} = require("./src/domain/declarative-screen")
+} = require("./src/domain/declarative-screen-guard")
 const {
   configurarClientMenuUi,
   iconeAreaJuridica,

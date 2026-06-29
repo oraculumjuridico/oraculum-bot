@@ -8,7 +8,7 @@ const {
 const { primeiroNomeCliente } = require("./phone-name")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { cabecalhoCasoAtivo } = require("./client-menu-ui")
-const { criarTela } = require("./declarative-screen")
+const { createClientScreen: criarTela } = require("./declarative-screen-guard")
 
 const IMAGEM_DOCS_FINAL_URL = process.env.IMAGEM_DOCS_FINAL_URL || "https://i.imgur.com/LRvw2m8.png"
 const IMAGEM_DOCS_PENDENTES_URL = "https://i.imgur.com/mKmFGHO.png"
