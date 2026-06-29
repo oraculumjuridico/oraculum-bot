@@ -4,6 +4,21 @@ const {
   sanitizarTextoEntrada
 } = require("../utils/text")
 
+const TIPOS_CASO_HUBSPOT = new Set([
+  "inss_aposentadoria",
+  "inss_bpc",
+  "inss_incapacidade",
+  "inss_dependentes",
+  "inss_outros",
+  "trab_demissao",
+  "trab_direitos",
+  "trab_acidente",
+  "trab_assedio",
+  "trab_outros",
+  "outros_revisao",
+  "outros_livre"
+])
+
 function calcScore(u) {
   let s = 0
   if (u.urgencia === "alta") s += 3
@@ -193,6 +208,8 @@ function mapearTipoCaso(u) {
     outros: "outros",
 
     revisao: "revisao",
+    livre: "livre",
+    outros_livre: "livre",
   }
 
   const areaNormalizada = (() => {
@@ -207,7 +224,11 @@ function mapearTipoCaso(u) {
 
   if (!area || !tipo) return null
 
-  return `${area}_${tipo}`
+  const valor = area === "outros" && tipo === "outros"
+    ? "outros_livre"
+    : `${area}_${tipo}`
+
+  return TIPOS_CASO_HUBSPOT.has(valor) ? valor : null
 }
 
 module.exports = {

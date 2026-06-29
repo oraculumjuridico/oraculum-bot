@@ -124,10 +124,41 @@ async function executar() {
   assert.equal(sincronizacaoContato.body.properties.state, "SP")
   assert.equal("uf" in sincronizacaoContato.body.properties, false)
 
+  const tiposValidos = [
+    ["inss", "aposentadoria", "inss_aposentadoria"],
+    ["inss", "bpc", "inss_bpc"],
+    ["inss", "incapacidade", "inss_incapacidade"],
+    ["inss", "dependentes", "inss_dependentes"],
+    ["inss", "inss_outros", "inss_outros"],
+    ["trabalhista", "demissao", "trab_demissao"],
+    ["trabalhista", "direitos", "trab_direitos"],
+    ["trabalhista", "acidente", "trab_acidente"],
+    ["trabalhista", "assedio", "trab_assedio"],
+    ["trabalhista", "outros", "trab_outros"],
+    ["outros", "revisao", "outros_revisao"],
+    ["outros", "livre", "outros_livre"],
+    ["outros", "outros", "outros_livre"]
+  ]
+  for (const [area, tipo, esperado] of tiposValidos) {
+    assert.equal(mapearTipoCaso({ area, tipo }), esperado)
+  }
   assert.equal(
-    mapearTipoCaso({ area: "inss", tipo: "aposentadoria" }),
+    mapearTipoCaso({ area: " INSS ", tipo: " APOSENTADORIA " }),
     "inss_aposentadoria"
   )
+
+  for (const entrada of [
+    { area: "area_familia", tipo: "outros" },
+    { area: "area_consumidor", tipo: "outros" },
+    { area: "area_penal", tipo: "outros" },
+    { area: "area_civil", tipo: "outros" },
+    { area: "area_imovel", tipo: "outros" },
+    { area: "outros", tipo: "desconhecido" },
+    { area: "", tipo: "revisao" },
+    { area: "outros", tipo: "" }
+  ]) {
+    assert.equal(mapearTipoCaso(entrada), null)
+  }
 }
 
 executar()
