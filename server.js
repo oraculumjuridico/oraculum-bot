@@ -103,6 +103,11 @@ const {
   montarAudioStatusCliente
 } = require("./src/domain/cliente-status-ui")
 const {
+  criarTela,
+  gerarBotoesDaTela,
+  gerarAudioDaTela
+} = require("./src/domain/declarative-screen")
+const {
   configurarClientMenuUi,
   iconeAreaJuridica,
   cabecalhoCasoAtivo,
@@ -5974,13 +5979,21 @@ async function telaStatusCliente(from, u) {
     documentosFaltantesAudio: removerFormatacaoParaAudio(listaAudioStatus)
   })
 
-  await enviarAudioModoVoz(from, u, acaoAudio, "status cliente")
+  const telaStatus = criarTela({
+    id: "status_cliente",
+    titulo: "Status do caso",
+    textoAudioBase: acaoAudio,
+    acoes: opcoesStatusCliente(stageAtualHS, temFaltantesCriticos, temAgendamentoAtivo)
+      .map(opcao => ({ id: opcao.id, label: opcao.title }))
+  })
+
+  await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaStatus), "status cliente")
 
   return await enviarTelaImagemOuTexto(
     from,
     IMAGEM_STATUS_URL,
     textoStatus,
-    opcoesStatusCliente(stageAtualHS, temFaltantesCriticos, temAgendamentoAtivo)
+    gerarBotoesDaTela(telaStatus)
   )
 }
 
