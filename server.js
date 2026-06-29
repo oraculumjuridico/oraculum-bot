@@ -8360,6 +8360,20 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (!mediaId) {
     return responderComTimer(from, { texto: "Nao consegui identificar o arquivo. Tente enviar novamente como foto ou PDF.", opcoes: [{ id:"m_docs", title:"Tentar novamente" }, { id:"m_inicio", title:"🏠 Menu do cliente" }] })
   }
+  if (
+    u.stage === STAGES.CLIENTE &&
+    ehDoc &&
+    !u._docsClienteGuiado &&
+    (u._docClientePendenteId || u._docClientePendenteArquivo)
+  ) {
+    return responderComTimer(from, {
+      texto: "📎 Já existe um arquivo aguardando sua confirmação.\n\nConclua ou cancele o arquivo anterior antes de enviar outro. O arquivo pendente foi preservado.",
+      opcoes: [
+        { id: "doc_cliente_anexar", title: "✅ Anexar anterior" },
+        { id: "m_inicio", title: "🏠 Menu do cliente" }
+      ]
+    })
+  }
   if (!u.pastaDriveId && ![STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) {
     if (u.numeroCaso) {
       const pasta = await criarPastaCliente(u.numeroCaso, u.nome || nomeWA || "Cliente", u.area, u.situacao, u.tipo)
@@ -14035,12 +14049,27 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           "arquivo pendente ausente"
         )
       }
+      const nomeRenomeado = `Documento anexado - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
+      const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
+      if (!arquivoRenomeado?.id) {
+        return await responderTelaComAudio(
+          from,
+          u,
+          {
+            texto: "⚠️ Não consegui concluir o anexo desse arquivo agora.\n\nO arquivo permanece aguardando confirmação. Tente novamente em instantes.",
+            opcoes: [
+              { id: "doc_cliente_anexar", title: "🔄 Tentar novamente" },
+              { id: "m_inicio", title: "🏠 Menu do cliente" }
+            ]
+          },
+          "Não consegui concluir o anexo desse arquivo agora. O arquivo continua aguardando confirmação. Tente novamente em instantes.",
+          "falha ao renomear documento avulso"
+        )
+      }
       if (u.negocioId) {
         const moveu1 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
         if (moveu1) u.negocioStageId = HS_STAGE.DOCS
       }
-      const nomeRenomeado = `Documento anexado - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
-      const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
       const nomeFinalDoc = arquivoRenomeado?.name || nomeDoc
       const linkFinalDoc = arquivoRenomeado?.webViewLink || linkDoc
       await hsCriarNota(
@@ -14106,12 +14135,27 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         doc_cliente_tipo_outro: "Outro documento"
       }
       const tipoDoc = tiposDocCliente[text] || "Documento recebido"
+      const nomeRenomeado = `${tipoDoc} - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
+      const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
+      if (!arquivoRenomeado?.id) {
+        return await responderTelaComAudio(
+          from,
+          u,
+          {
+            texto: "⚠️ Não consegui concluir a classificação desse arquivo agora.\n\nO arquivo permanece aguardando confirmação. Tente novamente em instantes.",
+            opcoes: [
+              { id: text, title: "🔄 Tentar novamente" },
+              { id: "m_inicio", title: "🏠 Menu do cliente" }
+            ]
+          },
+          "Não consegui concluir a classificação desse arquivo agora. O arquivo continua aguardando confirmação. Tente novamente em instantes.",
+          "falha ao classificar documento avulso"
+        )
+      }
       if (u.negocioId) {
         const moveu2 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
         if (moveu2) u.negocioStageId = HS_STAGE.DOCS
       }
-      const nomeRenomeado = `${tipoDoc} - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
-      const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
       const nomeFinalDoc = arquivoRenomeado?.name || nomeDoc
       const linkFinalDoc = arquivoRenomeado?.webViewLink || linkDoc
       await hsCriarNota(
@@ -14358,6 +14402,23 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       salvarEtapa(u._numero, "documentos")
       if (u.ultimoArqId) {
         const arquivoSubstituido = await marcarArquivoDriveSubstituido(u.ultimoArqId, u.ultimoArqNome)
+        if (!arquivoSubstituido?.id) {
+          iniciarTimer(from)
+          await enviarAudioModoVoz(
+            from,
+            u,
+            "Não consegui preparar a substituição desse arquivo agora. O arquivo atual foi mantido. Tente novamente em instantes.",
+            "falha ao substituir documento"
+          )
+          return {
+            texto: "⚠️ *Não consegui substituir o arquivo agora.*\n\nO arquivo atual foi mantido sem alterações. Tente novamente em instantes.",
+            opcoes: [
+              { id: "docs_reenviar", title: "🔄 Tentar novamente" },
+              { id: "docs_depois", title: "Continuar depois" },
+              { id: "m_inicio", title: "🏠 Menu do cliente" }
+            ]
+          }
+        }
         await hsCriarNota(
           u.contatoId,
           "DOCUMENTO MARCADO COMO SUBSTITUIDO",
