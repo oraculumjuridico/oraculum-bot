@@ -25,14 +25,17 @@ const axiosOriginal = {
   patch: axios.patch,
   put: axios.put
 }
+const consoleWarnOriginal = console.warn
 
 function restaurarAxios() {
   Object.assign(axios, axiosOriginal)
+  console.warn = consoleWarnOriginal
 }
 
 async function executar() {
   const requests = []
   const warnings = []
+  console.warn = warning => warnings.push(JSON.parse(warning))
 
   assert.equal(CONTACT_WRITE_PROPERTIES.has("firstname"), true)
   assert.equal(CONTACT_WRITE_PROPERTIES.has("dealstage"), false)
@@ -112,7 +115,8 @@ async function executar() {
   await hsAtualizarContato("contact-1", {
     firstname: "Maria",
     city: "",
-    state: "SP"
+    state: "SP",
+    dealstage: "appointmentscheduled"
   })
   const atualizacaoContato = requests.find(item =>
     item.method === "patch" && item.url.endsWith("/contacts/contact-1")
@@ -121,6 +125,17 @@ async function executar() {
     firstname: "Maria",
     state: "SP"
   })
+
+  const requestsAntesDoPayloadVazio = requests.length
+  assert.equal(
+    await hsAtualizarContato("contact-1", { dealstage: "appointmentscheduled" }),
+    null
+  )
+  assert.equal(requests.length, requestsAntesDoPayloadVazio)
+  assert.equal(warnings.some(warning =>
+    warning.objectType === "contacts" &&
+    warning.unknownProperties.includes("dealstage")
+  ), true)
 
   const dealId = await hsCriarNegocio({
     nome: "Maria",

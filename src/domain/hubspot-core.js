@@ -2,6 +2,7 @@ const axios = require("axios")
 const { logErro } = require("../utils/logging")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
+const { validateHubSpotProperties } = require("./hubspot-contract")
 
 let deps = {
   monitor: null,
@@ -16,6 +17,10 @@ function configurarHubSpotCore(config = {}) {
 }
 
 const HS = () => ({ Authorization: `Bearer ${process.env.HUBSPOT_TOKEN}`, "Content-Type": "application/json" })
+
+function warnHubSpotPayload(warning) {
+  console.warn(JSON.stringify(warning))
+}
 
 async function hsBuscarPorPhone(phone) {
   try {
@@ -39,7 +44,12 @@ async function hsCriarContato(from, u) {
     (u?.nomePerfilWhatsApp && String(u.nomePerfilWhatsApp).trim()) ||
     (u?.nomeWA && String(u.nomeWA).trim()) ||
     "Lead WhatsApp"
-  const props = { firstname: nomeContato, phone: telefone, city: u.cidade || "" }
+  const props = validateHubSpotProperties(
+    "contacts",
+    filtrarPropsHubSpot({ firstname: nomeContato, phone: telefone, city: u.cidade || "" }),
+    warnHubSpotPayload
+  )
+  if (!Object.keys(props).length) return null
   try {
     const res = await axios.post("https://api.hubapi.com/crm/v3/objects/contacts", { properties: props }, { headers: HS() })
     deps.monitor.cadastros++
@@ -99,7 +109,11 @@ function filtrarPropsHubSpot(props = {}) {
 }
 
 async function hsAtualizarContato(contactId, props = {}) {
-  const propsValidas = filtrarPropsHubSpot(props)
+  const propsValidas = validateHubSpotProperties(
+    "contacts",
+    filtrarPropsHubSpot(props),
+    warnHubSpotPayload
+  )
   if (!contactId || !Object.keys(propsValidas).length) return null
   try {
     await axios.patch(
