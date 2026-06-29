@@ -158,7 +158,8 @@ const {
   configurarLogging,
   logDebug,
   logContextoExecucao,
-  logErro
+  logErro,
+  detalhesErroHubSpot
 } = require("./src/utils/logging")
 const {
   digitando,
@@ -4749,12 +4750,7 @@ async function processarAdminWhatsApp(from, text) {
 }
 
 function detalharErroHubspot(e) {
-  return JSON.stringify({
-    message: e?.message || null,
-    status: e?.response?.status || null,
-    data: e?.response?.data || null,
-    stack: e?.stack || null
-  })
+  return JSON.stringify(detalhesErroHubSpot(e))
 }
 
 async function capturarLeadIncompleto(from, u) {

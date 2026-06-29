@@ -10,7 +10,7 @@ const {
   normalizarStageKey,
   normalizarTextoCRM
 } = require("../utils/text")
-const { logDebug, logErro } = require("../utils/logging")
+const { logDebug, logErroHubSpot } = require("../utils/logging")
 
 let deps = {
   HUBSPOT_TOKEN: "",
@@ -50,7 +50,13 @@ async function atualizarDealstage(u) {
         { headers: { Authorization: `Bearer ${deps.HUBSPOT_TOKEN}` } }
       )
       u.negocioStageId = res.data?.properties?.dealstage || null
-    } catch (e) { logErro("hubspot", "atualizarDealstage: falha ao buscar stage: " + e.message) }
+    } catch (e) {
+      logErroHubSpot(e, {
+        operation: "buscarDealstage",
+        dealId: u.negocioId,
+        properties: ["dealstage"]
+      })
+    }
   }
 
   const dealstage = deps.mapearStageParaDealstage(u)
@@ -91,9 +97,11 @@ async function sincronizarNegocio(u) {
     if (dealId) u._hubspotSyncSnapshot = snapshot
     return dealId
   } catch (e) {
-    const mensagem = e?.response?.data?.message || e?.message || "falha ao sincronizar negócio"
-    console.error(`[ERRO][HUBSPOT_SYNC] deal=${u?.negocioId || "-"} caso=${u?.numeroCaso || "-"} stage=${u?.stage || "-"} :: ${mensagem}`)
-    if (e?.stack) console.error(`[ERRO][HUBSPOT_SYNC] ${e.stack}`)
+    logErroHubSpot(e, {
+      operation: "sincronizarNegocio",
+      dealId: u?.negocioId,
+      properties: deps.getHubSpotDealStateProps(u)
+    })
     return null
   }
 }
@@ -193,7 +201,7 @@ async function hsBuscarNegociosDoContato(contactId) {
     const dealIds = (res.data?.results || []).map(r => r.id)
     return dealIds
   } catch (e) {
-    logErro("hubspot", "buscarNegociosDoContato: " + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "buscarNegociosDoContato", contactId })
     return []
   }
 }
@@ -228,7 +236,7 @@ async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
     }
     return null
   } catch (e) {
-    logErro("hubspot", "buscarNegocioAberto: " + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "buscarNegocioAberto", contactId })
     return null
   }
 }
@@ -256,13 +264,17 @@ async function hsListarNegociosAtivosDoContato(contactId) {
           })
         }
       } catch (e) {
-        logErro("hubspot", "listarNegocioAtivo: " + (e.response?.data?.message || e.message))
+        logErroHubSpot(e, {
+          operation: "listarNegocioAtivo",
+          contactId,
+          dealId
+        })
       }
     }
 
     return negocios.sort((a, b) => String(b.createdate || "").localeCompare(String(a.createdate || "")))
   } catch (e) {
-    logErro("hubspot", "listarNegociosAtivos: " + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "listarNegociosAtivos", contactId })
     return []
   }
 }

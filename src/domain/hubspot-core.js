@@ -1,5 +1,5 @@
 const axios = require("axios")
-const { logErro } = require("../utils/logging")
+const { logErroHubSpot } = require("../utils/logging")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
 const { validateHubSpotProperties } = require("./hubspot-contract")
@@ -55,7 +55,7 @@ async function hsCriarContato(from, u) {
     deps.monitor.cadastros++
     return res.data.id
   } catch (e) {
-    logErro("hubspot", `criarContato phone=${telefone || "-"} caso=${u?.numeroCaso || "-"}: ` + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "criarContato", properties: props })
     return null
   }
 }
@@ -91,7 +91,7 @@ async function hsCriarNegocio(u, opts = {}) {
     )
     return res.data.id
   } catch (e) {
-    logErro("hubspot", `criarNegocio caso=${u?.numeroCaso || "-"} area=${u?.area || "-"} stage=${opts.stage || deps.HS_STAGE.LEAD}: ` + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "criarNegocio", properties })
     return null
   }
 }
@@ -99,7 +99,9 @@ async function hsCriarNegocio(u, opts = {}) {
 async function hsAssociar(cId, nId) {
   try {
     await axios.put(`https://api.hubapi.com/crm/v3/objects/deals/${nId}/associations/contacts/${cId}/deal_to_contact`, {}, { headers: HS() })
-  } catch (e) { logErro("hubspot", "associar: " + (e.response?.data?.message || e.message)) }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "associarContatoNegocio", contactId: cId, dealId: nId })
+  }
 }
 
 function filtrarPropsHubSpot(props = {}) {
@@ -128,7 +130,11 @@ async function hsAtualizarContato(contactId, props = {}) {
     )
     return contactId
   } catch (e) {
-    logErro("hubspot", "atualizarContato: " + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, {
+      operation: "atualizarContato",
+      contactId,
+      properties: propsValidas
+    })
     return null
   }
 }
@@ -148,7 +154,11 @@ async function hsAtualizarNegocio(dealId, props = {}) {
     )
     return dealId
   } catch (e) {
-    logErro("hubspot", `atualizarNegocio deal=${dealId || "-"} props=${Object.keys(propsValidas).join(",") || "-"}: ` + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, {
+      operation: "atualizarNegocio",
+      dealId,
+      properties: propsValidas
+    })
     return null
   }
 }
@@ -163,7 +173,14 @@ async function hsCriarNota(cId, tipo, corpo) {
     )
     await axios.put(`https://api.hubapi.com/crm/v3/objects/notes/${res.data.id}/associations/contacts/${cId}/note_to_contact`, {}, { headers: HS() })
     return true
-  } catch (e) { logErro("hubspot", "criarNota: " + (e.response?.data?.message || e.message)); return false }
+  } catch (e) {
+    logErroHubSpot(e, {
+      operation: "criarNotaContato",
+      contactId: cId,
+      properties: ["hs_note_body", "hs_timestamp"]
+    })
+    return false
+  }
 }
 
 async function hsCriarNotaNegocio(nId, tipo, corpo) {
@@ -180,7 +197,14 @@ async function hsCriarNotaNegocio(nId, tipo, corpo) {
       { headers: HS() }
     )
     return true
-  } catch (e) { logErro("hubspot", "criarNotaNegocio: " + (e.response?.data?.message || e.message)); return false }
+  } catch (e) {
+    logErroHubSpot(e, {
+      operation: "criarNotaNegocio",
+      dealId: nId,
+      properties: ["hs_note_body", "hs_timestamp"]
+    })
+    return false
+  }
 }
 
 module.exports = {

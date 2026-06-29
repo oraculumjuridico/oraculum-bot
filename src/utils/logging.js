@@ -35,9 +35,52 @@ function logErro(tipo, msg, err = null) {
   if (err?.stack) console.error(`[ERRO] ${err.stack}`)
 }
 
+function sanitizarMensagemHubSpot(mensagem) {
+  return sanitizarTextoEntrada(mensagem)
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[CPF REDACTED]")
+    .replace(/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?9?\d{4}[\s.-]?\d{4}\b/g, "[PHONE REDACTED]")
+}
+
+function detalhesErroHubSpot(erro, contexto = {}) {
+  const response = erro?.response || {}
+  const data = response?.data || {}
+  const correlationId =
+    data?.correlationId ||
+    data?.correlation_id ||
+    response?.headers?.["x-hubspot-correlation-id"] ||
+    response?.headers?.["x-correlation-id"] ||
+    null
+  const propriedades = Array.isArray(contexto.properties)
+    ? contexto.properties
+    : Object.keys(contexto.properties || {})
+
+  return {
+    operation: sanitizarTextoEntrada(contexto.operation) || null,
+    contactId: sanitizarTextoEntrada(contexto.contactId) || null,
+    dealId: sanitizarTextoEntrada(contexto.dealId) || null,
+    httpStatus: response?.status || null,
+    correlationId: sanitizarTextoEntrada(correlationId) || null,
+    properties: propriedades
+      .map(propriedade => sanitizarTextoEntrada(propriedade))
+      .filter(Boolean),
+    errorCode: sanitizarTextoEntrada(data?.category || data?.code || erro?.code || erro?.name) || null,
+    message: sanitizarMensagemHubSpot(data?.message || erro?.message || "Erro HubSpot")
+  }
+}
+
+function logErroHubSpot(erro, contexto = {}) {
+  const detalhes = detalhesErroHubSpot(erro, contexto)
+  logErro("hubspot", JSON.stringify(detalhes))
+  return detalhes
+}
+
 module.exports = {
   configurarLogging,
   logDebug,
   logContextoExecucao,
-  logErro
+  logErro,
+  sanitizarMensagemHubSpot,
+  detalhesErroHubSpot,
+  logErroHubSpot
 }
