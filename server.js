@@ -1118,8 +1118,8 @@ async function respostaAposCidade(from, u) {
   const primeiroNomeAtendido = ehTerceiro && u.nome ? u.nome.split(" ")[0] : null
 
   const textoTela = primeiroNomeAtendido
-    ? `●●●●●● 📝 Etapa 6 de 6 · *Relato*\n\nAgora me conte a situação de *${primeiroNomeAtendido}* com detalhes para eu preparar o caso.\n\n💬 Você pode responder por mensagem de texto ou, se preferir, enviar um áudio. 🎙️`
-    : `●●●●●● 📝 Etapa 6 de 6 · *Relato*\n\nAgora me conte sua situação com detalhes para eu preparar seu caso, *${primeiroNome}*.\n\n💬 Você pode responder por mensagem de texto ou, se preferir, enviar um áudio. 🎙️`
+    ? `●●●○○○ 📝 Etapa 3 de 6 · *Relato*\n\nAgora me conte a situação de *${primeiroNomeAtendido}* com detalhes para eu preparar o caso.\n\n💬 Você pode responder por mensagem de texto ou, se preferir, enviar um áudio. 🎙️`
+    : `●●●○○○ 📝 Etapa 3 de 6 · *Relato*\n\nAgora me conte sua situação com detalhes para eu preparar seu caso, *${primeiroNome}*.\n\n💬 Você pode responder por mensagem de texto ou, se preferir, enviar um áudio. 🎙️`
 
   if (!u.modoTexto) {
     try {
@@ -6442,7 +6442,7 @@ function responderComTimer(from, payload) {
 
 function telaDescreverCaso() {
   return {
-    texto: "●●●●●○ 📝 Etapa 5 de 6 · *Descrição*\n\n✍️ Pode me contar um pouco mais sobre seu caso?\nVocê pode digitar ou enviar um áudio 😊",
+    texto: "●●●○○○ 📝 Etapa 3 de 6 · *Relato*\n\n✍️ Pode me contar um pouco mais sobre seu caso?\nVocê pode digitar ou enviar um áudio 😊",
     opcoes: [
       { id: "desc_incentivo_depois", title: "⏳ Enviar depois" },
         { id: "desc_incentivo_menu",      title: "🏠 Menu do cliente" },
@@ -6756,7 +6756,7 @@ async function flowResumoRetomada(u, ctx = {}) {
         acolhimento_confirma_whatsapp: "confirmar seu WhatsApp",
         acolhimento_cidade: "informar sua cidade",
         audio_confirmar_dados: "confirmação dos dados",
-        assessoria_inicial: "escolher como você prefere ser atendido",
+        assessoria_inicial: "confirmar o entendimento do seu relato",
         coleta_desc: "descrever seu caso",
         gatilho: "avaliação de urgência",
         confirmacao: "confirmação final dos dados"
@@ -6861,7 +6861,7 @@ function reiniciarFluxoRetomada(u) {
 
 function respostaOpcaoInvalidaRetomada() {
   return {
-    texto: "Não entendi. Escolha uma opção do menu 👇",
+    texto: "🤔 Não entendi. Por favor, escolha uma das opções do menu para continuar. 👇",
     opcoes: [
       { id: "rm_continuar", title: "▶️ Continuar atendimento" },
       { id: "rm_recomecar", title: "🔄 Recomeçar" },
@@ -8080,7 +8080,7 @@ async function processarRetomadaOuReinicio(from, u, text, buttonId = "", ctx = n
             acolhimento_confirma_nome: "confirmar seu nome",
             acolhimento_confirma_whatsapp: "confirmar seu WhatsApp",
             acolhimento_cidade: "informar sua cidade",
-            assessoria_inicial: "escolher como você prefere ser atendido",
+            assessoria_inicial: "confirmar o entendimento do seu relato",
             coleta_desc: "descrever seu caso",
             gatilho: "avaliação de urgência",
             confirmacao: "confirmação final dos dados"
@@ -8301,8 +8301,8 @@ async function verificarRetomadaAutomatica(from, u) {
   u._retomadaEhLeadFrio = u.negocioStageId === HS_STAGE.LEAD
   u._stageRetomadaOriginal = obterStageRetomadaOriginal(u)
 
-  // áudio obrigatório ANTES da tela de reengajamento — sempre, independente de modo
-  if (u.atendente) {
+  // No modo voz, envia o áudio antes da tela de reengajamento.
+  if (!u.modoTexto && u.atendente) {
     const primeiroNomeRetomada = getPrimeiroNomeRetomada(u) || "você"
     try {
       const ogg = await gerarAudioAtendente(u.atendente,
