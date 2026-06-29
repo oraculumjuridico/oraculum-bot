@@ -159,7 +159,8 @@ const {
   logDebug,
   logContextoExecucao,
   logErro,
-  detalhesErroHubSpot
+  detalhesErroHubSpot,
+  logErroHubSpot
 } = require("./src/utils/logging")
 const {
   digitando,
@@ -1794,7 +1795,7 @@ async function capturarLeadTerceiroIncompleto(from, u, motivo = "interrupcao") {
 
   let contatoId = null
   const existente = await hsBuscarPorPhone(telefoneCaptura).catch(e => {
-    logErro("hubspot", "buscar contato terceiro incompleto: " + e.message)
+    logErroHubSpot(e, { operation: "buscarContatoTerceiroIncompleto" })
     return null
   })
   contatoId = existente?.id || null
@@ -1825,7 +1826,11 @@ async function capturarLeadTerceiroIncompleto(from, u, motivo = "interrupcao") {
 
 async function cancelarNovoCasoClienteEVoltarMenu(from, u, motivo = "cancelado") {
   await capturarLeadTerceiroIncompleto(from, u, motivo).catch(e =>
-    logErro("hubspot", "capturarLeadTerceiroIncompleto: " + e.message)
+    logErroHubSpot(e, {
+      operation: "capturarLeadTerceiroIncompleto",
+      contactId: u?.contatoId,
+      dealId: u?.negocioId
+    })
   )
   const tinhaDados = temDadosUteisTerceiroIncompleto(u)
   if (!restaurarCasoAnteriorCliente(u, from)) return null
@@ -1954,7 +1959,11 @@ async function finalizarCadastroTerceiroEVoltarOrigem(from, u, numeroCaso, casoA
 
 async function encerrarNovoCasoClienteEVoltarMenu(from, u) {
   await capturarLeadTerceiroIncompleto(from, u, "encerramento_manual").catch(e =>
-    logErro("hubspot", "capturarLeadTerceiroIncompleto encerramento: " + e.message)
+    logErroHubSpot(e, {
+      operation: "capturarLeadTerceiroIncompletoEncerramento",
+      contactId: u?.contatoId,
+      dealId: u?.negocioId
+    })
   )
   const tinhaDados = temDadosUteisTerceiroIncompleto(u)
   if (!restaurarCasoAnteriorCliente(u, from)) return null
@@ -2370,7 +2379,11 @@ async function encerrarComCaptura(from, u) {
   }
   if (u && !u.numeroCaso && !u.leadIncompletoCapturado) {
     await capturarLeadIncompleto(from, u).catch(e =>
-      logErro("hubspot", "encerrarComCaptura: " + e.message)
+      logErroHubSpot(e, {
+        operation: "encerrarComCaptura",
+        contactId: u?.contatoId,
+        dealId: u?.negocioId
+      })
     )
   }
   if (!u.modoTexto && from) {
@@ -2434,7 +2447,11 @@ async function executarEncerramentoFluxo(from, u) {
     : (primeiroNomeCliente(u) || "você")
   if (!u.numeroCaso && !u.leadIncompletoCapturado) {
     await capturarLeadIncompleto(from, u).catch(e =>
-      logErro("hubspot", "executarEncerramentoFluxo: " + e.message)
+      logErroHubSpot(e, {
+        operation: "executarEncerramentoFluxo",
+        contactId: u?.contatoId,
+        dealId: u?.negocioId
+      })
     )
   }
   limparDadosCasoAtual(u, { marcarFluxoEncerrado: true })
@@ -3406,7 +3423,7 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
     )
     return contato.data || null
   } catch (e) {
-    logErro("admin_hubspot", "buscarContatoDoNegocio: " + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "adminBuscarContatoDoNegocio", dealId })
     return null
   }
 }
@@ -3437,7 +3454,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50) {
       properties: n.properties || {}
     }))
   } catch (e) {
-    logErro("admin_hubspot", "buscarNegociosPorStages: " + (e.response?.data?.message || e.message))
+    logErroHubSpot(e, { operation: "adminBuscarNegociosPorStages" })
     return []
   }
 }
@@ -4755,7 +4772,7 @@ function detalharErroHubspot(e) {
 
 async function capturarLeadIncompleto(from, u) {
   try {
-    logDebug("[CAPTURA] inicio:", from)
+    logDebug("[CAPTURA] inicio")
     const sessao = u || users[from] || null
     logDebug("[CAPTURA] sessao ativa:", Boolean(sessao))
 
@@ -4792,7 +4809,7 @@ async function capturarLeadIncompleto(from, u) {
           ? lead.nomeWA
           : "Lead WhatsApp"
     const area = lead.area || "Atendimento inicial"
-    logDebug("📌 Criando lead com nome:", nome, "telefone:", from)
+    logDebug("[CAPTURA] dados mínimos preparados")
     let contatoId = null
     let negocioId = null
 
@@ -4801,7 +4818,7 @@ async function capturarLeadIncompleto(from, u) {
     try {
       existente = await hsBuscarPorPhone(telefone)
     } catch (e) {
-      console.error("Erro ao buscar contato no HubSpot:", detalharErroHubspot(e))
+      logErroHubSpot(e, { operation: "capturarLeadBuscarContato" })
     }
     if (existente?.properties?.firstname && !lead.nomeHubspot) lead.nomeHubspot = existente.properties.firstname
     contatoId = existente?.id || null
@@ -4817,7 +4834,10 @@ async function capturarLeadIncompleto(from, u) {
           pastaDriveLink: null
         })
       } catch (e) {
-        console.error("Erro ao criar contato no HubSpot:", detalharErroHubspot(e))
+        logErroHubSpot(e, {
+          operation: "capturarLeadCriarContato",
+          properties: ["firstname", "phone", "city"]
+        })
         // segunda tentativa mínima — só telefone + nome fallback
         try {
           const res = await axios.post(
@@ -4828,7 +4848,10 @@ async function capturarLeadIncompleto(from, u) {
           contatoId = res.data.id
           monitor.cadastros++
         } catch (e2) {
-          console.error("Erro na segunda tentativa de criar contato:", detalharErroHubspot(e2))
+          logErroHubSpot(e2, {
+            operation: "capturarLeadCriarContatoFallback",
+            properties: ["firstname", "phone"]
+          })
         }
       }
     } else {
@@ -4839,8 +4862,10 @@ async function capturarLeadIncompleto(from, u) {
     if (sessao && contatoId) sessao._hubspotSemContato = false
 
     if (!contatoId) {
-      logDebug("Falha ao criar/obter contato no HubSpot. Cancelando criacao de negocio:", { from, telefone })
-      logErro("hubspot", `capturarLeadIncompleto sem contato para ${from}`)
+      logDebug("Falha ao criar/obter contato no HubSpot. Cancelando criacao de negocio.")
+      logErroHubSpot(new Error("Contato HubSpot indisponível"), {
+        operation: "capturarLeadSemContato"
+      })
       return null
     }
 
@@ -4849,7 +4874,10 @@ async function capturarLeadIncompleto(from, u) {
       try {
         negocioId = await hsBuscarNegocioAbertoDoContato(contatoId)
       } catch (e) {
-        console.error("Erro ao buscar negócio aberto no HubSpot:", detalharErroHubspot(e))
+        logErroHubSpot(e, {
+          operation: "capturarLeadBuscarNegocioAberto",
+          contactId: contatoId
+        })
       }
     }
 
@@ -4882,7 +4910,10 @@ async function capturarLeadIncompleto(from, u) {
           await hsCriarNotaNegocio(negocioCriadoId, "CLASSIFICACAO DE LEAD", notaLead)
         }
       } catch (e) {
-        console.error("Erro ao criar negócio no HubSpot:", detalharErroHubspot(e))
+        logErroHubSpot(e, {
+          operation: "capturarLeadCriarNegocio",
+          contactId: contatoId
+        })
         throw e
       }
     } else {
@@ -4899,15 +4930,18 @@ async function capturarLeadIncompleto(from, u) {
         `Lead capturado por inatividade.\nNome: ${nome}\nTelefone: ${telefone}\nÁrea: ${lead.area || "Não informada"}\nStage interno: ${lead.stage}`
       )
     } else {
-      logDebug("Captura incompleta no HubSpot:", { contatoId, negocioId, from })
+      logDebug("Captura incompleta no HubSpot:", { contatoId, negocioId })
     }
 
     if (sessao) sessao.leadIncompletoCapturado = true
     return { contatoId, negocioId }
   } catch (err) {
     logDebug("? ERRO capturaLead:", err.response?.data || err.message || err)
-    console.error("Erro completo em capturarLeadIncompleto:", detalharErroHubspot(err))
-    logErro("hubspot", "capturarLeadIncompleto: " + (err.response?.data?.message || err.message))
+    logErroHubSpot(err, {
+      operation: "capturarLeadIncompleto",
+      contactId: u?.contatoId,
+      dealId: u?.negocioId
+    })
     return null
   }
 }
@@ -5113,7 +5147,7 @@ async function finalizarCadastro(from, u) {
     normalizarNomeComparacao(nomeExistenteHS) !== normalizarNomeComparacao(nomeTerceiro)
 
   if (telefoneJaEhDeOutro) {
-    logDebug(`[HUBSPOT] Telefone do terceiro ja existe com outro nome (${nomeExistenteHS}). Preservando contato e registrando divergencia no negocio.`)
+    logDebug("[HUBSPOT] Telefone do terceiro ja existe com outro nome. Preservando contato e registrando divergencia no negocio.")
   } else if (!contatoId) {
     contatoId = await hsCriarContato(telefoneContato, u)
   } else {
@@ -5847,7 +5881,13 @@ async function telaStatusCliente(from, u) {
       stageAtualHS = res.data?.properties?.dealstage || stageAtualHS
       negocioAtual = res.data || null
       u.negocioStageId = stageAtualHS
-    } catch (e) { logErro("hubspot", "Falha consulta stage status", e) }
+    } catch (e) {
+      logErroHubSpot(e, {
+        operation: "consultarDealstageStatusCliente",
+        dealId: u.negocioId,
+        properties: ["dealstage", "createdate"]
+      })
+    }
   }
 
   // Buscar data da consulta no Google Calendar se houver evento agendado
@@ -8218,7 +8258,7 @@ async function verificarRetomadaAutomatica(from, u) {
   }
   if (u.stage !== STAGES.INICIO) return null
 
-  logDebug("🔁 Verificando retomada para:", from)
+  logDebug("🔁 Verificando retomada no HubSpot")
   const contato = await hsBuscarPorPhone(getTelefoneContato(from, u))
   if (!contato?.id) return null
 
@@ -10105,7 +10145,13 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   if (!u._casoAnteriorCliente && !u.numeroCaso && !ehAudio && !ehDoc && (buttonId === "terceiro_cancelar_menu" || text === "terceiro_cancelar_menu")) {
     limparTimer(u)
     if (!u.leadIncompletoCapturado) {
-      await capturarLeadIncompleto(from, u).catch(e => logErro("hubspot", "cancelar_terceiro_novo: " + e.message))
+      await capturarLeadIncompleto(from, u).catch(e =>
+        logErroHubSpot(e, {
+          operation: "cancelarTerceiroNovo",
+          contactId: u?.contatoId,
+          dealId: u?.negocioId
+        })
+      )
     }
     limparDadosCasoAtual(u, { marcarFluxoEncerrado: true })
     await enviarAudioModoVoz(from, u, "Tudo bem. Cancelei o atendimento. Quando quiser começar de novo, é só me chamar.", "cancelar terceiro novo")
@@ -10453,7 +10499,13 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       // Cenário B: novo cliente sem caso anterior — encerra limpo
       limparTimer(u)
       if (!u.leadIncompletoCapturado) {
-        await capturarLeadIncompleto(from, u).catch(e => logErro("hubspot", "cancelar_terceiro_novo_retomada: " + e.message))
+        await capturarLeadIncompleto(from, u).catch(e =>
+          logErroHubSpot(e, {
+            operation: "cancelarTerceiroNovoRetomada",
+            contactId: u?.contatoId,
+            dealId: u?.negocioId
+          })
+        )
       }
       limparDadosCasoAtual(u, { marcarFluxoEncerrado: true })
       await enviarAudioModoVoz(from, u, "Tudo bem. Cancelei o atendimento. Quando quiser começar de novo, é só me chamar.", "cancelar terceiro novo retomada")

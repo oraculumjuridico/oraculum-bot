@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict")
+const fs = require("node:fs")
+const path = require("node:path")
 const {
   configurarLogging,
   detalhesErroHubSpot,
@@ -85,6 +87,16 @@ function executar() {
   } finally {
     console.error = consoleErrorOriginal
   }
+
+  const serverSource = fs.readFileSync(
+    path.join(__dirname, "..", "server.js"),
+    "utf8"
+  )
+  assert.equal(/logErro\(\s*["'](?:admin_)?hubspot["']/i.test(serverSource), false)
+  assert.equal(/console\.error\([^\n]*hubspot/i.test(serverSource), false)
+  assert.equal(/capturarLeadIncompleto sem contato para \$\{from\}/.test(serverSource), false)
+  assert.equal(/logDebug\([^\n]*(?:HubSpot|CAPTURA)[^\n]*(?:\bfrom\b|nomeExistenteHS|\{[^}]*\btelefone\b)/i.test(serverSource), false)
+  assert.equal(serverSource.includes("logErroHubSpot"), true)
 
   console.log("hubspot-logging.test.js: ok")
 }
