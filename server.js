@@ -6127,7 +6127,7 @@ function detectarIntencaoCliente(texto = "") {
   if (/\b(urgente|urgencia|urgência|prazo|intimad|amanha|amanhã|hoje|liminar|audiencia|audiência)\b/.test(t)) return "urgente"
   if (/\b(agend|marcar|ligacao|ligação|consulta|horario|horário)\b/.test(t)) return "agendar"
   if (/\b(advogad|falar com|especialista|atendente|humano)\b/.test(t)) return "advogado"
-  if (/\b(document|doc|foto|pdf|anex|enviar arquivo|mandar arquivo)\b/.test(t)) return "documentos"
+  if (/\b(documentos?|docs?|foto|pdf|anex|enviar arquivo|mandar arquivo)\b/.test(t)) return "documentos"
   if (/\b(status|andamento|meu caso|processo|situacao do caso|situação do caso)\b/.test(t)) return "status"
   if (/\b(novo caso|outro caso|abrir caso|nova situacao|nova situação|situacao nova|situação nova|outro problema|outro atendimento|abrir outro atendimento)\b/.test(t)) return "novo_caso"
   return null
@@ -8410,6 +8410,13 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
 
     if (u.stage === STAGES.CLIENTE && trans) {
       const emFluxoDocumentoAudio = Boolean(u._docsClienteGuiado || u.etapa === "documentos")
+      const comandoDocumentoAudio = emFluxoDocumentoAudio ? detectarComandoDocumento(trans) : null
+      const ausenciaDocumentoAudio = emFluxoDocumentoAudio ? textoIndicaDocumentoAusente(trans) : false
+      const intencaoAudio = detectarIntencaoCliente(trans)
+      if (emFluxoDocumentoAudio && !comandoDocumentoAudio && !ausenciaDocumentoAudio && intencaoAudio) {
+        const respostaIntencao = await executarIntencaoDetectadaCliente(from, u, intencaoAudio, trans)
+        return respostaIntencao ? responderComTimer(from, respostaIntencao) : {}
+      }
       if (emFluxoDocumentoAudio) {
         const { doc: docAudio, folha: folhaAudio } = getDocumentoAtualGuia(u)
         if (docAudio) {
@@ -8434,7 +8441,6 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
           }
         }
       }
-      const intencaoAudio = detectarIntencaoCliente(trans)
       if (intencaoAudio === "novo_caso" && pareceNovaSituacaoCliente(trans)) {
         u._audioClientePendenteTexto = normalizarTextoCRM(trans)
         u._audioClientePendenteArquivo = arquivoAud?.webViewLink || null
@@ -14281,8 +14287,14 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     )
     const comandoDoc = emFluxoDocumento ? detectarComandoDocumento(text) : null
     if (emFluxoDocumento && text && !comandoDoc && !text.startsWith("m_") && !text.startsWith("doc_cliente_tipo_")) {
+      const indicaAusenciaDocumento = textoIndicaDocumentoAusente(text)
+      const intencaoDocumento = indicaAusenciaDocumento ? null : detectarIntencaoCliente(text)
+      if (intencaoDocumento) {
+        const respostaIntencao = await executarIntencaoDetectadaCliente(from, u, intencaoDocumento, text)
+        return respostaIntencao || {}
+      }
       const { doc: docTexto, folha: folhaTexto } = getDocumentoAtualGuia(u)
-      if (docTexto && textoIndicaDocumentoAusente(text)) {
+      if (docTexto && indicaAusenciaDocumento) {
         marcarStatusDocumento(u, docTexto.id, "docsAusentes")
         u.docAtualIdx = 0
         u.ultimoArqId = null
