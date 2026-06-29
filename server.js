@@ -105,6 +105,7 @@ const {
 const {
   configurarClientMenuUi,
   iconeAreaJuridica,
+  cabecalhoCasoAtivo,
   textoAudioCasosCliente,
   textoAudioResumoCasosCliente,
   deveMostrarBoasVindasMenuCliente,
@@ -5054,6 +5055,7 @@ async function enviarGuiaDocs(from, u, tela) {
 }
 
 async function enviarIntroDocumentos(from, u) {
+  const textoIntroDocumentos = `${TEXTO_INTRO_DOCS}\n\n${cabecalhoCasoAtivo(u)}`
   const opcoes = [
     { id: "docs_intro_ok", title: "✅ Entendi" },
     { id: "docs_depois", title: "Continuar depois" },
@@ -5070,14 +5072,14 @@ async function enviarIntroDocumentos(from, u) {
       }
     }
     const enviada = IMAGEM_GUIA_DOCS_URL
-      ? await enviarImagemWhatsApp(from, IMAGEM_GUIA_DOCS_URL, TEXTO_INTRO_DOCS, opcoes)
+      ? await enviarImagemWhatsApp(from, IMAGEM_GUIA_DOCS_URL, textoIntroDocumentos, opcoes)
       : false
     if (!enviada) {
-      await enviar(from, TEXTO_INTRO_DOCS, opcoes, false)
+      await enviar(from, textoIntroDocumentos, opcoes, false)
     }
   } catch (e) {
     logErro("intro_docs", "Falha ao enviar introducao de documentos", e)
-    await enviar(from, TEXTO_INTRO_DOCS, opcoes, false)
+    await enviar(from, textoIntroDocumentos, opcoes, false)
   }
 }
 
@@ -5574,7 +5576,7 @@ async function iniciarAgendamento(from, u) {
   if (!slots || slots.length === 0) {
     await enviarAudioModoVoz(from, u, "No momento não encontrei horários disponíveis. Você pode deixar uma mensagem urgente para nossa equipe ou voltar ao menu do cliente.", "sem horários")
     return {
-      texto: `😔 Não encontrei horários disponíveis no momento.\n\nVocê pode deixar uma mensagem urgente para nossa equipe ou voltar ao menu do cliente.`,
+      texto: `😔 Não encontrei horários disponíveis no momento.\n${cabecalhoCasoAtivo(u)}\n\nVocê pode deixar uma mensagem urgente para nossa equipe ou voltar ao menu do cliente.`,
       opcoes: [
         { id: "adv_urg", title: "⚠️ Mensagem urgente" },
       { id: "m_inicio", title: "🏠 Menu do cliente" }
@@ -5609,7 +5611,7 @@ async function iniciarAgendamento(from, u) {
   return await enviarTelaImagemOuTexto(
     from,
     IMAGEM_ADV_HORARIOS_URL,
-    `📅 *Horários disponíveis:*\n\nEscolha o melhor para você:`,
+    `📅 *Horários disponíveis:*\n${cabecalhoCasoAtivo(u)}\n\nEscolha o melhor para você:`,
     opcoes,
     "📅 *Toque no melhor horário para você.*"
   )
@@ -5626,9 +5628,9 @@ function textoAudioOpcoes(opcoes = [], prefixo = "") {
   return `${prefixo ? `${prefixo}: ` : ""}${corpo}.`
 }
 
-function telaAdvogadoCliente() {
+function telaAdvogadoCliente(u) {
   return {
-    texto: "👨‍⚖️ *Falar com advogado*\n\nVocê pode agendar uma ligação ou deixar uma mensagem urgente para nossa equipe.",
+    texto: `👨‍⚖️ *Falar com advogado*\n${cabecalhoCasoAtivo(u)}\n\nVocê pode agendar uma ligação ou deixar uma mensagem urgente para nossa equipe.`,
     opcoes: [
       { id: "adv_agendar_ligacao", title: "📅 Agendar ligação" },
         { id: "adv_urg", title: "⚠️ Mensagem urgente" },
@@ -5859,7 +5861,7 @@ async function executarAcaoPendenteCliente(from, u) {
 }
 
 async function telaAdvogadoClienteComAudio(from, u) {
-  const tela = telaAdvogadoCliente()
+  const tela = telaAdvogadoCliente(u)
   await enviarAudioModoVoz(
     from,
     u,

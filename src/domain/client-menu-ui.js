@@ -25,6 +25,12 @@ function iconeAreaJuridica(area = "") {
   return "📋"
 }
 
+function cabecalhoCasoAtivo(u = {}) {
+  const numeroCaso = sanitizarTextoEntrada(u.numeroCaso) || "—"
+  const area = sanitizarTextoEntrada(u.area) || "—"
+  return `📂 *Caso ativo:* ${numeroCaso} · ⚖️ ${area}`
+}
+
 function numeroParaIcone(numero) {
   const mapa = ["?", "?", "?", "?", "?", "?", "?", "?", "?"]
   return mapa[numero - 1] || String(numero)
@@ -222,6 +228,7 @@ function menuCliente(u, casosCliente = null) {
 module.exports = {
   configurarClientMenuUi,
   iconeAreaJuridica,
+  cabecalhoCasoAtivo,
   numeroParaIcone,
   formatarDataBR,
   textoAudioCasosCliente,

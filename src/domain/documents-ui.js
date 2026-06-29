@@ -7,6 +7,7 @@ const {
 } = require("./documents-core")
 const { primeiroNomeCliente } = require("./phone-name")
 const { sanitizarTextoEntrada } = require("../utils/text")
+const { cabecalhoCasoAtivo } = require("./client-menu-ui")
 
 const IMAGEM_DOCS_FINAL_URL = process.env.IMAGEM_DOCS_FINAL_URL || "https://i.imgur.com/LRvw2m8.png"
 const IMAGEM_DOCS_PENDENTES_URL = "https://i.imgur.com/mKmFGHO.png"
@@ -202,7 +203,7 @@ function telaEnvioDoc(u, enviarOpcoesPadrao) {
   const totalF   = folhas.length
   const folhasJaRecebidas = totalF > 1 && fIdx > 0 ? folhas.slice(0, fIdx).join(", ") : ""
 
-  let texto = `📋 *Kit de documentos do caso*\n${statusVisual.texto}\n\n`
+  let texto = `📋 *Kit de documentos do caso*\n${cabecalhoCasoAtivo(u)}\n\n${statusVisual.texto}\n\n`
   texto += `*Guia do status*\n${statusVisual.legenda}\n\n`
   texto += `────────────────\n\n`
   texto += `🧭 *Bloco:* ${doc.grupo || "Documentos"}\n`

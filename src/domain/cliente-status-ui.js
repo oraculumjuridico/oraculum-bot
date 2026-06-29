@@ -9,6 +9,7 @@ const HS_STAGE = {
   PROCESSO: "1337291921",
   FINAL: "1343039663"
 }
+const { cabecalhoCasoAtivo } = require("./client-menu-ui")
 
 function opcoesStatusCliente(stageAtualHS = null, temFaltantesCriticos = false, temAgendamentoAtivo = false) {
   const stagesDocumentos = [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS]
@@ -160,7 +161,7 @@ function montarTextoStatusCliente({
   const linhaTipo = tipoCasoFormatado && tipoCasoFormatado !== "—" ? `📌 ${tipoCasoFormatado}` : null
   return [
     "📊 *Status do seu caso*",
-    `🔢 ${numeroCaso || "—"} · ${iconeArea} ${area || "—"}`,
+    cabecalhoCasoAtivo({ numeroCaso, area }),
     ...(linhaTipo ? [linhaTipo] : []),
     "",
     barra,
