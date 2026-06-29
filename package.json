@@ -4,7 +4,8 @@
   "description": "Bot Oraculum",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test/hubspot-contract.test.js"
   },
   "license": "ISC",
   "type": "commonjs",
