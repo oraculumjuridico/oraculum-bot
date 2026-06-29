@@ -26,6 +26,7 @@ function validarEnumsEssenciais(schema) {
   const ausentes = []
 
   for (const [nome, valoresObrigatorios] of Object.entries(DEAL_ENUM_VALUES)) {
+    if (propriedades.get(nome)?.type !== "enumeration") continue
     const valoresExistentes = new Set(
       (propriedades.get(nome)?.options || []).map(opcao => opcao.value)
     )

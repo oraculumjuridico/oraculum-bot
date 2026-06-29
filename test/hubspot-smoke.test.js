@@ -6,10 +6,17 @@ const {
 } = require("../src/domain/hubspot-contract")
 const { executarHubSpotSmoke } = require("../smoke")
 
+const ENUM_PROPERTIES = new Set([
+  "tipo_de_caso",
+  "temperatura_lead",
+  "hs_priority"
+])
+
 function criarSchema(propriedades, enums = {}) {
   return {
     results: [...propriedades].map(name => ({
       name,
+      type: ENUM_PROPERTIES.has(name) ? "enumeration" : "string",
       options: [...(enums[name] || [])].map(value => ({ value }))
     }))
   }
@@ -74,6 +81,30 @@ async function executar() {
   })
   assert.equal(invalido.ok, false)
   assert.deepEqual(invalido.missingContactProperties, ["phone"])
+
+  const enumsSemTipo = {
+    ...DEAL_ENUM_VALUES,
+    tipo_de_caso: new Set(["inss_aposentadoria"])
+  }
+  const enumInvalido = await executarHubSpotSmoke({
+    token: "token-de-teste",
+    client: {
+      get: async url => {
+        if (url.includes("/properties/contacts")) {
+          return { data: criarSchema(CONTACT_WRITE_PROPERTIES) }
+        }
+        if (url.includes("/properties/deals")) {
+          return { data: criarSchema(DEAL_WRITE_PROPERTIES, enumsSemTipo) }
+        }
+        return { data: { results: [] } }
+      }
+    }
+  })
+  assert.equal(enumInvalido.ok, false)
+  assert.equal(
+    enumInvalido.missingDealEnums.includes("tipo_de_caso:outros_livre"),
+    true
+  )
 
   console.log("hubspot-smoke.test.js: ok")
 }
