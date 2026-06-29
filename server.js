@@ -392,7 +392,7 @@ async function notificarAgendamento(u, slot, duracao, negocioId) {
   const link = linkHubSpot(negocioId)
 
   // WhatsApp pessoal
-  const textoWA = `📅 *Agendamento confirmado* — Caso ${caso}\n\n👤 ${nome}\n📍 ${cidade}\n⚖️ Área: ${area}\n🕐 ${dataHora} (${duracaoLabel})\n\n🔗 ${link}`
+  const textoWA = `📅 *Consulta confirmada* — Caso ${caso}\n\n👤 ${nome}\n📍 ${cidade}\n⚖️ Área: ${area}\n🕐 ${dataHora} (${duracaoLabel})\n\n🔗 ${link}`
   await enviarWhatsAppAdmin(textoWA)
 
   // E-mail
@@ -5630,9 +5630,9 @@ function textoAudioOpcoes(opcoes = [], prefixo = "") {
 
 function telaAdvogadoCliente(u) {
   return {
-    texto: `👨‍⚖️ *Falar com advogado*\n${cabecalhoCasoAtivo(u)}\n\nVocê pode agendar uma ligação ou deixar uma mensagem urgente para nossa equipe.`,
+    texto: `👨‍⚖️ *Falar com advogado*\n${cabecalhoCasoAtivo(u)}\n\nVocê pode agendar uma consulta ou deixar uma mensagem urgente para nossa equipe.`,
     opcoes: [
-      { id: "adv_agendar_ligacao", title: "📅 Agendar ligação" },
+      { id: "adv_agendar_ligacao", title: "📅 Agendar consulta" },
         { id: "adv_urg", title: "⚠️ Mensagem urgente" },
       { id: "m_inicio", title: "🏠 Menu do cliente" }
     ]
@@ -5865,7 +5865,7 @@ async function telaAdvogadoClienteComAudio(from, u) {
   await enviarAudioModoVoz(
     from,
     u,
-    `Você pode agendar uma ligação com um advogado ou deixar uma mensagem urgente para nossa equipe. ${textoAudioOpcoes(tela.opcoes)}`,
+    `Você pode agendar uma consulta com um advogado ou deixar uma mensagem urgente para nossa equipe. ${textoAudioOpcoes(tela.opcoes)}`,
     "menu advogado cliente"
   )
   return await enviarTelaImagemOuTexto(from, IMAGEM_ADV_URL, tela.texto, tela.opcoes)
@@ -6109,7 +6109,7 @@ async function cancelarConsultaCliente(from, u) {
       texto: "⚠️ *Não consegui cancelar a consulta agora.*\n\nTente novamente em instantes ou fale com nossa equipe.",
       opcoes: [
         { id: "cliente_cancelar_consulta_sim", title: "🔄 Tentar de novo" },
-        { id: "m_adv", title: "👨‍⚖️ Falar equipe" },
+        { id: "m_adv", title: "👨‍⚖️ Falar com advogado" },
         { id: "m_status", title: "⬅️ Voltar" }
       ],
       registrarPergunta: false
@@ -6282,15 +6282,15 @@ async function respostaUrgenteRegistradaComAudio(from, u, contexto = "mensagem u
   await enviarAudioModoVoz(
     from,
     u,
-    "Sua mensagem urgente foi registrada. Nossa equipe será notificada e retornará em até 4 horas em dias úteis. Você pode agendar uma ligação ou voltar ao menu do cliente.",
+    "Sua mensagem urgente foi registrada. Nossa equipe será notificada e retornará em até 4 horas em dias úteis. Você pode agendar uma consulta ou voltar ao menu do cliente.",
     contexto
   )
   return responderComTimer(from, await enviarTelaImagemOuTexto(
     from,
     IMAGEM_ADV_URGENTE_REGISTRADA_URL,
-    `✅ *Mensagem registrada com urgência!*\n\n🕐 Registrada às: *${agora}*\n⏱️ Prazo de retorno: *até 4 horas* em dias úteis.\n\nNossa equipe foi notificada. ⚡\n\n📄 Caso: *${u.numeroCaso}*`,
+    `✅ *Mensagem urgente registrada!*\n\n🕐 Registrada às: *${agora}*\n⏱️ Prazo de retorno: *até 4 horas* em dias úteis.\n\nNossa equipe foi notificada. ⚡\n\n📄 Caso: *${u.numeroCaso}*`,
     [
-      { id: "adv_agendar_ligacao", title: "📅 Agendar ligação" },
+      { id: "adv_agendar_ligacao", title: "📅 Agendar consulta" },
       { id: "m_inicio", title: "🏠 Menu do cliente" }
     ]
   ))
@@ -9958,7 +9958,7 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
     )
 
     return {
-      texto: `📋 *Confirme seu agendamento:*\n\n📅 Data: *${formatarSlot(slot)}*\n⏱️ Duração: *${duracaoLabel}*\n👤 Nome: *${u.nome || "—"}*\n📄 Caso: *${u.numeroCaso || "—"}*\n\nEstá correto?`,
+      texto: `📋 *Confirme sua consulta:*\n\n📅 Data: *${formatarSlot(slot)}*\n⏱️ Duração: *${duracaoLabel}*\n👤 Nome: *${u.nome || "—"}*\n📄 Caso: *${u.numeroCaso || "—"}*\n\nEstá correto?`,
       opcoes: [
         { id: "ag_confirmar", title: "✅ Confirmar" },
         { id: "ag_outro_horario", title: "📅 Outro horário" },
@@ -14815,9 +14815,9 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
     } catch {}
 
     const msg = [
-      "📅 *Agendamento confirmado!*",
+      "📅 *Consulta confirmada!*",
       "",
-      `✅ Olá, *${nomeCliente}*! Sua ligação com um especialista da Oráculum está confirmada.`,
+      `✅ Olá, *${nomeCliente}*! Sua consulta com um advogado da Oráculum está confirmada.`,
       "",
       `🗓️ *Data e horário:* ${dataFormatada}`,
       "",
@@ -15079,7 +15079,7 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
       msg = [
         "⏰ *Sua consulta começa em 1 hora!*",
         "",
-        `Olá, *${nomeCliente}*! Daqui a pouco você tem sua ligação com um especialista da Oráculum.`,
+        `Olá, *${nomeCliente}*! Daqui a pouco você tem sua consulta com um advogado da Oráculum.`,
         "",
         `🗓️ *Horário:* ${dataFormatada}`,
         "",
@@ -15092,7 +15092,7 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
       msg = [
         "📅 *Lembrete: sua consulta é hoje!*",
         "",
-        `Olá, *${nomeCliente}*! Sua ligação com um especialista da Oráculum é *hoje*.`,
+        `Olá, *${nomeCliente}*! Sua consulta com um advogado da Oráculum é *hoje*.`,
         "",
         `🗓️ *Horário:* ${dataFormatada}`,
         "",
@@ -15105,7 +15105,7 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
       msg = [
         "✅ *Consulta confirmada*",
         "",
-        `Olá, *${nomeCliente}*! Sua ligação com um especialista da Oráculum está confirmada.`,
+        `Olá, *${nomeCliente}*! Sua consulta com um advogado da Oráculum está confirmada.`,
         "",
         `🗓️ *Data e horário:* ${dataFormatada}`,
         "",
