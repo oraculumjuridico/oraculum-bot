@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/hubspot-contract.test.js"
+    "test": "node test/hubspot-contract.test.js",
+    "smoke": "node smoke.js",
+    "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke"
   },
   "license": "ISC",
   "type": "commonjs",
