@@ -154,12 +154,39 @@ async function executar() {
 
   await hsAtualizarNegocio("deal-1", {
     urgencia: "Alta",
-    descricao_completa: null
+    descricao_completa: null,
+    phone: "5511999999999"
   })
   const atualizacaoDeal = requests.find(item =>
     item.method === "patch" && item.url.endsWith("/deals/deal-1")
   )
   assert.deepEqual(atualizacaoDeal.body.properties, { urgencia: "Alta" })
+  assert.equal(warnings.some(warning =>
+    warning.objectType === "deals" &&
+    warning.unknownProperties.includes("phone")
+  ), true)
+
+  const requestsAntesDoEnumInvalido = requests.length
+  await hsAtualizarNegocio("deal-1", {
+    dealname: "Caso atualizado",
+    urgencia: "Urgentíssima"
+  })
+  assert.equal(requests.length, requestsAntesDoEnumInvalido + 1)
+  assert.deepEqual(requests.at(-1).body.properties, { dealname: "Caso atualizado" })
+  assert.equal(warnings.some(warning =>
+    warning.objectType === "deals" &&
+    warning.invalidEnums.includes("urgencia")
+  ), true)
+
+  const requestsAntesDoDealVazio = requests.length
+  assert.equal(
+    await hsAtualizarNegocio("deal-1", {
+      phone: "5511999999999",
+      tipo_de_caso: "valor_inexistente"
+    }),
+    null
+  )
+  assert.equal(requests.length, requestsAntesDoDealVazio)
 
   configurarHubSpotSync({
     HS_STAGE: { FINAL: "closedwon" },

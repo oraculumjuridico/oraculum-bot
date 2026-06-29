@@ -64,21 +64,26 @@ async function hsCriarNegocio(u, opts = {}) {
   try {
     const stage = opts.stage || deps.HS_STAGE.LEAD
     const dealname = opts.dealname || deps.getNomeDeal(u)
-    const properties = filtrarPropsHubSpot({
-      dealname,
-      pipeline: deps.HS_PIPELINE,
-      dealstage: stage,
-      hubspot_owner_id: "90513737",
-      area_juridica: u.area || "",
-      resumo_cliente: u.assuntoResumo || u.descricao || "",
-      descricao_completa: u.descricao || u.assuntoResumo || "",
-      // urgencia normalizada para o HubSpot
-      urgencia: { alta: "Alta", normal: "Moderada", baixa: "Baixa" }[u.urgencia] || "Moderada",
-      cidade: u.cidade || "",
-      pasta_drive: u.pastaDriveLink || "",
-      origem_atendimento: sanitizarTextoEntrada(u?.origemCaptacao) || "whatsapp",
-      ...deps.getHubSpotDealStateProps(u)
-    })
+    const properties = validateHubSpotProperties(
+      "deals",
+      filtrarPropsHubSpot({
+        dealname,
+        pipeline: deps.HS_PIPELINE,
+        dealstage: stage,
+        hubspot_owner_id: "90513737",
+        area_juridica: u.area || "",
+        resumo_cliente: u.assuntoResumo || u.descricao || "",
+        descricao_completa: u.descricao || u.assuntoResumo || "",
+        // urgencia normalizada para o HubSpot
+        urgencia: { alta: "Alta", normal: "Moderada", baixa: "Baixa" }[u.urgencia] || "Moderada",
+        cidade: u.cidade || "",
+        pasta_drive: u.pastaDriveLink || "",
+        origem_atendimento: sanitizarTextoEntrada(u?.origemCaptacao) || "whatsapp",
+        ...deps.getHubSpotDealStateProps(u)
+      }),
+      warnHubSpotPayload
+    )
+    if (!Object.keys(properties).length) return null
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/deals",
       { properties },
@@ -129,7 +134,11 @@ async function hsAtualizarContato(contactId, props = {}) {
 }
 
 async function hsAtualizarNegocio(dealId, props = {}) {
-  const propsValidas = filtrarPropsHubSpot(props)
+  const propsValidas = validateHubSpotProperties(
+    "deals",
+    filtrarPropsHubSpot(props),
+    warnHubSpotPayload
+  )
   if (!dealId || !Object.keys(propsValidas).length) return null
   try {
     await axios.patch(
