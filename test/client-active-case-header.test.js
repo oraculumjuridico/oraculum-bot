@@ -57,19 +57,19 @@ const serverSource = fs.readFileSync(
   path.join(__dirname, "..", "server.js"),
   "utf8"
 )
-for (const trechoEsperado of [
-  "${TEXTO_INTRO_DOCS}\\n\\n${cabecalhoCasoAtivo(u)}",
-  "*Falar com advogado*\\n${cabecalhoCasoAtivo(u)}",
-  "*Horários disponíveis:*\\n${cabecalhoCasoAtivo(u)}"
-]) {
-  assert.equal(serverSource.includes(trechoEsperado), true)
-}
+const consultationSource = fs.readFileSync(
+  path.join(__dirname, "..", "src", "domain", "client-appointment-ui.js"),
+  "utf8"
+)
+assert.equal(serverSource.includes("${TEXTO_INTRO_DOCS}\\n\\n${cabecalhoCasoAtivo(u)}"), true)
+assert.equal(consultationSource.includes("*Falar com advogado*\\n${cabecalhoCaso}"), true)
+assert.equal(consultationSource.includes("*Horários disponíveis:*\\n${cabecalhoCaso}"), true)
 for (const botao of [
   'id: "adv_agendar_ligacao"',
   'id: "adv_urg"',
   'id: "m_inicio"'
 ]) {
-  assert.equal(serverSource.includes(botao), true)
+  assert.equal(consultationSource.includes(botao), true)
 }
 
 console.log("client-active-case-header.test.js: ok")

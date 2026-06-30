@@ -102,6 +102,20 @@ const {
   montarAudioStatusCliente
 } = require("./src/domain/cliente-status-ui")
 const {
+  telaConsultaAdvogado,
+  telaBuscandoHorarios,
+  telaConsultaSemHorarios,
+  telaHorariosConsulta,
+  telaDuracaoConsulta,
+  telaConfirmacaoConsulta,
+  telaFalhaAgendamento,
+  telaAgendamentoConfirmado,
+  telaConfirmarCancelamentoConsulta,
+  telaCancelamentoIndisponivel,
+  telaConsultaCancelada,
+  telaFalhaCancelamentoConsulta
+} = require("./src/domain/client-appointment-ui")
+const {
   createClientScreen: criarTela,
   gerarBotoesDaTela,
   gerarAudioDaTela
@@ -5567,7 +5581,8 @@ async function aplicarCorrecaoPendente(from, u) {
 }
 
 async function iniciarAgendamento(from, u) {
-  await enviar(from, "🔍 Buscando horários disponíveis...", null, false)
+  const telaBusca = telaBuscandoHorarios()
+  await enviar(from, telaBusca.texto, gerarBotoesDaTela(telaBusca), false)
 
   let slots = []
   let temMais = false
@@ -5582,36 +5597,23 @@ async function iniciarAgendamento(from, u) {
   }
 
   if (!slots || slots.length === 0) {
-    await enviarAudioModoVoz(from, u, "No momento não encontrei horários disponíveis. Você pode deixar uma mensagem urgente para nossa equipe ou voltar ao menu do cliente.", "sem horários")
-    return {
-      texto: `😔 Não encontrei horários disponíveis no momento.\n${cabecalhoCasoAtivo(u)}\n\nVocê pode deixar uma mensagem urgente para nossa equipe ou voltar ao menu do cliente.`,
-      opcoes: [
-        { id: "adv_urg", title: "⚠️ Mensagem urgente" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-      ]
-    }
+    const telaSemHorarios = telaConsultaSemHorarios(cabecalhoCasoAtivo(u))
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaSemHorarios), "sem horários")
+    return telaSemHorarios
   }
 
   // Salva slots no estado do usuário
   u._slotsDisponiveis = slots.map(s => s.toISOString())
   u._paginaSlots = pagina
 
-  // Monta opções (máximo 8 para não ultrapassar limite da lista)
-  const opcoes = slots.slice(0, 8).map((slot, i) => ({
-    id: `slot_${i}`,
-    title: formatarSlot(slot)
-  }))
-
-  if (pagina > 0) {
-    opcoes.unshift({ id: "slots_pagina_anterior", title: "⬅️ Horários anteriores" })
-  }
-
-  if (temMais) {
-    opcoes.push({ id: "slots_proxima_pagina", title: "➡️ Ver mais horários" })
-  }
-  opcoes.push({ id: "m_inicio", title: "🏠 Menu do cliente" })
-
-  await enviarAudioModoVoz(from, u, "Vou mostrar os horários disponíveis para você. Toque em uma das opções para escolher o melhor horário.", "horários")
+  const telaHorarios = telaHorariosConsulta({
+    cabecalhoCaso: cabecalhoCasoAtivo(u),
+    slots,
+    pagina,
+    temMais,
+    formatarSlot
+  })
+  await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaHorarios), "horários")
 
   setStage(u, STAGES.AGENDAMENTO_HORARIO)
   iniciarTimer(from)
@@ -5619,8 +5621,8 @@ async function iniciarAgendamento(from, u) {
   return await enviarTelaImagemOuTexto(
     from,
     IMAGEM_ADV_HORARIOS_URL,
-    `📅 *Horários disponíveis:*\n${cabecalhoCasoAtivo(u)}\n\nEscolha o melhor para você:`,
-    opcoes,
+    telaHorarios.texto,
+    gerarBotoesDaTela(telaHorarios),
     "📅 *Toque no melhor horário para você.*"
   )
 }
@@ -5637,14 +5639,7 @@ function textoAudioOpcoes(opcoes = [], prefixo = "") {
 }
 
 function telaAdvogadoCliente(u) {
-  return {
-    texto: `👨‍⚖️ *Falar com advogado*\n${cabecalhoCasoAtivo(u)}\n\nVocê pode agendar uma consulta ou deixar uma mensagem urgente para nossa equipe.`,
-    opcoes: [
-      { id: "adv_agendar_ligacao", title: "📅 Agendar consulta" },
-        { id: "adv_urg", title: "⚠️ Mensagem urgente" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-    ]
-  }
+  return telaConsultaAdvogado(cabecalhoCasoAtivo(u))
 }
 
 // Enquanto a preferência de canal ainda não foi definida (ACOLHIMENTO e
@@ -5869,13 +5864,8 @@ async function executarAcaoPendenteCliente(from, u) {
 
 async function telaAdvogadoClienteComAudio(from, u) {
   const tela = telaAdvogadoCliente(u)
-  await enviarAudioModoVoz(
-    from,
-    u,
-    `Você pode agendar uma consulta com um advogado ou deixar uma mensagem urgente para nossa equipe. ${textoAudioOpcoes(tela.opcoes)}`,
-    "menu advogado cliente"
-  )
-  return await enviarTelaImagemOuTexto(from, IMAGEM_ADV_URL, tela.texto, tela.opcoes)
+  await enviarAudioModoVoz(from, u, gerarAudioDaTela(tela), "menu advogado cliente")
+  return await enviarTelaImagemOuTexto(from, IMAGEM_ADV_URL, tela.texto, gerarBotoesDaTela(tela))
 }
 
 async function telaStatusCliente(from, u) {
@@ -6008,12 +5998,9 @@ async function telaConfirmarCancelamentoConsultaCliente(from, u) {
   }
 
   if (!estado?.inicio) {
-    await enviarAudioModoVoz(
-      from,
-      u,
-      "Não encontrei uma consulta futura ativa para cancelar. Vou mostrar o status atualizado do seu caso.",
-      "cancelamento consulta sem agenda"
-    )
+    const telaIndisponivel = telaCancelamentoIndisponivel()
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaIndisponivel), "cancelamento consulta sem agenda")
+    await enviar(from, telaIndisponivel.texto, gerarBotoesDaTela(telaIndisponivel), false)
     return await telaStatusCliente(from, u)
   }
 
@@ -6027,20 +6014,9 @@ async function telaConfirmarCancelamentoConsultaCliente(from, u) {
   }
   iniciarTimer(from)
 
-  await enviarAudioModoVoz(
-    from,
-    u,
-    `Você quer cancelar sua consulta de ${dataHoraAudio}? Se confirmar, o horário será removido da agenda e nossa equipe será avisada.`,
-    "confirmar cancelamento consulta"
-  )
-
-  return {
-    texto: `❌ *Cancelar consulta*\n\nVocê quer cancelar sua consulta de *${dataHora}*?\n\n_Se confirmar, o horário será removido da agenda e nossa equipe será avisada._`,
-    opcoes: [
-      { id: "cliente_cancelar_consulta_sim", title: "✅ Sim, cancelar" },
-      { id: "m_status", title: "⬅️ Voltar" }
-    ]
-  }
+  const telaCancelamento = telaConfirmarCancelamentoConsulta(dataHora, dataHoraAudio)
+  await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaCancelamento), "confirmar cancelamento consulta")
+  return telaCancelamento
 }
 
 async function cancelarConsultaCliente(from, u) {
@@ -6056,12 +6032,9 @@ async function cancelarConsultaCliente(from, u) {
   const eventoPendente = sanitizarTextoEntrada(pendente.eventId)
   if (!estado?.inicio || (eventoPendente && eventoAtual && eventoPendente !== eventoAtual)) {
     u._cancelamentoConsultaPendente = null
-    await enviarAudioModoVoz(
-      from,
-      u,
-      "A consulta mudou ou não está mais ativa. Vou mostrar o status atualizado do seu caso.",
-      "cancelamento consulta revalidacao"
-    )
+    const telaDesatualizada = telaCancelamentoIndisponivel({ alterada: true })
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaDesatualizada), "cancelamento consulta revalidacao")
+    await enviar(from, telaDesatualizada.texto, gerarBotoesDaTela(telaDesatualizada), false)
     return await telaStatusCliente(from, u)
   }
 
@@ -6089,46 +6062,17 @@ async function cancelarConsultaCliente(from, u) {
     }))
 
     iniciarTimer(from)
-    await enviarAudioModoVoz(
-      from,
-      u,
-      `Pronto. Sua consulta de ${dataHoraAudio} foi cancelada. Quando quiser marcar outro horário, toque em agendar consulta ou volte ao menu do cliente.`,
-      "consulta cancelada cliente"
-    )
-
-    return {
-      texto: [
-        "✅ *Consulta cancelada*",
-        "",
-        `Sua consulta de *${dataHora}* foi cancelada.`,
-        "",
-        "Quando quiser marcar outro horário, toque em *Agendar consulta*."
-      ].join("\n"),
-      opcoes: [
-        { id: "adv_agendar_ligacao", title: "📅 Agendar consulta" },
-        { id: "m_status", title: "📊 Ver status" },
-        { id: "m_inicio", title: "🏠 Menu do cliente" }
-      ],
-      registrarPergunta: false,
-      _resultadoCancelamento: resultado
-    }
+    const telaCancelada = telaConsultaCancelada(dataHora, dataHoraAudio)
+    telaCancelada.registrarPergunta = false
+    telaCancelada._resultadoCancelamento = resultado
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaCancelada), "consulta cancelada cliente")
+    return telaCancelada
   } catch (e) {
     logErro("calendar", "Falha ao cancelar consulta pelo cliente: " + e.message, e)
-    await enviarAudioModoVoz(
-      from,
-      u,
-      "Não consegui cancelar a consulta agora. Nossa equipe pode ajudar você pelo WhatsApp.",
-      "erro cancelamento consulta cliente"
-    )
-    return {
-      texto: "⚠️ *Não consegui cancelar a consulta agora.*\n\nTente novamente em instantes ou fale com nossa equipe.",
-      opcoes: [
-        { id: "cliente_cancelar_consulta_sim", title: "🔄 Tentar de novo" },
-        { id: "m_adv", title: "👨‍⚖️ Falar com advogado" },
-        { id: "m_status", title: "⬅️ Voltar" }
-      ],
-      registrarPergunta: false
-    }
+    const telaFalhaCancelamento = telaFalhaCancelamentoConsulta()
+    telaFalhaCancelamento.registrarPergunta = false
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaFalhaCancelamento), "erro cancelamento consulta cliente")
+    return telaFalhaCancelamento
   }
 }
 
@@ -9976,24 +9920,13 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
 
       const primeiroNome = primeiroNomeCliente(u) || "você"
       const slotFormatado = formatarSlotAudio(slotEscolhido)
-
-      await enviarAudioModoVoz(
-        from,
-        u,
-        `Ótimo, ${primeiroNome}! Você selecionou ${slotFormatado}. Agora preciso saber quanto tempo você precisa para a consulta. Escolha a duração desejada.`,
-        "duração agendamento"
-      )
-
-      return {
-        texto: `✅ *${formatarSlot(slotEscolhido)}* selecionado!\n\nQual a duração da consulta?`,
-        opcoes: [
-          { id: "dur_20", title: "⏱️ 20 minutos" },
-          { id: "dur_30", title: "⏱️ 30 minutos" },
-          { id: "dur_45", title: "⏱️ 45 minutos" },
-          { id: "dur_60", title: "⏱️ 1 hora" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-        ]
-      }
+      const telaDuracao = telaDuracaoConsulta({
+        dataHora: formatarSlot(slotEscolhido),
+        dataHoraAudio: slotFormatado,
+        primeiroNome
+      })
+      await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaDuracao), "duração agendamento")
+      return telaDuracao
     }
     iniciarTimer(from)
     return await iniciarAgendamento(from, u)
@@ -10024,21 +9957,15 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
     const primeiroNome = primeiroNomeCliente(u) || "você"
     const duracaoLabel = duracao === 60 ? "1 hora" : `${duracao} minutos`
 
-    await enviarAudioModoVoz(
-      from,
-      u,
-      `Perfeito! Vou confirmar seu agendamento. Data e horário: ${formatarSlotAudio(slot)}. Duração: ${duracaoLabel}. Primeira opção: confirmar. Segunda opção: outro horário. Terceira opção: menu do cliente.`,
-      "confirmar agendamento"
-    )
-
-    return {
-      texto: `📋 *Confirme sua consulta:*\n\n📅 Data: *${formatarSlot(slot)}*\n⏱️ Duração: *${duracaoLabel}*\n👤 Nome: *${u.nome || "—"}*\n📄 Caso: *${u.numeroCaso || "—"}*\n\nEstá correto?`,
-      opcoes: [
-        { id: "ag_confirmar", title: "✅ Confirmar" },
-        { id: "ag_outro_horario", title: "📅 Outro horário" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-      ]
-    }
+    const telaConfirmacao = telaConfirmacaoConsulta({
+      dataHora: formatarSlot(slot),
+      dataHoraAudio: formatarSlotAudio(slot),
+      duracao: duracaoLabel,
+      nome: u.nome || "—",
+      numeroCaso: u.numeroCaso || "—"
+    })
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaConfirmacao), "confirmar agendamento")
+    return telaConfirmacao
   }
 
   // -- AGENDAMENTO_CONFIRMAR --
@@ -10081,20 +10008,9 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
         delete u._duracaoEscolhida
         setStage(u, STAGES.CLIENTE)
         iniciarTimer(from)
-        await enviarAudioModoVoz(
-          from,
-          u,
-          "Não consegui confirmar esse agendamento agora. Você pode tentar novamente ou deixar uma mensagem urgente para nossa equipe.",
-          "falha agendamento"
-        )
-        return {
-          texto: "⚠️ Não consegui confirmar esse agendamento agora.\n\nVocê pode tentar novamente ou deixar uma mensagem urgente para nossa equipe.",
-          opcoes: [
-            { id: "adv_agendar_ligacao", title: "📅 Tentar novamente" },
-        { id: "adv_urg", title: "⚠️ Mensagem urgente" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-          ]
-        }
+        const telaFalha = telaFalhaAgendamento()
+        await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaFalha), "falha agendamento")
+        return telaFalha
       }
 
       // Limpa dados temporários
@@ -10104,22 +10020,20 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       setStage(u, STAGES.CLIENTE)
       iniciarTimer(from)
 
-      await enviarAudioModoVoz(
-        from,
-        u,
-        `Consulta agendada com sucesso, ${primeiroNome}! Sua consulta está marcada para ${formatarSlotAudio(slot)}, com duração de ${duracaoLabel}. Fique atento ao WhatsApp no horário combinado.`,
-        "agendamento confirmado"
-      )
+      const telaAgendada = telaAgendamentoConfirmado({
+        dataHora: formatarSlot(slot),
+        dataHoraAudio: formatarSlotAudio(slot),
+        duracao: duracaoLabel,
+        numeroCaso: u.numeroCaso,
+        primeiroNome
+      })
+      await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaAgendada), "agendamento confirmado")
 
       return await enviarTelaImagemOuTexto(
         from,
         IMAGEM_ADV_AGENDADO_URL,
-        `🎉 *Consulta agendada com sucesso!*\n\n📅 *${formatarSlot(slot)}*\n⏱️ Duração: *${duracaoLabel}*\n📄 Caso: *${u.numeroCaso}*\n\n📲 Fique atento ao WhatsApp no horário combinado. 😊`,
-        [
-      { id: "m_status",   title: "📊 Status do meu caso" },
-      { id: "m_docs", title: "📎 Enviar documentos" },
-      { id: "m_inicio", title: "🏠 Menu do cliente" }
-        ]
+        telaAgendada.texto,
+        gerarBotoesDaTela(telaAgendada)
       )
     }
 
