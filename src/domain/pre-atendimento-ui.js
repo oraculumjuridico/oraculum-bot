@@ -1,5 +1,6 @@
 const { primeiroNomeCliente } = require("./phone-name")
 const { normalizarTextoGatilho, sanitizarTextoEntrada } = require("../utils/text")
+const { telaModoAtendimento } = require("./client-mode-ui")
 
 function descricaoRelacaoTerceiroPreAtendimento(relacao = "") {
   const r = sanitizarTextoEntrada(relacao)
@@ -31,14 +32,7 @@ function descricaoRelacaoTerceiroPreAtendimento(relacao = "") {
 function perguntaAtualPreAtendimento(stage, u = {}) {
   const primeiroNome = primeiroNomeCliente(u) || u.nome || ""
   if (stage === "acolhimento_modo") {
-    return {
-      texto: `Como prefere ser atendido? *🎙️ Por áudio* ou *✍️ por texto*?`,
-      audio: `Como prefere ser atendido? Por áudio ou por texto?`,
-      opcoes: [
-        { id: "modo_audio", title: "🎙️ Por áudio" },
-        { id: "modo_texto", title: "✍️ Por texto" }
-      ]
-    }
+    return telaModoAtendimento({ atendente: u.atendente })
   }
   if (stage === "acolhimento_para_quem") {
     const relacao = u.relacaoComAtendido

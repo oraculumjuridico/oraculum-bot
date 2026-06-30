@@ -58,6 +58,7 @@ const {
   perguntaAtualPreAtendimento,
   gerarMensagemAcolhimento
 } = require("./src/domain/pre-atendimento-ui")
+const { telaModoAtendimento } = require("./src/domain/client-mode-ui")
 const {
   textoNormalizadoPreAtendimento,
   pareceCasoParaTerceiroPreAtendimento,
@@ -1204,33 +1205,31 @@ function detectarAmbiguidadeTitularNome(u = {}, texto = "") {
   }
 }
 
-async function telaEscolhaModo(from, u, { comAudio = false } = {}) {
+async function telaEscolhaModo(from, u, { comAudio = false, comBoasVindas = false } = {}) {
   // ○●○○○○ Etapa 1 de 6 — escolha do modo de comunicação.
   // Definida aqui, antes do relato, para que nenhum áudio seja enviado
   // a quem prefere texto e vice-versa.
   setStage(u, STAGES.ACOLHIMENTO_MODO)
   iniciarTimer(from)
-  // Reapresentação (ex: resposta não reconhecida pelo detector de modo):
-  // ACOLHIMENTO_MODO ainda não tem u.modoTexto definido, então o áudio
-  // é sempre enviado junto com o texto, independentemente da preferência.
-  if (comAudio) {
-    try {
-      const ogg = await gerarAudioAtendente(u.atendente,
-        `Não entendi sua resposta. Como prefere ser atendido durante este processo? Primeira opção: ouvir e responder por áudio, onde vou te guiando com perguntas em voz, uma de cada vez. Segunda opção: ler e digitar, onde você vê as perguntas por escrito e responde no seu ritmo.`)
-      await enviarAudio(from, urlAudioAtendente(ogg))
-      await new Promise(r => setTimeout(r, 4000))
-    } catch (e) { logErro("tts", "Falha áudio reapresentação escolha modo", e) }
+  const tela = telaModoAtendimento({
+    atendente: u.atendente,
+    boasVindas: comBoasVindas,
+    reapresentacao: comAudio
+  })
+  if (u.modoTexto !== true) {
+    await enviarAudioModoVoz(from, u, gerarAudioDaTela(tela), "escolha modo atendimento")
   }
-  const texto = `●○○○○○ 📡 *Etapa 1 de 6 · Atendimento*\n\nComo prefere ser atendido durante este processo?\n\n🎧 *Ouvir e responder* — vou te guiando com perguntas em áudio, uma de cada vez.\n\n✍️ *Ler e digitar* — você vê as perguntas por escrito e responde no seu ritmo.`
-  const opcoes = [
-    { id: "modo_audio", title: "🎧 Ouvir áudio" },
-    { id: "modo_texto", title: "✍️ Ler e digitar" }
-  ]
   if (IMAGEM_ASSESSORIA_INICIAL_URL) {
-    const enviada = await enviarImagemWhatsApp(from, IMAGEM_ASSESSORIA_INICIAL_URL, texto, opcoes)
+    const enviada = await enviarImagemWhatsApp(
+      from,
+      IMAGEM_ASSESSORIA_INICIAL_URL,
+      tela.texto,
+      gerarBotoesDaTela(tela)
+    )
     if (enviada) return { texto: null, opcoes: null, semAudio: true }
   }
-  return { texto, opcoes, semAudio: true }
+  tela.semAudio = true
+  return tela
 }
 
 async function telaParaQuem(from, u) {
@@ -2795,27 +2794,10 @@ async function iniciarFluxoRelatoLivre(from, u, { boasVindas = true } = {}) {
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
       await enviar(from, `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)
     }
-    // Áudio de boas-vindas + pergunta de modo em um único envio (evita dois áudios seguidos)
-    try {
-      const ogg = await gerarAudioAtendente(u.atendente,
-        `Olá! Meu nome é ${u.atendente} e vou acompanhar você neste atendimento. Ao final do cadastro, você poderá falar diretamente com um advogado. A qualquer momento você pode dizer recomeçar ou encerrar se precisar. Agora me diga: como prefere ser atendido durante este processo? Primeira opção: ouvir e responder por áudio, onde vou te guiando com perguntas em voz. Segunda opção: ler e digitar, onde você vê as perguntas por escrito e responde no seu ritmo.`)
-      await enviarAudio(from, urlAudioAtendente(ogg))
-      await new Promise(r => setTimeout(r, 5000))
-    } catch (e) { logErro("tts", "Falha áudio boas-vindas+modo", e) }
-  } else {
-    // Sem boas-vindas: envia apenas o áudio da pergunta de modo (só se modoTexto não foi definido)
-    if (!u.modoTexto) {
-      try {
-        const ogg = await gerarAudioAtendente(u.atendente,
-          `Como prefere ser atendido durante este processo? Primeira opção: ouvir e responder por áudio, onde vou te guiando com perguntas em voz, uma de cada vez. Segunda opção: ler e digitar, onde você vê as perguntas por escrito e responde no seu ritmo.`)
-        await enviarAudio(from, urlAudioAtendente(ogg))
-        await new Promise(r => setTimeout(r, 4000))
-      } catch (e) { logErro("tts", "Falha áudio escolha modo", e) }
-    }
   }
 
   // Após as boas-vindas, pergunta o modo de atendimento preferido (etapa 1 de 6)
-  return await telaEscolhaModo(from, u)
+  return await telaEscolhaModo(from, u, { comBoasVindas: boasVindas })
 }
 
 
@@ -11514,22 +11496,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
       await enviar(from, `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)
     }
-    // Áudio 1 — apresentação da atendente
-    try {
-      const ogg = await gerarAudioAtendente(u.atendente,
-        `Olá! Meu nome é ${u.atendente} e vou acompanhar você neste atendimento. Ao final do cadastro, você poderá falar diretamente com um advogado. A qualquer momento você pode dizer recomeçar ou encerrar se precisar.`)
-      await enviarAudio(from, urlAudioAtendente(ogg))
-      await new Promise(r => setTimeout(r, 3000))
-    } catch (e) { logErro("tts", "Falha áudio boas-vindas", e) }
-    // Áudio correspondente à tela de escolha de modo (etapa 1 de 6)
-    try {
-      const ogg = await gerarAudioAtendente(u.atendente,
-        `Como prefere ser atendido durante este processo? Primeira opção: ouvir e responder por áudio, onde vou te guiando com perguntas em voz, uma de cada vez. Segunda opção: ler e digitar, onde você vê as perguntas por escrito e responde no seu ritmo.`)
-      await enviarAudio(from, urlAudioAtendente(ogg))
-      await new Promise(r => setTimeout(r, 4000))
-    } catch (e) { logErro("tts", "Falha áudio escolha modo", e) }
     // Após apresentação, pergunta o modo de atendimento preferido (etapa 1 de 6)
-    return await telaEscolhaModo(from, u)
+    return await telaEscolhaModo(from, u, { comBoasVindas: true })
   }
 
   if (u.stage === STAGES.ESCOLHA_CANAL) {
