@@ -1,7 +1,9 @@
 const assert = require("node:assert/strict")
 const fs = require("node:fs")
 const path = require("node:path")
-const vm = require("node:vm")
+const {
+  detectarIntencaoCliente
+} = require("../src/domain/client-intent-detector")
 
 const source = fs.readFileSync(
   path.join(__dirname, "..", "server.js"),
@@ -16,29 +18,13 @@ function trecho(inicio, fim) {
   return source.slice(indiceInicio, indiceFim)
 }
 
-const detectorSource = trecho(
-  "function detectarIntencaoCliente",
-  "function pareceDuvidaCasoAtualOuNovo"
-)
-const detectorContext = {
-  normalizarTextoGatilho: texto => String(texto || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim()
-}
-vm.runInNewContext(
-  `${detectorSource}; this.detectar = detectarIntencaoCliente`,
-  detectorContext
-)
-
 for (const [texto, intencao] of [
   ["quero falar com advogado", "advogado"],
   ["qual o andamento do meu caso", "status"],
   ["status", "status"],
   ["documentos", "documentos"]
 ]) {
-  assert.equal(detectorContext.detectar(texto), intencao)
+  assert.equal(detectarIntencaoCliente(texto), intencao)
 }
 
 const caminhoAudio = trecho(
