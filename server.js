@@ -110,11 +110,8 @@ const {
   configurarClientMenuUi,
   iconeAreaJuridica,
   cabecalhoCasoAtivo,
-  textoAudioCasosCliente,
   textoAudioResumoCasosCliente,
   deveMostrarBoasVindasMenuCliente,
-  textoAudioOpcoesMenuCliente,
-  textoAudioSelecaoCaso,
   montarCasosMenuCliente,
   menuCliente
 } = require("./src/domain/client-menu-ui")
@@ -5790,15 +5787,14 @@ async function menuClienteComAudio(from, u) {
     : `Seu atendimento atual é sobre ${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || u.area || "seu caso"}.`
   u._menuClienteBoasVindas = boasVindas
   u._casoSelecionadoAudio = null
-  const tela = menuCliente(u, casosCliente)
-  const opcoesAudioMenu = textoAudioOpcoesMenuCliente(tela.opcoes)
-  const textoAudioMenu = temPainel
-    ? `${textoAudioSelecaoCaso(u._acaoPendente)} ${textoAudioCasosCliente(casosCliente)}`
-    : casoSelecionadoAudio
-    ? `Você selecionou o caso de ${casoSelecionadoAudio.area || "Atendimento"}, número ${casoSelecionadoAudio.numeroCaso}. ${opcoesAudioMenu}`
+  const textoAudioBase = casoSelecionadoAudio
+    ? `Você selecionou o caso de ${casoSelecionadoAudio.area || "Atendimento"}, número ${casoSelecionadoAudio.numeroCaso}`
     : boasVindas
-    ? `${saudacao}, ${primeiroNome}! ${await saudacaoGenero(u.nome || primeiroNome)} de volta à Oráculum. ${resumoCasosAudio} ${opcoesAudioMenu}`
-    : `${saudacao}, ${primeiroNome}! ${resumoCasosAudio} ${opcoesAudioMenu}`
+    ? `${saudacao}, ${primeiroNome}! ${await saudacaoGenero(u.nome || primeiroNome)} de volta à Oráculum. ${resumoCasosAudio}`
+    : `${saudacao}, ${primeiroNome}! ${resumoCasosAudio}`
+  const tela = menuCliente(u, casosCliente, { textoAudioBase })
+  const textoAudioMenu = gerarAudioDaTela(tela)
+  const opcoesMenu = gerarBotoesDaTela(tela)
 
   if (temPainel) {
     await enviarAudioModoVoz(from, u, textoAudioMenu, "menu cliente")
@@ -5827,11 +5823,11 @@ async function menuClienteComAudio(from, u) {
     await enviarAudioModoVoz(from, u, textoAudioMenu, "menu cliente")
     await new Promise(r => setTimeout(r, 5000))
   }
-  if (Array.isArray(tela.opcoes) && tela.opcoes.length) {
+  if (opcoesMenu.length) {
     const chamadaOpcoes = temPainel
       ? "📂 *Toque no caso sobre o qual deseja continuar.*"
       : "👇 *Escolha uma opção abaixo para continuar com seu atendimento.*"
-    await enviar(from, chamadaOpcoes, tela.opcoes, false)
+    await enviar(from, chamadaOpcoes, opcoesMenu, false)
     await new Promise(r => setTimeout(r, 500))
   }
   if (!temPainel) u._ultimoMenuClienteAt = Date.now()

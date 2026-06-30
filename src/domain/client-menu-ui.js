@@ -1,5 +1,6 @@
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { getPrimeiroNome } = require("./phone-name")
+const { createClientScreen } = require("./declarative-screen-guard")
 
 let deps = {}
 
@@ -59,17 +60,6 @@ function textoAudioResumoCasosCliente(casos = []) {
 function deveMostrarBoasVindasMenuCliente(u, agora = Date.now()) {
   const ultimo = Number(u?._ultimoMenuClienteAt || 0)
   return !u?._menuClienteJaApresentado || !ultimo || (agora - ultimo) > 6 * 60 * 60 * 1000
-}
-
-function textoAudioOpcoesMenuCliente(opcoes = null) {
-  const textoAudioOpcoes = requireDep("textoAudioOpcoes")
-  const opcoesMenu = Array.isArray(opcoes) ? opcoes : [
-    { title: "Status do meu caso" },
-    { title: "Enviar documentos" },
-    { title: "Falar com advogado" },
-    { title: "Abrir novo caso" }
-  ]
-  return textoAudioOpcoes(opcoesMenu)
 }
 
 function textoAudioSelecaoCaso(acao) {
@@ -151,7 +141,6 @@ function montarCasosMenuCliente(u, negocios = []) {
 }
 
 function montarPainelCasosCliente(u, casos = []) {
-  const saudacaoPorHorarioCliente = requireDep("saudacaoPorHorarioCliente")
   u._casosMenuCliente = casos
   const acao = u._acaoPendente || "caso"
   const pergunta = {
@@ -159,13 +148,13 @@ function montarPainelCasosCliente(u, casos = []) {
     documentos: "Para qual atendimento você quer enviar documentos?",
     advogado: "Para qual atendimento você quer falar com advogado?"
   }[acao] || "Para qual atendimento?"
-  const nomeExib = getPrimeiroNome(u) || "cliente"
-  const saudacao = saudacaoPorHorarioCliente()
   const linhasCasos = casos.map((caso, idx) => {
     const marcador = numeroParaIcone(idx + 1)
     return `${iconeAreaJuridica(caso.area)} ${marcador} *${caso.numeroCaso}* · ${caso.area || "Atendimento"}\n_${caso.situacao || "Em análise"}_`
   }).join("\n\n")
-  return {
+  return createClientScreen({
+    id: "selecao_caso_cliente",
+    titulo: "Seleção de caso",
     texto: [
       "📂 *Selecione o caso*",
       "",
@@ -173,17 +162,18 @@ function montarPainelCasosCliente(u, casos = []) {
       "",
       linhasCasos
     ].join("\n"),
-    opcoes: [
+    textoAudioBase: `${textoAudioSelecaoCaso(acao)} ${textoAudioCasosCliente(casos)}`,
+    acoes: [
       ...casos.map((caso, idx) => ({
         id: `m_caso_${idx}`,
-        title: `${numeroParaIcone(idx + 1)} ${caso.numeroCaso}`
+        label: `${numeroParaIcone(idx + 1)} ${caso.numeroCaso}`
       })),
-      { id: "m_novocaso", title: "➕ Abrir novo caso" }
+      { id: "m_novocaso", label: "➕ Abrir novo caso" }
     ]
-  }
+  })
 }
 
-function menuCliente(u, casosCliente = null) {
+function menuCliente(u, casosCliente = null, { textoAudioBase = "" } = {}) {
   const podeMostrarMenuCliente = requireDep("podeMostrarMenuCliente")
   const respostaRecomecoMenuPrincipal = requireDep("respostaRecomecoMenuPrincipal")
   const saudacaoPorHorarioCliente = requireDep("saudacaoPorHorarioCliente")
@@ -205,7 +195,11 @@ function menuCliente(u, casosCliente = null) {
     ? `${iconeAreaJuridica(u.area)} ① *${u.numeroCaso}* · ${u.area || "—"}\n_${situacaoMenu && situacaoMenu !== "—" ? situacaoMenu : "Em análise"}_`
     : ""
   const listaCasos = temVariosCasos
-    ? casos.map(caso => `${iconeAreaJuridica(caso.area)} *${caso.numeroCaso}* · ${caso.area || "Atendimento"}\n_${caso.situacao || "Em análise"}_`).join("\n\n")
+    ? casos.map(caso => {
+        const casoAtivo = String(caso.id || "") === String(u.negocioId || "")
+        const marcadorAtivo = casoAtivo ? "📂 *Caso ativo:* " : ""
+        return `${marcadorAtivo}${iconeAreaJuridica(caso.area)} *${caso.numeroCaso}* · ${caso.area || "Atendimento"}\n_${caso.situacao || "Em análise"}_`
+      }).join("\n\n")
     : null
   const cabecalho = `⚖️ *${saudacao}, ${nomeExib}!*`
   const linhaBoasVindas = boasVindas ? "\n\nSeja bem-vindo(a) de volta à Oráculum." : ""
@@ -214,15 +208,18 @@ function menuCliente(u, casosCliente = null) {
     ? `${cabecalho}${linhaBoasVindas}\n\n📋 *Seus atendimentos:*\n\n${listaCasos}\n\n${pergunta}`
     : `${cabecalho}${linhaBoasVindas}\n\n${casoInfo}\n\n${pergunta}`
 
-  return {
+  return createClientScreen({
+    id: "menu_principal_cliente",
+    titulo: "Menu do cliente",
     texto: corpo,
-    opcoes: [
-      { id: "m_status",   title: "📊 Status do meu caso" },
-      { id: "m_docs", title: "📎 Enviar documentos" },
-      { id: "m_adv",      title: "👨‍⚖️ Falar com advogado" },
-      { id: "m_novocaso", title: "➕ Abrir novo caso" }
+    textoAudioBase: textoAudioBase || `${saudacao}, ${nomeExib}`,
+    acoes: [
+      { id: "m_status",   label: "📊 Status do meu caso" },
+      { id: "m_docs", label: "📎 Enviar documentos" },
+      { id: "m_adv",      label: "👨‍⚖️ Falar com advogado" },
+      { id: "m_novocaso", label: "➕ Abrir novo caso" }
     ]
-  }
+  })
 }
 
 module.exports = {
@@ -234,7 +231,6 @@ module.exports = {
   textoAudioCasosCliente,
   textoAudioResumoCasosCliente,
   deveMostrarBoasVindasMenuCliente,
-  textoAudioOpcoesMenuCliente,
   textoAudioSelecaoCaso,
   resumoCasoMenuCliente,
   montarCasosMenuCliente,
