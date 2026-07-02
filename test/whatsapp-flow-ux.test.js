@@ -7,13 +7,17 @@ const source = fs.readFileSync(
   path.join(__dirname, "..", "server.js"),
   "utf8"
 )
+const audioSource = fs.readFileSync(
+  path.join(__dirname, "..", "src", "domain", "audio", "audio-intake-pipeline-router.js"),
+  "utf8"
+)
 
-function trecho(inicio, fim) {
-  const indiceInicio = source.indexOf(inicio)
-  const indiceFim = source.indexOf(fim, indiceInicio)
+function trecho(inicio, fim, origem = source) {
+  const indiceInicio = origem.indexOf(inicio)
+  const indiceFim = origem.indexOf(fim, indiceInicio)
   assert.notEqual(indiceInicio, -1, `Trecho inicial ausente: ${inicio}`)
   assert.notEqual(indiceFim, -1, `Trecho final ausente: ${fim}`)
-  return source.slice(indiceInicio, indiceFim)
+  return origem.slice(indiceInicio, indiceFim)
 }
 
 assert.equal(source.includes("Etapa 6 de 6 · *Relato*"), false)
@@ -104,7 +108,8 @@ async function executarTestesSelecaoCaso() {
 
   const caminhoAudio = trecho(
     "const intencaoAudio = detectarIntencaoCliente(trans)",
-    "if (pareceNovaSituacaoCliente(trans))"
+    "if (pareceNovaSituacaoCliente(trans))",
+    audioSource
   )
   assert.match(
     caminhoAudio,
