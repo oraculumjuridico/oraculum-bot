@@ -84,6 +84,7 @@ const { handleConfirmEntryInvalid } = require("./src/domain/stage-handlers/confi
 const { handleConfirmEntryCorrection } = require("./src/domain/stage-handlers/confirm-entry-correction-handler")
 const { handleConfirmEntryCorrectedName } = require("./src/domain/stage-handlers/confirm-entry-corrected-name-handler")
 const { handleConfirmEntryPhone } = require("./src/domain/stage-handlers/confirm-entry-phone-handler")
+const { handleConfirmEntryFinalAcceptance } = require("./src/domain/stage-handlers/confirm-entry-final-acceptance-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13102,93 +13103,29 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       iniciarTimer(from)
       return { texto: "Não consegui identificar a informação. Por favor, me diga novamente. Pode falar ou digitar. 🎙️", opcoes: null }
     }
-    if (text === "entrada_ok") {
-      const origem = u._entradaPendenteOrigem
-      const tipo = u._entradaPendenteTipo
-      const valor = u._entradaPendenteValor
-      limparEntradaPendente(u)
-      if (tipo === "nome") {
-        u.nome = valor
-        u.nomeConfirmado = true
-        if (!(u._novoCasoParaTerceiro && !u.whatsappContato)) {
-          await sincronizarContatoNegocioHubSpot(u)
-        }
-        if (origem === "coleta_tel_outro") {
-          setStage(u, "coleta_tel_wpp"); iniciarTimer(from)
-          const primeiroNome = primeiroNomeCliente(u) || "você"
-          await enviarAudioModoVoz(from, u, `Agora preciso do WhatsApp com DDD de ${primeiroNome}. Pode falar em áudio ou digitar.`, "novo caso terceiro whatsapp")
-          return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nQual é o WhatsApp com DDD de *${primeiroNome}* para contato da equipe?`, opcoes: null }
-        }
-        iniciarTimer(from)
-        return await flowAcolhimentoConfirmaWhatsapp(u, { from })
-      }
-      if (tipo === "telefone") {
-        u.whatsappContato = normalizarNumeroWhatsAppEnvio(valor)
-        if (origem === "coleta_tel_wpp_contato") {
-          // Se nome já foi coletado (fluxo de terceiro via assessoria), avança para cidade
-          if (u.nomeConfirmado && u.nome) {
-            u.whatsappVerificado = true
-            // Para si: número alternativo informado ainda é do cliente → true. Para terceiro → false.
-            u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
-            iniciarTimer(from)
-            // suprimirAudio=true: prepararConfirmacaoEntrada já enviou áudio de confirmação
-            return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
-          }
-          setStage(u, "coleta_nome"); iniciarTimer(from)
-          return { texto: "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nQual é o *nome completo* da pessoa que será atendida?", opcoes: null }
-        }
-        if (origem === "coleta_tel_wpp") {
-          u.whatsappVerificado = true
-          u.telefoneEhDoCliente = u._novoCasoParaTerceiro ? false : true
-          if (u._corrigindoWhatsappConfirmacao) {
-            delete u._corrigindoWhatsappConfirmacao
-            return await voltarParaConfirmacao(from, u)
-          }
-          if (u._novoCasoParaTerceiro) {
-            setStage(u, STAGES.ACOLHIMENTO_CIDADE); iniciarTimer(from)
-            if (u.modoTexto === false) {
-              const nomeTerceiro = u.nome ? u.nome.split(" ")[0] : null
-              await enviarAudioPedidoCidade(from, u.atendente, { nomeTerceiro })
-            }
-            return {
-              texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nNúmero registrado. ✅\n\nAgora, em qual *cidade* a pessoa atendida mora?\n\nSe preferir, pode informar o *CEP* também.`,
-              opcoes: null
-            }
-          }
-          if (u._novoCasoDeCliente) {
-            const relatoPendente = await aproveitarRelatoAudioClienteNovoCaso(from, u)
-            if (relatoPendente) return relatoPendente
-            setStage(u, STAGES.AUDIO_AGUARDANDO); iniciarTimer(from)
-            await enviarAudioModoVoz(from, u, "Número registrado. Agora me conte a nova situação. Pode falar em áudio ou digitar.", "novo caso terceiro relato")
-            return {
-              texto: `Número registrado. ✅\n\nAgora me conte a nova situação. Pode falar em áudio ou digitar.`,
-              opcoes: null
-            }
-          }
-          setStage(u, STAGES.ACOLHIMENTO_CIDADE); iniciarTimer(from)
-          if (u.modoTexto === false) await enviarAudioPedidoCidade(from, u.atendente)
-          return {
-            texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nÓtimo! Número registrado. ✅\n\nAgora, em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`,
-            opcoes: null
-          }
-        }
-        iniciarTimer(from)
-        return respostaRecomecoMenuPrincipal(u)
-      }
-      if (tipo === "cidade") {
-        u.cidade = valor
-        await sincronizarContatoNegocioHubSpot(u)
-        if (["coleta_cidade", "coleta_cidade_regiao", "__coleta_cidade_legado__"].includes(origem)) {
-          iniciarTimer(from)
-          if (u.descricao || u._audioCanalTranscricao) {
-            setStage(u, STAGES.AUDIO_CONFIRMAR_DADOS)
-            return await telaConfirmarDadosAudio(from, u)
-          }
-          return await iniciarFluxoRelatoLivre(from, u, { boasVindas: false })
-        }
-        return await flowAcolhimentoConfirmaWhatsapp(u, { from })
-      }
-    }
+    const resultadoAceitacaoFinalEntrada = await handleConfirmEntryFinalAcceptance({
+      u,
+      texto: text,
+      from,
+      stages: STAGES,
+      limparEntradaPendente,
+      sincronizarContatoNegocioHubSpot,
+      setStage,
+      iniciarTimer,
+      primeiroNomeCliente,
+      enviarAudioModoVoz,
+      flowAcolhimentoConfirmaWhatsapp,
+      normalizarNumeroWhatsAppEnvio,
+      flowAcolhimentoCidade,
+      voltarParaConfirmacao,
+      enviarAudioPedidoCidade,
+      aproveitarRelatoAudioClienteNovoCaso,
+      respostaRecomecoMenuPrincipal,
+      telaConfirmarDadosAudio,
+      iniciarFluxoRelatoLivre
+    })
+    if (resultadoAceitacaoFinalEntrada.handled) return resultadoAceitacaoFinalEntrada.response
+
     // Fallback genérico — reapresenta a tela de confirmação
     const resultadoEntradaInvalida = await handleConfirmEntryInvalid({
       u,
