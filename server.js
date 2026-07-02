@@ -90,6 +90,7 @@ const { routeClientIntake } = require("./src/domain/client/client-intake-decisio
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
+const { handle: handleRevalidatePhoneConfirm } = require("./src/domain/client/handlers/revalidate-phone-confirm.handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -10521,6 +10522,19 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     // Mensagem que não é cidade — verificar se é intenção de corrigir outro campo
     const imprevistoRevalidaCidade = await tratarImprevistoPreAtendimento(from, u, u.stage, text)
     if (imprevistoRevalidaCidade) return imprevistoRevalidaCidade
+  }
+
+  const resultadoRevalidacaoTelefoneConfirmada = await handleRevalidatePhoneConfirm({
+    decision: clientPostIntakeDecision,
+    u,
+    from,
+    responderComTimer,
+    voltarParaConfirmacao,
+    proximaConfirmacaoProgressiva,
+    flowAcolhimentoCidade
+  })
+  if (resultadoRevalidacaoTelefoneConfirmada.success) {
+    return resultadoRevalidacaoTelefoneConfirmada.response
   }
 
   if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_PHONE) {
