@@ -83,6 +83,7 @@ const { handleAudioConfirmation } = require("./src/domain/stage-handlers/audio-c
 const { handleConfirmEntryInvalid } = require("./src/domain/stage-handlers/confirm-entry-invalid-handler")
 const { handleConfirmEntryCorrection } = require("./src/domain/stage-handlers/confirm-entry-correction-handler")
 const { handleConfirmEntryCorrectedName } = require("./src/domain/stage-handlers/confirm-entry-corrected-name-handler")
+const { handleConfirmEntryPhone } = require("./src/domain/stage-handlers/confirm-entry-phone-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13075,24 +13076,22 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       })
       if (resultadoNomeCorrigido.handled) return resultadoNomeCorrigido.response
 
-      if (tipo === "telefone") {
-        const telNorm = normalizarTelefone(text)
-        if (telNorm && telNorm.replace(/\D/g, "").length >= 12) {
-          u._entradaPendenteValor = telNorm
-          const label = formatarTelefoneExibicao(telNorm)
-          if (!u.modoTexto) {
-            try {
-              const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O número é ${label}. Está correto? Se não estiver, me diga o número correto agora.`)
-              await enviarAudio(from, urlAudioAtendente(ogg))
-              await new Promise(r => setTimeout(r, 4000))
-            } catch (e) { logErro("tts", "Falha áudio reconfirmar telefone entrada", e) }
-          }
-          return {
-            texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nVocê informou: *${label}*\nEstá correto? Se não estiver, é só me dizer o número correto agora. Pode falar ou digitar. 🎙️`,
-            opcoes: [{ id: "entrada_ok", title: "✅ Confirmar" }]
-          }
-        }
-      } else if (tipo === "cidade") {
+      const resultadoTelefoneCorrigido = await handleConfirmEntryPhone({
+        u,
+        texto: text,
+        from,
+        stages: STAGES,
+        normalizarTelefone,
+        formatarTelefoneExibicao,
+        gerarAudioAtendente,
+        enviarAudio,
+        urlAudioAtendente,
+        esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+        logErro
+      })
+      if (resultadoTelefoneCorrigido.handled) return resultadoTelefoneCorrigido.response
+
+      if (tipo === "cidade") {
         // Para cidade, redireciona para o handler completo de cidade (com IBGE, CEP etc.)
         limparEntradaPendente(u)
         setStage(u, STAGES.ACOLHIMENTO_CIDADE)
