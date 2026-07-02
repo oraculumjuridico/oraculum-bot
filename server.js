@@ -89,6 +89,7 @@ const { handleAudioIntake } = require("./src/domain/audio/audio-intake-pipeline-
 const { routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
+const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -10431,6 +10432,16 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     // Mensagem que não é o nome — verificar se é intenção de corrigir outro campo
     const imprevistoRevalidaNome = await tratarImprevistoPreAtendimento(from, u, u.stage, text)
     if (imprevistoRevalidaNome) return imprevistoRevalidaNome
+  }
+
+  const resultadoRevalidacaoCidadeConfirmada = await handleRevalidateCityConfirm({
+    decision: clientPostIntakeDecision,
+    u,
+    from,
+    proximaConfirmacaoProgressiva
+  })
+  if (resultadoRevalidacaoCidadeConfirmada.success) {
+    return resultadoRevalidacaoCidadeConfirmada.response
   }
 
   if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_CITY) {
