@@ -3,6 +3,7 @@ const ROUTES = Object.freeze({
   CITY: "city",
   PHONE: "phone",
   THIRD_PARTY: "third_party",
+  ONBOARDING: "onboarding",
   FALLBACK: "fallback"
 })
 
@@ -26,6 +27,28 @@ function routeClientIntake(input = {}, ctx = {}) {
       route: ROUTES.FALLBACK,
       data: { stage, reason: "ambiguous" },
       handled: false
+    }
+  }
+
+  const onboardingStages = new Map([
+    [stages.ACOLHIMENTO, "welcome"],
+    [stages.ACOLHIMENTO_MODO, "mode"],
+    [stages.ACOLHIMENTO_PARA_QUEM, "subject"],
+    [stages.ACOLHIMENTO_CONFIRMA_NOME_CONTATO, "contact_name_confirmation"],
+    [stages.ACOLHIMENTO_CONFIRMA_NOME, "client_name_confirmation"],
+    [stages.ACOLHIMENTO_CONFIRMA_TITULAR_NOME, "name_owner_confirmation"],
+    [stages.ACOLHIMENTO_CONFIRMA_WHATSAPP, "client_phone_confirmation"]
+  ].filter(([stageValue]) => Boolean(stageValue)))
+  const onboardingFlow = onboardingStages.get(stage)
+  if (onboardingFlow) {
+    return {
+      route: ROUTES.ONBOARDING,
+      data: {
+        stage,
+        flow: onboardingFlow,
+        source: value.isAudio ? "audio" : "text"
+      },
+      handled: hasInput || onboardingFlow === "welcome"
     }
   }
 

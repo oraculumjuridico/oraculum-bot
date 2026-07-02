@@ -47,6 +47,21 @@ const ATOMIC_ACTIONS = Object.freeze({
   THIRD_PARTY_INPUT_TEXT: "third_party_input_text",
   THIRD_PARTY_INPUT_AUDIO: "third_party_input_audio",
 
+  START_INTAKE_TEXT: "start_intake_text",
+  START_INTAKE_AUDIO: "start_intake_audio",
+  SELECT_INTAKE_MODE_TEXT: "select_intake_mode_text",
+  SELECT_INTAKE_MODE_AUDIO: "select_intake_mode_audio",
+  SELECT_INTAKE_SUBJECT_TEXT: "select_intake_subject_text",
+  SELECT_INTAKE_SUBJECT_AUDIO: "select_intake_subject_audio",
+  CONFIRM_CONTACT_NAME_TEXT: "confirm_contact_name_text",
+  CONFIRM_CONTACT_NAME_AUDIO: "confirm_contact_name_audio",
+  CONFIRM_CLIENT_NAME_TEXT: "confirm_client_name_text",
+  CONFIRM_CLIENT_NAME_AUDIO: "confirm_client_name_audio",
+  CONFIRM_NAME_OWNER_TEXT: "confirm_name_owner_text",
+  CONFIRM_NAME_OWNER_AUDIO: "confirm_name_owner_audio",
+  CONFIRM_CLIENT_PHONE_TEXT: "confirm_client_phone_text",
+  CONFIRM_CLIENT_PHONE_AUDIO: "confirm_client_phone_audio",
+
   FALLBACK: "fallback"
 })
 
@@ -84,6 +99,20 @@ const LEGACY_ACTION_BY_ATOMIC_ACTION = Object.freeze({
   [ATOMIC_ACTIONS.THIRD_PARTY_PHONE_AUDIO]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
   [ATOMIC_ACTIONS.THIRD_PARTY_INPUT_TEXT]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
   [ATOMIC_ACTIONS.THIRD_PARTY_INPUT_AUDIO]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.START_INTAKE_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.START_INTAKE_AUDIO]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.SELECT_INTAKE_MODE_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.SELECT_INTAKE_MODE_AUDIO]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.SELECT_INTAKE_SUBJECT_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.SELECT_INTAKE_SUBJECT_AUDIO]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_CONTACT_NAME_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_CONTACT_NAME_AUDIO]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_CLIENT_NAME_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_CLIENT_NAME_AUDIO]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_NAME_OWNER_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_NAME_OWNER_AUDIO]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_CLIENT_PHONE_TEXT]: NEXT_ACTIONS.FALLBACK,
+  [ATOMIC_ACTIONS.CONFIRM_CLIENT_PHONE_AUDIO]: NEXT_ACTIONS.FALLBACK,
   [ATOMIC_ACTIONS.FALLBACK]: NEXT_ACTIONS.FALLBACK
 })
 
@@ -131,6 +160,20 @@ function routeThirdParty(stage, source, stages) {
   return ATOMIC_ACTIONS[`THIRD_PARTY_INPUT_${suffix}`]
 }
 
+function routeOnboarding(flow, source) {
+  const suffix = source === "audio" ? "AUDIO" : "TEXT"
+  const actions = {
+    welcome: ATOMIC_ACTIONS[`START_INTAKE_${suffix}`],
+    mode: ATOMIC_ACTIONS[`SELECT_INTAKE_MODE_${suffix}`],
+    subject: ATOMIC_ACTIONS[`SELECT_INTAKE_SUBJECT_${suffix}`],
+    contact_name_confirmation: ATOMIC_ACTIONS[`CONFIRM_CONTACT_NAME_${suffix}`],
+    client_name_confirmation: ATOMIC_ACTIONS[`CONFIRM_CLIENT_NAME_${suffix}`],
+    name_owner_confirmation: ATOMIC_ACTIONS[`CONFIRM_NAME_OWNER_${suffix}`],
+    client_phone_confirmation: ATOMIC_ACTIONS[`CONFIRM_CLIENT_PHONE_${suffix}`]
+  }
+  return actions[flow] || ATOMIC_ACTIONS.FALLBACK
+}
+
 function routeClientPostIntake(decision = {}, ctx = {}) {
   const route = decision.route
   const mode = decision.data?.mode
@@ -138,6 +181,13 @@ function routeClientPostIntake(decision = {}, ctx = {}) {
   const stages = ctx.stages || {}
   const text = typeof ctx.text === "string" ? ctx.text : ""
   const source = ctx.isAudio || decision.data?.source === "audio" ? "audio" : "text"
+
+  if (route === ROUTES.ONBOARDING) {
+    return atomicResult(
+      routeOnboarding(decision.data?.flow, source),
+      `${decision.data?.flow || "onboarding"}_${source}`
+    )
+  }
 
   if (route === ROUTES.THIRD_PARTY) {
     return atomicResult(

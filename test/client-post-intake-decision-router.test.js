@@ -59,6 +59,35 @@ for (const [stage, source, expected] of [
   assert.equal(result.legacyAction, NEXT_ACTIONS.PROCESS_THIRD_PARTY)
 }
 
+for (const [flow, source, expected] of [
+  ["welcome", "text", ATOMIC_ACTIONS.START_INTAKE_TEXT],
+  ["welcome", "audio", ATOMIC_ACTIONS.START_INTAKE_AUDIO],
+  ["mode", "text", ATOMIC_ACTIONS.SELECT_INTAKE_MODE_TEXT],
+  ["mode", "audio", ATOMIC_ACTIONS.SELECT_INTAKE_MODE_AUDIO],
+  ["subject", "text", ATOMIC_ACTIONS.SELECT_INTAKE_SUBJECT_TEXT],
+  ["subject", "audio", ATOMIC_ACTIONS.SELECT_INTAKE_SUBJECT_AUDIO],
+  ["contact_name_confirmation", "text", ATOMIC_ACTIONS.CONFIRM_CONTACT_NAME_TEXT],
+  ["contact_name_confirmation", "audio", ATOMIC_ACTIONS.CONFIRM_CONTACT_NAME_AUDIO],
+  ["client_name_confirmation", "text", ATOMIC_ACTIONS.CONFIRM_CLIENT_NAME_TEXT],
+  ["client_name_confirmation", "audio", ATOMIC_ACTIONS.CONFIRM_CLIENT_NAME_AUDIO],
+  ["name_owner_confirmation", "text", ATOMIC_ACTIONS.CONFIRM_NAME_OWNER_TEXT],
+  ["name_owner_confirmation", "audio", ATOMIC_ACTIONS.CONFIRM_NAME_OWNER_AUDIO],
+  ["client_phone_confirmation", "text", ATOMIC_ACTIONS.CONFIRM_CLIENT_PHONE_TEXT],
+  ["client_phone_confirmation", "audio", ATOMIC_ACTIONS.CONFIRM_CLIENT_PHONE_AUDIO]
+]) {
+  const inputDecision = {
+    route: ROUTES.ONBOARDING,
+    data: { flow, source, stage: "stage_test" },
+    handled: true
+  }
+  const result = routeClientPostIntake(inputDecision, {
+    stages,
+    isAudio: source === "audio"
+  })
+  assert.equal(result.nextAction, expected)
+  assert.equal(result.legacyAction, NEXT_ACTIONS.FALLBACK)
+}
+
 for (const reason of ["excluded_stage", "ambiguous", "invalid_input", "not_applicable"]) {
   assert.deepEqual(
     routeClientPostIntake({ route: ROUTES.FALLBACK, data: { reason }, handled: false }),
