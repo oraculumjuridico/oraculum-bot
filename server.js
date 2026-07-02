@@ -82,6 +82,7 @@ const { handleDescriptionConfirmation } = require("./src/domain/stage-handlers/d
 const { handleAudioConfirmation } = require("./src/domain/stage-handlers/audio-confirmation-handler")
 const { handleConfirmEntryInvalid } = require("./src/domain/stage-handlers/confirm-entry-invalid-handler")
 const { handleConfirmEntryCorrection } = require("./src/domain/stage-handlers/confirm-entry-correction-handler")
+const { handleConfirmEntryCorrectedName } = require("./src/domain/stage-handlers/confirm-entry-corrected-name-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13057,24 +13058,24 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     if (text && text !== "entrada_ok" && text !== "entrada_corrigir") {
       const tipo = u._entradaPendenteTipo
       const origem = u._entradaPendenteOrigem
-      if (tipo === "nome") {
-        const nomeLimpo = extrairNomeDaCorrecaoExplicita(text) || formatarNome(limparTextoSomenteLetras(text))
-        if (ehNomeAparente(nomeLimpo, nomeLimpo !== formatarNome(limparTextoSomenteLetras(text)) ? nomeLimpo : text) === true) {
-          u._entradaPendenteValor = nomeLimpo
-          const barra = "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n"
-          if (!u.modoTexto) {
-            try {
-              const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O nome é ${nomeLimpo}. Está correto? Se não estiver, me diga o nome correto agora.`)
-              await enviarAudio(from, urlAudioAtendente(ogg))
-              await new Promise(r => setTimeout(r, 4000))
-            } catch (e) { logErro("tts", "Falha áudio reconfirmar nome entrada", e) }
-          }
-          return {
-            texto: `${barra}Você informou: *${nomeLimpo}*\nEstá correto? Se não estiver, é só me dizer o nome correto agora. Pode falar ou digitar. 🎙️`,
-            opcoes: [{ id: "entrada_ok", title: "✅ Confirmar" }]
-          }
-        }
-      } else if (tipo === "telefone") {
+      const resultadoNomeCorrigido = await handleConfirmEntryCorrectedName({
+        u,
+        texto: text,
+        from,
+        stages: STAGES,
+        extrairNomeDaCorrecaoExplicita,
+        formatarNome,
+        limparTextoSomenteLetras,
+        ehNomeAparente,
+        gerarAudioAtendente,
+        enviarAudio,
+        urlAudioAtendente,
+        esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+        logErro
+      })
+      if (resultadoNomeCorrigido.handled) return resultadoNomeCorrigido.response
+
+      if (tipo === "telefone") {
         const telNorm = normalizarTelefone(text)
         if (telNorm && telNorm.replace(/\D/g, "").length >= 12) {
           u._entradaPendenteValor = telNorm
