@@ -89,6 +89,7 @@ const { handleAudioIntake } = require("./src/domain/audio/audio-intake-pipeline-
 const { routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
+const { handle: handleRevalidateNameCorrectText } = require("./src/domain/client/handlers/revalidate-name-correct-text.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const { handle: handleRevalidatePhoneConfirm } = require("./src/domain/client/handlers/revalidate-phone-confirm.handler")
 const { handle: handleConfirmEntryInvalidRetry } = require("./src/domain/client/handlers/confirm-entry-invalid-retry.handler")
@@ -10393,6 +10394,30 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   })
   if (resultadoRevalidacaoNomeConfirmada.success) {
     return resultadoRevalidacaoNomeConfirmada.response
+  }
+
+  const resultadoCorrecaoTextualNome = await handleRevalidateNameCorrectText({
+    decision: clientPostIntakeDecision,
+    u,
+    texto: text,
+    from,
+    extrairNomeDaCorrecaoExplicita,
+    formatarNome,
+    limparTextoSomenteLetras,
+    ehNomeAparente,
+    parecePuraNegacaoSemNome,
+    sincronizarContatoNegocioHubSpot,
+    gerarAudioAtendente,
+    enviarAudio,
+    urlAudioAtendente,
+    esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    logErro,
+    iniciarTimer,
+    responderComTimer,
+    proximaConfirmacaoProgressiva
+  })
+  if (resultadoCorrecaoTextualNome.success) {
+    return resultadoCorrecaoTextualNome.response
   }
 
   // handlers de revalidação progressiva
