@@ -77,6 +77,7 @@ const {
 } = require("./src/domain/client-message-builders")
 const { criarLegacyIntakeRouter } = require("./src/domain/legacy-intake-router")
 const { criarPostAudioRouter } = require("./src/domain/post-audio-router")
+const { criarClientNavigationRouter } = require("./src/domain/client-navigation-router")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -9825,6 +9826,16 @@ const processarPosAudio = criarPostAudioRouter({
   telaDescreverCaso
 })
 
+const processarNavegacaoCliente = criarClientNavigationRouter({
+  podeMostrarMenuCliente,
+  setStage,
+  iniciarTimer,
+  getPrimeiroNomeRetomada,
+  iniciarFluxoRelatoLivre,
+  menuClienteComAudio,
+  abrirNovoCasoCliente
+})
+
 async function processarInterno(from, nomeWA, text, msgObj, u) {
   text = sanitizarTextoEntrada(text)
   u.ultimaMsg = Date.now()
@@ -13470,36 +13481,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
   if (resultadoPosAudio.handled) return resultadoPosAudio.response
 
 
-  // INICIO
-  if (u.stage === "inicio") {
-    if (podeMostrarMenuCliente(u)) {
-      // Cliente retornando — perguntar se quer acompanhar ou abrir novo caso
-      setStage(u, "inicio_retorno"); iniciarTimer(from)
-      const nomeExib = getPrimeiroNomeRetomada(u)
-      return {
-        texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
-        opcoes: [
-        { id: "ret_acompanhar", title: "📊 Acompanhar meu caso" },
-        { id: "ret_novo",       title: "➕ Abrir novo caso" }
-        ]
-      }
-    }
-    return await iniciarFluxoRelatoLivre(from, u, { boasVindas: true })
-  }
-
-  // RETORNO — cliente escolhe entre acompanhar ou novo caso
-  if (u.stage === "inicio_retorno") {
-    if (text === "ret_acompanhar") {
-      if (!podeMostrarMenuCliente(u)) {
-        return await iniciarFluxoRelatoLivre(from, u, { boasVindas: true })
-      }
-      setStage(u, "cliente"); iniciarTimer(from)
-      return await menuClienteComAudio(from, u)
-    }
-    if (text === "ret_novo") {
-      return await abrirNovoCasoCliente(from, u)
-    }
-  }
+  const resultadoNavegacaoCliente = await processarNavegacaoCliente({ from, u, text })
+  if (resultadoNavegacaoCliente.handled) return resultadoNavegacaoCliente.response
 
   // MENU CLIENTE
   if (u.stage === "cliente") {
