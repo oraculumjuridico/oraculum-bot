@@ -91,6 +91,7 @@ const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = requ
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const { handle: handleRevalidatePhoneConfirm } = require("./src/domain/client/handlers/revalidate-phone-confirm.handler")
+const { handle: handleConfirmEntryInvalidRetry } = require("./src/domain/client/handlers/confirm-entry-invalid-retry.handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13069,6 +13070,16 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         setStage(u, STAGES.ACOLHIMENTO_CIDADE)
         iniciarTimer(from)
         return await processarInterno(from, u.nomeWA || "", text, { type: "text", text: { body: text } }, u)
+      }
+      const resultadoRetryEntradaInvalida = await handleConfirmEntryInvalidRetry({
+        u,
+        texto: text,
+        from,
+        stages: STAGES,
+        iniciarTimer
+      })
+      if (resultadoRetryEntradaInvalida.success) {
+        return resultadoRetryEntradaInvalida.response
       }
       // Não conseguiu extrair valor válido — orienta
       iniciarTimer(from)
