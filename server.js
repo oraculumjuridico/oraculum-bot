@@ -79,6 +79,7 @@ const { criarLegacyIntakeRouter } = require("./src/domain/legacy-intake-router")
 const { criarPostAudioRouter } = require("./src/domain/post-audio-router")
 const { criarClientNavigationRouter } = require("./src/domain/client-navigation-router")
 const { handleDescriptionConfirmation } = require("./src/domain/stage-handlers/description-confirmation-handler")
+const { handleAudioConfirmation } = require("./src/domain/stage-handlers/audio-confirmation-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -11476,57 +11477,26 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (u.stage === STAGES.AUDIO_CONFIRMAR_TRANSCRICAO) {
-    const seguirAposClassificacaoAudio = async () => {
-      setStage(u, STAGES.AUDIO_CONFIRMAR_AREA_CANAL)
-      iniciarTimer(from)
-      return await telaConfirmarAreaAudio(from, u)
-    }
-    if (text === "audio_transcricao_ok") {
-      if (!u._audioCanalTranscricao) {
-        iniciarTimer(from)
-        return responderComTimer(from, { texto: "Não encontrei a transcrição anterior. Envie seu áudio novamente, por favor.", opcoes: [{ id: "audio_enviar", title: "🎤 Enviar áudio" }] })
-      }
-      const classificacao = await classificarAreaAudio(u._audioCanalTranscricao)
-      aplicarClassificacaoJuridica(u, classificacao)
-      return await seguirAposClassificacaoAudio()
-    }
-    if (text === "audio_transcricao_novo") {
-      setStage(u, STAGES.AUDIO_AGUARDANDO)
-      iniciarTimer(from)
-      try {
-        const ogg = await gerarAudioAtendente(u.atendente,
-          `Tudo bem! Pode enviar um novo áudio agora. Fale com calma explicando sua situação.`)
-        await enviarAudio(from, urlAudioAtendente(ogg))
-        await new Promise(r => setTimeout(r, 3000))
-      } catch (e) { logErro("tts", "Falha áudio novo envio", e) }
-      return {
-        texto: `🎙️ Pode enviar seu novo áudio agora.\n\n_Fale com calma — estou aqui para ouvir você._`,
-        opcoes: null
-      }
-    }
-    if (text === "audio_transcricao_texto") {
-      iniciarTimer(from)
-      try {
-        const ogg = await gerarAudioAtendente(u.atendente,
-          `Tudo bem! Digite agora sua situação com suas próprias palavras. Pode escrever à vontade.`)
-        await enviarAudio(from, urlAudioAtendente(ogg))
-        await new Promise(r => setTimeout(r, 3000))
-      } catch (e) { logErro("tts", "Falha áudio corrigir texto", e) }
-      return {
-        texto: `✍️ Digite abaixo sua situação com suas próprias palavras.\n\n_Escreva à vontade — estou aqui para ajudar._`,
-        opcoes: null
-      }
-    }
-    if (text) {
-      u._audioCanalTranscricao = normalizarTextoCRM(text)
-      const classificacao = await classificarAreaAudio(u._audioCanalTranscricao)
-      aplicarClassificacaoJuridica(u, classificacao)
-      return await seguirAposClassificacaoAudio()
-    }
-    iniciarTimer(from)
-    return responderComTimer(from, await telaConfirmarTranscricao(from, u.atendente, u._audioCanalTranscricao || "", u.area))
-  }
+  const resultadoConfirmacaoAudio = await handleAudioConfirmation({
+    u,
+    texto: text,
+    from,
+    stages: STAGES,
+    setStage,
+    iniciarTimer,
+    telaConfirmarAreaAudio,
+    responderComTimer,
+    classificarAreaAudio,
+    aplicarClassificacaoJuridica,
+    gerarAudioAtendente,
+    enviarAudio,
+    urlAudioAtendente,
+    esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    logErro,
+    normalizarTextoCRM,
+    telaConfirmarTranscricao
+  })
+  if (resultadoConfirmacaoAudio.handled) return resultadoConfirmacaoAudio.response
 
   if (u.stage === STAGES.ASSESSORIA_INICIAL) {
     // "Continuar" — modo já definido na etapa 1, apenas avança o fluxo
