@@ -93,6 +93,7 @@ const { handle: handleRevalidateNameCorrectText } = require("./src/domain/client
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const { handle: handleRevalidateCitySelect } = require("./src/domain/client/handlers/revalidate-city-select.handler")
 const { handle: handleRevalidatePhoneConfirm } = require("./src/domain/client/handlers/revalidate-phone-confirm.handler")
+const { handle: handleRevalidatePhoneCorrectText } = require("./src/domain/client/handlers/revalidate-phone-correct-text.handler")
 const { handle: handleConfirmEntryInvalidRetry } = require("./src/domain/client/handlers/confirm-entry-invalid-retry.handler")
 const {
   formatarSituacaoJuridica,
@@ -10580,6 +10581,28 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   })
   if (resultadoRevalidacaoTelefoneConfirmada.success) {
     return resultadoRevalidacaoTelefoneConfirmada.response
+  }
+
+  const resultadoCorrecaoTextualTelefone = await handleRevalidatePhoneCorrectText({
+    decision: clientPostIntakeDecision,
+    u,
+    texto: text,
+    from,
+    normalizarTelefone,
+    formatarTelefoneExibicao,
+    gerarAudioAtendente,
+    enviarAudio,
+    urlAudioAtendente,
+    esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    logErro,
+    iniciarTimer,
+    responderComTimer,
+    voltarParaConfirmacao,
+    proximaConfirmacaoProgressiva,
+    flowAcolhimentoCidade
+  })
+  if (resultadoCorrecaoTextualTelefone.success) {
+    return resultadoCorrecaoTextualTelefone.response
   }
 
   if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_PHONE) {
