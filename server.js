@@ -80,6 +80,7 @@ const { criarPostAudioRouter } = require("./src/domain/post-audio-router")
 const { criarClientNavigationRouter } = require("./src/domain/client-navigation-router")
 const { handleDescriptionConfirmation } = require("./src/domain/stage-handlers/description-confirmation-handler")
 const { handleAudioConfirmation } = require("./src/domain/stage-handlers/audio-confirmation-handler")
+const { handleConfirmEntryInvalid } = require("./src/domain/stage-handlers/confirm-entry-invalid-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13186,11 +13187,13 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
     }
     // Fallback genérico — reapresenta a tela de confirmação
-    iniciarTimer(from)
-    return {
-      texto: "Confirme a informação ou me diga a correção agora. Pode falar ou digitar. 🎙️",
-      opcoes: [{ id: "entrada_ok", title: "✅ Confirmar" }]
-    }
+    const resultadoEntradaInvalida = await handleConfirmEntryInvalid({
+      u,
+      from,
+      stages: STAGES,
+      iniciarTimer
+    })
+    if (resultadoEntradaInvalida.handled) return resultadoEntradaInvalida.response
   }
 
   // NOVO CASO CONFIRMA — verificar se o telefone é do cliente
