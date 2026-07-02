@@ -78,6 +78,7 @@ const {
 const { criarLegacyIntakeRouter } = require("./src/domain/legacy-intake-router")
 const { criarPostAudioRouter } = require("./src/domain/post-audio-router")
 const { criarClientNavigationRouter } = require("./src/domain/client-navigation-router")
+const { handleDescriptionConfirmation } = require("./src/domain/stage-handlers/description-confirmation-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13340,38 +13341,19 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
   if (resultadoColetaLegada.handled) return resultadoColetaLegada.response
 
   // DESC_CONFIRMA — confirmar ou voltar para descrição
-  if (u.stage === "desc_confirma") {
-    if (text === "desc_ok") {
-      u.descricao = normalizarTextoCRM((u._descTemp || "").trim())
-      u._descTemp  = null
-      await sincronizarNegocio(u)
-      return await respostaAposConfirmarDescricao(from, u)
-    }
-    if (text === "desc_corrigir") {
-      if (u._audioDescBuffer) {
-        u.audiosDescCorrigidos.push({
-          buffer: u._audioDescBuffer,
-          mimeType: u._audioDescMime,
-          nome: u._audioDescNome
-        })
-      }
-      u._descTemp = null
-      u._audioDescBuffer = null
-      u._audioDescMime = null
-      u._audioDescNome = null
-      entrarEtapaDescricao(u, u._descOrigemStage === "explicar_tudo" ? STAGES.COLETA_DESC_AUDIO : (u._descOrigemStage || STAGES.COLETA_DESC_AUDIO))
-      iniciarTimer(from)
-      return telaDescreverCaso()
-    }
-    iniciarTimer(from)
-    return {
-      texto: "Use uma das opções abaixo para confirmar ou corrigir a transcrição.",
-      opcoes: [
-      { id: "desc_ok", title: "✅ Confirmar" },
-      { id: "desc_corrigir", title: "✏️ Corrigir" }
-      ]
-    }
-  }
+  const resultadoConfirmacaoDescricao = await handleDescriptionConfirmation({
+    u,
+    texto: text,
+    from,
+    stages: STAGES,
+    normalizarTextoCRM,
+    sincronizarNegocio,
+    respostaAposConfirmarDescricao,
+    entrarEtapaDescricao,
+    iniciarTimer,
+    telaDescreverCaso
+  })
+  if (resultadoConfirmacaoDescricao.handled) return resultadoConfirmacaoDescricao.response
 
   // GATILHO ? URGENCIA ? COLETA
   if (u.stage === "gatilho") {
