@@ -86,7 +86,8 @@ const { handleConfirmEntryCorrectedName } = require("./src/domain/stage-handlers
 const { handleConfirmEntryPhone } = require("./src/domain/stage-handlers/confirm-entry-phone-handler")
 const { handleConfirmEntryFinalAcceptance } = require("./src/domain/stage-handlers/confirm-entry-final-acceptance-handler")
 const { handleAudioIntake } = require("./src/domain/audio/audio-intake-pipeline-router")
-const { ROUTES: CLIENT_INTAKE_ROUTES, routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
+const { routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
+const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -10372,17 +10373,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     { text, isAudio: ehAudio },
     { stage: u.stage, stages: STAGES }
   )
-  const entradaNomeRevalidacao = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.NAME && clientIntakeDecision.data.mode === "revalidation"
-  const entradaNomeCliente = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.NAME && clientIntakeDecision.data.mode === "intake"
-  const entradaCidadeRevalidacao = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.CITY && clientIntakeDecision.data.mode === "revalidation"
-  const entradaCidadeCliente = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.CITY && clientIntakeDecision.data.mode === "intake"
-  const entradaWhatsappRevalidacao = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.PHONE && clientIntakeDecision.data.mode === "revalidation"
-  const entradaTelefoneCliente = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.PHONE && clientIntakeDecision.data.mode === "intake"
-  const confirmacaoTelefoneCliente = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.PHONE && clientIntakeDecision.data.mode === "confirmation"
-  const entradaTerceiro = clientIntakeDecision.route === CLIENT_INTAKE_ROUTES.THIRD_PARTY
+  const { nextAction: clientPostIntakeAction } = routeClientPostIntake(clientIntakeDecision)
 
   // handlers de revalidação progressiva
-  if (entradaNomeRevalidacao) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_NAME) {
     if (text === "revalida_nome_ok") {
       if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
       u._revalidaConfirmados.push("nome")
@@ -10422,7 +10416,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     if (imprevistoRevalidaNome) return imprevistoRevalidaNome
   }
 
-  if (entradaCidadeRevalidacao) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_CITY) {
     if (text === "revalida_cidade_ok") {
       if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
       u._revalidaConfirmados.push("cidade")
@@ -10501,7 +10495,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     if (imprevistoRevalidaCidade) return imprevistoRevalidaCidade
   }
 
-  if (entradaWhatsappRevalidacao) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_PHONE) {
     if (text === "revalida_whatsapp_ok") {
       if (u._corrigindoWhatsappConfirmacao) {
         u.whatsappVerificado = true
@@ -10558,7 +10552,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   }
 
   // Após corrigir nome no fluxo de revalidação → continuar progressão
-  if (entradaNomeCliente && u._revalidandoCampos && text) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.COLLECT_NAME && u._revalidandoCampos && text) {
     const nomeRevalida = extrairNomeDaCorrecaoExplicita(text) || formatarNome(limparTextoSomenteLetras(text))
     if (ehNomeAparente(nomeRevalida, text) !== true) {
       iniciarTimer(from)
@@ -10575,7 +10569,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   }
 
   // Intercepta áudio no stage de coleta do nome do contato (quem está no WhatsApp, caso para terceiro)
-  if (entradaTerceiro && u.stage === STAGES.ACOLHIMENTO_NOME_CONTATO && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.PROCESS_THIRD_PARTY && u.stage === STAGES.ACOLHIMENTO_NOME_CONTATO && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) {
@@ -10637,7 +10631,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
   }
 
   // Intercepta áudio no stage de coleta de nome
-  if (entradaNomeCliente && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.COLLECT_NAME && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) {
@@ -10715,7 +10709,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaCidadeCliente && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.COLLECT_CITY && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) return { texto: `Não consegui processar seu áudio. Por favor, digite sua cidade ou CEP.`, opcoes: null }
@@ -10841,7 +10835,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaWhatsappRevalidacao && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_PHONE && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) {
@@ -10897,7 +10891,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaNomeRevalidacao && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_NAME && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) {
@@ -10949,7 +10943,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaCidadeRevalidacao && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_CITY && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) return { texto: `Não consegui processar seu áudio. Por favor, digite sua cidade ou CEP.`, opcoes: null }
@@ -11037,7 +11031,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaTelefoneCliente && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.COLLECT_PHONE && ehAudio) {
     try {
   await enviar(from, "👂 Estou ouvindo seu áudio...", null, false)
       const mediaId = msgObj.audio?.id || msgObj.voice?.id
@@ -11106,7 +11100,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (confirmacaoTelefoneCliente) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.CONFIRM_PHONE) {
     if (text === "tel_confirmar") {
       u.whatsappContato = normalizarNumeroWhatsAppEnvio(u._telefoneTemp)
       u.whatsappVerificado = true
@@ -11142,7 +11136,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaTerceiro && u.stage === STAGES.COLETA_TEL_OUTRO && ehAudio) {
+  if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.PROCESS_THIRD_PARTY && u.stage === STAGES.COLETA_TEL_OUTRO && ehAudio) {
     try {
       const mediaId = msgObj?.[tipo]?.id
       if (!mediaId) {
@@ -12022,11 +12016,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     { text, isAudio: ehAudio },
     { stage: u.stage, stages: STAGES }
   )
-  const entradaNomeClienteAtual = clientIntakeDecisionAtual.route === CLIENT_INTAKE_ROUTES.NAME && clientIntakeDecisionAtual.data.mode === "intake"
-  const entradaCidadeClienteAtual = clientIntakeDecisionAtual.route === CLIENT_INTAKE_ROUTES.CITY && clientIntakeDecisionAtual.data.mode === "intake"
-  const entradaTerceiroAtual = clientIntakeDecisionAtual.route === CLIENT_INTAKE_ROUTES.THIRD_PARTY
+  const { nextAction: clientPostIntakeActionAtual } = routeClientPostIntake(clientIntakeDecisionAtual)
 
-  if (entradaTerceiroAtual && u.stage === STAGES.ACOLHIMENTO_NOME_CONTATO && text) {
+  if (clientPostIntakeActionAtual === CLIENT_POST_INTAKE_ACTIONS.PROCESS_THIRD_PARTY && u.stage === STAGES.ACOLHIMENTO_NOME_CONTATO && text) {
 
     // 1. Tenta extrair nome — primeiro por padrões de correção explícita ("meu nome é X",
     //    "me chamo X"), depois por remoção de prefixo simples, depois por limpeza pura.
@@ -12190,7 +12182,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
   }
 
-  if (entradaNomeClienteAtual && text) {
+  if (clientPostIntakeActionAtual === CLIENT_POST_INTAKE_ACTIONS.COLLECT_NAME && text) {
     // Tenta extrair nome por correção explícita ("meu nome é X", "me chamo X") antes da limpeza pura.
     // Isso evita que frases com prefixo de negação/correção sejam limpas e virem um "nome" inválido.
     const nomeCorrecaoNome = extrairNomeDaCorrecaoExplicita(text)
@@ -12624,7 +12616,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nSe quiser usar outro número, é só digitar ou falar com DDD agora. Se preferir continuar com este, toque em *Continuar assim*. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
   }
 
-  if (entradaCidadeClienteAtual && text) {
+  if (clientPostIntakeActionAtual === CLIENT_POST_INTAKE_ACTIONS.COLLECT_CITY && text) {
     if (text === "cidade_nenhuma_dessas") {
       delete u._cidadesMultiplas
       iniciarTimer(from)
