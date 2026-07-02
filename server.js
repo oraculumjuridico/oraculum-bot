@@ -88,6 +88,7 @@ const { handleConfirmEntryFinalAcceptance } = require("./src/domain/stage-handle
 const { handleAudioIntake } = require("./src/domain/audio/audio-intake-pipeline-router")
 const { routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
+const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -10373,12 +10374,23 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     { text, isAudio: ehAudio },
     { stage: u.stage, stages: STAGES }
   )
-  const { legacyAction: clientPostIntakeAction } = routeClientPostIntake(clientIntakeDecision, {
+  const clientPostIntakeDecision = routeClientPostIntake(clientIntakeDecision, {
     text,
     isAudio: ehAudio,
     stage: u.stage,
     stages: STAGES
   })
+  const clientPostIntakeAction = clientPostIntakeDecision.legacyAction
+
+  const resultadoRevalidacaoNomeConfirmada = await handleRevalidateNameConfirm({
+    decision: clientPostIntakeDecision,
+    u,
+    from,
+    proximaConfirmacaoProgressiva
+  })
+  if (resultadoRevalidacaoNomeConfirmada.success) {
+    return resultadoRevalidacaoNomeConfirmada.response
+  }
 
   // handlers de revalidação progressiva
   if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_NAME) {
