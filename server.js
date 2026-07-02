@@ -66,7 +66,8 @@ const {
 } = require("./src/domain/client-intent-detector")
 const {
   detectarSofrimentoIntenso,
-  detectarModoAtendimento
+  detectarModoAtendimento,
+  deveAtivarModoDigitando
 } = require("./src/domain/message-classifiers")
 const {
   formatarSituacaoJuridica,
@@ -2213,20 +2214,6 @@ function prepararNovaEntradaAposFluxoEncerrado(u, nomeWA = "") {
   })
 
   agendarPersistenciaUsers()
-}
-
-function deveAtivarModoDigitando(payload) {
-  const texto = String(payload?.texto || "").toLowerCase()
-  if (!texto) return false
-  return (
-    texto.includes("me explique o que está acontecendo") ||
-    texto.includes("me explique o que est") ||
-    texto.includes("pode digitar ou enviar um áudio") ||
-    texto.includes("pode digitar ou enviar um audio") ||
-    texto.includes("digite sua mensagem ou envie um áudio agora") ||
-    texto.includes("digite sua mensagem ou envie um audio agora") ||
-    texto.includes("descreva brevemente")
-  )
 }
 
 function enviarOpcoesPadrao(_from, modo = "documentos") {

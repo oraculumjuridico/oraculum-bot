@@ -2,7 +2,8 @@ const assert = require("node:assert/strict")
 
 const {
   detectarSofrimentoIntenso,
-  detectarModoAtendimento
+  detectarModoAtendimento,
+  deveAtivarModoDigitando
 } = require("../src/domain/message-classifiers")
 
 for (const [texto, esperado] of [
@@ -36,6 +37,28 @@ for (const texto of [
   ""
 ]) {
   assert.equal(detectarSofrimentoIntenso(texto), false)
+}
+
+for (const texto of [
+  "Me explique o que está acontecendo",
+  "Me explique o que est",
+  "Pode digitar ou enviar um áudio",
+  "Pode digitar ou enviar um audio",
+  "Digite sua mensagem ou envie um áudio agora",
+  "Digite sua mensagem ou envie um audio agora",
+  "Descreva brevemente"
+]) {
+  assert.equal(deveAtivarModoDigitando({ texto }), true)
+}
+
+for (const payload of [
+  undefined,
+  null,
+  {},
+  { texto: "" },
+  { texto: "Escolha uma opção" }
+]) {
+  assert.equal(deveAtivarModoDigitando(payload), false)
 }
 
 console.log("message-classifiers.test.js: ok")

@@ -63,7 +63,22 @@ function detectarModoAtendimento(texto) {
   return null
 }
 
+function deveAtivarModoDigitando(payload) {
+  const texto = String(payload?.texto || "").toLowerCase()
+  if (!texto) return false
+  return (
+    texto.includes("me explique o que está acontecendo") ||
+    texto.includes("me explique o que est") ||
+    texto.includes("pode digitar ou enviar um áudio") ||
+    texto.includes("pode digitar ou enviar um audio") ||
+    texto.includes("digite sua mensagem ou envie um áudio agora") ||
+    texto.includes("digite sua mensagem ou envie um audio agora") ||
+    texto.includes("descreva brevemente")
+  )
+}
+
 module.exports = {
   detectarSofrimentoIntenso,
-  detectarModoAtendimento
+  detectarModoAtendimento,
+  deveAtivarModoDigitando
 }
