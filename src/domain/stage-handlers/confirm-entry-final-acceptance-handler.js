@@ -26,6 +26,9 @@ async function handleConfirmEntryFinalAcceptance({
   const origem = u._entradaPendenteOrigem
   const tipo = u._entradaPendenteTipo
   const valor = u._entradaPendenteValor
+  if (!["nome", "telefone", "cidade"].includes(tipo)) {
+    return { handled: false, response: null }
+  }
   limparEntradaPendente(u)
   if (tipo === "nome") {
     u.nome = valor

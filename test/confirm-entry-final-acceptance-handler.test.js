@@ -245,17 +245,30 @@ async function main() {
       stage: "confirmar_entrada",
       _entradaPendenteTipo: "desconhecido",
       _entradaPendenteValor: "valor",
-      _entradaPendenteOrigem: "origem"
+      _entradaPendenteOrigem: "origem",
+      _entradaPendenteExtra: { campo: "preservado" }
     }
     const { ctx, chamadas } = criarContexto(u)
+    const estadoAntes = structuredClone(u)
     assert.deepEqual(
       await handleConfirmEntryFinalAcceptance(ctx),
       { handled: false, response: null }
     )
-    assert.equal(u._entradaPendenteTipo, null)
-    assert.equal(u._entradaPendenteValor, null)
-    assert.equal(u._entradaPendenteOrigem, null)
-    assert.deepEqual(chamadas.limpezas, [u])
+    assert.deepEqual(u, estadoAntes)
+    assert.deepEqual(chamadas, {
+      limpezas: [],
+      sincronizacoes: [],
+      stages: [],
+      timers: [],
+      audiosModoVoz: [],
+      confirmaWhatsapp: [],
+      cidades: [],
+      voltas: [],
+      pedidosCidade: [],
+      relatosPendentes: [],
+      confirmacoesDados: [],
+      iniciosRelato: []
+    })
   }
 
   console.log("confirm-entry-final-acceptance-handler.test.js: ok")
