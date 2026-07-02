@@ -81,6 +81,7 @@ const { criarClientNavigationRouter } = require("./src/domain/client-navigation-
 const { handleDescriptionConfirmation } = require("./src/domain/stage-handlers/description-confirmation-handler")
 const { handleAudioConfirmation } = require("./src/domain/stage-handlers/audio-confirmation-handler")
 const { handleConfirmEntryInvalid } = require("./src/domain/stage-handlers/confirm-entry-invalid-handler")
+const { handleConfirmEntryCorrection } = require("./src/domain/stage-handlers/confirm-entry-correction-handler")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -13038,18 +13039,20 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
   }
 
   if (u.stage === STAGES.CONFIRMAR_ENTRADA) {
-    if (text === "entrada_corrigir") {
-      // Legado: se alguém ainda enviar esse payload (ex: mensagem antiga), orienta a dizer a correção
-      iniciarTimer(from)
-      if (!u.modoTexto) {
-        try {
-          const ogg = await gerarAudioAtendente(u.atendente, "Sem problema. Me diga a informação correta agora, pode falar ou digitar.")
-          await enviarAudio(from, urlAudioAtendente(ogg))
-          await new Promise(r => setTimeout(r, 3000))
-        } catch (e) { logErro("tts", "Falha áudio orientar correção entrada", e) }
-      }
-      return { texto: "Sem problema! Me diga a informação correta agora. Pode falar ou digitar. 🎙️", opcoes: null }
-    }
+    const resultadoPedidoCorrecaoEntrada = await handleConfirmEntryCorrection({
+      u,
+      texto: text,
+      from,
+      stages: STAGES,
+      iniciarTimer,
+      gerarAudioAtendente,
+      enviarAudio,
+      urlAudioAtendente,
+      esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+      logErro
+    })
+    if (resultadoPedidoCorrecaoEntrada.handled) return resultadoPedidoCorrecaoEntrada.response
+
     // Texto livre = informação corrigida diretamente
     if (text && text !== "entrada_ok" && text !== "entrada_corrigir") {
       const tipo = u._entradaPendenteTipo
