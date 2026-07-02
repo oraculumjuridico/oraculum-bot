@@ -76,6 +76,7 @@ const {
   gerarFallbackEmpatico
 } = require("./src/domain/client-message-builders")
 const { criarLegacyIntakeRouter } = require("./src/domain/legacy-intake-router")
+const { criarPostAudioRouter } = require("./src/domain/post-audio-router")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
@@ -9810,6 +9811,20 @@ const processarColetaLegada = criarLegacyIntakeRouter({
   iniciarConfirmacaoDescricao
 })
 
+const processarPosAudio = criarPostAudioRouter({
+  STAGES,
+  executarRecomecoFluxo,
+  executarEncerramentoFluxo,
+  retomarUltimaPergunta,
+  iniciarTimer,
+  responderComTimer,
+  telaAudioNoFluxo,
+  aplicarSugestaoFluxoOutro,
+  setStage,
+  sincronizarNegocio,
+  telaDescreverCaso
+})
+
 async function processarInterno(from, nomeWA, text, msgObj, u) {
   text = sanitizarTextoEntrada(text)
   u.ultimaMsg = Date.now()
@@ -13451,71 +13466,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     return responderComTimer(from, await telaConfirmarUrgenteComAudio(from, u, u._urgenteAudioTexto || ""))
   }
 
-  if (u.stage === STAGES.AUDIO_FLUXO_CONFIRMA) {
-    const acao = u._audioFluxoAcao || "continuar"
-    if (text === "audio_fluxo_recomecar") {
-      u._audioFluxoTexto = null
-      u._audioFluxoAcao = null
-      u._audioFluxoResposta = null
-      return executarRecomecoFluxo(from, u)
-    }
-    if (text === "audio_fluxo_encerrar") {
-      u._audioFluxoTexto = null
-      u._audioFluxoAcao = null
-      u._audioFluxoResposta = null
-      return executarEncerramentoFluxo(from, u)
-    }
-    if (text === "audio_fluxo_seguir") {
-      u._audioFluxoTexto = null
-      u._audioFluxoResposta = null
-      u._audioFluxoAcao = null
-      if (acao === "recomecar") return executarRecomecoFluxo(from, u)
-      if (acao === "encerrar") return executarEncerramentoFluxo(from, u)
-      const ultimaPergunta = retomarUltimaPergunta(u)
-      if (ultimaPergunta) {
-        iniciarTimer(from)
-        return ultimaPergunta
-      }
-      return await executarRecomecoFluxo(from, u)
-    }
-    return responderComTimer(from, telaAudioNoFluxo(u._audioFluxoTexto || "", u._audioFluxoResposta || "continuar o atendimento"))
-  }
-
-  if (u.stage === STAGES.SUGESTAO_FLUXO_OUTRO) {
-    if (text === "sug_fluxo" && u._sugestaoFluxo?.categoria) {
-      aplicarSugestaoFluxoOutro(u, u._sugestaoFluxo.categoria)
-      u._sugestaoFluxo = null
-      setStage(u, STAGES.GATILHO)
-      await sincronizarNegocio(u)
-      iniciarTimer(from)
-      return { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
-    }
-    if (text === "sug_nao") {
-      u._sugestaoFluxo = null
-      setStage(u, STAGES.COLETA_DESC_AUDIO)
-      iniciarTimer(from)
-      return telaDescreverCaso()
-    }
-  }
-
-  if (u.stage === STAGES.EXPLICAR_TUDO_OFERTA) {
-    if (text === "explicar_tudo") {
-      u._descOrigemStage = "explicar_tudo"
-      setStage(u, STAGES.COLETA_DESC_AUDIO)
-      iniciarTimer(from)
-      return telaDescreverCaso()
-    }
-    if (text === "seguir_fluxo") {
-      u._proximoStageAposDescricao = null
-      u._proximaPerguntaAposDescricao = null
-      setStage(u, STAGES.GATILHO)
-      iniciarTimer(from)
-      return { texto: "✅ Certo! Vamos registrar sua solicitação.", opcoes: [{ id: "cont", title: "▶️ Continuar" }] }
-    }
-    setStage(u, STAGES.COLETA_DESC_AUDIO)
-    iniciarTimer(from)
-    return telaDescreverCaso()
-  }
+  const resultadoPosAudio = await processarPosAudio({ from, u, text })
+  if (resultadoPosAudio.handled) return resultadoPosAudio.response
 
 
   // INICIO
