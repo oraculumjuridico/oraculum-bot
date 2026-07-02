@@ -91,6 +91,7 @@ const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = requ
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const { handle: handleRevalidateNameCorrectText } = require("./src/domain/client/handlers/revalidate-name-correct-text.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
+const { handle: handleRevalidateCitySelect } = require("./src/domain/client/handlers/revalidate-city-select.handler")
 const { handle: handleRevalidatePhoneConfirm } = require("./src/domain/client/handlers/revalidate-phone-confirm.handler")
 const { handle: handleConfirmEntryInvalidRetry } = require("./src/domain/client/handlers/confirm-entry-invalid-retry.handler")
 const {
@@ -10469,6 +10470,24 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   })
   if (resultadoRevalidacaoCidadeConfirmada.success) {
     return resultadoRevalidacaoCidadeConfirmada.response
+  }
+
+  const resultadoSelecaoCidadeRevalidada = await handleRevalidateCitySelect({
+    decision: clientPostIntakeDecision,
+    u,
+    texto: text,
+    from,
+    mapearRegiaoPorUF,
+    estadoPorExtenso,
+    gerarAudioAtendente,
+    enviarAudio,
+    urlAudioAtendente,
+    esperar: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    logErro,
+    proximaConfirmacaoProgressiva
+  })
+  if (resultadoSelecaoCidadeRevalidada.success) {
+    return resultadoSelecaoCidadeRevalidada.response
   }
 
   if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_CITY) {
