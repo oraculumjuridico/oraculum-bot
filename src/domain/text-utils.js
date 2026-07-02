@@ -87,10 +87,53 @@ function classificarReuniaoCliente({ summary = "", description = "", tituloHubSp
   return "pontual"
 }
 
+function textoAudioOpcoes(opcoes = [], prefixo = "") {
+  const lista = Array.isArray(opcoes) ? opcoes.filter(o => sanitizarTextoEntrada(o?.title)) : []
+  if (!lista.length) return ""
+  const ordinais = ["Primeira", "Segunda", "Terceira", "Quarta", "Quinta", "Sexta", "Setima", "Oitava", "Nona", "Decima"]
+  const corpo = lista.map((opcao, idx) => {
+    const ordinal = ordinais[idx] || `${idx + 1}a`
+    return `${ordinal} opcao: ${removerFormatacaoParaAudio(opcao.title).replace(/[.!?;:]+$/g, "")}`
+  }).join(". ")
+  return `${prefixo ? `${prefixo}: ` : ""}${corpo}.`
+}
+
+function removerFormatacaoParaAudio(texto = "") {
+  return sanitizarTextoEntrada(texto)
+    .replace(/\bCNIS\b/gi, "extrato de contribuições do Meu INSS")
+    .replace(/```/g, " ")
+    .replace(/[*_~`]/g, "")
+    .replace(/[•·]/g, ". ")
+    .replace(/[━─]+/g, ". ")
+    .replace(/[●○]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function textoAudioAutomatico(payload = {}) {
+  const textoBase = removerFormatacaoParaAudio(payload?.texto || "")
+  const opcoes = Array.isArray(payload?.opcoes) ? payload.opcoes.slice(0, 4) : []
+  const textoOpcoes = opcoes.length ? ` ${textoAudioOpcoes(opcoes, "Opcoes na tela")}` : ""
+  const combinado = `${textoBase}${textoOpcoes}`.trim()
+  if (combinado.length <= 850) return combinado
+  return combinado.slice(0, 847).replace(/\s+\S*$/, "") + "..."
+}
+
+function textoTemMarcadorVisual(texto = "") {
+  const t = sanitizarTextoEntrada(texto)
+  if (!t) return true
+  if (/^[●○◯⚪✅❌⚠⏳⌛📌📍📎📩📄📊📱📋📅📆📁📂📞📲💬💡💰🏥🏛⚖🔎🔍🔢🎉🎙👀👂👤👋🏠➕✍✏🕒]/u.test(t)) return true
+  return /^\p{Extended_Pictographic}/u.test(t)
+}
+
 module.exports = {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
   detectarReferenciaTerceiro,
   formatarValorCorrecao,
-  classificarReuniaoCliente
+  classificarReuniaoCliente,
+  removerFormatacaoParaAudio,
+  textoAudioOpcoes,
+  textoAudioAutomatico,
+  textoTemMarcadorVisual
 }

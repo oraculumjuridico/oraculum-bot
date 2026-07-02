@@ -133,7 +133,7 @@ for (const trecho of [
 }
 
 const inicioAgendamento = server.indexOf("async function iniciarAgendamento")
-const fimAgendamento = server.indexOf("function textoAudioOpcoes", inicioAgendamento)
+const fimAgendamento = server.indexOf("function telaAdvogadoCliente", inicioAgendamento)
 const apresentacaoAgendamento = server.slice(inicioAgendamento, fimAgendamento)
 assert.match(apresentacaoAgendamento, /telaHorariosConsulta\(/)
 assert.match(apresentacaoAgendamento, /gerarAudioDaTela\(telaHorarios\)/)
