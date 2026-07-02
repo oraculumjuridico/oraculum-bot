@@ -10373,7 +10373,12 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     { text, isAudio: ehAudio },
     { stage: u.stage, stages: STAGES }
   )
-  const { nextAction: clientPostIntakeAction } = routeClientPostIntake(clientIntakeDecision)
+  const { legacyAction: clientPostIntakeAction } = routeClientPostIntake(clientIntakeDecision, {
+    text,
+    isAudio: ehAudio,
+    stage: u.stage,
+    stages: STAGES
+  })
 
   // handlers de revalidação progressiva
   if (clientPostIntakeAction === CLIENT_POST_INTAKE_ACTIONS.REVALIDATE_NAME) {
@@ -12016,7 +12021,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     { text, isAudio: ehAudio },
     { stage: u.stage, stages: STAGES }
   )
-  const { nextAction: clientPostIntakeActionAtual } = routeClientPostIntake(clientIntakeDecisionAtual)
+  const { legacyAction: clientPostIntakeActionAtual } = routeClientPostIntake(clientIntakeDecisionAtual, {
+    text,
+    isAudio: ehAudio,
+    stage: u.stage,
+    stages: STAGES
+  })
 
   if (clientPostIntakeActionAtual === CLIENT_POST_INTAKE_ACTIONS.PROCESS_THIRD_PARTY && u.stage === STAGES.ACOLHIMENTO_NOME_CONTATO && text) {
 

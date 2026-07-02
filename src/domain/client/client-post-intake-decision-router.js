@@ -12,41 +12,187 @@ const NEXT_ACTIONS = Object.freeze({
   FALLBACK: "fallback"
 })
 
-function routeClientPostIntake(decision = {}) {
+const ATOMIC_ACTIONS = Object.freeze({
+  REVALIDATE_NAME_CONFIRM: "revalidate_name_confirm",
+  REVALIDATE_NAME_CORRECT_TEXT: "revalidate_name_correct_text",
+  REVALIDATE_NAME_AUDIO: "revalidate_name_audio",
+  REVALIDATE_NAME_WAIT: "revalidate_name_wait",
+  COLLECT_NAME_TEXT: "collect_name_text",
+  COLLECT_NAME_AUDIO: "collect_name_audio",
+
+  REVALIDATE_CITY_CONFIRM: "revalidate_city_confirm",
+  REVALIDATE_CITY_SELECT: "revalidate_city_select",
+  REVALIDATE_CITY_CORRECT_TEXT: "revalidate_city_correct_text",
+  REVALIDATE_CITY_AUDIO: "revalidate_city_audio",
+  REVALIDATE_CITY_WAIT: "revalidate_city_wait",
+  COLLECT_CITY_TEXT: "collect_city_text",
+  COLLECT_CITY_AUDIO: "collect_city_audio",
+
+  REVALIDATE_PHONE_CONFIRM: "revalidate_phone_confirm",
+  REVALIDATE_PHONE_CORRECT_TEXT: "revalidate_phone_correct_text",
+  REVALIDATE_PHONE_AUDIO: "revalidate_phone_audio",
+  REVALIDATE_PHONE_WAIT: "revalidate_phone_wait",
+  COLLECT_PHONE_TEXT: "collect_phone_text",
+  COLLECT_PHONE_AUDIO: "collect_phone_audio",
+  CONFIRM_PHONE_ACCEPT: "confirm_phone_accept",
+  CONFIRM_PHONE_CORRECT: "confirm_phone_correct",
+  CONFIRM_PHONE_FALLBACK: "confirm_phone_fallback",
+
+  THIRD_PARTY_CONTACT_NAME_TEXT: "third_party_contact_name_text",
+  THIRD_PARTY_CONTACT_NAME_AUDIO: "third_party_contact_name_audio",
+  THIRD_PARTY_ATTENDED_NAME_TEXT: "third_party_attended_name_text",
+  THIRD_PARTY_ATTENDED_NAME_AUDIO: "third_party_attended_name_audio",
+  THIRD_PARTY_PHONE_TEXT: "third_party_phone_text",
+  THIRD_PARTY_PHONE_AUDIO: "third_party_phone_audio",
+  THIRD_PARTY_INPUT_TEXT: "third_party_input_text",
+  THIRD_PARTY_INPUT_AUDIO: "third_party_input_audio",
+
+  FALLBACK: "fallback"
+})
+
+const LEGACY_ACTION_BY_ATOMIC_ACTION = Object.freeze({
+  [ATOMIC_ACTIONS.REVALIDATE_NAME_CONFIRM]: NEXT_ACTIONS.REVALIDATE_NAME,
+  [ATOMIC_ACTIONS.REVALIDATE_NAME_CORRECT_TEXT]: NEXT_ACTIONS.REVALIDATE_NAME,
+  [ATOMIC_ACTIONS.REVALIDATE_NAME_AUDIO]: NEXT_ACTIONS.REVALIDATE_NAME,
+  [ATOMIC_ACTIONS.REVALIDATE_NAME_WAIT]: NEXT_ACTIONS.REVALIDATE_NAME,
+  [ATOMIC_ACTIONS.COLLECT_NAME_TEXT]: NEXT_ACTIONS.COLLECT_NAME,
+  [ATOMIC_ACTIONS.COLLECT_NAME_AUDIO]: NEXT_ACTIONS.COLLECT_NAME,
+
+  [ATOMIC_ACTIONS.REVALIDATE_CITY_CONFIRM]: NEXT_ACTIONS.REVALIDATE_CITY,
+  [ATOMIC_ACTIONS.REVALIDATE_CITY_SELECT]: NEXT_ACTIONS.REVALIDATE_CITY,
+  [ATOMIC_ACTIONS.REVALIDATE_CITY_CORRECT_TEXT]: NEXT_ACTIONS.REVALIDATE_CITY,
+  [ATOMIC_ACTIONS.REVALIDATE_CITY_AUDIO]: NEXT_ACTIONS.REVALIDATE_CITY,
+  [ATOMIC_ACTIONS.REVALIDATE_CITY_WAIT]: NEXT_ACTIONS.REVALIDATE_CITY,
+  [ATOMIC_ACTIONS.COLLECT_CITY_TEXT]: NEXT_ACTIONS.COLLECT_CITY,
+  [ATOMIC_ACTIONS.COLLECT_CITY_AUDIO]: NEXT_ACTIONS.COLLECT_CITY,
+
+  [ATOMIC_ACTIONS.REVALIDATE_PHONE_CONFIRM]: NEXT_ACTIONS.REVALIDATE_PHONE,
+  [ATOMIC_ACTIONS.REVALIDATE_PHONE_CORRECT_TEXT]: NEXT_ACTIONS.REVALIDATE_PHONE,
+  [ATOMIC_ACTIONS.REVALIDATE_PHONE_AUDIO]: NEXT_ACTIONS.REVALIDATE_PHONE,
+  [ATOMIC_ACTIONS.REVALIDATE_PHONE_WAIT]: NEXT_ACTIONS.REVALIDATE_PHONE,
+  [ATOMIC_ACTIONS.COLLECT_PHONE_TEXT]: NEXT_ACTIONS.COLLECT_PHONE,
+  [ATOMIC_ACTIONS.COLLECT_PHONE_AUDIO]: NEXT_ACTIONS.COLLECT_PHONE,
+  [ATOMIC_ACTIONS.CONFIRM_PHONE_ACCEPT]: NEXT_ACTIONS.CONFIRM_PHONE,
+  [ATOMIC_ACTIONS.CONFIRM_PHONE_CORRECT]: NEXT_ACTIONS.CONFIRM_PHONE,
+  [ATOMIC_ACTIONS.CONFIRM_PHONE_FALLBACK]: NEXT_ACTIONS.CONFIRM_PHONE,
+
+  [ATOMIC_ACTIONS.THIRD_PARTY_CONTACT_NAME_TEXT]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_CONTACT_NAME_AUDIO]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_ATTENDED_NAME_TEXT]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_ATTENDED_NAME_AUDIO]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_PHONE_TEXT]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_PHONE_AUDIO]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_INPUT_TEXT]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.THIRD_PARTY_INPUT_AUDIO]: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
+  [ATOMIC_ACTIONS.FALLBACK]: NEXT_ACTIONS.FALLBACK
+})
+
+function atomicResult(nextAction, reason) {
+  return {
+    nextAction,
+    legacyAction: LEGACY_ACTION_BY_ATOMIC_ACTION[nextAction] || NEXT_ACTIONS.FALLBACK,
+    reason
+  }
+}
+
+function routeRevalidation(field, source, text) {
+  if (source === "audio") {
+    return ATOMIC_ACTIONS[`REVALIDATE_${field}_AUDIO`]
+  }
+  if (!text) return ATOMIC_ACTIONS[`REVALIDATE_${field}_WAIT`]
+  const confirmIds = {
+    NAME: "revalida_nome_ok",
+    CITY: "revalida_cidade_ok",
+    PHONE: "revalida_phone_ok"
+  }
+  if (text === confirmIds[field]) {
+    return ATOMIC_ACTIONS[`REVALIDATE_${field}_CONFIRM`]
+  }
+  if (field === "CITY" && text.startsWith("revalida_cidade_multipla_")) {
+    return ATOMIC_ACTIONS.REVALIDATE_CITY_SELECT
+  }
+  return ATOMIC_ACTIONS[`REVALIDATE_${field}_CORRECT_TEXT`]
+}
+
+function routeThirdParty(stage, source, stages) {
+  const suffix = source === "audio" ? "AUDIO" : "TEXT"
+  if (stage === stages.ACOLHIMENTO_NOME_CONTATO) {
+    return ATOMIC_ACTIONS[`THIRD_PARTY_CONTACT_NAME_${suffix}`]
+  }
+  if (stage === stages.COLETA_TEL_OUTRO) {
+    return ATOMIC_ACTIONS[`THIRD_PARTY_ATTENDED_NAME_${suffix}`]
+  }
+  if (
+    stage === stages.ACOLHIMENTO_CONFIRMA_WHATSAPP_OUTRO ||
+    stage === stages.COLETA_TEL_WPP_CONTATO
+  ) {
+    return ATOMIC_ACTIONS[`THIRD_PARTY_PHONE_${suffix}`]
+  }
+  return ATOMIC_ACTIONS[`THIRD_PARTY_INPUT_${suffix}`]
+}
+
+function routeClientPostIntake(decision = {}, ctx = {}) {
   const route = decision.route
   const mode = decision.data?.mode
-  const actions = new Map([
-    [`${ROUTES.NAME}:revalidation`, NEXT_ACTIONS.REVALIDATE_NAME],
-    [`${ROUTES.NAME}:intake`, NEXT_ACTIONS.COLLECT_NAME],
-    [`${ROUTES.CITY}:revalidation`, NEXT_ACTIONS.REVALIDATE_CITY],
-    [`${ROUTES.CITY}:intake`, NEXT_ACTIONS.COLLECT_CITY],
-    [`${ROUTES.PHONE}:revalidation`, NEXT_ACTIONS.REVALIDATE_PHONE],
-    [`${ROUTES.PHONE}:intake`, NEXT_ACTIONS.COLLECT_PHONE],
-    [`${ROUTES.PHONE}:confirmation`, NEXT_ACTIONS.CONFIRM_PHONE]
-  ])
+  const stage = ctx.stage || decision.data?.stage || null
+  const stages = ctx.stages || {}
+  const text = typeof ctx.text === "string" ? ctx.text : ""
+  const source = ctx.isAudio || decision.data?.source === "audio" ? "audio" : "text"
 
   if (route === ROUTES.THIRD_PARTY) {
-    return {
-      nextAction: NEXT_ACTIONS.PROCESS_THIRD_PARTY,
-      reason: "third_party_intake"
-    }
+    return atomicResult(
+      routeThirdParty(stage, source, stages),
+      `third_party_${source}`
+    )
   }
 
-  const nextAction = actions.get(`${route}:${mode}`)
-  if (nextAction) {
-    return {
-      nextAction,
-      reason: `${route}_${mode}`
-    }
+  if (route === ROUTES.NAME && mode === "revalidation") {
+    return atomicResult(routeRevalidation("NAME", source, text), `name_revalidation_${source}`)
+  }
+  if (route === ROUTES.CITY && mode === "revalidation") {
+    return atomicResult(routeRevalidation("CITY", source, text), `city_revalidation_${source}`)
+  }
+  if (route === ROUTES.PHONE && mode === "revalidation") {
+    const phoneText = text === "revalida_whatsapp_ok" ? "revalida_phone_ok" : text
+    return atomicResult(routeRevalidation("PHONE", source, phoneText), `phone_revalidation_${source}`)
   }
 
-  return {
-    nextAction: NEXT_ACTIONS.FALLBACK,
-    reason: decision.data?.reason || "not_applicable"
+  if (route === ROUTES.NAME && mode === "intake") {
+    return atomicResult(
+      source === "audio" ? ATOMIC_ACTIONS.COLLECT_NAME_AUDIO : ATOMIC_ACTIONS.COLLECT_NAME_TEXT,
+      `name_intake_${source}`
+    )
   }
+  if (route === ROUTES.CITY && mode === "intake") {
+    return atomicResult(
+      source === "audio" ? ATOMIC_ACTIONS.COLLECT_CITY_AUDIO : ATOMIC_ACTIONS.COLLECT_CITY_TEXT,
+      `city_intake_${source}`
+    )
+  }
+  if (route === ROUTES.PHONE && mode === "intake") {
+    return atomicResult(
+      source === "audio" ? ATOMIC_ACTIONS.COLLECT_PHONE_AUDIO : ATOMIC_ACTIONS.COLLECT_PHONE_TEXT,
+      `phone_intake_${source}`
+    )
+  }
+  if (route === ROUTES.PHONE && mode === "confirmation") {
+    const action = text === "tel_confirmar"
+      ? ATOMIC_ACTIONS.CONFIRM_PHONE_ACCEPT
+      : text === "tel_corrigir"
+        ? ATOMIC_ACTIONS.CONFIRM_PHONE_CORRECT
+        : ATOMIC_ACTIONS.CONFIRM_PHONE_FALLBACK
+    return atomicResult(action, "phone_confirmation")
+  }
+
+  return atomicResult(
+    ATOMIC_ACTIONS.FALLBACK,
+    decision.data?.reason || "not_applicable"
+  )
 }
 
 module.exports = {
   NEXT_ACTIONS,
+  ATOMIC_ACTIONS,
+  LEGACY_ACTION_BY_ATOMIC_ACTION,
   routeClientPostIntake
 }
