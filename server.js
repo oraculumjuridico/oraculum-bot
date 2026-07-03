@@ -252,6 +252,14 @@ const {
   validarWebhookInterno
 } = require("./src/domain/webhook-security")
 const {
+  criarCaminhoAudioAssinado,
+  validarUrlAudioAssinada
+} = require("./src/domain/audio-url-security")
+const {
+  aplicarHeadersSeguranca,
+  criarRateLimiter
+} = require("./src/domain/http-security")
+const {
   configurarStatePersistence,
   serializarEstado,
   desserializarEstado,
@@ -339,6 +347,38 @@ const {
 } = require("./src/domain/finalization-invariants")
 
 const app = express()
+app.set("trust proxy", 1)
+app.disable("x-powered-by")
+app.use(aplicarHeadersSeguranca)
+
+const limitarWebhookMeta = criarRateLimiter({
+  limite: 1000,
+  janelaMs: 60 * 1000,
+  escopo: "webhook-meta"
+})
+const limitarWebhookInterno = criarRateLimiter({
+  limite: 180,
+  janelaMs: 60 * 1000,
+  escopo: "webhook-interno"
+})
+const limitarAudios = criarRateLimiter({
+  limite: 600,
+  janelaMs: 60 * 1000,
+  escopo: "audios"
+})
+
+app.use("/webhook", limitarWebhookMeta)
+app.use([
+  "/health-interno",
+  "/resumo-diario",
+  "/agendamento",
+  "/buscar-contato-reuniao",
+  "/evento-cancelado",
+  "/pos-consulta",
+  "/consulta-status",
+  "/lembrete"
+], limitarWebhookInterno)
+
 const AXIOS_TIMEOUT_MS = Number(process.env.AXIOS_TIMEOUT_MS || 15000)
 axios.defaults.timeout = Number.isFinite(AXIOS_TIMEOUT_MS) && AXIOS_TIMEOUT_MS > 0 ? AXIOS_TIMEOUT_MS : 15000
 app.use(express.json({
@@ -347,7 +387,16 @@ app.use(express.json({
     req.rawBody = Buffer.from(buf)
   }
 }))
-app.use("/audios", express.static(path.join(__dirname, "audios")))
+app.use(
+  "/audios",
+  limitarAudios,
+  validarUrlAudioAssinada,
+  express.static(path.join(__dirname, "audios"), {
+    dotfiles: "deny",
+    index: false,
+    fallthrough: false
+  })
+)
 
 // ================================================================
 //  NOTIFICAÇÕES — WhatsApp pessoal + E-mail
@@ -565,7 +614,8 @@ function montarUrlPublica(caminho) {
 }
 
 function urlAudioAtendente(arquivo) {
-  return montarUrlPublica(`/audios/atendentes/${path.basename(arquivo)}`)
+  const ttlSeconds = Number(process.env.AUDIO_URL_TTL_SECONDS || 15 * 60)
+  return montarUrlPublica(criarCaminhoAudioAssinado(arquivo, { ttlSeconds }))
 }
 
 function etapaValida(etapa) {
