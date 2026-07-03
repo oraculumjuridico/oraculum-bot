@@ -2,30 +2,17 @@ const crypto = require("crypto")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { logErro } = require("../utils/logging")
 
-function ambienteProducao() {
-  return ["production", "prod"].includes(sanitizarTextoEntrada(process.env.NODE_ENV).toLowerCase())
-}
-
 function compararAssinaturaSegura(a, b) {
   const bufferA = Buffer.from(a || "", "utf8")
   const bufferB = Buffer.from(b || "", "utf8")
   return bufferA.length === bufferB.length && crypto.timingSafeEqual(bufferA, bufferB)
 }
 
-let avisoAssinaturaMetaDevEmitido = false
-
 function validarAssinaturaMeta(req, res, next) {
   const appSecret = sanitizarTextoEntrada(process.env.APP_SECRET || process.env.META_APP_SECRET)
   if (!appSecret) {
-    if (ambienteProducao()) {
-      logErro("config", "APP_SECRET ausente; webhook Meta recusado em producao.")
-      return res.sendStatus(503)
-    }
-    if (!avisoAssinaturaMetaDevEmitido) {
-      avisoAssinaturaMetaDevEmitido = true
-      console.warn("[CONFIG] APP_SECRET/META_APP_SECRET ausente; assinatura Meta nao validada em modo desenvolvimento.")
-    }
-    return next()
+    logErro("config", "APP_SECRET/META_APP_SECRET ausente; webhook Meta recusado.")
+    return res.sendStatus(503)
   }
 
   const assinatura = sanitizarTextoEntrada(req.get("x-hub-signature-256"))
