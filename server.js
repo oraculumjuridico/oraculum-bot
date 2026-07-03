@@ -1051,7 +1051,7 @@ async function telaConfirmarAreaAudio(from, u, origemTexto = false) {
   }
 }
 
-async function telaConfirmarDadosAudio(from, u) {
+async function telaConfirmarDadosAudio(from, u, opcoesAudio = {}) {
   // No fluxo de terceiro, quem está no WhatsApp é nomeContato (ex: José),
   // não a pessoa atendida (u.nome = Alberina).
   const primeiroNome = u.atendimentoParaTerceiro && u.nomeContato
@@ -1096,6 +1096,10 @@ async function telaConfirmarDadosAudio(from, u) {
       textoAudio += _comSofrimento
         ? `Confirme quando estiver pronto. Primeira opção: Confirmar. Segunda opção: Corrigir dados. Terceira opção: Voltar.`
         : `Tudo está correto? Primeira opção: Confirmar. Segunda opção: Corrigir dados. Terceira opção: Voltar.`
+      const introducaoAudio = typeof opcoesAudio.introducaoAudio === "string"
+        ? opcoesAudio.introducaoAudio.trim()
+        : ""
+      if (introducaoAudio) textoAudio = `${introducaoAudio} ${textoAudio}`
 
       const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
       await enviarAudio(from, urlAudioAtendente(ogg))
@@ -7558,20 +7562,16 @@ function flowAudioFluxoConfirma(u, ctx) {
 async function flowAudioConfirmarDados(u, ctx) {
   const from = ctx?.from || u._numero || ""
   const primeiroNome = primeiroNomeCliente(u) || ""
+  let introducaoAudio = ""
   if (u._vindoDeRetomada && !u.modoTexto && from) {
     u._vindoDeRetomada = false
-    try {
-      const textoRetomada = primeiroNome
-        ? `Certo, ${primeiroNome}! Você parou na etapa de confirmação dos dados. Vou confirmar seus dados para dar continuidade.`
-        : `Certo! Você parou na etapa de confirmação dos dados. Vou confirmar seus dados para dar continuidade.`
-      const ogg = await gerarAudioAtendente(u.atendente, textoRetomada)
-      await enviarAudio(from, urlAudioAtendente(ogg))
-      await new Promise(r => setTimeout(r, 2000))
-    } catch (e) { logErro("tts", "Falha áudio retomada audio_confirmar_dados", e) }
+    introducaoAudio = primeiroNome
+      ? `Certo, ${primeiroNome}! Você parou na etapa de confirmação dos dados. Vou confirmar seus dados para dar continuidade.`
+      : `Certo! Você parou na etapa de confirmação dos dados. Vou confirmar seus dados para dar continuidade.`
   }
   setStage(u, STAGES.AUDIO_CONFIRMAR_DADOS)
   salvarEtapa(u._numero || from, "audio_confirmar_dados")
-  return telaConfirmarDadosAudio(from, u)
+  return telaConfirmarDadosAudio(from, u, { introducaoAudio })
 }
 
 async function flowAudioConfirmarTranscricao(u, ctx) {
@@ -8522,7 +8522,11 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   return {}
 }
 
-async function proximaConfirmacaoProgressiva(from, u) {
+async function proximaConfirmacaoProgressiva(from, u, opcoesAudio = {}) {
+  const introducaoAudio = typeof opcoesAudio.introducaoAudio === "string"
+    ? opcoesAudio.introducaoAudio.trim()
+    : ""
+  const textoComIntroducaoAudio = texto => introducaoAudio ? `${introducaoAudio} ${texto}` : texto
   const campos = [
     {
       chave: "nome",
@@ -8534,7 +8538,7 @@ async function proximaConfirmacaoProgressiva(from, u) {
         ]
         if (!u.modoTexto) {
           try {
-            const ogg = await gerarAudioAtendente(u.atendente, `Seu nome está como ${u.nome}. Está correto? Se estiver, toque em Confirmar. Se não estiver, é só me dizer o nome correto agora. Pode falar ou digitar.`)
+            const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`Seu nome está como ${u.nome}. Está correto? Se estiver, toque em Confirmar. Se não estiver, é só me dizer o nome correto agora. Pode falar ou digitar.`))
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 2000))
           } catch (e) { logErro("tts", "Falha áudio confirmar nome", e) }
@@ -8547,7 +8551,7 @@ async function proximaConfirmacaoProgressiva(from, u) {
       const pergunta = `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n😊 Fico feliz em poder ajudar! Para começar, qual é o seu nome completo?`
         if (!u.modoTexto) {
           try {
-            const ogg = await gerarAudioAtendente(u.atendente, `Qual é o seu nome completo?`)
+            const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`Qual é o seu nome completo?`))
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 2000))
           } catch (e) { logErro("tts", "Falha áudio coletar nome", e) }
@@ -8575,7 +8579,7 @@ async function proximaConfirmacaoProgressiva(from, u) {
         if (!u.modoTexto) {
           try {
             const _numAudio = `DDD ${_ddd.split("").join(" ")} ${_nono} ${_b1.slice(0,2)} ${_b1.slice(2,4)} ${_b2.slice(0,2)} ${_b2.slice(2,4)}`
-            const ogg = await gerarAudioAtendente(u.atendente, `Seu WhatsApp está como ${_numAudio}. Está correto? Se estiver, toque em Confirmar. Se não estiver, é só digitar ou falar o número correto com DDD agora.`)
+            const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`Seu WhatsApp está como ${_numAudio}. Está correto? Se estiver, toque em Confirmar. Se não estiver, é só digitar ou falar o número correto com DDD agora.`))
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 2000))
           } catch (e) { logErro("tts", "Falha áudio confirmar whatsapp", e) }
@@ -8595,7 +8599,7 @@ async function proximaConfirmacaoProgressiva(from, u) {
         if (!u.modoTexto) {
           try {
             const _numAudio = `DDD ${_ddd.split("").join(" ")} ${_nono} ${_b1.slice(0,2)} ${_b1.slice(2,4)} ${_b2.slice(0,2)} ${_b2.slice(2,4)}`
-            const ogg = await gerarAudioAtendente(u.atendente, `Este WhatsApp tem o número ${_numAudio}. É o seu? Se não for, é só me dizer o número correto com DDD agora. Pode falar ou digitar.`)
+            const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`Este WhatsApp tem o número ${_numAudio}. É o seu? Se não for, é só me dizer o número correto com DDD agora. Pode falar ou digitar.`))
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 4000))
           } catch (e) { logErro("tts", "Falha áudio coletar whatsapp", e) }
@@ -8624,7 +8628,7 @@ async function proximaConfirmacaoProgressiva(from, u) {
         if (!u.modoTexto) {
           try {
             const estadoFull = estadoPorExtenso(u.uf) || u.uf || ""
-            const ogg = await gerarAudioAtendente(u.atendente, `A cidade que você informou é ${u.cidade}${estadoFull ? ", " + estadoFull : ""}. Está correto? Se estiver, toque em Confirmar. Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar.`)
+            const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`A cidade que você informou é ${u.cidade}${estadoFull ? ", " + estadoFull : ""}. Está correto? Se estiver, toque em Confirmar. Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar.`))
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 2000))
           } catch (e) { logErro("tts", "Falha áudio confirmar cidade", e) }
@@ -8637,7 +8641,7 @@ async function proximaConfirmacaoProgressiva(from, u) {
         const pergunta = `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nÓtimo! Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`
         if (!u.modoTexto) {
           try {
-            const ogg = await gerarAudioAtendente(u.atendente, `Em qual cidade você mora?`)
+            const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`Em qual cidade você mora?`))
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 2000))
           } catch (e) { logErro("tts", "Falha áudio coletar cidade", e) }
@@ -8661,14 +8665,9 @@ async function proximaConfirmacaoProgressiva(from, u) {
   u._revalidandoCampos = false
   u._revalidaConfirmados = []
   setStage(u, STAGES.CONFIRMACAO)
-  if (!u.modoTexto) {
-    try {
-      const ogg = await gerarAudioAtendente(u.atendente, `Ótimo! Vou mostrar um resumo dos seus dados para você confirmar.`)
-      await enviarAudio(from, urlAudioAtendente(ogg))
-      await new Promise(r => setTimeout(r, 2000))
-    } catch (e) { logErro("tts", "Falha áudio confirmação final", e) }
-  }
-  return responderComTimer(from, await telaConfirmarDadosAudio(from, u))
+  return responderComTimer(from, await telaConfirmarDadosAudio(from, u, {
+    introducaoAudio: textoComIntroducaoAudio(`Ótimo! Vou mostrar um resumo dos seus dados para você confirmar.`)
+  }))
 }
 
 async function processarAudioCanalAtendimento(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
@@ -8713,14 +8712,9 @@ async function processarAudioCanalAtendimento(from, nomeWA, u, msgObj, tipo, ehA
   if (u._revalidandoCampos) {
     aplicarClassificacaoJuridica(u, classificacao)
     u._revalidaConfirmados = []
-    if (!u.modoTexto) {
-      try {
-        const ogg = await gerarAudioAtendente(u.atendente, `Atualizei seu relato. Agora vou confirmar seus dados com você.`)
-        await enviarAudio(from, urlAudioAtendente(ogg))
-        await new Promise(r => setTimeout(r, 2000))
-      } catch (e) { logErro("tts", "Falha áudio início revalidação", e) }
-    }
-    return await proximaConfirmacaoProgressiva(from, u)
+    return await proximaConfirmacaoProgressiva(from, u, {
+      introducaoAudio: `Atualizei seu relato. Agora vou confirmar seus dados com você.`
+    })
   }
   // "Voltar" da confirmação: atualiza relato e revisa dados campo a campo (igual ao Recomeçar)
   if (u._voltandoConfirmacao) {
@@ -8728,15 +8722,9 @@ async function processarAudioCanalAtendimento(from, nomeWA, u, msgObj, tipo, ehA
     u._voltandoConfirmacao = false
     u._revalidandoCampos = true
     u._revalidaConfirmados = []
-    if (!u.modoTexto) {
-      try {
-        const ogg = await gerarAudioAtendente(u.atendente,
-          `Atualizei seu relato. Agora vou confirmar seus dados com você.`)
-        await enviarAudio(from, urlAudioAtendente(ogg))
-        await new Promise(r => setTimeout(r, 2000))
-      } catch (e) { logErro("tts", "Falha áudio revalidação áudio", e) }
-    }
-    return await proximaConfirmacaoProgressiva(from, u)
+    return await proximaConfirmacaoProgressiva(from, u, {
+      introducaoAudio: `Atualizei seu relato. Agora vou confirmar seus dados com você.`
+    })
   }
 
   // Guarda: classificação fraca → pede esclarecimento antes de avançar
@@ -10577,16 +10565,11 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         u.nome = nomeLimpo
         u.nomeConfirmado = true
         await sincronizarContatoNegocioHubSpot(u)
-        if (!u.modoTexto) {
-          try {
-            const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Nome atualizado para ${nomeLimpo}.`)
-            await enviarAudio(from, urlAudioAtendente(ogg))
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (e) { logErro("tts", "Falha áudio atualizar nome revalida", e) }
-        }
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
         u._revalidaConfirmados.push("nome")
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Entendi! Nome atualizado para ${nomeLimpo}.`
+        })
       }
       // Negação pura sem nome → deixa cair no imprevisto abaixo
       if (!parecePuraNegacaoSemNome(text)) {
@@ -10645,17 +10628,12 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         u.uf = escolhida.uf
         u.regiao = escolhida.regiao || mapearRegiaoPorUF(escolhida.uf)
         delete u._cidadesMultiplas
-        if (!u.modoTexto) {
-          try {
-            const estadoFull = estadoPorExtenso(escolhida.uf) || escolhida.uf || ""
-            const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Cidade atualizada para ${escolhida.cidade}${estadoFull ? ", " + estadoFull : ""}.`)
-            await enviarAudio(from, urlAudioAtendente(ogg))
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (e) { logErro("tts", "Falha áudio cidade multipla revalida", e) }
-        }
+        const estadoFull = estadoPorExtenso(escolhida.uf) || escolhida.uf || ""
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
         u._revalidaConfirmados.push("cidade")
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Entendi! Cidade atualizada para ${escolhida.cidade}${estadoFull ? ", " + estadoFull : ""}.`
+        })
       }
     }
     // Texto livre = cliente digitou ou falou a cidade correta diretamente
@@ -10666,17 +10644,12 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         u.cidade = loc.cidade
         u.uf = loc.uf
         u.regiao = loc.regiao || mapearRegiaoPorUF(loc.uf)
-        if (!u.modoTexto) {
-          try {
-            const estadoFull = estadoPorExtenso(loc.uf) || loc.uf || ""
-            const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Cidade atualizada para ${loc.cidade}${estadoFull ? ", " + estadoFull : ""}.`)
-            await enviarAudio(from, urlAudioAtendente(ogg))
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (e) { logErro("tts", "Falha áudio atualizar cidade revalida", e) }
-        }
+        const estadoFull = estadoPorExtenso(loc.uf) || loc.uf || ""
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
         u._revalidaConfirmados.push("cidade")
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Entendi! Cidade atualizada para ${loc.cidade}${estadoFull ? ", " + estadoFull : ""}.`
+        })
       }
       if (loc?.multiplos && loc.opcoes?.length > 1) {
         u._cidadesMultiplas = loc.opcoes
@@ -10769,9 +10742,9 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         u.whatsappContato = telNorm
         u.whatsappVerificado = true
         u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
-        if (!u.modoTexto) {
+        const label = formatarTelefoneExibicao(telNorm)
+        if (!u._revalidandoCampos && !u.modoTexto) {
           try {
-            const label = formatarTelefoneExibicao(telNorm)
             const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Vou usar o número ${label}.`)
             await enviarAudio(from, urlAudioAtendente(ogg))
             await new Promise(r => setTimeout(r, 2000))
@@ -10784,7 +10757,9 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         if (u._revalidandoCampos) {
           if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
           u._revalidaConfirmados.push("whatsapp")
-          return await proximaConfirmacaoProgressiva(from, u)
+          return await proximaConfirmacaoProgressiva(from, u, {
+            introducaoAudio: `Entendi! Vou usar o número ${label}.`
+          })
         }
         // Usuário novo corrigindo WhatsApp antes de ter cidade — retoma coleta de cidade
         return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
@@ -11115,9 +11090,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.whatsappContato = telNorm
       u.whatsappVerificado = true
       u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
-      if (!u.modoTexto) {
+      const label = formatarTelefoneExibicao(telNorm)
+      if (!u._revalidandoCampos && !u.modoTexto) {
         try {
-          const label = formatarTelefoneExibicao(telNorm)
           const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Vou usar o número ${label}.`)
           await enviarAudio(from, urlAudioAtendente(ogg))
           await new Promise(r => setTimeout(r, 2000))
@@ -11130,7 +11105,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       if (u._revalidandoCampos) {
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
         u._revalidaConfirmados.push("whatsapp")
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Entendi! Vou usar o número ${label}.`
+        })
       }
       // Usuário novo corrigindo WhatsApp antes de ter cidade — retoma coleta de cidade
       return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
@@ -11176,16 +11153,11 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.nome = nomeLimpo
       u.nomeConfirmado = true
       await sincronizarContatoNegocioHubSpot(u)
-      if (!u.modoTexto) {
-        try {
-          const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Nome atualizado para ${nomeLimpo}.`)
-          await enviarAudio(from, urlAudioAtendente(ogg))
-          await new Promise(r => setTimeout(r, 2000))
-        } catch (e) { logErro("tts", "Falha áudio atualizar nome revalida áudio", e) }
-      }
       if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
       u._revalidaConfirmados.push("nome")
-      return await proximaConfirmacaoProgressiva(from, u)
+      return await proximaConfirmacaoProgressiva(from, u, {
+        introducaoAudio: `Entendi! Nome atualizado para ${nomeLimpo}.`
+      })
     } catch (e) {
       logErro("tts", "Falha transcrição nome revalida por áudio", e)
       return { texto: `Não consegui processar seu áudio. Por favor, *digite seu nome*.`, opcoes: null }
@@ -11263,17 +11235,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.uf = localizacao.uf
       u.regiao = localizacao.regiao || mapearRegiaoPorUF(localizacao.uf)
       await sincronizarContatoNegocioHubSpot(u)
-      if (!u.modoTexto) {
-        try {
-          const estadoFull = estadoPorExtenso(localizacao.uf) || localizacao.uf || ""
-          const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Cidade atualizada para ${cidadeIdentificada}${estadoFull ? ", " + estadoFull : ""}.`)
-          await enviarAudio(from, urlAudioAtendente(ogg))
-          await new Promise(r => setTimeout(r, 2000))
-        } catch (e) { logErro("tts", "Falha áudio confirmar cidade revalida áudio", e) }
-      }
+      const estadoFull = estadoPorExtenso(localizacao.uf) || localizacao.uf || ""
       if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
       u._revalidaConfirmados.push("cidade")
-      return await proximaConfirmacaoProgressiva(from, u)
+      return await proximaConfirmacaoProgressiva(from, u, {
+        introducaoAudio: `Entendi! Cidade atualizada para ${cidadeIdentificada}${estadoFull ? ", " + estadoFull : ""}.`
+      })
     } catch (e) {
       logErro("tts", "Falha transcrição cidade revalida por áudio", e)
       return { texto: `Não consegui processar seu áudio. Por favor, digite sua cidade ou CEP.`, opcoes: null }
@@ -11609,14 +11576,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       if (u._revalidandoCampos) {
         aplicarClassificacaoJuridica(u, classificacao)
         u._revalidaConfirmados = []
-        if (!u.modoTexto) {
-          try {
-            const ogg = await gerarAudioAtendente(u.atendente, `Atualizei sua situação. Agora vou confirmar seus dados com você.`)
-            await enviarAudio(from, urlAudioAtendente(ogg))
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (e) { logErro("tts", "Falha áudio início revalidação texto", e) }
-        }
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Atualizei sua situação. Agora vou confirmar seus dados com você.`
+        })
       }
       // "Voltar" da confirmação: atualiza a situação e revisa campos um a um (igual ao áudio)
       if (u._voltandoConfirmacao) {
@@ -11624,15 +11586,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u._voltandoConfirmacao = false
         u._revalidandoCampos = true
         u._revalidaConfirmados = []
-        if (!u.modoTexto) {
-          try {
-            const ogg = await gerarAudioAtendente(u.atendente,
-              `Atualizei sua situação. Agora vou confirmar seus dados com você.`)
-            await enviarAudio(from, urlAudioAtendente(ogg))
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (e) { logErro("tts", "Falha áudio revalidação texto", e) }
-        }
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Atualizei sua situação. Agora vou confirmar seus dados com você.`
+        })
       }
 
       // Guarda: classificação fraca → pede esclarecimento antes de avançar
@@ -11677,14 +11633,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       // Se veio do Voltar/Recomeçar, retoma revalidação campo a campo
       if (u._revalidandoCampos) {
         u._revalidaConfirmados = u._revalidaConfirmados || []
-        if (!u.modoTexto) {
-          try {
-            const ogg = await gerarAudioAtendente(u.atendente, `Atualizei sua situação. Agora vou confirmar seus dados com você.`)
-            await enviarAudio(from, urlAudioAtendente(ogg))
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (e) { logErro("tts", "Falha áudio revalida", e) }
-        }
-        return await proximaConfirmacaoProgressiva(from, u)
+        return await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Atualizei sua situação. Agora vou confirmar seus dados com você.`
+        })
       }
       const proximaNovoCaso = await proximaEtapaNovoCasoClienteAposModo(from, u)
       if (proximaNovoCaso) return proximaNovoCaso
