@@ -81,8 +81,8 @@ function telaConfirmacaoConsulta({
   dataHora = "",
   dataHoraAudio = dataHora,
   duracao = "",
-  nome = "—",
-  numeroCaso = "—"
+  nome = "Não informado",
+  numeroCaso = "Não informado"
 } = {}) {
   return createClientScreen({
     id: "consulta_confirmacao",
@@ -115,7 +115,7 @@ function telaAgendamentoConfirmado({
   dataHora = "",
   dataHoraAudio = dataHora,
   duracao = "",
-  numeroCaso = "—",
+  numeroCaso = "Não informado",
   primeiroNome = "você"
 } = {}) {
   return createClientScreen({

@@ -439,19 +439,19 @@ async function enviarWhatsAppAdmin_para(numero, mensagem) {
 }
 
 async function notificarMensagemUrgente(u, mensagem, negocioId) {
-  const area = u.area || "—"
-  const caso = u.numeroCaso || "—"
-  const nome = u.nome || "—"
-  const cidade = u.cidade ? `${u.cidade}${u.uf ? " - " + u.uf : ""}` : "—"
+  const area = u.area || "Não informado"
+  const caso = u.numeroCaso || "Não informado"
+  const nome = u.nome || "Não informado"
+  const cidade = u.cidade ? `${u.cidade}${u.uf ? " - " + u.uf : ""}` : "Não informada"
   const link = linkHubSpot(negocioId)
 
   // WhatsApp pessoal
-  const textoWA = `⚡ *Mensagem urgente* — Caso ${caso}\n\n👤 ${nome}\n📍 ${cidade}\n⚖️ Área: ${area}\n📩 "${mensagem.slice(0, 200)}${mensagem.length > 200 ? "..." : ""}"\n\n🔗 ${link}`
+  const textoWA = `⚡ *Mensagem urgente*\nCaso ${caso}\n\n👤 ${nome}\n📍 ${cidade}\n⚖️ Área: ${area}\n📩 "${mensagem.slice(0, 200)}${mensagem.length > 200 ? "..." : ""}"\n\n🔗 ${link}`
   await enviarWhatsAppAdmin(textoWA)
 
   // E-mail
   await enviarEmailNotificacao({
-    assunto: `⚡ Mensagem urgente — ${nome} (Caso ${caso})`,
+    assunto: `⚡ Mensagem urgente: ${nome} (Caso ${caso})`,
     tituloCard: "⚡ Mensagem Urgente Recebida",
     linhas: [
       `<b>👤 Cliente:</b> ${nome}`,
@@ -470,21 +470,21 @@ async function notificarMensagemUrgente(u, mensagem, negocioId) {
 }
 
 async function notificarAgendamento(u, slot, duracao, negocioId) {
-  const nome = u.nome || "—"
-  const caso = u.numeroCaso || "—"
-  const area = u.area || "—"
-  const cidade = u.cidade ? `${u.cidade}${u.uf ? " - " + u.uf : ""}` : "—"
-  const dataHora = slot ? formatarSlot(slot) : "—"
+  const nome = u.nome || "Não informado"
+  const caso = u.numeroCaso || "Não informado"
+  const area = u.area || "Não informada"
+  const cidade = u.cidade ? `${u.cidade}${u.uf ? " - " + u.uf : ""}` : "Não informada"
+  const dataHora = slot ? formatarSlot(slot) : "Não informado"
   const duracaoLabel = duracao === 60 ? "1 hora" : `${duracao || 30} minutos`
   const link = linkHubSpot(negocioId)
 
   // WhatsApp pessoal
-  const textoWA = `📅 *Consulta confirmada* — Caso ${caso}\n\n👤 ${nome}\n📍 ${cidade}\n⚖️ Área: ${area}\n🕐 ${dataHora} (${duracaoLabel})\n\n🔗 ${link}`
+  const textoWA = `📅 *Consulta confirmada*\nCaso ${caso}\n\n👤 ${nome}\n📍 ${cidade}\n⚖️ Área: ${area}\n🕐 ${dataHora} (${duracaoLabel})\n\n🔗 ${link}`
   await enviarWhatsAppAdmin(textoWA)
 
   // E-mail
   await enviarEmailNotificacao({
-    assunto: `📅 Agendamento — ${nome} (Caso ${caso})`,
+    assunto: `📅 Agendamento: ${nome} (Caso ${caso})`,
     tituloCard: "📅 Consulta Agendada",
     linhas: [
       `<b>👤 Cliente:</b> ${nome}`,
@@ -1090,8 +1090,8 @@ async function telaConfirmarDadosAudio(from, u) {
       textoAudio += `WhatsApp: ${whatsappVoz}. `
       textoAudio += `Cidade: ${cidadeVoz}. `
       textoAudio += `Área jurídica: ${areaVoz}. `
-      if (situacaoVoz && situacaoVoz !== "—") textoAudio += `Situação: ${situacaoVoz}. `
-      if (detalheVoz  && detalheVoz  !== "—") textoAudio += `Detalhe: ${detalheVoz}. `
+      if (situacaoVoz && situacaoVoz !== "Não informado") textoAudio += `Situação: ${situacaoVoz}. `
+      if (detalheVoz  && detalheVoz  !== "Não informado") textoAudio += `Detalhe: ${detalheVoz}. `
       textoAudio += `Urgência: ${urgVoz}. `
       textoAudio += _comSofrimento
         ? `Confirme quando estiver pronto. Primeira opção: Confirmar. Segunda opção: Corrigir dados. Terceira opção: Voltar.`
@@ -1109,11 +1109,11 @@ async function telaConfirmarDadosAudio(from, u) {
   // Para terceiro: nome deve ser sempre o da pessoa atendida (u.nome), nunca do contato.
   // Se u.nome estiver vazio num fluxo de terceiro, sinaliza explicitamente para o usuário corrigir.
   const nome = u.atendimentoParaTerceiro
-    ? (u.nome || "⚠️ não informado — corrija antes de confirmar")
-    : (u.nome || u.nomeContato || "—")
+    ? (u.nome || "⚠️ não informado. Corrija antes de confirmar")
+    : (u.nome || u.nomeContato || "Não informado")
   const whatsapp = formatarTelefoneExibicao(u.whatsappContato || from || "")
   // formato padronizado de cidade - "Cidade, UF"
-  const cidade = u.cidade && u.uf ? `${u.cidade}, ${u.uf}` : u.cidade || "—"
+  const cidade = u.cidade && u.uf ? `${u.cidade}, ${u.uf}` : u.cidade || "Não informada"
   const descPreview = await gerarResumoDescricaoConfirmacao(u)
 
   const situacaoFormatada = formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo)
@@ -1124,13 +1124,13 @@ async function telaConfirmarDadosAudio(from, u) {
   const _camposTela = [
     `👤 *Nome:* ${nome}`,
     (u.atendimentoParaTerceiro && u.nomeContato) ? `👥 *Aberto por:* ${u.nomeContato}` : null,
-    `📱 WhatsApp: *${whatsapp || "—"}*`,
+    `📱 WhatsApp: *${whatsapp || "Não informado"}*`,
     `📍 *Cidade:* ${cidade}`,
-    `⚖️ *Área:* ${u.area || "—"}`,
-    situacaoFormatada && situacaoFormatada !== "—" ? `📌 *Situação:* ${situacaoFormatada}` : null,
-    detalheFormatado  && detalheFormatado  !== "—" ? `🔎 *Detalhe:* ${detalheFormatado}`  : null,
+    `⚖️ *Área:* ${u.area || "Não informada"}`,
+    situacaoFormatada && situacaoFormatada !== "Não informado" ? `📌 *Situação:* ${situacaoFormatada}` : null,
+    detalheFormatado  && detalheFormatado  !== "Não informado" ? `🔎 *Detalhe:* ${detalheFormatado}`  : null,
     `⚡ *Urgência:* ${urgenciaLabel[u.urgencia] || "Moderada 🟡"}`,
-    descPreview && descPreview !== "—" ? `💬 *Descrição:* ${descPreview}` : null,
+    descPreview && descPreview !== "Não informado" ? `💬 *Descrição:* ${descPreview}` : null,
   ].filter(Boolean).join("\n")
   const textoConfirmacao = u._jaAcolheuSofrimento
     ? `●●●●●● Etapa 6 de 6 · *Confirmação*\n\n*Confira seus dados:*\n\n${_camposTela}\n\nQuando confirmar, seu caso será registrado e nossa equipe será notificada.`
@@ -1408,16 +1408,16 @@ function gerarBriefingCaso(u = {}) {
 
 function resumoCaso(u) {
   return [
-    `👤 Nome: ${u.nome || "—"}`,
-    `📍 Cidade: ${u.cidade || "—"}${u.uf ? " - " + u.uf : ""}`,
-    `⚖️ Área: ${u.area || "—"}`,
+    `👤 Nome: ${u.nome || "Não informado"}`,
+    `📍 Cidade: ${u.cidade || "Não informada"}${u.uf ? " - " + u.uf : ""}`,
+    `⚖️ Área: ${u.area || "Não informada"}`,
     u.tipo      ? `📌 Tipo: ${u.tipo}` : null,
     u.situacao  ? `📌 Situação: ${u.situacao}` : null,
     u.subTipo   ? `🔎 Detalhe: ${u.subTipo}` : null,
     u.detalhe   ? `ℹ️ Info: ${u.detalhe}` : null,
     `⚡ Urgência: ${{ alta: "Alta 🔴", normal: "Moderada 🟡", baixa: "Baixa 🟢" }[u.urgencia] || "Moderada 🟡"}`,
-    `💼 Contribuiu ao INSS: ${u.contribuicao || "—"}`,
-    `🏥 Recebe benefício: ${u.recebeBeneficio || "—"}`,
+    `💼 Contribuiu ao INSS: ${u.contribuicao || "Não informado"}`,
+    `🏥 Recebe benefício: ${u.recebeBeneficio || "Não informado"}`,
     u.descricao ? `💬 Descrição: ${u.descricao}` : null,
   ].filter(Boolean).join("\n")
 }
@@ -1619,10 +1619,10 @@ function getNotaLead(u) {
   const label   = temperatura === "quente" ? "QUENTE" : temperatura === "morno" ? "MORNO" : "FRIO"
   const interpretacao =
     temperatura === "quente"
-      ? "Preencheu todos os dados — pronto para contato imediato."
+      ? "Preencheu todos os dados e está pronto para contato imediato."
       : temperatura === "morno"
-        ? "Informou nome e cidade — precisa de abordagem para concluir."
-        : "Entrou mas não preencheu informações — requer nurturing."
+        ? "Informou nome e cidade. Precisa de abordagem para concluir."
+        : "Entrou, mas não preencheu informações. Requer nurturing."
 
   return [
     "🤖 Lead gerado via bot",
@@ -2413,7 +2413,7 @@ function responderEncerramento(u) {
     : (primeiroNomeCliente(u) || "")
   const saudacao = primeiroNome ? `, ${primeiroNome}` : ""
   return {
-    texto: `👋 Foi um prazer te atender${saudacao}! 😊\n\nSeu atendimento foi encerrado. Qualquer coisa, é só me chamar aqui — estou sempre disponível para ajudar. Até logo! 💙`,
+    texto: `👋 Foi um prazer te atender${saudacao}! 😊\n\nSeu atendimento foi encerrado. Qualquer coisa, é só me chamar aqui. Estou sempre disponível para ajudar. Até logo! 💙`,
     opcoes: null,
     registrarPergunta: false
   }
@@ -3068,10 +3068,10 @@ function iniciarTimer(from) {
     const saudacaoPausa = primeiroNomePausa ? `, ${primeiroNomePausa}` : ""
     const pausaComSofrimento = u._jaAcolheuSofrimento === true
     const textoPausa = pausaComSofrimento
-      ? `Oi${saudacaoPausa}, estou por aqui. Sei que o que você me contou é difícil. Seu atendimento ficou salvo — quando quiser continuar, é só me chamar.`
+      ? `Oi${saudacaoPausa}, estou por aqui. Sei que o que você me contou é difícil. Seu atendimento ficou salvo. Quando quiser continuar, é só me chamar.`
       : `Oi${saudacaoPausa} 😊 Fiquei te esperando. Seu progresso está salvo. Como deseja continuar?`
     const textoTelaPausa = pausaComSofrimento
-      ? `💙 *Aqui quando você precisar*\n\nOi${saudacaoPausa}. Estou por aqui.\n\n_Sei que o que você me contou é difícil. Seu atendimento ficou salvo — continue quando se sentir pronto._\n\nComo deseja continuar?`
+      ? `💙 *Aqui quando você precisar*\n\nOi${saudacaoPausa}. Estou por aqui.\n\n_Sei que o que você me contou é difícil. Seu atendimento ficou salvo. Continue quando se sentir pronto._\n\nComo deseja continuar?`
       : `🕒 *Atendimento pausado*\n\nOi${saudacaoPausa} 😊 Fiquei te esperando.\n\n📌 Seu progresso está salvo.\n\nComo deseja continuar?`
     if (!u.modoTexto && u.atendente) {
       try {
@@ -5390,16 +5390,16 @@ async function finalizarCadastro(from, u) {
 
 async function tela_confirmacao(u) {
   const urgenciaLabel = { alta: "Alta 🔴", normal: "Moderada 🟡", baixa: "Baixa 🟢" }
-  const cidade = u.cidade && u.uf ? `${u.cidade}, ${u.uf}` : u.cidade || "—"
+  const cidade = u.cidade && u.uf ? `${u.cidade}, ${u.uf}` : u.cidade || "Não informada"
   const whatsapp = formatarTelefoneExibicao(u.whatsappContato || u._numero || "")
   // sempre gerar resumo via IA, não apenas quando cache existe
   const descExibir = (u.descricao || u._audioCanalTranscricao)
     ? await gerarResumoDescricaoConfirmacao(u)
-    : "—"
+    : "Não informado"
   // Para terceiro: nome deve ser sempre o da pessoa atendida (u.nome), nunca do contato.
   const nome = u.atendimentoParaTerceiro
-    ? (u.nome || "⚠️ não informado — corrija antes de confirmar")
-    : (u.nome || u.nomeContato || "—")
+    ? (u.nome || "⚠️ não informado. Corrija antes de confirmar")
+    : (u.nome || u.nomeContato || "Não informado")
   const situacaoFormatada = formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo)
   const detalheBase = u.detalhe || u.assuntoResumo || descExibir || u.descricao || u._audioCanalTranscricao
   const detalheFormatado = formatarDetalheJuridico(detalheBase, null)
@@ -5407,13 +5407,13 @@ async function tela_confirmacao(u) {
   const linhas = [
     `👤 *Nome:* ${nome}`,
     (u.atendimentoParaTerceiro && u.nomeContato) ? `👥 *Aberto por:* ${u.nomeContato}` : null,
-    `📱 WhatsApp: *${whatsapp || "—"}*`,
+    `📱 WhatsApp: *${whatsapp || "Não informado"}*`,
     `📍 *Cidade:* ${cidade}`,
-    `⚖️ *Área:* ${u.area || "—"}`,
-    situacaoFormatada && situacaoFormatada !== "—" ? `📌 *Situação:* ${situacaoFormatada}` : null,
-    detalheFormatado  && detalheFormatado  !== "—" ? `🔎 *Detalhe:* ${detalheFormatado}`  : null,
+    `⚖️ *Área:* ${u.area || "Não informada"}`,
+    situacaoFormatada && situacaoFormatada !== "Não informado" ? `📌 *Situação:* ${situacaoFormatada}` : null,
+    detalheFormatado  && detalheFormatado  !== "Não informado" ? `🔎 *Detalhe:* ${detalheFormatado}`  : null,
     `⚡ *Urgência:* ${urgenciaLabel[u.urgencia] || "Moderada 🟡"}`,
-    descExibir && descExibir !== "—" ? `💬 *Descrição:* ${descExibir}` : null,
+    descExibir && descExibir !== "Não informado" ? `💬 *Descrição:* ${descExibir}` : null,
   ].filter(Boolean).join("\n")
 
   // Quando sofrimento foi detectado: texto de confirmação mais sóbrio,
@@ -6858,7 +6858,7 @@ async function responderImprevistoPreAtendimento(from, u, stage, tipo, textoOrig
     setStage(u, STAGES.ACOLHIMENTO_NOME_CONTATO)
     salvarEtapa(u._numero || from, STAGES.ACOLHIMENTO_NOME_CONTATO)
     texto = `*👥 Atendimento para outra pessoa*\n\n✅ Combinado! Só me diga uma coisa antes: *qual é o seu nome*?\n\nPreciso saber quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`
-    audio = `Entendi! Vamos registrar o atendimento para ${alvoTexto}. Antes de continuar, preciso saber o seu nome — de quem está aqui no WhatsApp. Pode falar ou digitar.`
+    audio = `Entendi! Vamos registrar o atendimento para ${alvoTexto}. Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.`
     return await responderTelaComAudio(
       from,
       u,
@@ -6878,7 +6878,7 @@ async function responderImprevistoPreAtendimento(from, u, stage, tipo, textoOrig
     // enquadra o cadastro como cuidado, não como barreira.
     let resposta
     if (u._jaAcolheuSofrimento && tipo === "advogado_direto") {
-      resposta = "Entendo que você quer falar com alguém agora, e vou garantir que isso aconteça. Para que o advogado chegue já sabendo tudo sobre sua situação e possa te ajudar de verdade, preciso registrar algumas informações antes — leva poucos minutos."
+      resposta = "Entendo que você quer falar com alguém agora, e vou garantir que isso aconteça. Para que o advogado chegue já sabendo tudo sobre sua situação e possa te ajudar de verdade, preciso registrar algumas informações antes. Leva poucos minutos."
     } else {
       resposta = respostaCurtaDuvidaPreAtendimento(textoOriginal)
     }
@@ -8394,7 +8394,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       "DOCUMENTO RECEBIDO - AGUARDANDO CLASSIFICACAO",
       `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinal}\nStatus: aguardando classificacao pelo cliente${arquivo.webViewLink ? `\nDrive: ${arquivo.webViewLink}` : ""}`
     )
-    const casoInfoAvulso = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "—"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
+    const casoInfoAvulso = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "Não informada"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
     const telaAvulso = criarTela({
       id: "documento_avulso_recebido",
       titulo: "Arquivo recebido",
@@ -8511,7 +8511,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const telaRecebido = criarTela({
     id: "documento_guiado_recebido",
     titulo: "Documento recebido",
-    texto: `✅ *${lblD}${docAtualCompleto ? "" : ` — ${folha}`}* recebido!\n\n📊 *Andamento do envio*\n${statusRecebido.texto}\n\n${textoFinalTela}`,
+    texto: `✅ *${lblD}${docAtualCompleto ? "" : `: ${folha}`}* recebido!\n\n📊 *Andamento do envio*\n${statusRecebido.texto}\n\n${textoFinalTela}`,
     textoAudioBase: textoAudioRecebido,
     imagemUrl: IMAGEM_DOC_RECEBIDO_URL,
     acoes: opcoesRecebido.map(opcao => ({ id: opcao.id, label: opcao.title }))
@@ -9774,8 +9774,8 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       dataHora: formatarSlot(slot),
       dataHoraAudio: formatarSlotAudio(slot),
       duracao: duracaoLabel,
-      nome: u.nome || "—",
-      numeroCaso: u.numeroCaso || "—"
+      nome: u.nome || "Não informado",
+      numeroCaso: u.numeroCaso || "Não informado"
     })
     await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaConfirmacao), "confirmar agendamento")
     return telaConfirmacao
@@ -10040,7 +10040,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
               texto: `*👥 Atendimento para outra pessoa*\n\n✅ Combinado! Só me diga uma coisa antes: *qual é o seu nome*?\n\nPreciso saber quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
               opcoes: null
             },
-            "Antes de continuar, preciso saber o seu nome — de quem está aqui no WhatsApp. Pode falar ou digitar.",
+            "Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.",
             "pre atendimento pede nome contato"
           )
         }
@@ -10092,10 +10092,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         from,
         u,
         {
-          texto: `👤 *Atendimento para outra pessoa*\n\nAntes de continuar, preciso saber o *seu nome* — quem está aqui no WhatsApp cuidando desse caso.\n\n*Como você se chama?*`,
+          texto: `👤 *Atendimento para outra pessoa*\n\nAntes de continuar, preciso saber o *seu nome*, de quem está aqui no WhatsApp cuidando desse caso.\n\n*Como você se chama?*`,
           opcoes: null
         },
-        "Entendido! Antes de continuar, preciso saber o seu nome — de quem está aqui no WhatsApp. Pode falar ou digitar.",
+        "Entendido! Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.",
         "pre atendimento terceiro pede nome contato"
       )
     }
@@ -10106,7 +10106,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       if (!u.atendente) u.atendente = sortearAtendente()
       try {
         const ogg = await gerarAudioAtendente(u.atendente,
-          `Certo! Me conte o que aconteceu. Pode falar em áudio ou digitar — eu vou organizar tudo para o advogado.`)
+          `Certo! Me conte o que aconteceu. Pode falar em áudio ou digitar. Eu vou organizar tudo para o advogado.`)
         await enviarAudio(from, urlAudioAtendente(ogg))
         await new Promise(r => setTimeout(r, 3000))
       } catch (e) { logErro("tts", "Falha áudio iniciar relato confuso", e) }
@@ -10158,7 +10158,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
           texto: `*👥 Atendimento para outra pessoa*\n\n✅ Combinado! Só me diga uma coisa antes: *qual é o seu nome*?\n\nPreciso saber quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
           opcoes: null
         },
-        "Entendido! Antes de continuar, preciso saber o seu nome — de quem está aqui no WhatsApp. Pode falar ou digitar.",
+        "Entendido! Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.",
         "pre atendimento terceiro pede nome contato"
       )
     }
@@ -10504,7 +10504,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       from,
       u,
       {
-        texto: `📎 Recebi seu arquivo! Mas por enquanto ainda não tenho onde guardá-lo — o caso ainda não foi aberto.\n\nMe conta primeiro o que está acontecendo (pode falar em áudio 🎙️ ou digitar 💬). Depois do cadastro você poderá enviar documentos normalmente. 😊`,
+        texto: `📎 Recebi seu arquivo! Mas por enquanto ainda não tenho onde guardá-lo, pois o caso ainda não foi aberto.\n\nMe conta primeiro o que está acontecendo (pode falar em áudio 🎙️ ou digitar 💬). Depois do cadastro você poderá enviar documentos normalmente. 😊`,
         opcoes: null
       },
       "Recebi seu arquivo. Mas o caso ainda não foi aberto, então ainda não tenho onde guardá-lo. Me conta primeiro o que está acontecendo, por áudio ou digitando. Depois do cadastro você poderá enviar documentos normalmente.",
@@ -11777,7 +11777,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         from,
         u,
         {
-          texto: `✍️ Digite novamente sua situação com suas próprias palavras.\n\n_Escreva à vontade — estou aqui para ajudar._`,
+          texto: `✍️ Digite novamente sua situação com suas próprias palavras.\n\n_Escreva à vontade. Estou aqui para ajudar._`,
           opcoes: null
         },
         "Tudo bem. Digite novamente sua situação com suas próprias palavras. Escreva à vontade, estou aqui para ajudar.",
@@ -12236,7 +12236,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         } catch (e) { logErro("tts", "Falha áudio nome_contato terceiro", e) }
       }
       return {
-        texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n*👥 Atendimento para outra pessoa*\n\nAntes de continuar, preciso saber *o seu nome* — quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
+        texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n*👥 Atendimento para outra pessoa*\n\nAntes de continuar, preciso saber *o seu nome*, de quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
         opcoes: null
       }
     }
@@ -13715,7 +13715,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._docClientePendenteNome = null
       u._docClientePendenteArquivo = null
       u._docClientePendenteId = null
-      const casoInfoAnexado = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "—"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
+      const casoInfoAnexado = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "Não informada"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
       const telaAnexado = criarTela({
         id: "documento_avulso_anexado",
         titulo: "Documento anexado",
@@ -13864,7 +13864,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       return null
     }
     if (text === "docs_confirmar_envio_extra") {
-      const casoInfoExtra = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "—"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
+      const casoInfoExtra = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "Não informada"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
       const telaEnvioExtra = criarTela({
         id: "documento_envio_extra",
         titulo: "Enviar arquivo adicional",
@@ -14893,7 +14893,7 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
         "",
         `🗓️ *Horário:* ${dataFormatada}`,
         "",
-        "📞 Deixe o celular por perto — nosso advogado vai te ligar!",
+        "📞 Deixe o celular por perto. Nosso advogado vai te ligar!",
         "",
         "Precisa reagendar de última hora?",
         msgReagendamento,

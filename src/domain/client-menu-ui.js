@@ -27,8 +27,8 @@ function iconeAreaJuridica(area = "") {
 }
 
 function cabecalhoCasoAtivo(u = {}) {
-  const numeroCaso = sanitizarTextoEntrada(u.numeroCaso) || "—"
-  const area = sanitizarTextoEntrada(u.area) || "—"
+  const numeroCaso = sanitizarTextoEntrada(u.numeroCaso) || "Não informado"
+  const area = sanitizarTextoEntrada(u.area) || "Não informada"
   return `📂 *Caso ativo:* ${numeroCaso} · ⚖️ ${area}`
 }
 
@@ -103,7 +103,7 @@ function resumoCasoMenuCliente(negocio, fallback = {}) {
     numeroCaso,
     hasNumeroCaso: Boolean(numeroCasoOficial),
     area,
-    situacao: situacao && situacao !== "—" ? situacao : "Em análise",
+    situacao: situacao && situacao !== "Não informado" ? situacao : "Em análise",
     createdate: negocio?.createdate || props.createdate || null,
     negocio
   }
@@ -192,7 +192,7 @@ function menuCliente(u, casosCliente = null, { textoAudioBase = "" } = {}) {
 
   const situacaoMenu = formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo)
   const casoInfo = u.numeroCaso
-    ? `${iconeAreaJuridica(u.area)} ① *${u.numeroCaso}* · ${u.area || "—"}\n_${situacaoMenu && situacaoMenu !== "—" ? situacaoMenu : "Em análise"}_`
+    ? `${iconeAreaJuridica(u.area)} ① *${u.numeroCaso}* · ${u.area || "Não informada"}\n_${situacaoMenu && situacaoMenu !== "Não informado" ? situacaoMenu : "Em análise"}_`
     : ""
   const listaCasos = temVariosCasos
     ? casos.map(caso => {

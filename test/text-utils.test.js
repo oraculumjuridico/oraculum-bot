@@ -11,12 +11,12 @@ const {
 assert.equal(formatarSituacaoJuridica("cortado"), "Benefício previdenciário cancelado indevidamente")
 assert.equal(formatarSituacaoJuridica("", "Demissao"), "Demissão sem justa causa")
 assert.equal(formatarSituacaoJuridica("", "", "novo_assunto"), "Novo assunto")
-assert.equal(formatarSituacaoJuridica(), "—")
+assert.equal(formatarSituacaoJuridica(), "Não informado")
 
 assert.equal(formatarDetalheJuridico("benefício negado"), "Benefício negado.")
 assert.equal(formatarDetalheJuridico("já termina!"), "Já termina!")
 assert.equal(formatarDetalheJuridico("", "resumo disponível"), "Resumo disponível.")
-assert.equal(formatarDetalheJuridico(), "—")
+assert.equal(formatarDetalheJuridico(), "Não informado")
 assert.equal(formatarDetalheJuridico("a".repeat(141)), `${"A"}${"a".repeat(136)}...`)
 
 const referenciaMae = detectarReferenciaTerceiro("Preciso de atendimento para minha mãe")
@@ -29,7 +29,7 @@ assert.equal(
   "Campinas, SP (Sudeste)"
 )
 assert.equal(formatarValorCorrecao("nome", "  Maria  "), "Maria")
-assert.equal(formatarValorCorrecao("nome", null), "—")
+assert.equal(formatarValorCorrecao("nome", null), "Não informado")
 
 for (const entrada of [
   { summary: "[CASO] Reunião" },

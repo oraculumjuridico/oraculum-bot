@@ -23,7 +23,7 @@ const DOCS_BASE = [
 ]
 const DOCS_EXTRA = {
   "aposentadoria": [
-    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos — envie cada uma"],
+    { id:"doc_ctps", label:"Carteira de Trabalho", folhas:["Folha de rosto","Páginas com empregos. Envie cada uma"],
       dica:"📒 Fotografe a folha de rosto (seus dados) e TODAS as páginas com registros de emprego, uma foto por página. Frente e verso se tiver anotação dos dois lados." },
     { id:"doc_cnis", label:"Extrato CNIS (Meu INSS)", folhas:["Todas as páginas"],
       dica:"📱 App Meu INSS → Extrato de Contribuições. Tire print de TODAS as páginas ou salve como PDF e envie aqui." },
@@ -134,7 +134,7 @@ const DOCS_EXTRA = {
     { id:"doc_obito_fam", label:"Certidão de Óbito", folhas:["Frente","Verso"],
       dica:"📜 Documento original, frente e verso, sobre fundo escuro." },
     { id:"doc_bens", label:"Documentos dos Bens (imóveis, veículos, contas)", folhas:["Cada documento separado"],
-      dica:"📁 Escritura, CRLV, extrato bancário — um documento por foto." },
+      dica:"📁 Escritura, CRLV, extrato bancário. Envie um documento por foto." },
     { id:"doc_herd", label:"Certidões de Nascimento / Casamento dos Herdeiros", folhas:["Cada certidão separada"],
       dica:"📜 Uma foto por documento, frente e verso." }
   ],
@@ -144,7 +144,7 @@ const DOCS_EXTRA = {
     { id:"doc_renda_fam", label:"Comprovante de Renda", folhas:["Foto do documento"],
       dica:"💰 Contracheque, extrato bancário ou declaração de IR dos últimos 3 meses." },
     { id:"doc_fam_outros", label:"Documentos Relacionados ao Caso", folhas:["Cada documento separado"],
-      dica:"📁 Decisões judiciais, acordos, notificações — um documento por foto." }
+      dica:"📁 Decisões judiciais, acordos, notificações. Envie um documento por foto." }
   ],
 
   // -- Consumidor ---------------------------------------------------
@@ -178,7 +178,7 @@ const DOCS_EXTRA = {
     { id:"doc_print_cons", label:"Prints de Comunicação com a Empresa", folhas:["Cada print separado"],
       dica:"📱 Prints de e-mail, chat, WhatsApp ou protocolo de atendimento." },
     { id:"doc_cons_outros", label:"Outros Documentos do Caso", folhas:["Cada documento separado"],
-      dica:"📁 Boletos, extratos, fotos do produto — um documento por foto." }
+      dica:"📁 Boletos, extratos, fotos do produto. Envie um documento por foto." }
   ],
 
   // -- Penal --------------------------------------------------------
@@ -202,7 +202,7 @@ const DOCS_EXTRA = {
     { id:"doc_bo", label:"Boletim de Ocorrência ou Intimação", folhas:["Todas as páginas"],
       dica:"📋 Documento da delegacia ou fórum, todas as páginas." },
     { id:"doc_proc_penal", label:"Documentos do Processo (se houver)", folhas:["Cada página separada"],
-      dica:"📁 Peças processuais, notificações ou laudos — um documento por foto." },
+      dica:"📁 Peças processuais, notificações ou laudos. Envie um documento por foto." },
     { id:"doc_penal_outros", label:"Outros Registros do Caso", folhas:["Cada documento separado"],
       dica:"📱 Prints, fotos ou qualquer outro registro relacionado ao caso." }
   ],

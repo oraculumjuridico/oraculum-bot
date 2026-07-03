@@ -47,7 +47,7 @@ async function handleAudioConfirmation({
     return {
       handled: true,
       response: {
-        texto: `🎙️ Pode enviar seu novo áudio agora.\n\n_Fale com calma — estou aqui para ouvir você._`,
+        texto: `🎙️ Pode enviar seu novo áudio agora.\n\n_Fale com calma. Estou aqui para ouvir você._`,
         opcoes: null
       }
     }
@@ -63,7 +63,7 @@ async function handleAudioConfirmation({
     return {
       handled: true,
       response: {
-        texto: `✍️ Digite abaixo sua situação com suas próprias palavras.\n\n_Escreva à vontade — estou aqui para ajudar._`,
+        texto: `✍️ Digite abaixo sua situação com suas próprias palavras.\n\n_Escreva à vontade. Estou aqui para ajudar._`,
         opcoes: null
       }
     }

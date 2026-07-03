@@ -17,7 +17,7 @@ function telaModoAtendimento({
   const tela = createClientScreen({
     id: "modo_atendimento",
     titulo: "Modo de atendimento",
-    texto: `●○○○○○ 📡 *Etapa 1 de 6 · Atendimento*\n\nComo prefere ser atendido durante este processo?\n\n🎧 *Ouvir e responder* — vou te guiando com perguntas em áudio, uma de cada vez.\n\n✍️ *Ler e digitar* — você vê as perguntas por escrito e responde no seu ritmo.`,
+    texto: `●○○○○○ 📡 *Etapa 1 de 6 · Atendimento*\n\nComo prefere ser atendido durante este processo?\n\n🎧 *Ouvir e responder:* vou te guiando com perguntas em áudio, uma de cada vez.\n\n✍️ *Ler e digitar:* você vê as perguntas por escrito e responde no seu ritmo.`,
     textoAudioBase,
     acoes: [
       { id: "modo_audio", label: "🎧 Ouvir áudio" },

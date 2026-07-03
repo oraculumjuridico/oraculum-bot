@@ -152,7 +152,7 @@ function montarTextoStatusCliente({
   blocoAgendamento = [],
   blocoDocumentos = []
 } = {}) {
-  const linhaTipo = tipoCasoFormatado && tipoCasoFormatado !== "—" ? `📌 ${tipoCasoFormatado}` : null
+  const linhaTipo = tipoCasoFormatado && tipoCasoFormatado !== "Não informado" ? `📌 ${tipoCasoFormatado}` : null
   return [
     "📊 *Status do seu caso*",
     cabecalhoCasoAtivo({ numeroCaso, area }),

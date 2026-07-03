@@ -31,12 +31,12 @@ function formatarSituacaoJuridica(situacao, tipo, subTipo) {
   const chave = (situacao || tipo || subTipo || "").trim()
   return mapa[chave] || (chave
     ? chave.charAt(0).toUpperCase() + chave.slice(1).replace(/_/g, " ")
-    : "—")
+    : "Não informado")
 }
 
 function formatarDetalheJuridico(detalhe, assuntoResumo, descricao = "") {
   const d = (detalhe || assuntoResumo || descricao || "").trim()
-  if (!d) return "—"
+  if (!d) return "Não informado"
   const limite = d.length > 140 ? d.slice(0, 137).trimEnd() + "..." : d
   const texto = limite.charAt(0).toUpperCase() + limite.slice(1)
   return texto.endsWith(".") || texto.endsWith("!") || texto.endsWith("?")
@@ -69,7 +69,7 @@ function formatarValorCorrecao(campo, valor, extra = {}) {
     const cidade = extra.cidade || valor
     return `${cidade}${extra.uf ? `, ${extra.uf}` : ""}${extra.regiao ? ` (${extra.regiao})` : ""}`
   }
-  return sanitizarTextoEntrada(valor) || "—"
+  return sanitizarTextoEntrada(valor) || "Não informado"
 }
 
 function classificarReuniaoCliente({ summary = "", description = "", tituloHubSpot = "", corpoHubSpot = "" } = {}) {

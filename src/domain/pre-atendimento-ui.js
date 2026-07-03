@@ -61,7 +61,7 @@ function perguntaAtualPreAtendimento(stage, u = {}) {
     const nomeTemp = u._nomeContatoTemp || ""
     const textoNome = nomeTemp ? `*${nomeTemp}*` : "o nome informado"
     return {
-      texto: `Preciso confirmar seu nome. ${nomeTemp ? `Você disse ${textoNome} — está correto?` : "Por favor, confirme seu nome."} Se não estiver, é só me dizer agora.`,
+      texto: `Preciso confirmar seu nome. ${nomeTemp ? `Você disse ${textoNome}. Está correto?` : "Por favor, confirme seu nome."} Se não estiver, é só me dizer agora.`,
       audio: `Preciso confirmar seu nome. ${nomeTemp ? `Você disse ${nomeTemp}, está correto?` : "Por favor, confirme seu nome."} Se não estiver, me diga agora.`,
       opcoes: [
         { id: "confirma_nome_contato_sim", title: "✅ Sim, está certo" }
@@ -139,7 +139,7 @@ function gerarMensagemAcolhimento(texto = "") {
     return "💙 Antes de qualquer coisa: obrigada por confiar em nós nesse momento difícil.\n\nEstou aqui com você. Vamos cuidar disso juntos, com calma e atenção."
   }
   if (/\x08(sem dinheiro|sem renda|passando fome|sem comer|sem comida|despejad|vou perder minha casa)\x08/.test(t)) {
-    return "💙 Entendo que você está passando por uma situação muito séria.\n\nPode continuar me contando — nossa equipe vai analisar isso com prioridade."
+    return "💙 Entendo que você está passando por uma situação muito séria.\n\nPode continuar me contando. Nossa equipe vai analisar isso com prioridade."
   }
   if (/\x08(ameacad|ameaçad|violencia|violência|agredid|medo de|com medo)\x08/.test(t)) {
     return "💙 Entendo que isso é muito assustador.\n\nVocê não está sozinho. Nossa equipe vai analisar o que pode ser feito para te proteger."
@@ -147,7 +147,7 @@ function gerarMensagemAcolhimento(texto = "") {
   if (/\x08(amanha perco|amanhã perco|prazo vence hoje|audiencia amanha|intimad|preso|vao me prender)\x08/.test(t)) {
     return "💙 Entendi a urgência da sua situação.\n\nVou garantir que nossa equipe receba isso com prioridade máxima."
   }
-  return "💙 Entendo que o que você está passando é muito difícil.\n\nPode contar com a gente — vamos cuidar do seu caso com toda a atenção."
+  return "💙 Entendo que o que você está passando é muito difícil.\n\nPode contar com a gente. Vamos cuidar do seu caso com toda a atenção."
 }
 
 module.exports = {

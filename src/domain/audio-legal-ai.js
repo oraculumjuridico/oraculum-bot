@@ -90,7 +90,7 @@ function classificacaoEhFraca(classificacao, relato) {
 function gerarPerguntaEsclarecimentoRelato(classificacao, relato) {
   const area = classificacao?.area
   if (!area || area === "Outros") {
-    return `Entendi que você precisa de ajuda jurídica. 😊\n\nPara eu preparar seu caso da forma certa, pode me contar um pouco mais?\n\nPor exemplo:\n\n— É sobre *trabalho* (demissão, salário, acidente)?\n— Sobre *INSS* (aposentadoria, benefício)?\n— Sobre *família* (pensão, guarda, divórcio)?\n— Ou outro assunto?\n\n_Pode digitar ou enviar um áudio._`
+    return `Entendi que você precisa de ajuda jurídica. 😊\n\nPara eu preparar seu caso da forma certa, pode me contar um pouco mais?\n\nPor exemplo:\n\n• É sobre *trabalho* (demissão, salário, acidente)?\n• Sobre *INSS* (aposentadoria, benefício)?\n• Sobre *família* (pensão, guarda, divórcio)?\n• Ou outro assunto?\n\n_Pode digitar ou enviar um áudio._`
   }
   if (!classificacao.situacao && !classificacao.detalhe) {
     return `Entendi que é sobre *${area}*. 😊\n\nPode me contar um pouco mais sobre o que aconteceu? Quanto mais detalhes você der, melhor o advogado chega preparado para te atender.\n\n_Pode digitar ou enviar um áudio._`
@@ -353,7 +353,7 @@ async function consolidarDescricaoCorrecaoIA(u, textoNovo) {
 
 async function gerarResumoDescricaoConfirmacao(u) {
   const descricao = u.descricao || u._audioCanalTranscricao || ""
-  if (!descricao) return "—"
+  if (!descricao) return "Não informado"
 
   // Cache: se já gerou para essa versão da descrição, retornar cached
   if (u._resumoDescricaoIA && u._resumoDescricaoIABase === descricao) {
@@ -375,7 +375,7 @@ async function gerarResumoDescricaoConfirmacao(u) {
         messages: [
           {
             role: "system",
-            content: `Você é um assistente jurídico. Leia o relato do cliente e gere um resumo de 1 a 2 frases, em linguagem simples e humanizada, que capture o problema central. Seja técnico mas acessível. Não use gírias. Não comece com "O cliente" — escreva direto sobre a situação.`
+            content: `Você é um assistente jurídico. Leia o relato do cliente e gere um resumo de 1 a 2 frases, em linguagem simples e humanizada, que capture o problema central. Seja técnico mas acessível. Não use gírias. Não comece com "O cliente". Escreva direto sobre a situação.`
           },
           { role: "user", content: `Área: ${u.area || "não informada"}\nRelato: ${descricao}` }
         ],
