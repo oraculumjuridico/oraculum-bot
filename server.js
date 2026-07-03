@@ -333,6 +333,9 @@ const {
   getPrimeiroNome,
   getPrimeiroNomeRetomada
 } = require("./src/domain/phone-name")
+const {
+  assertFinalizationInvariants
+} = require("./src/domain/finalization-invariants")
 
 const app = express()
 const AXIOS_TIMEOUT_MS = Number(process.env.AXIOS_TIMEOUT_MS || 15000)
@@ -5238,6 +5241,11 @@ async function detectarEncerramentoPorAudio(from, u, msgObj, tipo) {
 // ================================================================
 
 async function finalizarCadastro(from, u) {
+  assertFinalizationInvariants({
+    from,
+    u,
+    normalizarNumeroWhatsAppEnvio
+  })
   const telefoneContato = getTelefoneContato(from, u)
   const ehTerceiro = u.telefoneEhDoCliente === false
   const ehNovoCasoCliente = Boolean(u._novoCasoDeCliente)
