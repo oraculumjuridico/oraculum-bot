@@ -1,6 +1,7 @@
 .env
 node_modules/
-data/users-state.json
+data/
+storage-backups/
 audios/atendentes/*.mp3
 audios/atendentes/*.ogg
 graphify-out/
