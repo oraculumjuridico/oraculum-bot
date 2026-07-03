@@ -6,3 +6,4 @@ audios/atendentes/*.mp3
 audios/atendentes/*.ogg
 graphify-out/
 *.log
+scripts/local/
