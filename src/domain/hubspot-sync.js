@@ -28,6 +28,27 @@ let deps = {
   hidratarUsuarioPersistido: null
 }
 let HS_STAGES_FINALIZADOS = new Set()
+const filasMutacaoNegocio = new Map()
+
+async function executarComLockNegocio(dealId, tarefa) {
+  const chave = sanitizarTextoEntrada(dealId)
+  if (!chave) return tarefa()
+
+  const anterior = filasMutacaoNegocio.get(chave) || Promise.resolve()
+  let liberar
+  const atual = new Promise(resolve => { liberar = resolve })
+  filasMutacaoNegocio.set(chave, atual)
+
+  await anterior.catch(() => {})
+  try {
+    return await tarefa()
+  } finally {
+    liberar()
+    if (filasMutacaoNegocio.get(chave) === atual) {
+      filasMutacaoNegocio.delete(chave)
+    }
+  }
+}
 
 function configurarHubSpotSync(config = {}) {
   deps = { ...deps, ...config }
@@ -36,10 +57,13 @@ function configurarHubSpotSync(config = {}) {
 
 async function hsAtualizarNegocioComEstado(u, props = {}) {
   if (!u?.negocioId) return null
-  return hsAtualizarNegocio(u.negocioId, deps.getHubSpotDealProps(u, props))
+  return executarComLockNegocio(
+    u.negocioId,
+    () => hsAtualizarNegocio(u.negocioId, deps.getHubSpotDealProps(u, props))
+  )
 }
 
-async function atualizarDealstage(u) {
+async function atualizarDealstageSemLock(u) {
   if (!u?.negocioId) return null
 
   // Se não temos o stage em memória, busca do HubSpot antes de qualquer decisão
@@ -80,11 +104,16 @@ async function atualizarDealstage(u) {
   return dealId
 }
 
-async function sincronizarNegocio(u) {
+async function atualizarDealstage(u) {
+  if (!u?.negocioId) return null
+  return executarComLockNegocio(u.negocioId, () => atualizarDealstageSemLock(u))
+}
+
+async function sincronizarNegocioSemLock(u) {
   if (!u?.negocioId) return null
 
   try {
-    await atualizarDealstage(u)
+    await atualizarDealstageSemLock(u)
     const props = deps.getHubSpotDealStateProps(u)
 
     if (!Object.keys(props).length) return null
@@ -104,6 +133,11 @@ async function sincronizarNegocio(u) {
     })
     return null
   }
+}
+
+async function sincronizarNegocio(u) {
+  if (!u?.negocioId) return null
+  return executarComLockNegocio(u.negocioId, () => sincronizarNegocioSemLock(u))
 }
 
 function restaurarEstadoNegocioHubSpot(u, negocio) {
@@ -281,11 +315,9 @@ async function hsListarNegociosAtivosDoContato(contactId) {
 
 async function hsAtualizarEtapaNegocio(dealId, stageId) {
   if (!dealId) return
-  try {
-    await deps.hubspotClient.crm.deals.basicApi.update(dealId, {
-      properties: { dealstage: stageId }
-    })
-  } catch (e) { logErro("hubspot", "atualizarEtapaNegocio: " + (e.response?.data?.message || e.message)) }
+  return executarComLockNegocio(dealId, () =>
+    hsAtualizarNegocio(dealId, { dealstage: stageId })
+  )
 }
 
 async function hsMoverStage(nId, stage) {
@@ -296,15 +328,22 @@ async function hsMoverStage(nId, stage) {
 // Move o stage no HubSpot apenas se o stage atual NÃO for um stage avançado.
 // Impede que ações de documentos regridam o pipeline após agendamento.
 async function hsMoverStageSeguro(nId, novoStage, stageAtual, temEventoCalendar = false) {
-  const stagesProtegidos = [deps.HS_STAGE.AGENDAMENTO, deps.HS_STAGE.PROTOCOLO, deps.HS_STAGE.PROCESSO, deps.HS_STAGE.FINAL]
+  const stagesProtegidos = [deps.HS_STAGE.PROTOCOLO, deps.HS_STAGE.PROCESSO, deps.HS_STAGE.FINAL]
   if (stagesProtegidos.includes(stageAtual) || temEventoCalendar) return false
   await hsMoverStage(nId, novoStage)
   return true
 }
 
+async function hsAtualizarNegocioSerializado(dealId, props = {}) {
+  if (!dealId) return null
+  return executarComLockNegocio(dealId, () => hsAtualizarNegocio(dealId, props))
+}
+
 module.exports = {
   configurarHubSpotSync,
+  executarComLockNegocio,
   hsAtualizarNegocioComEstado,
+  hsAtualizarNegocioSerializado,
   atualizarDealstage,
   sincronizarNegocio,
   restaurarEstadoNegocioHubSpot,

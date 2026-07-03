@@ -1,0 +1,7 @@
+.gitattributes text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.env.example text eol=lf
+.nvmrc text eol=lf

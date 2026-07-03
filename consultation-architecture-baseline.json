@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "protectedModules": {
+    "calendar-scheduling": {
+      "readApis": [
+        "obterEstadoConsulta",
+        "obterEstadoEventoConsulta",
+        "buscarEventoConsultaPorDeal",
+        "listarEventosConsultaAtivos",
+        "listarTodosEventosConsulta",
+        "listarEventosConsultaPorDeal",
+        "buscarPrimeiroEventoCalendarNoIntervalo",
+        "classificarEstadoEvento",
+        "selecionarEventoConsultaMaisRecente"
+      ]
+    },
+    "consultation-events": {
+      "readApis": ["getConsultaHistory", "getConsultaTimeline"]
+    }
+  },
+  "officialDomainEntries": [
+    "getConsultaView",
+    "listConsultasAtivasViews",
+    "getConsultaCalendarEventState",
+    "findConsultaCalendarEvent",
+    "listConsultaCalendarEventsForReconciliation",
+    "findConsultaCalendarEventInRange",
+    "classificarEstadoCalendar",
+    "selecionarEventoConsultaMaisRecente",
+    "buscarHorariosDisponiveis",
+    "criarEventoConsulta",
+    "definirResultadoConsulta",
+    "cancelarEventosAtivosDoDeal",
+    "vincularEventoConsulta",
+    "appendConsultaEvent"
+    ,"calcularMetricasConsulta"
+    ,"persistirMetricasConsulta"
+    ,"CONSULTATION_VERSION"
+    ,"eventModelHash"
+    ,"assertEventModelVersion"
+    ,"assertConsultationArchitecture"
+    ,"assertConsultationReleaseIntegrity"
+    ,"installConsultationDependencyFirewall"
+    ,"getConsultaHistory"
+    ,"getConsultaStateAt"
+    ,"getConsultaFullAudit"
+    ,"getConsultaDecisionHistory"
+    ,"buildConsultaLegalDossier"
+    ,"generateConsultaNarrative"
+    ,"verifyConsultaLegalDossier"
+    ,"refreshConsultationSessionProjection"
+  ],
+  "allowedDependencies": {
+    "server.js": {
+      "consultation": ["assertConsultationArchitecture", "assertConsultationReleaseIntegrity", "getConsultaView", "listConsultasAtivasViews", "findConsultaCalendarEventInRange", "getConsultaCalendarEventState", "buscarHorariosDisponiveis", "criarEventoConsulta", "definirResultadoConsulta", "cancelarEventosAtivosDoDeal", "appendConsultaEvent"]
+    },
+    "src/domain/consultation/index.js": {
+      "consultation-read-model": ["*"],
+      "consultation-metrics": ["*"],
+      "consultation-replay-engine": ["*"],
+      "consultation-decision-audit": ["appendConsultaDecision", "readConsultaDecisions"],
+      "consultation-legal-snapshot": ["createConsultationLegalSnapshot"],
+      "consultation-legal-dossier-builder": ["buildConsultaLegalDossier"],
+      "consultation-narrative-generator": ["generateConsultaNarrative"],
+      "consultation-audit-verifier": ["verifyConsultaLegalDossier"]
+      ,"consultation-session-recovery": ["refreshConsultationSessionProjection"]
+    },
+    "src/domain/consultation/consultation-replay-engine.js": {
+      "consultation-events": ["getConsultaHistory"]
+    },
+    "src/domain/consultation/consultation-legal-snapshot.js": {
+      "consultation-replay-engine": ["getConsultaHistory", "getConsultaStateAt"],
+      "consultation-decision-audit": ["readConsultaDecisions"]
+    },
+    "src/domain/consultation/consultation-legal-dossier-builder.js": {
+      "consultation-narrative-generator": ["generateConsultaNarrative"],
+      "consultation-audit-verifier": ["buildDossierProof", "verifyConsultaLegalDossier"]
+    },
+    "src/domain/consultation/consultation-audit-verifier.js": {
+      "consultation-replay-engine": ["replayConsultaEvents"]
+    },
+    "src/domain/consultation/integrity/consultation-self-verification-engine.js": {
+      "consultation-replay-engine": ["getConsultaStateAt"],
+      "consultation-read-model": ["getConsultaView"]
+    },
+    "src/domain/consultation/integrity/consultation-integrity-drift-event.js": {
+      "consultation-decision-audit": ["appendConsultaDecision"],
+      "consultation-integrity-event-store": ["SCHEMA_VERSION", "INTEGRITY_EVENTS_FILE", "LOCK_FILE", "hashIntegrityEvent", "readIntegrityEvents", "appendIntegrityEvent"]
+    },
+    "src/domain/consultation/integrity/consultation-auto-repair-engine.js": {
+      "consultation-replay-engine": ["getConsultaStateAt"],
+      "consultation-session-recovery": ["refreshConsultationSessionProjection"],
+      "consultation-self-healed-event": ["recordConsultationSelfHealed"]
+    },
+    "src/domain/consultation/integrity/consultation-self-healed-event.js": {
+      "consultation-decision-audit": ["appendConsultaDecision"],
+      "consultation-integrity-event-store": ["appendIntegrityEvent", "readIntegrityEvents"]
+    },
+    "src/domain/consultation/projections/consultation-session-recovery.js": {
+      "consultation-replay-engine": ["getConsultaStateAt"]
+    },
+    "src/domain/consultation-read-model.js": {
+      "calendar-scheduling": ["obterEstadoConsulta", "listarEventosConsultaAtivos", "obterEstadoEventoConsulta", "buscarEventoConsultaPorDeal", "listarTodosEventosConsulta", "buscarPrimeiroEventoCalendarNoIntervalo", "classificarEstadoEvento", "selecionarEventoConsultaMaisRecente", "buscarHorariosDisponiveis", "criarEventoConsulta", "definirResultadoConsulta", "cancelarEventosAtivosDoDeal", "vincularEventoConsulta", "configurarConsultaEventSink"],
+      "consultation-events": ["getConsultaTimeline", "appendConsultaEvent"]
+    },
+    "src/domain/consultation-metrics.js": {
+      "consultation-read-model": ["classificarEstadoCalendar"]
+    },
+    "scripts/reconcile-consulta.js": {
+      "consultation": ["classificarEstadoCalendar", "selecionarEventoConsultaMaisRecente", "listConsultaCalendarEventsForReconciliation", "definirResultadoConsulta", "appendConsultaEvent", "calcularMetricasConsulta", "persistirMetricasConsulta"]
+    },
+    "scripts/migrate-consulta-calendar.js": {
+      "consultation": ["findConsultaCalendarEvent", "vincularEventoConsulta"]
+    },
+    "scripts/audit-consulta-phase1.js": {
+      "consultation": ["classificarEstadoCalendar", "selecionarEventoConsultaMaisRecente", "listConsultaCalendarEventsForReconciliation"]
+    },
+    "src/scripts/consultation-release-check.js": {
+      "consultation": ["assertConsultationArchitecture", "assertConsultationReleaseIntegrity", "CONSULTATION_VERSION"]
+    },
+    "src/scripts/consultation-export-legal.js": {
+      "consultation": ["getConsultaFullAudit"]
+    },
+    "src/scripts/consultation-export-dossier.js": {
+      "consultation": ["buildConsultaLegalDossier"]
+    }
+  },
+  "registeredConsultationRoutes": [
+    "/agendamento",
+    "/buscar-contato-reuniao",
+    "/evento-cancelado",
+    "/pos-consulta",
+    "/consulta-status",
+    "/lembrete"
+  ],
+  "scan": {
+    "include": ["server.js", "src", "scripts"],
+    "exclude": [
+      "src/scripts/consultation-architecture-audit.js",
+      "scripts/audit-consulta-enforcement.js"
+    ]
+  }
+}

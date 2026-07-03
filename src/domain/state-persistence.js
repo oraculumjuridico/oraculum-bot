@@ -6,6 +6,9 @@ const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
 
 let persistUsersTimeout = null
+let persistUsersMaxTimeout = null
+const PERSIST_DEBOUNCE_MS = 300
+const PERSIST_MAX_WAIT_MS = 2000
 const WEBHOOK_INBOX_SCHEMA_VERSION = 1
 const WEBHOOK_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -304,6 +307,15 @@ function serializarUsers() {
 }
 
 function persistirUsersAgora({ propagarErro = false } = {}) {
+  if (persistUsersTimeout) {
+    clearTimeout(persistUsersTimeout)
+    persistUsersTimeout = null
+  }
+  if (persistUsersMaxTimeout) {
+    clearTimeout(persistUsersMaxTimeout)
+    persistUsersMaxTimeout = null
+  }
+
   let arquivoTemporario = null
   let descritor = null
   try {
@@ -338,9 +350,14 @@ function persistirUsersAgora({ propagarErro = false } = {}) {
 function agendarPersistenciaUsers() {
   if (persistUsersTimeout) clearTimeout(persistUsersTimeout)
   persistUsersTimeout = setTimeout(() => {
-    persistUsersTimeout = null
     persistirUsersAgora()
-  }, 300)
+  }, PERSIST_DEBOUNCE_MS)
+
+  if (!persistUsersMaxTimeout) {
+    persistUsersMaxTimeout = setTimeout(() => {
+      persistirUsersAgora()
+    }, PERSIST_MAX_WAIT_MS)
+  }
 }
 
 function hidratarUsuarioPersistido(data) {
@@ -410,6 +427,8 @@ function hidratarUsuarioPersistido(data) {
   hidratado.aguardandoResposta = Boolean(hidratado.aguardandoResposta)
   hidratado.nomePerfilWhatsApp = hidratado.nomePerfilWhatsApp || data?.nomeWA || "Cliente"
   hidratado.origemCaptacao = hidratado.origemCaptacao || "whatsapp"
+  hidratado.consultaStatus = sanitizarTextoEntrada(hidratado.consultaStatus) || "sem_consulta"
+  hidratado.tipoConsulta = sanitizarTextoEntrada(hidratado.tipoConsulta) || "inicial"
   hidratado._menuClienteCasoAtivo = false
   hidratado._casosMenuCliente = null
   hidratado._acaoPendente = null

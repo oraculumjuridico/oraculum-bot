@@ -5,12 +5,28 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/hubspot-contract.test.js",
     "smoke": "node smoke.js",
-    "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke"
+    "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke",
+    "test": "node test/consultation-state.test.js && node test/consultation-flows.test.js && node test/consultation-idempotency.test.js && node test/consultation-reconcile.test.js && node test/consultation-audit-operational.test.js && node test/consultation-operational-baseline.test.js && node test/consultation-integrity-metrics.test.js && node test/crm-identity-impact-analysis.test.js && node test/crm-case-party.test.js && node test/crm-case-party-decision-audit.test.js && node test/crm-case-party-multi-resolver.test.js && node test/crm-case-party-resolution-stability.test.js && node test/consultation-events.test.js && node test/consultation-read-model.test.js && node test/consultation-enforcement.test.js && node test/consultation-architecture-audit.test.js && node test/consultation-architecture-hard-lock.test.js && node test/consultation-architecture-snapshot.test.js && node test/consultation-immutability.test.js && node test/consultation-replay-consistency.test.js && node test/consultation-legal-proof.test.js && node test/consultation-integrity-hash.test.js && node test/consultation-self-verification-engine.test.js && node test/consultation-drift-detector.test.js && node test/consultation-integrity-drift-detected.test.js && node test/consultation-auto-repair-engine.test.js && node test/consultation-session-recovery.test.js && node test/consultation-self-healed-event.test.js && node test/hubspot-contract.test.js",
+    "audit:consulta": "node scripts/audit-consulta-phase1.js",
+    "consultation:baseline": "node scripts/collect-consultation-operational-baseline.js --live",
+    "consultation:integrity:metrics": "node scripts/consultation-integrity-metrics.js",
+    "crm:identity:impact": "node scripts/crm-identity-impact-analysis.js",
+    "audit:consulta:enforcement": "node scripts/audit-consulta-enforcement.js",
+    "audit:consulta:architecture": "node src/scripts/consultation-architecture-audit.js",
+    "consultation:release-check": "node src/scripts/consultation-release-check.js",
+    "consultation:export:legal": "node src/scripts/consultation-export-legal.js",
+    "consultation:export:dossier": "node src/scripts/consultation-export-dossier.js",
+    "reconcile:consulta": "node scripts/reconcile-consulta.js",
+    "reconcile:consulta:dry": "node scripts/reconcile-consulta.js --dry-run",
+    "migrate:consulta": "node scripts/migrate-consulta-calendar.js"
   },
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": "20.x",
+    "npm": "10.x"
+  },
   "dependencies": {
     "axios": "^1.16.1",
     "dotenv": "^17.4.2",

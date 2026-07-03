@@ -12,6 +12,10 @@ const VOZES = {
 }
 
 const AUDIO_DIR = path.join(__dirname, "audios", "atendentes")
+const AXIOS_TIMEOUT_MS = Number(process.env.AXIOS_TIMEOUT_MS || 15000)
+const FFMPEG_TIMEOUT_MS = Number(process.env.FFMPEG_TIMEOUT_MS || 60000)
+const axiosTimeout = Number.isFinite(AXIOS_TIMEOUT_MS) && AXIOS_TIMEOUT_MS > 0 ? AXIOS_TIMEOUT_MS : 15000
+const ffmpegTimeout = Number.isFinite(FFMPEG_TIMEOUT_MS) && FFMPEG_TIMEOUT_MS > 0 ? FFMPEG_TIMEOUT_MS : 60000
 const AUDIO_TTL_MS = 24 * 60 * 60 * 1000
 const GOOGLE_TTS_MAX_CHARS = 180
 let ultimaLimpeza = 0
@@ -74,6 +78,7 @@ function caminhoConcatFfmpeg(caminho) {
 async function baixarMp3GoogleTTS(texto, lang, destino) {
   const url = "https://translate.google.com/translate_tts"
   const resposta = await axios.get(url, {
+    timeout: axiosTimeout,
     responseType: "arraybuffer",
     params: {
       ie: "UTF-8",
@@ -118,11 +123,17 @@ async function gerarAudioAtendente(atendente, texto) {
 
     if (mp3Parts.length === 1) {
       fs.copyFileSync(mp3Parts[0], mp3Path)
-      execFileSync("ffmpeg", ["-y", "-i", mp3Path, "-c:a", "libopus", "-b:a", "24k", oggPath], { stdio: "ignore" })
+      execFileSync("ffmpeg", ["-y", "-i", mp3Path, "-c:a", "libopus", "-b:a", "24k", oggPath], {
+        stdio: "ignore",
+        timeout: ffmpegTimeout
+      })
     } else {
       const lista = mp3Parts.map(p => `file '${caminhoConcatFfmpeg(p)}'`).join("\n")
       fs.writeFileSync(concatListPath, lista, "utf8")
-      execFileSync("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c:a", "libopus", "-b:a", "24k", oggPath], { stdio: "ignore" })
+      execFileSync("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c:a", "libopus", "-b:a", "24k", oggPath], {
+        stdio: "ignore",
+        timeout: ffmpegTimeout
+      })
     }
   } finally {
     try { if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path) } catch {}

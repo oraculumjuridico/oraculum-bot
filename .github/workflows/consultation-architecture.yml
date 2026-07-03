@@ -1,0 +1,25 @@
+name: Consultation Architecture
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:consulta:architecture
+        env:
+          NODE_ENV: production
+          CONSULTA_ARCHITECTURE_AUDIT_MODE: strict
+      - run: npm run consultation:release-check
+        env:
+          NODE_ENV: production
+      - run: npm test

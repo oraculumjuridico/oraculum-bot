@@ -3,6 +3,13 @@
 //  WhatsApp · HubSpot · Google Drive · AssemblyAI · Groq AI
 // ================================================================
 
+const {
+  assertConsultationArchitecture,
+  assertConsultationReleaseIntegrity
+} = require("./src/domain/consultation")
+assertConsultationReleaseIntegrity({ root: __dirname })
+assertConsultationArchitecture({ root: __dirname })
+
 // ================================================================
 //  CONFIG / INIT
 // ================================================================
@@ -199,10 +206,16 @@ const {
   formatarSlotAudio
 } = require("./src/domain/calendar-format")
 const {
+  getConsultaView,
+  listConsultasAtivasViews,
+  findConsultaCalendarEventInRange,
+  getConsultaCalendarEventState,
   buscarHorariosDisponiveis,
   criarEventoConsulta,
-  obterEstadoEventoConsulta
-} = require("./src/domain/calendar-scheduling")
+  definirResultadoConsulta,
+  cancelarEventosAtivosDoDeal,
+  appendConsultaEvent
+} = require("./src/domain/consultation")
 const {
   estadoPorExtenso,
   mapearRegiaoPorUF,
@@ -266,13 +279,13 @@ const {
   hsAssociar,
   filtrarPropsHubSpot,
   hsAtualizarContato,
-  hsAtualizarNegocio,
   hsCriarNota,
   hsCriarNotaNegocio
 } = require("./src/domain/hubspot-core")
 const {
   configurarHubSpotSync,
   hsAtualizarNegocioComEstado,
+  hsAtualizarNegocioSerializado,
   atualizarDealstage,
   sincronizarNegocio,
   restaurarEstadoNegocioHubSpot,
@@ -563,9 +576,30 @@ const sessoesAdminWhatsApp = new Map()
 // Fila por usuário — garante que mensagens simultâneas sejam processadas em ordem,
 // sem perda de conteúdo quando o cliente envia várias mensagens rapidamente.
 const filasMensagens = new Map()
+const locksUsuarios = new Map()
 const sessoesAdminAutenticadas = new Map()
 const tentativasAdminWhatsApp = new Map()
 const revisoesCasosAdmin = new Map()
+
+async function executarComLockUsuario(from, tarefa) {
+  const chave = normalizarNumeroWhatsAppEnvio(from) || sanitizarTextoEntrada(from)
+  if (!chave) return tarefa()
+
+  const anterior = locksUsuarios.get(chave) || Promise.resolve()
+  let liberar
+  const atual = new Promise(resolve => { liberar = resolve })
+  locksUsuarios.set(chave, atual)
+
+  await anterior.catch(() => {})
+  try {
+    return await tarefa()
+  } finally {
+    liberar()
+    if (locksUsuarios.get(chave) === atual) {
+      locksUsuarios.delete(chave)
+    }
+  }
+}
 configurarAdminAuth({
   WHATSAPP_ADMIN,
   sessoesAdminWhatsApp,
@@ -589,11 +623,13 @@ function mensagemJaProcessada(messageId, fallbackKey = "") {
     if (agora - ts > MESSAGE_DEDUPE_WINDOW_MS) mensagensProcessadas.delete(id)
   }
 
-  const chaves = [sanitizarTextoEntrada(messageId), sanitizarTextoEntrada(fallbackKey)].filter(Boolean)
-  if (!chaves.length) return false
-  if (chaves.some(chave => mensagensProcessadas.has(chave))) return true
+  const id = sanitizarTextoEntrada(messageId)
+  const fallback = sanitizarTextoEntrada(fallbackKey)
+  const chave = id || fallback
+  if (!chave) return false
+  if (mensagensProcessadas.has(chave)) return true
 
-  for (const chave of chaves) mensagensProcessadas.set(chave, agora)
+  mensagensProcessadas.set(chave, agora)
   return false
 }
 
@@ -613,6 +649,8 @@ function novoUsuario(nomeWA) {
     nomeConfirmado: false,
     contatoId: null, negocioId: null, numeroCaso: null,
     pastaDriveId: null, pastaDriveLink: null,
+    consultaStatus: "sem_consulta",
+    tipoConsulta: "inicial",
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
@@ -924,7 +962,6 @@ const HS_STAGE = {
   ANALISE: "presentationscheduled",
   AGUARDANDO_DOCS: "decisionmakerboughtin",
   DOCS: "contractsent",
-  AGENDAMENTO: "1343040832",
   PROTOCOLO: "1343040098",
   PROCESSO: "1337291921",
   FINAL: "1343039663"
@@ -1329,7 +1366,7 @@ function gerarBriefingCaso(u = {}) {
   const stage = u.negocioStageId || mapearStageParaDealstage(u) || u.stage || ""
   const proximaAcao = (() => {
     if (!u.numeroCaso) return "Concluir pre-atendimento e gerar caso."
-    if (u._eventoCalendarId || stage === HS_STAGE.AGENDAMENTO) return "Acompanhar consulta agendada."
+    if (u.consultaStatus === "agendada") return "Acompanhar consulta agendada."
     if (statusDocs.faltantesCriticos.length > 0) return "Cobrar documentos faltantes."
     if (stage === HS_STAGE.ANALISE) return "Revisar analise juridica inicial."
     if (stage === HS_STAGE.PROTOCOLO) return "Acompanhar protocolo."
@@ -1358,7 +1395,7 @@ function gerarBriefingCaso(u = {}) {
       faltantesCriticos: statusDocs.faltantesCriticos.map(doc => doc.label),
       pendentesFluxo: statusDocs.pendentesFluxo.map(doc => doc.label)
     },
-    consultaAtiva: Boolean(u._eventoCalendarId || stage === HS_STAGE.AGENDAMENTO),
+    consultaAtiva: u.consultaStatus === "agendada",
     hubspot: u.negocioId ? linkHubSpot(u.negocioId) : null,
     drive: u.pastaDriveLink || null,
     proximaAcao
@@ -1499,7 +1536,7 @@ function mapearStageParaDealstage(u) {
   const stageBase = stageBaseNormalizado || ""
 
   // Proteção global — nunca regride de stage avançado independente do stageBase
-  const stagesAvancados = [HS_STAGE.AGENDAMENTO, HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL]
+  const stagesAvancados = [HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL]
   if (stagesAvancados.includes(u?.negocioStageId)) return null
 
   if (stageBase === STAGES.CLIENTE || stageBase === STAGES.DOCUMENTOS) {
@@ -1887,10 +1924,23 @@ async function registrarCasoTerceiroNoWhatsAppInformado(from, u, numeroCaso, cas
     lastPergunta: null,
     lastPerguntaPayload: null
   }
-  users[telefoneTerceiro] = { ...novoUsuario(u.nome || "Cliente"), ...estadoTerceiro }
+  let sessaoTerceiroPreparada = false
+  if (!locksUsuarios.has(telefoneTerceiro)) {
+    sessaoTerceiroPreparada = await executarComLockUsuario(telefoneTerceiro, () => {
+      const estadoAnteriorTerceiro = users[telefoneTerceiro]
+      if (estadoAnteriorTerceiro) {
+        limparTimer(estadoAnteriorTerceiro)
+        limparTimerIncentivoDescricao(estadoAnteriorTerceiro)
+      }
+      users[telefoneTerceiro] = { ...novoUsuario(u.nome || "Cliente"), ...estadoTerceiro }
+      return true
+    })
+  } else {
+    logErro("concorrencia", `Sessao ativa impediu substituicao do estado do terceiro: ${telefoneTerceiro}`)
+  }
 
   let enviado = false
-  if (WHATSAPP_TEMPLATE_TERCEIRO) {
+  if (sessaoTerceiroPreparada && WHATSAPP_TEMPLATE_TERCEIRO) {
     const imagemTemplateTerceiro = WHATSAPP_TEMPLATE_TERCEIRO_IMAGEM_URL
     enviado = await enviarTemplateWhatsApp(telefoneTerceiro, WHATSAPP_TEMPLATE_TERCEIRO, [
       primeiroNomeCliente(u) || u.nome || "tudo bem",
@@ -1900,7 +1950,7 @@ async function registrarCasoTerceiroNoWhatsAppInformado(from, u, numeroCaso, cas
     ], WHATSAPP_TEMPLATE_LANG, { headerImageUrl: imagemTemplateTerceiro })
   }
 
-  if (!enviado) {
+  if (sessaoTerceiroPreparada && !enviado) {
     enviado = await enviar(telefoneTerceiro,
       `Olá, *${primeiroNomeCliente(u) || u.nome || "tudo bem"}*!\n\nUm novo atendimento jurídico foi aberto para você pela *Oráculum Advocacia*${nomeQuemAbriu ? ` a pedido de *${nomeQuemAbriu}*` : ""}.\n\n📄 *Número do caso:* \`\`\`${numeroCaso}\`\`\`\n⚖️ *Área:* ${u.area ? "Direito " + u.area : "Jurídico"}\n\nA continuidade deste atendimento será feita por este WhatsApp.\n\nVocê reconhece esse atendimento?\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`,
       [
@@ -2071,6 +2121,8 @@ function limparDadosCasoAtual(u, { preservarNome = true, marcarFluxoEncerrado = 
     contribuicao: null, recebeBeneficio: null, descricao: null,
     contatoId: null, negocioId: null, numeroCaso: null,
     pastaDriveId: null, pastaDriveLink: null,
+    consultaStatus: "sem_consulta",
+    tipoConsulta: "inicial",
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
@@ -2145,6 +2197,7 @@ function limparDadosAtendimento(u) {
     urgencia: "normal", semReceber: false,
     contribuicao: null, recebeBeneficio: null, descricao: null,
     pastaDriveId: null, pastaDriveLink: null,
+    consultaStatus: "sem_consulta", tipoConsulta: "inicial",
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
@@ -2862,6 +2915,16 @@ function limparTimerIncentivoDescricao(u) {
   }
 }
 
+function executarCallbackTimerUsuario(from, estadoEsperado, ultimaMsgEsperada, contexto, tarefa) {
+  executarComLockUsuario(from, () => {
+    if (users[from] !== estadoEsperado) return null
+    if (Number(estadoEsperado?.ultimaMsg || 0) !== ultimaMsgEsperada) return null
+    return tarefa()
+  }).catch(err => {
+    logErro("timer_usuario", `Falha no timer ${contexto} | USER: ${sanitizarTextoEntrada(from) || "-"}`, err)
+  })
+}
+
 function agendarIncentivoDescricao(from) {
   const u = users[from]
   if (!u) return
@@ -2875,7 +2938,7 @@ function agendarIncentivoDescricao(from) {
   const ultimaMsgBase = Number(u.ultimaMsg || 0)
   const espera = u.modoDigitando ? 3 * 60 * 1000 : 2 * 60 * 1000
 
-  u.timerIncentivoDescricao = setTimeout(async () => {
+  u.timerIncentivoDescricao = setTimeout(() => executarCallbackTimerUsuario(from, u, ultimaMsgBase, "incentivo_descricao", async () => {
     const atual = users[from]
     if (!atual) return
     if (obterEtapaSegura(atual._numero) !== "descricao_caso") return
@@ -2908,7 +2971,7 @@ function agendarIncentivoDescricao(from) {
       ],
       false
     )
-  }, espera)
+  }), espera)
 }
 
 function iniciarTimer(from) {
@@ -2917,7 +2980,8 @@ function iniciarTimer(from) {
   limparTimer(u)
 
   if (u.numeroCaso) {
-    u.timer = setTimeout(() => {
+    const ultimaMsgBase = Number(u.ultimaMsg || 0)
+    u.timer = setTimeout(() => executarCallbackTimerUsuario(from, u, ultimaMsgBase, "cliente_inatividade", () => {
       const atual = users[from]
       if (!atual) return
       atual.aguardandoResposta = false
@@ -2925,7 +2989,7 @@ function iniciarTimer(from) {
       atual.modoDigitando = false
       atual.timer = null
       agendarPersistenciaUsers()
-    }, 30 * 60 * 1000)
+    }), 30 * 60 * 1000)
     return
   }
 
@@ -2939,7 +3003,8 @@ function iniciarTimer(from) {
   const t2 = (temSofrimentoAtivo ? 20 : 10) * 60 * 1000
 
   if (!AUTO_REENGAJAMENTO) {
-    u.timer = setTimeout(() => {
+    const ultimaMsgBase = Number(u.ultimaMsg || 0)
+    u.timer = setTimeout(() => executarCallbackTimerUsuario(from, u, ultimaMsgBase, "lead_inatividade", () => {
       const atual = users[from]
       if (!atual) return
       atual.aguardandoResposta = false
@@ -2947,11 +3012,12 @@ function iniciarTimer(from) {
       atual.modoDigitando = false
       atual.timer = null
       agendarPersistenciaUsers()
-    }, t1 + t2)
+    }), t1 + t2)
     return
   }
 
-  u.timer = setTimeout(async () => {
+  const ultimaMsgBase = Number(u.ultimaMsg || 0)
+  u.timer = setTimeout(() => executarCallbackTimerUsuario(from, u, ultimaMsgBase, "reengajamento", async () => {
     if (!users[from]) return
     if (u.modoDigitando) {
       u.modoDigitando = false
@@ -2980,7 +3046,8 @@ function iniciarTimer(from) {
       u.aguardandoResposta = true
       u.aguardandoRetomada = true
 
-      u.timer = setTimeout(async () => {
+      const ultimaMsgAbandonoTerceiro = Number(u.ultimaMsg || 0)
+      u.timer = setTimeout(() => executarCallbackTimerUsuario(from, u, ultimaMsgAbandonoTerceiro, "abandono_terceiro", async () => {
         if (!users[from]) return
         if (u.modoDigitando) u.modoDigitando = false
         u.aguardandoRetomada = false
@@ -2988,7 +3055,7 @@ function iniciarTimer(from) {
         const resposta = await cancelarNovoCasoClienteEVoltarMenu(from, u, "inatividade")
         if (resposta) await enviar(from, resposta.texto, resposta.opcoes || null, false)
         agendarPersistenciaUsers()
-      }, t2)
+      }), t2)
       return
     }
 
@@ -3021,7 +3088,8 @@ function iniciarTimer(from) {
     u.aguardandoResposta = true
     u.aguardandoRetomada = true
 
-    u.timer = setTimeout(async () => {
+    const ultimaMsgAbandono = Number(u.ultimaMsg || 0)
+    u.timer = setTimeout(() => executarCallbackTimerUsuario(from, u, ultimaMsgAbandono, "abandono", async () => {
       if (!users[from]) return
       if (u.modoDigitando) u.modoDigitando = false
 
@@ -3050,8 +3118,8 @@ function iniciarTimer(from) {
       await capturarLeadIncompleto(from, u)
       limparDadosCasoAtual(u, { preservarNome: false, marcarFluxoEncerrado: true })
       agendarPersistenciaUsers()
-    }, t2)
-  }, t1)
+    }), t2)
+  }), t1)
 }
 
 function restaurarTimersPersistidos() {
@@ -3227,13 +3295,26 @@ function calcularStageAposAgendamento(u) {
   return HS_STAGE.DOCS
 }
 
-function localizarUsuarioAgendamento({ eventId = "", dealId = "", phone = "" } = {}) {
+async function atualizarEstadoConsultaUsuario(u) {
+  if (!u) return { status: "sem_consulta", fonte: "sem_usuario" }
+  const estado = await getConsultaView(u.negocioId)
+  u.consultaStatus = estado.status
+  u._consultaEstadoFonte = estado.fonte || null
+  u._consultaInicio = estado.inicio || null
+  u._consultaFim = estado.fim || null
+  return estado
+}
+
+async function localizarUsuarioAgendamento({ eventId = "", dealId = "", phone = "" } = {}) {
   const evento = sanitizarTextoEntrada(eventId)
-  const negocio = sanitizarTextoEntrada(dealId)
+  let negocio = sanitizarTextoEntrada(dealId)
   const numero = normalizarNumeroWhatsAppEnvio(phone)
+  if (!negocio && evento) {
+    const estadoEvento = await getConsultaCalendarEventState(evento)
+    negocio = sanitizarTextoEntrada(estadoEvento?.metadata?.dealId)
+  }
 
   for (const [from, u] of Object.entries(users)) {
-    if (evento && u?._eventoCalendarId === evento) return { from, u }
     if (negocio && String(u?.negocioId || "") === negocio) return { from, u }
     if (numero && normalizarNumeroWhatsAppEnvio(from) === numero) return { from, u }
     if (numero && normalizarNumeroWhatsAppEnvio(u?.whatsappContato) === numero) return { from, u }
@@ -3245,13 +3326,31 @@ function localizarUsuarioAgendamento({ eventId = "", dealId = "", phone = "" } =
 async function liberarAgendamentoERecalcularStage(u, motivo = "agendamento_liberado") {
   if (!u) return { atualizado: false, motivo: "usuario_nao_encontrado" }
 
-  const eventoAnterior = u._eventoCalendarId || null
+  const estadoConsulta = await getConsultaView(u.negocioId)
+  const eventoAnterior = estadoConsulta.eventId || null
+  if (eventoAnterior && ["cancelada", "encerrada", "nao_compareceu"].includes(estadoConsulta.status)) {
+    await appendConsultaEvent({
+      tipo: estadoConsulta.status === "cancelada" ? "consulta.canceled" : "consulta.expired",
+      dealId: u.negocioId,
+      timestamp: estadoConsulta.fim || new Date().toISOString(),
+      consultaStatus: estadoConsulta.status,
+      metadata: {
+        calendarEventId: eventoAnterior,
+        inicio: estadoConsulta.inicio,
+        fim: estadoConsulta.fim,
+        tipoConsulta: estadoConsulta.metadata?.tipoConsulta,
+        versaoIntegracao: estadoConsulta.metadata?.versaoIntegracao || "3"
+      },
+      origem: motivo.includes("admin") ? "admin" : motivo.includes("cliente") ? "client" : "system",
+      chaveIdempotencia: `calendar:${eventoAnterior}:${estadoConsulta.status}`
+    })
+  }
   if (eventoAnterior) {
     u._ultimoEventoCalendarId = eventoAnterior
     u._ultimoEventoCalendarMotivo = motivo
     u._ultimoEventoCalendarLiberadoEm = new Date().toISOString()
   }
-  u._eventoCalendarId = null
+  u.consultaStatus = estadoConsulta.status
 
   const stageAtual = sanitizarTextoEntrada(u.negocioStageId)
   const stagesNaoRecalcular = [HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL]
@@ -3295,7 +3394,6 @@ function labelStageAdmin(stage) {
     [HS_STAGE.ANALISE]: "🔎 Analise",
     [HS_STAGE.AGUARDANDO_DOCS]: "📎 Docs pendentes",
     [HS_STAGE.DOCS]: "📁 Docs recebidos",
-    [HS_STAGE.AGENDAMENTO]: "📅 Consulta",
     [HS_STAGE.PROTOCOLO]: "📮 Protocolo",
     [HS_STAGE.PROCESSO]: "⚖️ Processo",
     [HS_STAGE.FINAL]: "✅ Encerrado"
@@ -3379,8 +3477,7 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     area: snapshot.area || props.area_juridica || u?.area || null,
     urgencia: snapshot.urgencia || ({ alta: "alta", moderada: "normal", baixa: "baixa" }[urgenciaProps]) || u?.urgencia || "normal",
     descricao: snapshot.descricao || props.description || props.descricao_completa || u?.descricao || null,
-    assuntoResumo: snapshot.assuntoResumo || props.resumo_cliente || u?.assuntoResumo || null,
-    _eventoCalendarId: snapshot._eventoCalendarId || u?._eventoCalendarId || null
+    assuntoResumo: snapshot.assuntoResumo || props.resumo_cliente || u?.assuntoResumo || null
   })
   base._numero = telefone || from || null
   return { from: telefone || from || "", u: base, negocio, contato }
@@ -3461,6 +3558,28 @@ async function hsAdminItensPorStages(stages = [], limit = 30) {
   })
 }
 
+async function hsAdminItemPorDealId(dealId) {
+  const id = sanitizarTextoEntrada(dealId)
+  if (!id) return null
+  try {
+    const res = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso,urgencia`,
+      { headers: HS() }
+    )
+    const negocio = {
+      id,
+      stageId: res.data?.properties?.dealstage || null,
+      createdate: res.data?.properties?.createdate || null,
+      properties: res.data?.properties || {}
+    }
+    const contato = await hsAdminBuscarContatoDoNegocio(id)
+    return normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarDealPorCalendar", dealId: id })
+    return null
+  }
+}
+
 async function adminItensAtivosHubSpot(limit = 50) {
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
   return hsAdminItensPorStages(stagesAtivos, limit)
@@ -3485,11 +3604,16 @@ async function adminResumoOperacional() {
     const id = String(item.u?.negocioId || "")
     if (!id || !vistos.has(id)) todos.push(item)
   }
+  await mapearComLimite(todos, 5, async ({ u }) => {
+    if (u?.negocioId) {
+      await atualizarEstadoConsultaUsuario(u).catch(() => null)
+    }
+  })
 
   return {
     fonte: ativos.length ? "HubSpot + memoria local" : "memoria local",
     totalClientes: todos.filter(({ u }) => Boolean(u.numeroCaso)).length,
-    consultasAtivas: todos.filter(({ u }) => u.negocioStageId === HS_STAGE.AGENDAMENTO || Boolean(u._eventoCalendarId)).length,
+    consultasAtivas: todos.filter(({ u }) => u.consultaStatus === "agendada").length,
     docsPendentes: todos.filter(({ u }) => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)).length,
     urgentes: todos.filter(({ u }) => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || u.hs_priority === "high").length,
     analise: todos.filter(({ u }) => u.negocioStageId === HS_STAGE.ANALISE && Boolean(u.numeroCaso)).length,
@@ -4006,8 +4130,7 @@ async function telaAdminAlertasDocs(from) {
 }
 
 async function telaAdminAlertasAgenda(from) {
-  const filtro = u => u.negocioStageId === HS_STAGE.AGENDAMENTO || Boolean(u._eventoCalendarId)
-  const itens = await adminFonteCasos(filtro, [HS_STAGE.AGENDAMENTO], 50)
+  const itens = await obterConsultasAtivasAdmin()
   return telaAdminListaCasos(from, "📅 *Alertas de agenda*", itens, "✅ Nao encontrei consultas futuras ativas.", ADMIN_IDS.alertas)
 }
 
@@ -4345,19 +4468,21 @@ async function obterConsultasAtivasAdmin() {
   const consultas = []
   const vistos = new Set()
 
-  const itensHubSpot = await hsAdminItensPorStages([HS_STAGE.AGENDAMENTO], 30)
-  for (const item of itensHubSpot) {
+  let consultasViews = []
+  try {
+    consultasViews = await listConsultasAtivasViews()
+  } catch (e) {
+    logErro("admin_whatsapp", "Falha ao listar consultas no Calendar: " + e.message)
+  }
+  const itensCalendar = await mapearComLimite(consultasViews, 5, async view => ({
+    estado: view,
+    item: await hsAdminItemPorDealId(view.dealId)
+  }))
+  for (const { estado, item } of itensCalendar) {
+    if (!item) continue
     const u = item.u
-    const eventId = sanitizarTextoEntrada(u?._eventoCalendarId)
-    let estado = null
-    if (eventId) {
-      try {
-        estado = await obterEstadoEventoConsulta(eventId)
-      } catch (e) {
-        logErro("admin_whatsapp", "Falha ao consultar evento HubSpot: " + e.message)
-      }
-      if (estado?.cancelado || estado?.passou) continue
-    }
+    const eventId = estado.eventId
+    u.consultaStatus = estado.status
 
     const chave = String(u?.negocioId || item.negocio?.id || eventId || item.from || "")
     if (chave) vistos.add(chave)
@@ -4369,32 +4494,7 @@ async function obterConsultasAtivasAdmin() {
       fim: estado?.fim || null,
       negocioId: u.negocioId || item.negocio?.id || null,
       contatoId: u.contatoId || item.contato?.id || null,
-      fonte: "HubSpot"
-    })
-  }
-
-  for (const [from, u] of Object.entries(users)) {
-    if (!u?._eventoCalendarId) continue
-    const chave = String(u.negocioId || u._eventoCalendarId || from)
-    if (vistos.has(chave)) continue
-
-    let estado = null
-    try {
-      estado = await obterEstadoEventoConsulta(u._eventoCalendarId)
-    } catch (e) {
-      logErro("admin_whatsapp", "Falha ao consultar evento: " + e.message)
-    }
-
-    if (estado?.cancelado || estado?.passou) continue
-    consultas.push({
-      from,
-      u,
-      eventId: u._eventoCalendarId,
-      inicio: estado?.inicio || null,
-      fim: estado?.fim || null,
-      negocioId: u.negocioId || null,
-      contatoId: u.contatoId || null,
-      fonte: "Memoria"
+      fonte: "Calendar"
     })
   }
 
@@ -4501,7 +4601,7 @@ function telaConfirmarCancelamentoAdmin(from) {
   }
 
   const u = item.u
-  if (!item.eventId && !u?._eventoCalendarId) {
+  if (!item.eventId) {
     return {
       texto: "Essa consulta esta no HubSpot, mas nao encontrei o ID do evento Calendar para cancelar com seguranca. Abra o HubSpot ou atualize a agenda.",
       opcoes: [
@@ -4534,32 +4634,24 @@ async function cancelarConsultaAdmin(from) {
   }
 
   const { u } = item
-  const eventoId = u._eventoCalendarId || item.eventId
+  const eventoId = item.eventId
   let calendarOk = false
-  if (eventoId) {
-    try {
-      const cal = getCalendar()
-      await cal.events.delete({ calendarId: CALENDAR_ID, eventId: eventoId })
-      calendarOk = true
-    } catch (e) {
-      const status = e?.code || e?.response?.status || e?.status
-      if (status !== 404 && status !== 410) {
-        logErro("admin_whatsapp", "Falha ao deletar evento: " + e.message, e)
-        return {
-          texto: "Nao consegui cancelar o evento no Google Calendar. Tente novamente em instantes.",
-          opcoes: [
-            { id: ADMIN_IDS.cancelarSim, title: "Tentar de novo" },
-            { id: ADMIN_IDS.agenda, title: "Atualizar" }
-          ],
-          registrarPergunta: false
-        }
-      }
-      calendarOk = true
+  const dataHora = item.inicio ? formatarSlot(new Date(item.inicio)) : "data anterior"
+  let resultado
+  try {
+    resultado = await cancelarEventoConsultaUsuario(u, "cancelado_admin_whatsapp", eventoId)
+    calendarOk = true
+  } catch (e) {
+    logErro("admin_whatsapp", "Falha ao deletar evento: " + e.message, e)
+    return {
+      texto: "Nao consegui cancelar o evento no Google Calendar. Tente novamente em instantes.",
+      opcoes: [
+        { id: ADMIN_IDS.cancelarSim, title: "Tentar de novo" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar" }
+      ],
+      registrarPergunta: false
     }
   }
-
-  const dataHora = item.inicio ? formatarSlot(new Date(item.inicio)) : "data anterior"
-  const resultado = await liberarAgendamentoERecalcularStage(u, "cancelado_admin_whatsapp")
   let notaHubSpotOk = false
   if (u.contatoId) {
     notaHubSpotOk = await hsCriarNota(
@@ -4604,20 +4696,42 @@ async function cancelarConsultaAdmin(from) {
 }
 
 async function obterConsultaAtivaCliente(u) {
-  if (!u?._eventoCalendarId) return null
-  const estado = await obterEstadoEventoConsulta(u._eventoCalendarId)
-  if (estado?.cancelado || estado?.passou) {
+  if (!u?.negocioId) return null
+  const estado = await atualizarEstadoConsultaUsuario(u)
+  if (estado.status === "cancelada" || estado.status === "encerrada") {
+    if (estado.status === "encerrada" && estado.eventId) {
+      await appendConsultaEvent({
+        tipo: "consulta.expired",
+        dealId: u.negocioId,
+        timestamp: estado.fim || new Date().toISOString(),
+        consultaStatus: "encerrada",
+        metadata: {
+          calendarEventId: estado.eventId,
+          inicio: estado.inicio,
+          fim: estado.fim,
+          tipoConsulta: estado.metadata?.tipoConsulta,
+          versaoIntegracao: estado.metadata?.versaoIntegracao || "3"
+        },
+        origem: "system",
+        chaveIdempotencia: `calendar:${estado.eventId}:encerrada`
+      })
+    }
     await liberarAgendamentoERecalcularStage(
       u,
-      estado?.cancelado ? "evento_cancelado_cliente_verificacao" : "consulta_passada_cliente_verificacao"
+      estado.status === "cancelada" ? "evento_cancelado_cliente_verificacao" : "consulta_passada_cliente_verificacao"
     )
     return null
   }
-  return estado
+  return estado.status === "agendada" ? estado : null
 }
 
 async function cancelarEventoConsultaUsuario(u, motivo = "consulta_cancelada", eventoId = null) {
-  const idEvento = sanitizarTextoEntrada(eventoId || u?._eventoCalendarId)
+  const estadoAtual = await getConsultaView(u?.negocioId)
+  const idEvento = sanitizarTextoEntrada(estadoAtual?.eventId)
+  const idSolicitado = sanitizarTextoEntrada(eventoId)
+  if (idSolicitado && idEvento && idSolicitado !== idEvento) {
+    throw new Error("evento informado nao corresponde a consulta ativa do deal")
+  }
   if (idEvento) {
     try {
       const cal = getCalendar()
@@ -4626,6 +4740,28 @@ async function cancelarEventoConsultaUsuario(u, motivo = "consulta_cancelada", e
       const status = e?.code || e?.response?.status || e?.status
       if (status !== 404 && status !== 410) throw e
     }
+  }
+
+  const origem = motivo.includes("cliente")
+    ? "client"
+    : motivo.includes("admin")
+      ? "admin"
+      : "system"
+  if (idEvento) {
+    await appendConsultaEvent({
+      tipo: "consulta.canceled",
+      dealId: u.negocioId,
+      consultaStatus: "cancelada",
+      metadata: {
+        calendarEventId: idEvento,
+        inicio: estadoAtual.inicio,
+        fim: estadoAtual.fim,
+        tipoConsulta: estadoAtual.metadata?.tipoConsulta,
+        versaoIntegracao: estadoAtual.metadata?.versaoIntegracao || "3"
+      },
+      origem,
+      chaveIdempotencia: `calendar:${idEvento}:cancelada`
+    })
   }
 
   return await liberarAgendamentoERecalcularStage(u, motivo)
@@ -5167,28 +5303,20 @@ async function finalizarCadastro(from, u) {
   } else {
     logDebug("Negócio já existe, atualizando dealname:", negocioId)
     u.negocioId = negocioId
-    await hubspotClient.crm.deals.basicApi.update(u.negocioId, {
-      properties: {
-        dealname: dealnameFinal
-      }
+    await hsAtualizarNegocioSerializado(u.negocioId, {
+      dealname: dealnameFinal
     })
   }
   if (u.negocioId && u.numeroCaso) {
-    await hubspotClient.crm.deals.basicApi.update(u.negocioId, {
-      properties: {
-        numero_de_caso: u.numeroCaso
-      }
-    })
-    await hubspotClient.crm.deals.basicApi.update(u.negocioId, {
-      properties: {
-        dealname: dealnameFinal
-      }
+    await hsAtualizarNegocioSerializado(u.negocioId, {
+      numero_de_caso: u.numeroCaso,
+      dealname: dealnameFinal
     })
     await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
     u.negocioStageId = HS_STAGE.ANALISE
   }
   if (contatoId && negocioId) await hsAssociar(contatoId, negocioId)
-  await hsAtualizarNegocio(u.negocioId, getHubSpotDealStateProps(u))
+  await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
 
   if (contatoId) {
     await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
@@ -5803,37 +5931,22 @@ async function telaStatusCliente(from, u) {
     }
   }
 
-  // Buscar data da consulta no Google Calendar se houver evento agendado
+  // Calendar é a fonte exclusiva de verdade da agenda.
   let consultaDataHora = null
   let consultaPassou = false
-  if (u._eventoCalendarId) {
-    try {
-      const cal = getCalendar()
-      const ev = await cal.events.get({ calendarId: CALENDAR_ID, eventId: u._eventoCalendarId })
-      if (ev.data?.status === "cancelled") {
-        logDebug(`[CALENDAR] Evento ${u._eventoCalendarId} cancelado - agendamento removido da memoria`)
-        const liberacao = await liberarAgendamentoERecalcularStage(u, "evento_cancelado_calendar")
-        if (liberacao.novoStage) stageAtualHS = liberacao.novoStage
-      } else {
-        const dtInicio = ev.data?.start?.dateTime || ev.data?.start?.date || null
-        if (dtInicio) {
-          consultaDataHora = new Date(dtInicio)
-          consultaPassou = consultaDataHora < new Date()
-        }
-      }
-    } catch (e) {
-      logDebug('[CALENDAR-ERR] code=' + e?.code + ' status=' + e?.status + ' res=' + e?.response?.status + ' msg=' + String(e?.message).slice(0,80))
-      if (e?.code === 404 || e?.response?.status === 404 || e?.status === 404) {
-        logDebug(`[CALENDAR] Evento ${u._eventoCalendarId} não encontrado — agendamento removido da memória`)
-        const liberacao = await liberarAgendamentoERecalcularStage(u, "evento_nao_encontrado_calendar")
-        if (liberacao.novoStage) stageAtualHS = liberacao.novoStage
-      } else {
-        logErro("calendar", "Falha ao buscar evento para status: " + e.message)
-      }
+  let estadoConsulta = null
+  try {
+    estadoConsulta = await atualizarEstadoConsultaUsuario(u)
+    if (estadoConsulta.inicio) consultaDataHora = new Date(estadoConsulta.inicio)
+    consultaPassou = ["encerrada", "realizada", "nao_compareceu"].includes(estadoConsulta.status)
+    if (estadoConsulta.status === "cancelada") {
+      const liberacao = await liberarAgendamentoERecalcularStage(u, "evento_cancelado_calendar")
+      if (liberacao.novoStage) stageAtualHS = liberacao.novoStage
     }
+  } catch (e) {
+    logErro("calendar", "Falha ao obter estado central da consulta: " + e.message)
   }
-  // Agendamento ativo = evento existe E data ainda não passou
-  const temAgendamentoAtivo = Boolean(u._eventoCalendarId) && !consultaPassou
+  const temAgendamentoAtivo = u.consultaStatus === "agendada"
 
   // Documentos
   const statusDocs = calcularStatusDocumentos(u)
@@ -5845,7 +5958,7 @@ async function telaStatusCliente(from, u) {
     todosDocsEnviados,
     temFaltantesCriticos,
     temAgendamentoAtivo,
-    temEventoCalendar: Boolean(u._eventoCalendarId),
+    temEventoCalendar: Boolean(estadoConsulta?.encontrado),
     consultaPassou
   })
 
@@ -5922,7 +6035,7 @@ async function telaConfirmarCancelamentoConsultaCliente(from, u) {
   const dataHora = formatarSlot(dataConsulta)
   const dataHoraAudio = formatarSlotAudio(dataConsulta)
   u._cancelamentoConsultaPendente = {
-    eventId: u._eventoCalendarId,
+    eventId: estado.eventId,
     inicio: estado.inicio,
     ts: Date.now()
   }
@@ -5942,7 +6055,8 @@ async function cancelarConsultaCliente(from, u) {
     logErro("calendar", "Falha ao revalidar consulta para cancelamento: " + e.message, e)
   }
 
-  const eventoAtual = sanitizarTextoEntrada(u._eventoCalendarId)
+  const estadoAtual = await getConsultaView(u.negocioId)
+  const eventoAtual = sanitizarTextoEntrada(estadoAtual.eventId)
   const eventoPendente = sanitizarTextoEntrada(pendente.eventId)
   if (!estado?.inicio || (eventoPendente && eventoAtual && eventoPendente !== eventoAtual)) {
     u._cancelamentoConsultaPendente = null
@@ -6234,7 +6348,6 @@ async function executarIntencaoCliente(from, u, intencao, textoOriginal = "") {
   }
   if (intencao === "advogado") return await telaAdvogadoClienteComAudio(from, u)
   if (intencao === "agendar") {
-    if (u.negocioId) { await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO); u.negocioStageId = HS_STAGE.AGENDAMENTO }
     return await iniciarAgendamento(from, u)
   }
   if (intencao === "cancelar_consulta") return await telaConfirmarCancelamentoConsultaCliente(from, u)
@@ -8311,20 +8424,17 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   salvarEtapa(u._numero, "documentos")
   if (u.stage === STAGES.AGUARDANDO_URGENTE) setStage(u, STAGES.CLIENTE)
 
-  // Atualiza stage no HubSpot com lógica correta:
-  // - Se stage protegido (AGENDAMENTO/PROTOCOLO/etc) OU há evento de calendário ativo: não move, cria nota
-  // - Se não protegido: AGUARDANDO_DOCS se ainda há pendentes, DOCS se todos enviados
+  // Consulta ativa é decidida exclusivamente por consultaStatus.
+  // A proteção de stages jurídicos avançados permanece em hsMoverStageSeguro.
   if (u.negocioId) {
-    const stagesProtegidos = [HS_STAGE.AGENDAMENTO, HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL]
-    const temAgendamento = stagesProtegidos.includes(u.negocioStageId) || Boolean(u._eventoCalendarId)
-    if (temAgendamento) {
+    if (u.consultaStatus === "agendada") {
       await hsCriarNotaNegocio(u.negocioId, "DOCUMENTO ENVIADO DURANTE AGENDAMENTO",
         `${u.nome || "-"} (${from}) enviou um documento enquanto há consulta agendada.\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nArqFinal}`)
     } else {
       const pendentesAposEnvio = getDocsPendentes(u)
       const stageCorreto = pendentesAposEnvio.length > 0 ? HS_STAGE.AGUARDANDO_DOCS : HS_STAGE.DOCS
-      await hsMoverStage(u.negocioId, stageCorreto)
-      u.negocioStageId = stageCorreto
+      const moveu = await hsMoverStageSeguro(u.negocioId, stageCorreto, u.negocioStageId, false)
+      if (moveu) u.negocioStageId = stageCorreto
     }
   }
 
@@ -9668,11 +9778,9 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
 
       let eventoId = null
       try {
-        eventoId = await criarEventoConsulta(u, slot, duracao)
-        if (eventoId) u._eventoCalendarId = eventoId
+        eventoId = await criarEventoConsulta(u, slot, duracao, { origem: "client" })
+        if (eventoId) await atualizarEstadoConsultaUsuario(u)
         if (u.negocioId) {
-          await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
-          u.negocioStageId = HS_STAGE.AGENDAMENTO
           await hsCriarNota(u.contatoId, "CONSULTA AGENDADA",
             `${u.nome} agendou consulta para ${formatarSlot(slot)} (${duracaoLabel}).\nCaso: ${u.numeroCaso} | Área: ${u.area}`)
           notificarAgendamento(u, slot, duracao, u.negocioId).catch(e => console.error("[notif] agendamento:", e.message))
@@ -13715,22 +13823,15 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     if (text === "docs_intro_ok") {
       aplicarContextoDocsCasoAtual(u)
       if (u.negocioId) {
-        const moveu3 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.AGUARDANDO_DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
+        const moveu3 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.AGUARDANDO_DOCS, u.negocioStageId, u.consultaStatus === "agendada")
         if (moveu3) u.negocioStageId = HS_STAGE.AGUARDANDO_DOCS
       }
       if (getDocsPendentes(u).length === 0 && getDocsFaltantesReenviaveis(u).length > 0) {
         u._docsClienteGuiado = true
         u.etapa = "documentos"
         iniciarTimer(from)
-        await enviarAudioModoVoz(
-          from,
-          u,
-          "Encontrei documentos que ficaram faltando ou incompletos neste caso. Na tela, toque em Enviar faltantes para continuar o envio, ou em Ver status para conferir a lista.",
-          "documentos faltantes"
-        )
         const telaPendentes = telaDocsPendentesComImagem(u)
-        const enviadaPendentes = await enviarImagemWhatsApp(from, telaPendentes.imagemUrl, telaPendentes.texto, telaPendentes.opcoes)
-        if (!enviadaPendentes) return telaPendentes
+        await enviarGuiaDocs(from, u, telaPendentes)
         registrarUltimaPergunta(u, telaPendentes)
         return null
       }
@@ -13793,7 +13894,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u.documentosEnviados = true
         salvarEtapa(u._numero, "documentos")
         if (u.negocioId) {
-          const moveu4 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
+          const moveu4 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, u.consultaStatus === "agendada")
           if (moveu4) u.negocioStageId = HS_STAGE.DOCS
         }
         await hsCriarNota(
@@ -13848,7 +13949,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       salvarEtapa(u._numero, "documentos")
       setStage(u, STAGES.CLIENTE)
       if (u.negocioId) {
-        const moveu5 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.AGUARDANDO_DOCS, u.negocioStageId, Boolean(u._eventoCalendarId))
+        const moveu5 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.AGUARDANDO_DOCS, u.negocioStageId, u.consultaStatus === "agendada")
         if (moveu5) u.negocioStageId = HS_STAGE.AGUARDANDO_DOCS
       }
       await hsCriarNota(
@@ -14090,8 +14191,6 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     if (text === "adv_agendar_ligacao") {
       u._docsClienteGuiado = false
       if (u.negocioId) {
-        await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
-        u.negocioStageId = HS_STAGE.AGENDAMENTO
         await hsCriarNota(u.contatoId, "AGENDAMENTO SOLICITADO",
           `${u.nome} (${from}) solicitou agendamento.\nCaso: ${u.numeroCaso} | Área: ${u.area}`)
       }
@@ -14207,7 +14306,10 @@ async function drenaFilaUsuario(from) {
     const { nomeWA, text, msgObj, resolve } = fila[0]
     let resultado = null
     try {
-      resultado = await processarComLock(from, nomeWA, text, msgObj)
+      resultado = await executarComLockUsuario(
+        from,
+        () => processarComLock(from, nomeWA, text, msgObj)
+      )
     } catch (e) {
       logErro("fila_usuario", `Erro ao drenar fila | USER: ${sanitizarTextoEntrada(from) || "-"}`, e)
     }
@@ -14218,22 +14320,30 @@ async function drenaFilaUsuario(from) {
 }
 
 async function processarComLock(from, nomeWA, text, msgObj) {
-
-  const { contato, u } = await resolverUsuarioPorHubSpot(from, nomeWA)
-  const nomeWAEfetivo = contato?.id ? (nomeWA || u.nomeWA || "Cliente") : "Cliente"
   const textoSanitizado = sanitizarTextoEntrada(text)
-  const estadoHubSpotAntes = serializarEstado(u)
+  let u = users[from] || null
 
   try {
+    const resolvido = await resolverUsuarioPorHubSpot(from, nomeWA)
+    const contato = resolvido.contato
+    u = resolvido.u
+    const nomeWAEfetivo = contato?.id ? (nomeWA || u.nomeWA || "Cliente") : "Cliente"
+    if (u.negocioId) {
+      await atualizarEstadoConsultaUsuario(u).catch(e =>
+        logErro("calendar", "Falha ao atualizar estado da consulta na entrada: " + e.message)
+      )
+    }
+    const estadoHubSpotAntes = serializarEstado(u)
+
     const resposta = await processarInterno(from, nomeWAEfetivo, textoSanitizado, msgObj, u)
     if (deveSincronizarEstadoHubSpot(estadoHubSpotAntes, u)) {
       await sincronizarNegocio(u)
     }
     return resposta
   } catch (err) {
-    logContextoExecucao({ from, stage: u.stage, flow: "processar", msg: textoSanitizado })
+    logContextoExecucao({ from, stage: u?.stage, flow: "processar", msg: textoSanitizado })
     logErro("processar", "Falha ao processar solicitacao", err)
-    iniciarTimer(from)
+    if (u) iniciarTimer(from)
     return criarRespostaFallbackProcessamento()
   } finally {
     agendarPersistenciaUsers()
@@ -14406,12 +14516,15 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
 
     await enviar(numero, msg, null, false)
 
-    // Se tiver número do caso, atualizar stage no HubSpot
+    // Compatibilidade: esta rota apenas notifica. O estado da agenda vem do Calendar.
     if (caseid) {
       for (const [from, u] of Object.entries(users)) {
         if (u.numeroCaso === caseid && u.negocioId) {
-          await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
-          agendarPersistenciaUsers()
+          await executarComLockUsuario(from, async () => {
+            const atual = users[from]
+            if (!atual || atual.numeroCaso !== caseid || !atual.negocioId) return
+            agendarPersistenciaUsers()
+          })
           break
         }
       }
@@ -14490,15 +14603,7 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
     let eventoCalendar = null
     let eventoCalendarId = null
     try {
-      const cal = getCalendar()
-      const eventos = await cal.events.list({
-        calendarId: CALENDAR_ID,
-        timeMin: new Date(inicio).toISOString(),
-        timeMax: new Date(fim).toISOString(),
-        singleEvents: true,
-        maxResults: 1
-      })
-      eventoCalendar = eventos.data?.items?.[0] || null
+      eventoCalendar = await findConsultaCalendarEventInRange(inicio, fim)
       eventoCalendarId = eventoCalendar?.status === "cancelled" ? null : (eventoCalendar?.id || null)
     } catch (e) {
       logErro("buscar-contato-reuniao", "Erro ao buscar evento no Calendar: " + e.message)
@@ -14512,27 +14617,64 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
     })
     const ehConsultaCaso = tipoReuniao === "consulta_caso"
 
+    if (ehConsultaCaso && eventoCalendarId) {
+      try {
+        const estadoAnteriorConsulta = await getConsultaView(dealId)
+        const cal = getCalendar()
+        await cal.events.patch({
+          calendarId: CALENDAR_ID,
+          eventId: eventoCalendarId,
+          requestBody: {
+            extendedProperties: {
+              private: {
+                ...(eventoCalendar?.extendedProperties?.private || {}),
+                dealId: String(dealId),
+                personId: String(contactId),
+                contactId: String(contactId),
+                tipoConsulta: "inicial",
+                versaoIntegracao: "2"
+              }
+            }
+          }
+        })
+        const inicioEvento = eventoCalendar?.start?.dateTime || eventoCalendar?.start?.date || null
+        const fimEvento = eventoCalendar?.end?.dateTime || eventoCalendar?.end?.date || inicioEvento
+        await appendConsultaEvent({
+          tipo: estadoAnteriorConsulta.status === "agendada" && estadoAnteriorConsulta.eventId !== eventoCalendarId
+            ? "consulta.rescheduled"
+            : "consulta.scheduled",
+          dealId,
+          consultaStatus: "agendada",
+          metadata: {
+            calendarEventId: eventoCalendarId,
+            inicio: inicioEvento,
+            fim: fimEvento,
+            tipoConsulta: "inicial",
+            versaoIntegracao: "3"
+          },
+          origem: "admin",
+          chaveIdempotencia: `calendar:${eventoCalendarId}:agendada`
+        })
+      } catch (e) {
+        logErro("buscar-contato-reuniao", "Erro ao vincular metadata do Calendar: " + e.message)
+      }
+    }
+
     // 6. Atualizar memória do bot — encontrar usuário pelo número normalizado
     const phoneNorm = normalizarNumeroWhatsAppEnvio(phone)
     for (const [from, u] of Object.entries(users)) {
       if (normalizarNumeroWhatsAppEnvio(from) === phoneNorm) {
-        if (ehConsultaCaso && eventoCalendarId) {
-          if (u._eventoCalendarId && u._eventoCalendarId !== eventoCalendarId) {
-            try {
-              const cal = getCalendar()
-              await cal.events.delete({ calendarId: CALENDAR_ID, eventId: u._eventoCalendarId })
-              logDebug(`[CALENDAR] Evento anterior cancelado por nova consulta manual: ${u._eventoCalendarId}`)
-            } catch (e) {
-              logErro("calendar", "Falha ao cancelar evento anterior por nova consulta manual: " + e.message)
-            }
+        await executarComLockUsuario(from, async () => {
+          const atual = users[from]
+          if (!atual) return
+          if (ehConsultaCaso && eventoCalendarId) {
+            await cancelarEventosAtivosDoDeal(atual.negocioId, { excetoEventId: eventoCalendarId })
           }
-          u._eventoCalendarId = eventoCalendarId
-        }
-        if (ehConsultaCaso && u.negocioId) {
-          await hsMoverStage(u.negocioId, HS_STAGE.AGENDAMENTO)
-          u.negocioStageId = HS_STAGE.AGENDAMENTO
-        }
-        agendarPersistenciaUsers()
+          if (ehConsultaCaso && atual.negocioId) {
+            await atualizarEstadoConsultaUsuario(atual)
+          }
+          agendarPersistenciaUsers()
+        })
         break
       }
     }
@@ -14553,7 +14695,7 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
 })
 
 // ------------------------------------------------------------------
-// ROTA /evento-cancelado - libera AGENDAMENTO quando o Calendar/Make avisa cancelamento
+// ROTA /evento-cancelado - encerra o vínculo ativo quando Calendar/Make avisa cancelamento
 // Body aceito: { eventId } ou { dealId } ou { phone }
 // ------------------------------------------------------------------
 app.post("/evento-cancelado", validarWebhookInterno, async (req, res) => {
@@ -14563,11 +14705,17 @@ app.post("/evento-cancelado", validarWebhookInterno, async (req, res) => {
       return res.status(400).json({ erro: "eventId, dealId ou phone obrigatorio" })
     }
 
-    const { from, u } = localizarUsuarioAgendamento({ eventId, dealId, phone })
-    if (!u) return res.status(404).json({ erro: "usuario nao encontrado para o agendamento" })
+    const localizado = await localizarUsuarioAgendamento({ eventId, dealId, phone })
+    if (!localizado.u || !localizado.from) {
+      return res.status(404).json({ erro: "usuario nao encontrado para o agendamento" })
+    }
 
-    const resultado = await liberarAgendamentoERecalcularStage(u, "evento_cancelado_make")
-    if (from) users[from] = u
+    const resultado = await executarComLockUsuario(localizado.from, async () => {
+      const atual = await localizarUsuarioAgendamento({ eventId, dealId, phone })
+      if (!atual.u) return null
+      return liberarAgendamentoERecalcularStage(atual.u, "evento_cancelado_make")
+    })
+    if (!resultado) return res.status(404).json({ erro: "usuario nao encontrado para o agendamento" })
     return res.json({ ok: true, ...resultado })
   } catch (e) {
     logErro("evento-cancelado", e.message, e)
@@ -14576,34 +14724,83 @@ app.post("/evento-cancelado", validarWebhookInterno, async (req, res) => {
 })
 
 // ------------------------------------------------------------------
-// ROTA /pos-consulta - remove protecao de AGENDAMENTO e recalcula stage apos a consulta
+// ROTA /pos-consulta - encerra o evento ativo e preserva/recalcula apenas o stage jurídico
 // Body aceito: { eventId } ou { dealId } ou { phone }
 // ------------------------------------------------------------------
 app.post("/pos-consulta", validarWebhookInterno, async (req, res) => {
   try {
     const { eventId, dealId, phone, force } = req.body || {}
-    const { from, u } = localizarUsuarioAgendamento({ eventId, dealId, phone })
-    if (!u) return res.status(404).json({ erro: "usuario nao encontrado para o agendamento" })
-
-    const eventoId = sanitizarTextoEntrada(eventId || u._eventoCalendarId)
-    const estadoEvento = eventoId ? await obterEstadoEventoConsulta(eventoId) : { passou: Boolean(force), motivo: "sem_eventId" }
-
-    if (estadoEvento.cancelado) {
-      const resultadoCancelado = await liberarAgendamentoERecalcularStage(u, "evento_cancelado_pos_consulta")
-      if (from) users[from] = u
-      return res.json({ ok: true, evento: estadoEvento, ...resultadoCancelado })
+    const localizado = await localizarUsuarioAgendamento({ eventId, dealId, phone })
+    if (!localizado.u || !localizado.from) {
+      return res.status(404).json({ erro: "usuario nao encontrado para o agendamento" })
     }
 
-    if (!force && !estadoEvento.passou) {
-      return res.json({ ok: true, atualizado: false, motivo: "consulta_ainda_futura", evento: estadoEvento })
-    }
+    const resultado = await executarComLockUsuario(localizado.from, async () => {
+      const atual = await localizarUsuarioAgendamento({ eventId, dealId, phone })
+      if (!atual.u) return null
 
-    u._ultimaConsultaRealizadaEm = new Date().toISOString()
-    const resultado = await liberarAgendamentoERecalcularStage(u, "pos_consulta")
-    if (from) users[from] = u
-    return res.json({ ok: true, evento: estadoEvento, ...resultado })
+      const estadoEvento = await getConsultaView(atual.u.negocioId)
+      const eventoId = sanitizarTextoEntrada(estadoEvento.eventId)
+      if (!eventoId && force) {
+        return { atualizado: false, motivo: "sem_evento_calendar", evento: estadoEvento }
+      }
+
+      if (estadoEvento.cancelado) {
+        const liberacao = await liberarAgendamentoERecalcularStage(atual.u, "evento_cancelado_pos_consulta")
+        return { evento: estadoEvento, ...liberacao }
+      }
+
+      if (!force && !estadoEvento.passou) {
+        return { atualizado: false, motivo: "consulta_ainda_futura", evento: estadoEvento }
+      }
+
+      const liberacao = await liberarAgendamentoERecalcularStage(atual.u, "pos_consulta")
+      return { evento: estadoEvento, ...liberacao }
+    })
+
+    if (!resultado) return res.status(404).json({ erro: "usuario nao encontrado para o agendamento" })
+    return res.json({ ok: true, ...resultado })
   } catch (e) {
     logErro("pos-consulta", e.message, e)
+    return res.sendStatus(500)
+  }
+})
+
+// Resultado humano da consulta. O decurso do horário, sozinho, produz "encerrada".
+app.post("/consulta-status", validarWebhookInterno, async (req, res) => {
+  try {
+    const { eventId, status, dealId, phone, origem } = req.body || {}
+    if (!eventId || !["realizada", "nao_compareceu"].includes(sanitizarTextoEntrada(status).toLowerCase())) {
+      return res.status(400).json({ erro: "eventId e status (realizada|nao_compareceu) obrigatorios" })
+    }
+    const estado = await definirResultadoConsulta(eventId, status)
+    const localizado = await localizarUsuarioAgendamento({ eventId, dealId, phone })
+    const dealIdEvento = estado.metadata?.dealId || dealId || localizado.u?.negocioId
+    if (!dealIdEvento) return res.status(400).json({ erro: "dealId ausente no evento Calendar" })
+    const origemEvento = ["admin", "client", "system"].includes(origem) ? origem : "admin"
+    await appendConsultaEvent({
+      tipo: estado.status === "realizada" ? "consulta.completed" : "consulta.no_show",
+      dealId: dealIdEvento,
+      consultaStatus: estado.status,
+      metadata: {
+        calendarEventId: estado.eventId,
+        inicio: estado.inicio,
+        fim: estado.fim,
+        tipoConsulta: estado.metadata?.tipoConsulta,
+        versaoIntegracao: estado.metadata?.versaoIntegracao || "3"
+      },
+      origem: origemEvento,
+      chaveIdempotencia: `calendar:${estado.eventId}:${estado.status}`
+    })
+    if (localizado.u) {
+      await atualizarEstadoConsultaUsuario(localizado.u)
+      localizado.u._ultimaConsultaRealizadaEm = estado.status === "realizada" ? new Date().toISOString() : null
+      localizado.u._ultimaConsultaNaoCompareceuEm = estado.status === "nao_compareceu" ? new Date().toISOString() : null
+      agendarPersistenciaUsers()
+    }
+    return res.json({ ok: true, estado })
+  } catch (e) {
+    logErro("consulta-status", e.message, e)
     return res.sendStatus(500)
   }
 })

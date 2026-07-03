@@ -34,7 +34,10 @@ async function hsBuscarPorPhone(phone) {
       { headers: HS() }
     )
     return res.data.results?.[0] || null
-  } catch { return null }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "buscarPorPhone" })
+    throw e
+  }
 }
 
 async function hsCriarContato(from, u) {
