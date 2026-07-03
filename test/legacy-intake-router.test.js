@@ -137,7 +137,7 @@ async function main() {
     const u = { stage: "coleta_benef" }
     const resultado = await processar({ from: "5511", u, text: "col_b1" })
     assert.equal(resultado.handled, true)
-    assert.match(resultado.response.texto, /Me explique o que está acontecendo/)
+    assert.match(resultado.response.texto, /Conte o que aconteceu/)
     assert.equal(u.recebeBeneficio, "Sim")
     assert.equal(u.stage, "coleta_desc_audio")
     assert.deepEqual(chamadas.descricoes, ["coleta_desc_audio"])

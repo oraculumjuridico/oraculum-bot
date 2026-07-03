@@ -57,7 +57,7 @@ function criarLegacyIntakeRouter({
         return { handled: true, response: prepararOfertaExplicarTudoFinal(from, u, STAGES.CONFIRMACAO, null) }
       }
       entrarEtapaDescricao(u, STAGES.COLETA_DESC_AUDIO); iniciarTimer(from)
-      return { handled: true, response: { texto: "●●●●●○ 📝 Etapa 5 de 6 · *Descrição*\n\n📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null } }
+      return { handled: true, response: { texto: "●●●●●○ 📝 Etapa 5 de 6 · *Descrição*\n\nConte o que aconteceu e inclua os detalhes que considerar importantes.\n\nPode digitar ou enviar um áudio.", opcoes: null } }
     }
     if (u.stage === STAGES.DESC_ERRO_TRANSCRICAO) {
       if (text === "desc_corrigir") {
@@ -125,7 +125,7 @@ function criarLegacyIntakeRouter({
         return { handled: true, response: prepararOfertaExplicarTudoFinal(from, u, STAGES.CONFIRMACAO, null) }
       }
       entrarEtapaDescricao(u, STAGES.COLETA_DESC_AUDIO); iniciarTimer(from)
-      return { handled: true, response: { texto: "●●●●●○ 📝 Etapa 5 de 6 · *Descrição*\n\n📝 *Me explique o que está acontecendo.*\n\nQuanto mais detalhes, melhor! 😊\n\n🎙️ Pode *digitar* ou *enviar um áudio* — escolha como preferir.\n\n💡 Se for áudio, fique à vontade para explicar com calma. Tenho todo o tempo do mundo!", opcoes: null } }
+      return { handled: true, response: { texto: "●●●●●○ 📝 Etapa 5 de 6 · *Descrição*\n\nConte o que aconteceu e inclua os detalhes que considerar importantes.\n\nPode digitar ou enviar um áudio.", opcoes: null } }
     }
     if ((u.stage === "coleta_desc" || u.stage === "coleta_desc_audio") && text) {
       return { handled: true, response: iniciarConfirmacaoDescricao(from, u, text, STAGES.COLETA_DESC_AUDIO) }

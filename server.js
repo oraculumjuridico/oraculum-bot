@@ -2824,10 +2824,10 @@ async function iniciarFluxoRelatoLivre(from, u, { boasVindas = true } = {}) {
 
   if (boasVindas) {
     try {
-      await enviarImagemWhatsApp(from, "https://i.imgur.com/ztcFIuG.png", `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)
+      await enviarImagemWhatsApp(from, "https://i.imgur.com/ztcFIuG.png", `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`)
     } catch (e) {
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
-      await enviar(from, `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)
+      await enviar(from, `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`)
     }
   }
 
@@ -6162,7 +6162,7 @@ async function abrirNovoCasoCliente(from, u) {
     "novo caso cliente"
   )
   return {
-    texto: `➕ *Abrir novo caso*\n\nEscolha como deseja abrir este novo atendimento:\n\n✅ *É meu número*\nO novo caso será aberto em seu nome, usando seus dados cadastrados.\n\n👤 *É de outra pessoa*\nVamos abrir um atendimento separado para outra pessoa. Primeiro você contará a situação, depois informará os dados dela. A continuidade será pelo WhatsApp dessa pessoa.\n\n🏠 *Menu do cliente*\nCancela esta abertura e volta ao seu menu, sem alterar seu caso atual.\n\n*Dados que temos de você:*\n👤 *${nomeExibicao || "Nome não informado"}*\n📍 ${cidadeExibicao || "Cidade não informada"}${ufExibicao ? " - " + ufExibicao : ""}`,
+    texto: `➕ *Abrir novo caso*\n\nPara quem é este novo atendimento?\n\nSeu caso atual continuará registrado. Se for para outra pessoa, pediremos os dados e o WhatsApp dela.\n\n*Seus dados atuais:*\n👤 *${nomeExibicao || "Nome não informado"}*\n📍 ${cidadeExibicao || "Cidade não informada"}${ufExibicao ? " - " + ufExibicao : ""}`,
     opcoes: opcoesNovoCasoCliente
   }
 }
@@ -7465,11 +7465,11 @@ function flowNovoCasoConfirma(u, ctx) {
   const primeiroNome = primeiroNomeCliente(u) || "você"
   if (!u.modoTexto && from && u.atendente) {
     gerarAudioAtendente(u.atendente,
-      `Você quer abrir um novo atendimento. Escolha como prefere continuar. Primeira opção: É para mim — o novo caso será aberto em seu nome, usando seus dados cadastrados. Segunda opção: É para outra pessoa — vamos abrir um atendimento separado para outra pessoa. Terceira opção: Menu do cliente — cancela esta abertura e volta ao seu menu.`
+      `Você quer abrir um novo atendimento. Escolha se o caso é para você ou para outra pessoa. Seu caso atual continuará registrado.`
     ).then(ogg => enviarAudio(from, urlAudioAtendente(ogg))).catch(e => logErro("tts", "Falha áudio novo caso confirma", e))
   }
   return {
-    texto: `➕ *Abrir novo caso*\n\nEscolha como deseja abrir este novo atendimento:\n\n✅ *É meu número*\nO novo caso será aberto em seu nome, usando seus dados cadastrados.\n\n👤 *É de outra pessoa*\nVamos abrir um atendimento separado para outra pessoa. Primeiro você contará a situação, depois informará os dados dela. A continuidade será pelo WhatsApp dessa pessoa.\n\n🏠 *Menu do cliente*\nCancela esta abertura e volta ao seu menu, sem alterar seu caso atual.\n\n*Dados que temos de você:*\n👤 *${primeiroNome}*\n📍 ${u.cidade || "Cidade não informada"}${u.uf ? " - " + u.uf : ""}`,
+    texto: `➕ *Abrir novo caso*\n\nPara quem é este novo atendimento?\n\nSeu caso atual continuará registrado. Se for para outra pessoa, pediremos os dados e o WhatsApp dela.\n\n*Seus dados atuais:*\n👤 *${primeiroNome}*\n📍 ${u.cidade || "Cidade não informada"}${u.uf ? " - " + u.uf : ""}`,
     opcoes: [
       { id: "nc_meu", title: "✅ É para mim" },
       { id: "nc_outro", title: "👤 É para outra pessoa" },
@@ -11479,13 +11479,13 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
 
       try {
         const ogg = await gerarAudioAtendente(u.atendente,
-          `Você escolheu o atendimento por voz. A partir de agora vou te guiar enviando um áudio de instrução em cada etapa. Fique à vontade para falar. Quando terminar de gravar, envie o áudio normalmente.`)
+          `Você escolheu o atendimento por voz. Vou fazer uma pergunta por vez. Comece contando o que aconteceu e, quando terminar, envie o áudio.`)
         await enviarAudio(from, urlAudioAtendente(ogg))
         await new Promise(r => setTimeout(r, 4000))
       } catch (e) { logErro("tts", "Falha áudio aguardando", e) }
 
       return {
-        texto: `🎙️ Pode falar agora!\n\nEnvie seu áudio explicando sua situação. Fale com calma — estou aqui para ouvir você.\n\n_Se preferir, pode digitar sua mensagem._`,
+        texto: `🎙️ *Conte o que aconteceu*\n\nEnvie um áudio com a sua situação.\n\n_Se preferir, pode digitar._`,
         opcoes: null
       }
     }
@@ -11500,13 +11500,13 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
 
       try {
         const ogg = await gerarAudioAtendente(u.atendente,
-          `Pode falar agora. Diga com calma o que está acontecendo. Quando terminar, envie o áudio normalmente.`)
+          `Pode começar. Conte o que aconteceu e, quando terminar, envie o áudio.`)
         await enviarAudio(from, urlAudioAtendente(ogg))
         await new Promise(r => setTimeout(r, 4000))
       } catch (e) { logErro("tts", "Falha áudio aguardando", e) }
 
       return {
-        texto: `🎙️ *Pode falar!*\n\nEnvie seu áudio agora. Fale com calma — estou aqui para ouvir você.\n\n_Se preferir, pode digitar sua mensagem._`,
+        texto: `🎙️ *Conte o que aconteceu*\n\nEnvie um áudio com a sua situação.\n\n_Se preferir, pode digitar._`,
         opcoes: null
       }
     }
