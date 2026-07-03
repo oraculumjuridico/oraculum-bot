@@ -61,7 +61,7 @@ async function main() {
     assert.equal(u.stage, "confirmar_entrada")
     assert.deepEqual(chamadas.audiosGerados, [{
       atendente: "Ana",
-      prompt: "Entendi! O nome é Maria Silva. Está correto? Se não estiver, me diga o nome correto agora."
+      prompt: "Entendi! O nome é Maria Silva. Está correto? Se estiver, toque em Confirmar. Se não estiver, digite o nome correto ou envie um novo áudio."
     }])
     assert.deepEqual(chamadas.audiosEnviados, [{
       from: "5511",

@@ -1042,7 +1042,7 @@ async function telaConfirmarTranscricao(from, atendente, transcricao, area) {
 
   try {
     const ogg = await gerarAudioAtendente(atendente,
-      `Recebi seu áudio. Ouvi o seguinte: "${preview.slice(0, 200)}${preview.length > 200 ? "..." : ""}". Está correto? Se quiser, pode confirmar, enviar um novo áudio ou corrigir digitando.`)
+      `Recebi seu áudio. Ouvi o seguinte: "${preview.slice(0, 200)}${preview.length > 200 ? "..." : ""}". Está correto? Se estiver, toque em Confirmar envio. Se não estiver, toque em Enviar novo áudio ou em Corrigir digitando.`)
     await enviarAudio(from, urlAudioAtendente(ogg))
     await new Promise(r => setTimeout(r, 4000))
   } catch (e) { logErro("tts", "Falha áudio confirmar transcrição", e) }
@@ -5611,6 +5611,13 @@ async function responderFalhaAudioCorrecao(from, u, textoFallback = "Não conseg
   return responderComTimer(from, { texto: textoFallback, opcoes: null })
 }
 
+function textoAudioConfirmacaoNome(nome, { pessoaAtendida = false } = {}) {
+  const identificacao = pessoaAtendida
+    ? `O nome da pessoa atendida é ${nome}.`
+    : `Seu nome é ${nome}.`
+  return `${identificacao} Está correto? Se estiver, toque no botão Sim, está certo. Se não estiver, digite o nome correto ou envie um novo áudio.`
+}
+
 async function prepararConfirmacaoCorrecao(from, u, campo, valor, extra = {}) {
   u._correcaoPendenteCampo = campo
   u._correcaoPendenteValor = valor
@@ -5625,9 +5632,9 @@ async function prepararConfirmacaoCorrecao(from, u, campo, valor, extra = {}) {
     const textoConfNome = ehNomeContato
       ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${valor}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
       : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${valor}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-    const audioConfNome = ehNomeContato
-      ? `${valor}. Esse é o seu nome correto?`
-      : `${valor}. Esse é o nome correto da pessoa atendida?`
+    const audioConfNome = textoAudioConfirmacaoNome(valor, {
+      pessoaAtendida: !ehNomeContato
+    })
     if (!u.modoTexto) {
       try {
         const ogg = await gerarAudioAtendente(u.atendente, audioConfNome)
@@ -5646,7 +5653,7 @@ async function prepararConfirmacaoCorrecao(from, u, campo, valor, extra = {}) {
     const ufExib = extra?.uf || ""
     const regiaoExib = extra?.regiao || ""
     const textoExib = `${cidadeExib}${ufExib ? `, ${ufExib}` : ""}${regiaoExib ? ` (${regiaoExib})` : ""}`
-    const textoAudio = `${cidadeExib}${ufExib ? `, ${estadoPorExtenso(ufExib) || ufExib}` : ""}. Está correto?`
+    const textoAudio = `${cidadeExib}${ufExib ? `, ${estadoPorExtenso(ufExib) || ufExib}` : ""}. Está correto? Se estiver, toque no botão Sim, está certo. Se não estiver, digite a cidade correta ou envie um novo áudio.`
     setStage(u, STAGES.CONFIRMAR_CORRECAO_CIDADE)
     iniciarTimer(from)
     if (!u.modoTexto) {
@@ -7458,7 +7465,7 @@ async function flowDescConfirma(u, ctx) {
   await enviarAudioModoVoz(
     ctx?.from || u?._numero || "",
     u,
-    "Entendi sua descricao. Na tela, confirme se esta correta ou escolha corrigir.",
+    "Entendi sua descrição. Se estiver correta, toque em Confirmar. Se quiser mudar, toque em Corrigir, digite a correção ou envie um novo áudio.",
     "confirmar descricao"
   )
   return {
@@ -7715,6 +7722,7 @@ function flowRetomadaFallback(u, ctx) {
 async function flowAssessoriaInicial(u, ctx = {}) {
   const from = ctx.from || u._numero || ""
   const origemRelato = ctx.origem || "audio"
+  const introducaoAudio = sanitizarTextoEntrada(ctx.introducaoAudio)
   const primeiroNome = primeiroNomeCliente(u) || "você"
   const areaLabel = u.area || "sua situação"
   const relato = u._audioCanalTranscricao || ""
@@ -7791,7 +7799,11 @@ NÃO escreva nada além dessa frase.`
   // Áudio do comentário — limpa formatação visual antes de enviar ao TTS
   if (!u.modoTexto) {
     const sufixoAudio = ` Foi isso que entendi. Se estiver correto, toque em Está correto. Se quiser acrescentar ou corrigir algo, é só falar ou digitar agora mesmo.`
-    const comentarioAudio = removerFormatacaoParaAudio(comentarioGroq + (nivelEmocional === "alto" ? " Entendemos que você pode estar passando por um momento difícil. Nossa equipe vai tratar o seu caso com prioridade e cuidado." : "")) + sufixoAudio
+    const comentarioAudio = [
+      introducaoAudio,
+      removerFormatacaoParaAudio(comentarioGroq + (nivelEmocional === "alto" ? " Entendemos que você pode estar passando por um momento difícil. Nossa equipe vai tratar o seu caso com prioridade e cuidado." : "")),
+      sufixoAudio.trim()
+    ].filter(Boolean).join(" ")
     let audioEnviado = false
     try {
       const ogg = await gerarAudioAtendente(u.atendente, comentarioAudio)
@@ -7801,7 +7813,7 @@ NÃO escreva nada além dessa frase.`
     } catch (e) { logErro("tts", "Falha áudio assessoria tentativa 1", e) }
     if (!audioEnviado) {
       try {
-        const ogg2 = await gerarAudioAtendente(u.atendente, sufixoAudio.trim())
+        const ogg2 = await gerarAudioAtendente(u.atendente, [introducaoAudio, sufixoAudio.trim()].filter(Boolean).join(" "))
         await enviarAudio(from, urlAudioAtendente(ogg2))
         await new Promise(r => setTimeout(r, 3000))
       } catch (e2) { logErro("tts", "Falha áudio assessoria tentativa 2", e2) }
@@ -7811,7 +7823,7 @@ NÃO escreva nada além dessa frase.`
   setStage(u, STAGES.ASSESSORIA_INICIAL)
   salvarEtapa(u._numero || from, "assessoria_inicial")
 
-  const textoAssessoria = `${comentarioGroq}${blocoAcolhimento}\n\nFoi isso que entendi. Está correto?\n\n_Se quiser acrescentar ou corrigir algo, é só digitar ou enviar um áudio agora._`
+  const textoAssessoria = `${comentarioGroq}${blocoAcolhimento}\n\nFoi isso que entendi. Está correto?\n\n_Se estiver, toque em Está correto. Se quiser acrescentar ou corrigir algo, é só digitar ou enviar um áudio agora._`
   const opcoesAssessoria = [
     { id: "continuar_audio", title: "✅ Está correto" }
   ]
@@ -9639,9 +9651,9 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
     const textoReconf = ehNomeContato
       ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
       : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-    const audioReconf = ehNomeContato
-      ? `${nomeLimpo}. Esse é o seu nome correto?`
-      : `${nomeLimpo}. Esse é o nome correto da pessoa atendida?`
+    const audioReconf = textoAudioConfirmacaoNome(nomeLimpo, {
+      pessoaAtendida: !ehNomeContato
+    })
     if (!u.modoTexto) {
       try {
         const ogg = await gerarAudioAtendente(u.atendente, audioReconf)
@@ -10887,8 +10899,10 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME_CONTATO)
       iniciarTimer(from)
       try {
-        const ogg = await gerarAudioAtendente(u.atendente,
-          `${nomeLimpo}. Está correto?`)
+        const ogg = await gerarAudioAtendente(
+          u.atendente,
+          textoAudioConfirmacaoNome(nomeLimpo)
+        )
         await enviarAudio(from, urlAudioAtendente(ogg))
         await new Promise(r => setTimeout(r, 4000))
       } catch (e) { logErro("tts", "Falha áudio confirmar nome contato (áudio)", e) }
@@ -10965,8 +10979,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       iniciarTimer(from)
 
       try {
-        const ogg = await gerarAudioAtendente(u.atendente,
-          `${nomeLimpo}. Está correto?`)
+        const ogg = await gerarAudioAtendente(
+          u.atendente,
+          textoAudioConfirmacaoNome(nomeLimpo, {
+            pessoaAtendida: u.atendimentoParaTerceiro && !!u.nomeContato
+          })
+        )
         await enviarAudio(from, urlAudioAtendente(ogg))
         await new Promise(r => setTimeout(r, 4000))
       } catch (e) { logErro("tts", "Falha áudio confirmar nome", e) }
@@ -11749,17 +11767,13 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._audioCanalTranscricao = relatoAnterior ? `${relatoAnterior}. ${complemento}` : complemento
       u.descricao = u._audioCanalTranscricao
       iniciarTimer(from)
-      if (!u.modoTexto) {
-        try {
-          const ogg = await gerarAudioAtendente(u.atendente,
-            `Entendi! Vou acrescentar essa informação ao que você já me contou.`)
-          await enviarAudio(from, urlAudioAtendente(ogg))
-          await new Promise(r => setTimeout(r, 3000))
-        } catch (e) { logErro("tts", "Falha áudio complemento relato assessoria", e) }
-      }
       const classificacao = await classificarAreaAudio(u._audioCanalTranscricao)
       aplicarClassificacaoJuridica(u, classificacao)
-      return await flowAssessoriaInicial(u, { from, origem: "texto" })
+      return await flowAssessoriaInicial(u, {
+        from,
+        origem: "texto",
+        introducaoAudio: "Entendi! Vou acrescentar essa informação ao que você já me contou."
+      })
     }
     iniciarTimer(from)
     return responderComTimer(from, {
@@ -12291,7 +12305,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._nomeContatoTemp = nomeLimpo
       setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME_CONTATO)
       iniciarTimer(from)
-      const audioConfirmar = `${nomeLimpo}. Está correto?`
+      const audioConfirmar = textoAudioConfirmacaoNome(nomeLimpo)
       if (!u.modoTexto) {
         try {
           const ogg = await gerarAudioAtendente(u.atendente, audioConfirmar)
@@ -12390,7 +12404,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         ehNomeAparente(nomeCorrecaoContato, nomeCorrecaoContato) === true
       ) {
         u._nomeContatoTemp = nomeCorrecaoContato
-        const audioReconfirmar = `${nomeCorrecaoContato}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeCorrecaoContato)
         if (!u.modoTexto) {
           try {
             const ogg = await gerarAudioAtendente(u.atendente, audioReconfirmar)
@@ -12417,7 +12431,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const validacaoNomeConfContato = ehNomeAparente(nomeLimpo, text)
       if (validacaoNomeConfContato === true) {
         u._nomeContatoTemp = nomeLimpo
-        const audioReconfirmar = `${nomeLimpo}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeLimpo)
         if (!u.modoTexto) {
           try {
             const ogg = await gerarAudioAtendente(u.atendente, audioReconfirmar)
@@ -12473,7 +12487,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
     iniciarTimer(from)
 
-    const textoConfirmarAudio = `${nomeLimpo}. Está correto?`
+    const textoConfirmarAudio = textoAudioConfirmacaoNome(nomeLimpo, {
+      pessoaAtendida: coletandoNomeAtendido
+    })
     const textoConfirmarTela = coletandoNomeAtendido
       ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
       : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
@@ -12552,7 +12568,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       ) {
         u._nomeTemp = nomeCorrecaoExplicita
         u._nomeTitularPendente = null
-        const audioReconfirmar = `${nomeCorrecaoExplicita}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeCorrecaoExplicita, {
+          pessoaAtendida: coletandoNomeAtendido
+        })
         const telaReconfirmar = coletandoNomeAtendido
           ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeCorrecaoExplicita}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeCorrecaoExplicita}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
@@ -12585,7 +12603,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       if (validacaoNomeConf === true) {
         u._nomeTemp = nomeLimpo
         u._nomeTitularPendente = null
-        const audioReconfirmar = `${nomeLimpo}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeLimpo, {
+          pessoaAtendida: coletandoNomeAtendido
+        })
         const telaReconfirmar = coletandoNomeAtendido
           ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
@@ -12678,7 +12698,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
         iniciarTimer(from)
         const coletandoNomeAtendido = u.atendimentoParaTerceiro && !!u.nomeContato
-        const audioReconfirmar = `${nomeLimpoCorrecao}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeLimpoCorrecao, {
+          pessoaAtendida: coletandoNomeAtendido
+        })
         const telaReconfirmar = coletandoNomeAtendido
           ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpoCorrecao}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpoCorrecao}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
@@ -12721,7 +12743,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
         iniciarTimer(from)
         const coletandoNomeAtendido = u.atendimentoParaTerceiro && !!u.nomeContato
-        const audioReconfirmar = `${nomeCorrecaoTitular}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeCorrecaoTitular, {
+          pessoaAtendida: coletandoNomeAtendido
+        })
         const telaReconfirmar = coletandoNomeAtendido
           ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeCorrecaoTitular}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeCorrecaoTitular}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
@@ -12741,7 +12765,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
         iniciarTimer(from)
         const coletandoNomeAtendido = u.atendimentoParaTerceiro && !!u.nomeContato
-        const audioReconfirmar = `${nomeLimpoLivre}. Está correto?`
+        const audioReconfirmar = textoAudioConfirmacaoNome(nomeLimpoLivre, {
+          pessoaAtendida: coletandoNomeAtendido
+        })
         const telaReconfirmar = coletandoNomeAtendido
           ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpoLivre}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpoLivre}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`

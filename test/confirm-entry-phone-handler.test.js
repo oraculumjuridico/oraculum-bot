@@ -69,7 +69,7 @@ async function main() {
     assert.deepEqual(chamadas.formatacoes, ["5511987654321"])
     assert.deepEqual(chamadas.audiosGerados, [{
       atendente: "Ana",
-      prompt: "Entendi! O número é (11) 9 8765-4321. Está correto? Se não estiver, me diga o número correto agora."
+      prompt: "Entendi! O número é (11) 9 8765-4321. Está correto? Se estiver, toque em Confirmar. Se não estiver, digite o número correto ou envie um novo áudio."
     }])
     assert.deepEqual(chamadas.audiosEnviados, [{
       from: "5511",

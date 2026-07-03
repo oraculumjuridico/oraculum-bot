@@ -32,7 +32,7 @@ async function handleConfirmEntryCorrectedName({
   const barra = "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n"
   if (!u.modoTexto) {
     try {
-      const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O nome é ${nomeLimpo}. Está correto? Se não estiver, me diga o nome correto agora.`)
+      const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O nome é ${nomeLimpo}. Está correto? Se estiver, toque em Confirmar. Se não estiver, digite o nome correto ou envie um novo áudio.`)
       await enviarAudio(from, urlAudioAtendente(ogg))
       await esperar(4000)
     } catch (e) { logErro("tts", "Falha áudio reconfirmar nome entrada", e) }

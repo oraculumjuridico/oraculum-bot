@@ -30,7 +30,7 @@ async function handleConfirmEntryPhone({
   const label = formatarTelefoneExibicao(telNorm)
   if (!u.modoTexto) {
     try {
-      const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O número é ${label}. Está correto? Se não estiver, me diga o número correto agora.`)
+      const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O número é ${label}. Está correto? Se estiver, toque em Confirmar. Se não estiver, digite o número correto ou envie um novo áudio.`)
       await enviarAudio(from, urlAudioAtendente(ogg))
       await esperar(4000)
     } catch (e) { logErro("tts", "Falha áudio reconfirmar telefone entrada", e) }

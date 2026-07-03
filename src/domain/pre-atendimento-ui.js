@@ -62,7 +62,7 @@ function perguntaAtualPreAtendimento(stage, u = {}) {
     const textoNome = nomeTemp ? `*${nomeTemp}*` : "o nome informado"
     return {
       texto: `Preciso confirmar seu nome. ${nomeTemp ? `Você disse ${textoNome}. Está correto?` : "Por favor, confirme seu nome."} Se não estiver, é só me dizer agora.`,
-      audio: `Preciso confirmar seu nome. ${nomeTemp ? `Você disse ${nomeTemp}, está correto?` : "Por favor, confirme seu nome."} Se não estiver, me diga agora.`,
+      audio: `Preciso confirmar seu nome. ${nomeTemp ? `Você disse ${nomeTemp}, está correto?` : "Por favor, confirme seu nome."} Se estiver, toque em Sim, está certo. Se não estiver, digite o nome correto ou envie um novo áudio.`,
       opcoes: [
         { id: "confirma_nome_contato_sim", title: "✅ Sim, está certo" }
       ]
