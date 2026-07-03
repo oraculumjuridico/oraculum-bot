@@ -245,7 +245,14 @@ const {
   persistirUsersAgora,
   agendarPersistenciaUsers,
   hidratarUsuarioPersistido,
-  carregarUsersPersistidos
+  carregarUsersPersistidos,
+  criarChaveWebhookDuravel,
+  carregarWebhookInbox,
+  registrarMensagensWebhook,
+  listarWebhookPendentes,
+  marcarWebhookProcessing,
+  marcarWebhookCompleted,
+  marcarWebhookError
 } = require("./src/domain/state-persistence")
 const {
   transcrever
@@ -14290,6 +14297,34 @@ async function processarMensagemWebhook(value, message) {
   }
 }
 
+let webhookInboxDraining = false
+
+async function drenarWebhookInbox() {
+  if (webhookInboxDraining) return
+  webhookInboxDraining = true
+  try {
+    while (true) {
+      const record = listarWebhookPendentes()[0]
+      if (!record) break
+      if (!marcarWebhookProcessing(record.key)) continue
+      try {
+        await processarMensagemWebhook(record.payload?.value || {}, record.payload?.message || {})
+        persistirUsersAgora({ propagarErro: true })
+        marcarWebhookCompleted(record.key)
+      } catch (err) {
+        try {
+          marcarWebhookError(record.key, err)
+        } catch (persistError) {
+          logErro("webhook_inbox", `Falha ao persistir erro da mensagem ${record.messageId || record.key}: ${persistError.message}`, persistError)
+        }
+        logErro("webhook_async", `Falha ao processar mensagem ${record.messageId || "-"}: ${err.message}`, err)
+      }
+    }
+  } finally {
+    webhookInboxDraining = false
+  }
+}
+
 app.post("/webhook", validarAssinaturaMeta, (req, res) => {
   try {
     const mensagens = []
@@ -14300,30 +14335,32 @@ app.post("/webhook", validarAssinaturaMeta, (req, res) => {
           const from = message.from
           const text = sanitizarTextoEntrada(message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "")
           const dedupeKey = criarChaveMensagemDuplicada(from, text, message)
-          if (!mensagemJaProcessada(message.id, dedupeKey)) {
-            mensagens.push({ value, message })
-          }
+          mensagens.push({
+            key: criarChaveWebhookDuravel(message, dedupeKey),
+            messageId: message.id || null,
+            from,
+            receivedAt: new Date().toISOString(),
+            payload: { value, message }
+          })
         }
       }
     }
 
+    registrarMensagensWebhook(mensagens)
     res.sendStatus(200)
     if (!mensagens.length) return
 
-    setImmediate(async () => {
-      for (const { value, message } of mensagens) {
-        try {
-          await processarMensagemWebhook(value, message)
-        } catch (err) {
-          logErro("webhook_async", `Falha ao processar mensagem ${message?.id || "-"}: ${err.message}`, err)
-        }
-      }
+    setImmediate(() => {
+      drenarWebhookInbox().catch(err =>
+        logErro("webhook_inbox", "Falha ao drenar inbox: " + err.message, err)
+      )
     })
   } catch (err) { logErro("webhook", err.message, err); return res.sendStatus(500) }
 })
 
 const PORT = process.env.PORT || 10000
 carregarUsersPersistidos()
+carregarWebhookInbox()
 restaurarTimersPersistidos()
 // ------------------------------------------------------------------
 // ROTA /agendamento — confirmação de ligação agendada
@@ -14645,4 +14682,11 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
   } catch (e) { logErro("lembrete", e.message); return res.sendStatus(500) }
 })
 
-app.listen(PORT, () => console.log(`Oraculum v6.4 — porta ${PORT}`))
+app.listen(PORT, () => {
+  console.log(`Oraculum v6.4 — porta ${PORT}`)
+  setImmediate(() => {
+    drenarWebhookInbox().catch(err =>
+      logErro("webhook_inbox", "Falha no replay da inbox: " + err.message, err)
+    )
+  })
+})

@@ -1,9 +1,15 @@
 const fs = require("fs")
+const path = require("path")
+const crypto = require("crypto")
 const { DOCS_EXTRA } = require("./documents-core")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
 
 let persistUsersTimeout = null
+const WEBHOOK_INBOX_SCHEMA_VERSION = 1
+const WEBHOOK_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
+let webhookInbox = criarWebhookInboxVazia()
 
 let deps = {
   DATA_DIR: "",
@@ -19,6 +25,203 @@ let deps = {
 
 function configurarStatePersistence(config = {}) {
   deps = { ...deps, ...config }
+}
+
+function criarWebhookInboxVazia() {
+  return {
+    schemaVersion: WEBHOOK_INBOX_SCHEMA_VERSION,
+    updatedAt: null,
+    sequence: 0,
+    records: {},
+    receipts: {}
+  }
+}
+
+function clonarJson(value) {
+  return JSON.parse(JSON.stringify(value))
+}
+
+function arquivoWebhookInbox() {
+  return path.join(deps.DATA_DIR, "webhook-inbox.json")
+}
+
+function gravarJsonAtomico(caminho, payload) {
+  fs.mkdirSync(path.dirname(caminho), { recursive: true })
+  const temporario = `${caminho}.${process.pid}.${Date.now()}.tmp`
+  let descritor = null
+  try {
+    descritor = fs.openSync(temporario, "wx", 0o600)
+    fs.writeFileSync(descritor, JSON.stringify(payload, null, 2), "utf8")
+    fs.fsyncSync(descritor)
+    fs.closeSync(descritor)
+    descritor = null
+    fs.renameSync(temporario, caminho)
+  } finally {
+    if (descritor !== null) {
+      try { fs.closeSync(descritor) } catch {}
+    }
+    try { fs.unlinkSync(temporario) } catch {}
+  }
+}
+
+function criarChaveWebhookDuravel(message = {}, fallbackKey = "") {
+  const messageId = sanitizarTextoEntrada(message?.id)
+  if (messageId) return messageId
+  const base = [
+    sanitizarTextoEntrada(message?.from),
+    sanitizarTextoEntrada(message?.type),
+    sanitizarTextoEntrada(message?.timestamp),
+    sanitizarTextoEntrada(message?.audio?.id || message?.voice?.id || message?.image?.id || message?.document?.id || message?.video?.id),
+    sanitizarTextoEntrada(message?.interactive?.button_reply?.id || message?.interactive?.list_reply?.id),
+    sanitizarTextoEntrada(message?.text?.body),
+    sanitizarTextoEntrada(fallbackKey)
+  ].join("|")
+  return `fallback:${crypto.createHash("sha256").update(base).digest("hex")}`
+}
+
+function limparWebhookReceiptsExpirados(inbox, agora = Date.now()) {
+  let alterado = false
+  for (const [key, receipt] of Object.entries(inbox.receipts || {})) {
+    if (Date.parse(receipt?.expiresAt || "") <= agora) {
+      delete inbox.receipts[key]
+      alterado = true
+    }
+  }
+  return alterado
+}
+
+function persistirProximaWebhookInbox(proxima) {
+  proxima.updatedAt = new Date().toISOString()
+  gravarJsonAtomico(arquivoWebhookInbox(), proxima)
+  webhookInbox = proxima
+}
+
+function carregarWebhookInbox() {
+  const caminho = arquivoWebhookInbox()
+  if (!fs.existsSync(caminho)) {
+    webhookInbox = criarWebhookInboxVazia()
+    return { pending: 0, recovered: 0 }
+  }
+
+  const parsed = JSON.parse(fs.readFileSync(caminho, "utf8"))
+  if (parsed?.schemaVersion !== WEBHOOK_INBOX_SCHEMA_VERSION) {
+    throw new Error(`schema de webhook inbox incompatível: ${parsed?.schemaVersion}`)
+  }
+
+  const proxima = {
+    ...criarWebhookInboxVazia(),
+    ...parsed,
+    records: parsed.records && typeof parsed.records === "object" ? parsed.records : {},
+    receipts: parsed.receipts && typeof parsed.receipts === "object" ? parsed.receipts : {}
+  }
+  let recovered = 0
+  for (const record of Object.values(proxima.records)) {
+    if (record?.status === "processing" || record?.status === "error") {
+      record.status = "pending"
+      record.updatedAt = new Date().toISOString()
+      recovered += 1
+    }
+  }
+  const alterado = recovered > 0 || limparWebhookReceiptsExpirados(proxima)
+  webhookInbox = proxima
+  if (alterado) persistirProximaWebhookInbox(proxima)
+  return {
+    pending: Object.values(proxima.records).filter(record => record?.status === "pending").length,
+    recovered
+  }
+}
+
+function registrarMensagensWebhook(records = []) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return { inserted: [], duplicates: [] }
+  }
+
+  const proxima = clonarJson(webhookInbox)
+  limparWebhookReceiptsExpirados(proxima)
+  const inserted = []
+  const duplicates = []
+  const agora = new Date().toISOString()
+
+  for (const input of records) {
+    const key = sanitizarTextoEntrada(input?.key)
+    if (!key) throw new Error("chave de webhook obrigatória")
+    if (proxima.records[key] || proxima.receipts[key]) {
+      duplicates.push(key)
+      continue
+    }
+    proxima.sequence = Number(proxima.sequence || 0) + 1
+    proxima.records[key] = {
+      key,
+      messageId: sanitizarTextoEntrada(input.messageId) || null,
+      from: sanitizarTextoEntrada(input.from) || null,
+      status: "pending",
+      receivedAt: input.receivedAt || agora,
+      updatedAt: agora,
+      attempts: 0,
+      lastError: null,
+      sequence: proxima.sequence,
+      payload: input.payload
+    }
+    inserted.push(key)
+  }
+
+  if (inserted.length > 0 || duplicates.length !== records.length) {
+    persistirProximaWebhookInbox(proxima)
+  }
+  return { inserted, duplicates }
+}
+
+function listarWebhookPendentes() {
+  return Object.values(webhookInbox.records)
+    .filter(record => record?.status === "pending")
+    .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0))
+    .map(clonarJson)
+}
+
+function alterarRegistroWebhook(key, alterar) {
+  const proxima = clonarJson(webhookInbox)
+  const record = proxima.records[key]
+  if (!record) return false
+  alterar(record, proxima)
+  persistirProximaWebhookInbox(proxima)
+  return true
+}
+
+function marcarWebhookProcessing(key) {
+  return alterarRegistroWebhook(key, record => {
+    record.status = "processing"
+    record.attempts = Number(record.attempts || 0) + 1
+    record.updatedAt = new Date().toISOString()
+    record.lastError = null
+  })
+}
+
+function marcarWebhookCompleted(key) {
+  return alterarRegistroWebhook(key, (record, inbox) => {
+    const completedAt = new Date().toISOString()
+    inbox.receipts[key] = {
+      key,
+      messageId: record.messageId || null,
+      completedAt,
+      expiresAt: new Date(Date.now() + WEBHOOK_RECEIPT_RETENTION_MS).toISOString()
+    }
+    delete inbox.records[key]
+  })
+}
+
+function marcarWebhookError(key, error) {
+  return alterarRegistroWebhook(key, record => {
+    record.status = "error"
+    record.updatedAt = new Date().toISOString()
+    record.lastError = {
+      code: sanitizarTextoEntrada(error?.code || error?.name) || null,
+      message: "Falha ao processar mensagem"
+    }
+  })
+}
+
+function obterEstadoWebhookInbox() {
+  return clonarJson(webhookInbox)
 }
 
 function serializarEstado(u) {
@@ -100,7 +303,7 @@ function serializarUsers() {
   return saida
 }
 
-function persistirUsersAgora() {
+function persistirUsersAgora({ propagarErro = false } = {}) {
   let arquivoTemporario = null
   let descritor = null
   try {
@@ -121,6 +324,7 @@ function persistirUsersAgora() {
     arquivoTemporario = null
   } catch (e) {
     logErro("persistencia", "salvarUsers: " + e.message)
+    if (propagarErro) throw e
   } finally {
     if (descritor !== null) {
       try { fs.closeSync(descritor) } catch {}
@@ -237,6 +441,14 @@ function carregarUsersPersistidos() {
 
 module.exports = {
   configurarStatePersistence,
+  criarChaveWebhookDuravel,
+  carregarWebhookInbox,
+  registrarMensagensWebhook,
+  listarWebhookPendentes,
+  marcarWebhookProcessing,
+  marcarWebhookCompleted,
+  marcarWebhookError,
+  obterEstadoWebhookInbox,
   serializarEstado,
   desserializarEstado,
   garantirDiretorioDados,
