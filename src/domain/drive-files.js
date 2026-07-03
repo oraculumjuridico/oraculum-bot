@@ -90,7 +90,6 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
       media: { mimeType: mimeType || "application/octet-stream", body: fs.createReadStream(tmpPath) },
       fields: "id,name,webViewLink"
     })
-    await tornarArquivoPublicoDrive(res.data.id)
     logDebug(`[DRIVE] Upload OK: ${res.data.name} (${res.data.id})`)
     return res.data
   } catch (e) {
@@ -101,19 +100,6 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
   } finally {
     try { fs.unlinkSync(tmpPath) } catch {}
   }
-}
-
-async function tornarArquivoPublicoDrive(fileId) {
-  if (!fileId) return null
-  const drive = getDrive()
-  await drive.permissions.create({
-    fileId,
-    requestBody: {
-      role: "reader",
-      type: "anyone"
-    }
-  })
-  return `https://drive.google.com/uc?export=download&id=${fileId}`
 }
 
 async function marcarArquivoDriveSubstituido(fileId, nomeOriginal = "") {
@@ -171,9 +157,8 @@ async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mi
       fields: "id,name,webViewLink"
     })
     try { fs.unlinkSync(tmp) } catch {}
-    const directDownloadUrl = await tornarArquivoPublicoDrive(res.data.id)
     logDebug(`[DRIVE] Áudio: ${res.data.name}`)
-    return { ...res.data, directDownloadUrl, folderId: pasta.data.id }
+    return { ...res.data, folderId: pasta.data.id }
   } catch (e) { logErro("drive", "uploadAudio: " + e.message); return null }
 }
 
@@ -189,7 +174,6 @@ module.exports = {
   obterOuCriarPastaArea,
   criarPastaCliente,
   uploadDrive,
-  tornarArquivoPublicoDrive,
   marcarArquivoDriveSubstituido,
   renomearArquivoDrive,
   uploadPastaAudio,
