@@ -102,8 +102,10 @@ async function hsCriarNegocio(u, opts = {}) {
 async function hsAssociar(cId, nId) {
   try {
     await axios.put(`https://api.hubapi.com/crm/v3/objects/deals/${nId}/associations/contacts/${cId}/deal_to_contact`, {}, { headers: HS() })
+    return true
   } catch (e) {
     logErroHubSpot(e, { operation: "associarContatoNegocio", contactId: cId, dealId: nId })
+    return false
   }
 }
 

@@ -65,7 +65,17 @@ function assertFinalizationInvariants(ctx) {
   throw error
 }
 
+function assertFinalizationOperation(operation, result) {
+  if (result) return result
+
+  const error = new Error(`falha obrigatoria ao finalizar cadastro: ${operation}`)
+  error.code = "FINALIZATION_INTEGRATION_FAILURE"
+  error.operation = operation
+  throw error
+}
+
 module.exports = {
   assertFinalizationInvariants,
+  assertFinalizationOperation,
   collectFinalizationViolations
 }

@@ -66,8 +66,23 @@ async function criarPastaCliente(numeroCaso, nome, area, situacao, tipo) {
     const nomeArea = getNomePastaArea(area, situacao, tipo)
     const pastaArea = await obterOuCriarPastaArea(area, situacao, tipo)
     const pastaAreaId = pastaArea?.id || DRIVE_PASTA_CLIENTES_ID
+    const nomePasta = `${numeroCaso} - ${nome}`
+    const existentes = await getDrive().files.list({
+      q: [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        `name = '${escapeDriveQueryValue(nomePasta)}'`,
+        `'${pastaAreaId}' in parents`,
+        "trashed = false"
+      ].join(" and "),
+      fields: "files(id,name,webViewLink)",
+      pageSize: 1
+    })
+    if (existentes.data.files?.length) {
+      logDebug(`[DRIVE] Pasta reutilizada: ${existentes.data.files[0].name}`)
+      return existentes.data.files[0]
+    }
     const res = await getDrive().files.create({
-      requestBody: { name: `${numeroCaso} - ${nome}`, mimeType: "application/vnd.google-apps.folder", parents: [pastaAreaId] },
+      requestBody: { name: nomePasta, mimeType: "application/vnd.google-apps.folder", parents: [pastaAreaId] },
       fields: "id,name,webViewLink"
     })
     logDebug(`[DRIVE] Pasta criada: ${res.data.name} (área: ${nomeArea})`)

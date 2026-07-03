@@ -334,7 +334,8 @@ const {
   getPrimeiroNomeRetomada
 } = require("./src/domain/phone-name")
 const {
-  assertFinalizationInvariants
+  assertFinalizationInvariants,
+  assertFinalizationOperation
 } = require("./src/domain/finalization-invariants")
 
 const app = express()
@@ -5253,19 +5254,24 @@ async function finalizarCadastro(from, u) {
     logDebug("? Sessão já possui número de caso, reutilizando existente")
   } else {
     u.numeroCaso = gerarCaso(u.area)
+    persistirUsersAgora({ propagarErro: true })
   }
   const numeroCaso = u.numeroCaso
   u.score       = calcScore(u)
   u.docsEntregues = []; u.docsAusentes = []; u.docsPulados = []; u.docsParciais = []; u.docsDispensados = []
   u.docAtualIdx = 0; u.ultimoArqId = null
 
-  const pasta      = await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
-  u.pastaDriveId   = pasta?.id || null
-  u.pastaDriveLink = pasta?.webViewLink || null
+  const pasta = u.pastaDriveId
+    ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
+    : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
+  assertFinalizationOperation("drive_folder", pasta?.id)
+  u.pastaDriveId = pasta.id
+  u.pastaDriveLink = pasta.webViewLink || u.pastaDriveLink || null
+  persistirUsersAgora({ propagarErro: true })
 
   const existente = await hsBuscarPorPhone(telefoneContato)
   if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
-  let contatoId   = existente?.id || null
+  let contatoId = u.contatoId || existente?.id || null
 
   const nomeExistenteHS = existente?.properties?.firstname || ""
   const nomeTerceiro = (u.nome || "").trim()
@@ -5287,8 +5293,10 @@ async function finalizarCadastro(from, u) {
       await hsAtualizarContato(contatoId, { firstname: u.nome })
     }
   }
+  assertFinalizationOperation("hubspot_contact", contatoId)
   u.contatoId = contatoId
   if (contatoId) u._hubspotSemContato = false
+  persistirUsersAgora({ propagarErro: true })
 
   let negocioId = u.negocioId || null
   if (!negocioId && contatoId && !ehNovoCasoCliente) {
@@ -5315,16 +5323,24 @@ async function finalizarCadastro(from, u) {
       dealname: dealnameFinal
     })
   }
+  assertFinalizationOperation("hubspot_deal", negocioId)
+  u.negocioId = negocioId
+  persistirUsersAgora({ propagarErro: true })
+
   if (u.negocioId && u.numeroCaso) {
-    await hsAtualizarNegocioSerializado(u.negocioId, {
+    const casoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, {
       numero_de_caso: u.numeroCaso,
       dealname: dealnameFinal
     })
-    await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
+    assertFinalizationOperation("hubspot_case_number", casoAtualizado)
+    const etapaAtualizada = await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
+    assertFinalizationOperation("hubspot_stage", etapaAtualizada)
     u.negocioStageId = HS_STAGE.ANALISE
   }
-  if (contatoId && negocioId) await hsAssociar(contatoId, negocioId)
-  await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
+  const associado = await hsAssociar(contatoId, negocioId)
+  assertFinalizationOperation("hubspot_association", associado)
+  const estadoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
+  assertFinalizationOperation("hubspot_state", estadoAtualizado)
 
   if (contatoId) {
     await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
