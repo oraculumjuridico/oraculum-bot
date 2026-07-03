@@ -14485,19 +14485,24 @@ restaurarTimersPersistidos()
 // Como usar GRATUITAMENTE (sem pagar HubSpot):
 //   Opção 1: Make.com (gratuito, 1000 ops/mês):
 //     - Crie cenário: HubSpot "Meeting Booked" ? HTTP POST ? https://seu-dominio.onrender.com/agendamento
-//     - Body: { "phone": "{{contact.phone}}", "name": "{{contact.firstname}}", "datetime": "{{meeting.startTime}}" }
+//     - Body: { "phone": "{{contact.phone}}", "name": "{{contact.firstname}}", "eventId": "{{calendar.eventId}}", "datetime": "{{meeting.startTime}}" }
 //   Opção 2: n8n (auto-hospedado, 100% gratuito):
 //     - Trigger HubSpot ? HTTP Request para esta rota
 //   Opção 3: Zapier free tier (100 tarefas/mês)
 // ------------------------------------------------------------------
 app.post("/agendamento", validarWebhookInterno, async (req, res) => {
   try {
-    const { phone, name, datetime, caseid } = req.body
+    const { phone, name, datetime, caseid, eventId } = req.body
     if (!phone) return res.sendStatus(400)
     const numero = normalizarNumeroWhatsAppEnvio(phone)
     if (!numero) return res.sendStatus(400)
     const nomeCliente = name || "cliente"
-    const dataHora    = datetime || "em breve"
+    let dataHora = datetime || "em breve"
+    if (eventId) {
+      const evento = await getConsultaCalendarEventState(eventId)
+      if (!evento?.encontrado) return res.status(404).json({ erro: "evento nao encontrado" })
+      dataHora = evento.inicio || dataHora
+    }
 
     // Formatar data se vier em ISO
     let dataFormatada = dataHora
@@ -14554,47 +14559,64 @@ process.on("beforeExit", persistirUsersAgora)
 // ------------------------------------------------------------------
 // ROTA /buscar-contato-reuniao — recebe horário do evento do Calendar e retorna phone + name + tipo
 // Chamada pelo Make.com após detectar evento novo no Google Calendar
-// Body: { datetime: "2026-05-29T19:00:00" } — horário de início do evento
+// Body preferencial: { eventId: "google-calendar-event-id" }
+// Compatibilidade legada: { datetime: "2026-05-29T19:00:00" }
 // ------------------------------------------------------------------
 app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
   try {
-    const { datetime } = req.body
-    if (!datetime) return res.status(400).json({ erro: "datetime obrigatório" })
+    const { eventId, datetime } = req.body
+    if (!eventId && !datetime) return res.status(400).json({ erro: "eventId ou datetime obrigatório" })
 
-    const dt = new Date(datetime)
+    let eventoCalendar = null
+    let eventoCalendarId = null
+    if (eventId) {
+      eventoCalendar = await getConsultaCalendarEventState(eventId)
+      if (!eventoCalendar?.encontrado) {
+        return res.status(404).json({ erro: "evento não encontrado no Google Calendar" })
+      }
+      eventoCalendarId = eventoCalendar.eventId
+    }
+
+    const dt = new Date(eventoCalendar?.inicio || datetime)
     if (isNaN(dt.getTime())) return res.status(400).json({ erro: "datetime inválido" })
     const inicio = dt.getTime() - 5 * 60 * 1000
     const fim    = dt.getTime() + 5 * 60 * 1000
 
-    // 1. Buscar reunião no HubSpot pelo horário (±5 min)
-    const buscaReuniao = await axios.post(
-      "https://api.hubapi.com/crm/v3/objects/meetings/search",
-      {
-        filterGroups: [{ filters: [{ propertyName: "hs_meeting_start_time", operator: "BETWEEN", value: String(inicio), highValue: String(fim) }] }],
-        sorts: [{ propertyName: "hs_meeting_start_time", direction: "DESCENDING" }],
-        properties: ["hs_meeting_title", "hs_meeting_body", "hs_meeting_start_time"],
-        limit: 1
-      },
-      { headers: HS() }
-    )
-    const reuniao = buscaReuniao.data?.results?.[0]
-    if (!reuniao) return res.status(404).json({ erro: "reunião não encontrada no HubSpot" })
-    const meetingId = reuniao.id
+    const metadataEvento = eventoCalendar?.metadata || eventoCalendar?.extendedProperties?.private || {}
+    let reuniao = null
+    let dealId = sanitizarTextoEntrada(metadataEvento.dealId)
+    let contactId = sanitizarTextoEntrada(metadataEvento.contactId || metadataEvento.personId)
 
-    // 2. Buscar deal associado à reunião
-    const assocDeal = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/meetings/${meetingId}/associations/deals`,
-      { headers: HS() }
-    )
-    const dealId = assocDeal.data?.results?.[0]?.id
+    // Compatibilidade legada: eventos sem dealId ainda dependem da reunião por horário.
+    if (!dealId) {
+      const buscaReuniao = await axios.post(
+        "https://api.hubapi.com/crm/v3/objects/meetings/search",
+        {
+          filterGroups: [{ filters: [{ propertyName: "hs_meeting_start_time", operator: "BETWEEN", value: String(inicio), highValue: String(fim) }] }],
+          sorts: [{ propertyName: "hs_meeting_start_time", direction: "DESCENDING" }],
+          properties: ["hs_meeting_title", "hs_meeting_body", "hs_meeting_start_time"],
+          limit: 1
+        },
+        { headers: HS() }
+      )
+      reuniao = buscaReuniao.data?.results?.[0]
+      if (!reuniao) return res.status(404).json({ erro: "reunião não encontrada no HubSpot" })
+      const assocDeal = await axios.get(
+        `https://api.hubapi.com/crm/v3/objects/meetings/${reuniao.id}/associations/deals`,
+        { headers: HS() }
+      )
+      dealId = assocDeal.data?.results?.[0]?.id
+    }
     if (!dealId) return res.status(404).json({ erro: "deal não encontrado para a reunião" })
 
-    // 3. Buscar contato associado ao deal
-    const assocContato = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/deals/${dealId}/associations/contacts`,
-      { headers: HS() }
-    )
-    const contactId = assocContato.data?.results?.[0]?.id
+    // Eventos novos carregam contactId; os antigos usam a associação do negócio.
+    if (!contactId) {
+      const assocContato = await axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${dealId}/associations/contacts`,
+        { headers: HS() }
+      )
+      contactId = assocContato.data?.results?.[0]?.id
+    }
     if (!contactId) return res.status(404).json({ erro: "contato não encontrado para o deal" })
 
     // 4. Buscar nome e telefone do contato
@@ -14607,21 +14629,21 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
     const name  = (props.firstname || "cliente").trim()
     if (!phone) return res.status(404).json({ erro: "telefone não encontrado para o contato" })
 
-    // 5. Buscar evento no Google Calendar pelo horário (±5 min)
-    let eventoCalendar = null
-    let eventoCalendarId = null
-    try {
-      eventoCalendar = await findConsultaCalendarEventInRange(inicio, fim)
-      eventoCalendarId = eventoCalendar?.status === "cancelled" ? null : (eventoCalendar?.id || null)
-    } catch (e) {
-      logErro("buscar-contato-reuniao", "Erro ao buscar evento no Calendar: " + e.message)
+    // 5. Compatibilidade: eventos antigos podem chegar sem eventId.
+    if (!eventoCalendarId) {
+      try {
+        eventoCalendar = await findConsultaCalendarEventInRange(inicio, fim)
+        eventoCalendarId = eventoCalendar?.status === "cancelled" ? null : (eventoCalendar?.id || null)
+      } catch (e) {
+        logErro("buscar-contato-reuniao", "Erro ao buscar evento no Calendar: " + e.message)
+      }
     }
 
     const tipoReuniao = classificarReuniaoCliente({
       summary: eventoCalendar?.summary,
       description: eventoCalendar?.description,
-      tituloHubSpot: reuniao.properties?.hs_meeting_title,
-      corpoHubSpot: reuniao.properties?.hs_meeting_body
+      tituloHubSpot: reuniao?.properties?.hs_meeting_title,
+      corpoHubSpot: reuniao?.properties?.hs_meeting_body
     })
     const ehConsultaCaso = tipoReuniao === "consulta_caso"
 
@@ -14635,7 +14657,7 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
           requestBody: {
             extendedProperties: {
               private: {
-                ...(eventoCalendar?.extendedProperties?.private || {}),
+                ...(eventoCalendar?.metadata || eventoCalendar?.extendedProperties?.private || {}),
                 dealId: String(dealId),
                 personId: String(contactId),
                 contactId: String(contactId),
@@ -14695,7 +14717,7 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
     if (msAteConsulta > 0 && msAteConsulta < 60 * 60 * 1000) tipoLembrete = "1h"
     else if (msAteConsulta > 0 && consultaStr === hojeStr) tipoLembrete = "hoje"
 
-    return res.json({ phone, name, tipo: tipoLembrete, tipoReuniao })
+    return res.json({ phone, name, eventId: eventoCalendarId, tipo: tipoLembrete, tipoReuniao })
   } catch (e) {
     logErro("buscar-contato-reuniao", e.message)
     return res.sendStatus(500)
@@ -14816,22 +14838,28 @@ app.post("/consulta-status", validarWebhookInterno, async (req, res) => {
 // ------------------------------------------------------------------
 // ROTA /lembrete - lembrete automatico antes da consulta
 // Chamar via Make.com ou n8n com Google Calendar como gatilho:
-//   - padrao: POST /lembrete com { phone, name, datetime, tipo: "24h" }
-//   - no dia: POST /lembrete com { phone, name, datetime, tipo: "hoje" }
-//   - 1h antes:  POST /lembrete com { phone, name, datetime, tipo: "1h" }
+//   - padrao: POST /lembrete com { phone, name, eventId, datetime, tipo: "24h" }
+//   - no dia: POST /lembrete com { phone, name, eventId, datetime, tipo: "hoje" }
+//   - 1h antes:  POST /lembrete com { phone, name, eventId, datetime, tipo: "1h" }
 // ------------------------------------------------------------------
 app.post("/lembrete", validarWebhookInterno, async (req, res) => {
   try {
-    const { phone, name, datetime, tipo } = req.body
+    const { phone, name, datetime, tipo, eventId } = req.body
     if (!phone) return res.sendStatus(400)
     const numero = normalizarNumeroWhatsAppEnvio(phone)
     if (!numero) return res.sendStatus(400)
     const nomeCliente = (name || "cliente").trim()
 
     let dataFormatada = datetime || "em breve"
+    let dataEvento = datetime
+    if (eventId) {
+      const evento = await getConsultaCalendarEventState(eventId)
+      if (!evento?.encontrado) return res.status(404).json({ erro: "evento nao encontrado" })
+      dataEvento = evento.inicio || dataEvento
+    }
     try {
-      if (datetime) {
-        const d = new Date(datetime)
+      if (dataEvento) {
+        const d = new Date(dataEvento)
         if (!isNaN(d.getTime())) {
           dataFormatada = d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" })
         }

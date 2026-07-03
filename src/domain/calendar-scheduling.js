@@ -270,6 +270,8 @@ function classificarEstadoEvento(ev = {}) {
     inicio: dtInicio,
     fim: dtFim,
     eventId: ev.id || null,
+    summary: ev.summary || "",
+    description: ev.description || "",
     metadata: privado,
     fonte: "calendar"
   }
