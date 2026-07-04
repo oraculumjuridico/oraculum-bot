@@ -139,8 +139,7 @@ async function main() {
     assert.equal(u.whatsappVerificado, true)
     assert.equal(u.whatsappContato, "5511")
     assert.deepEqual(chamadas.cidades[0].contexto, {
-      from: "5511",
-      suprimirAudio: true
+      from: "5511"
     })
   }
 

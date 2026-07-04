@@ -1205,12 +1205,13 @@ async function telaConfirmarDadosAudio(from, u, opcoesAudio = {}) {
 }
 
 async function enviarAudioPedidoCidade(from, atendente, opcoes = {}) {
-  const { nomeTerceiro = null } = opcoes
+  const { nomeTerceiro = null, introducaoAudio = "" } = opcoes
   if (!from || !atendente) return
   try {
-    const texto = nomeTerceiro
+    const pergunta = nomeTerceiro
       ? `Agora preciso saber onde ${nomeTerceiro} mora. Você pode enviar um CEP, digitar o nome da cidade, ou enviar um áudio falando o nome da cidade.`
       : `Agora preciso saber onde você mora. Você pode enviar um CEP, digitar o nome da sua cidade, ou enviar um áudio falando o nome da cidade.`
+    const texto = [sanitizarTextoEntrada(introducaoAudio), pergunta].filter(Boolean).join(" ")
     const ogg = await gerarAudioAtendente(atendente, texto)
     await enviarAudio(from, urlAudioAtendente(ogg))
     ultimosAudiosEnviados.set(String(from), Date.now())
@@ -2710,8 +2711,7 @@ function getNumeroCasoOficialDoNegocio(negocio) {
 async function avancarAposTelefoneConfirmado(from, u) {
   if (u.nomeConfirmado && u.nome) {
     iniciarTimer(from)
-    // suprimirAudio=true: a confirmação do telefone já enviou áudio antes desta chamada
-    return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+    return await flowAcolhimentoCidade(u, { from })
   }
   setStage(u, STAGES.ACOLHIMENTO_NOME)
   salvarEtapa(u._numero || from, STAGES.ACOLHIMENTO_NOME)
@@ -5740,8 +5740,7 @@ async function aplicarCorrecaoPendente(from, u) {
   // no próximo campo que falta em vez de exibir uma confirmação incompleta.
   if (!u._retornarParaConfirmacao && !u.numeroCaso) {
     if (!u.whatsappVerificado) return responderComTimer(from, await flowAcolhimentoConfirmaWhatsapp(u, { from }))
-    // suprimirAudio quando campo=descricao pois já foi enviado áudio de aviso acima
-    if (!u.cidade) return responderComTimer(from, await flowAcolhimentoCidade(u, { from, suprimirAudio: campoAplicado === "descricao" }))
+    if (!u.cidade) return responderComTimer(from, await flowAcolhimentoCidade(u, { from }))
   }
   return await voltarParaConfirmacao(from, u)
 }
@@ -7303,7 +7302,7 @@ Dado que ainda precisa ser coletado: ${dadoFaltante}`
 
 async function flowAcolhimentoCidade(u, ctx = {}) {
   const from = ctx.from || u._numero || ""
-  const suprimirAudio = Boolean(ctx.suprimirAudio)
+  const introducaoAudio = sanitizarTextoEntrada(ctx.introducaoAudio)
   const primeiroNome = primeiroNomeCliente(u) || u.nome?.split(" ")[0] || u.nomeHubspot?.split(" ")[0] || u.nomeWA?.split(" ")[0] || ""
   const ehTerceiro = Boolean(u.atendimentoParaTerceiro || u._novoCasoParaTerceiro)
   let audioRetomadaEnviado = false
@@ -7322,10 +7321,9 @@ async function flowAcolhimentoCidade(u, ctx = {}) {
       audioRetomadaEnviado = true
     } catch (e) { logErro("tts", "Falha áudio retomada cidade", e) }
   }
-  // Só envia áudio de pedido de cidade se não veio de uma transição que já enviou áudio
-  if (!audioRetomadaEnviado && !suprimirAudio && u.modoTexto === false) {
+  if (!audioRetomadaEnviado && u.modoTexto !== true) {
     const nomeTerceiro = ehTerceiro && u.nome ? u.nome.split(" ")[0] : null
-    await enviarAudioPedidoCidade(from, u.atendente, { nomeTerceiro })
+    await enviarAudioPedidoCidade(from, u.atendente, { nomeTerceiro, introducaoAudio })
   }
   setStage(u, STAGES.ACOLHIMENTO_CIDADE)
   salvarEtapa(u._numero || from, "acolhimento_cidade")
@@ -10129,8 +10127,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     }
     if (text === "pre_cidade_informar") {
       iniciarTimer(from)
-      // suprimirAudio=true: a resposta de imprevisto já enviou áudio antes deste botão
-      return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      return await flowAcolhimentoCidade(u, { from })
     }
     if (text === "pre_terceiro_continuar") {
       u.atendimentoParaTerceiro = true
@@ -10795,7 +10792,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       // Usuário novo corrigindo WhatsApp antes de ter cidade — retoma coleta de cidade
       u.whatsappVerificado = true
       if (!u.whatsappContato) u.whatsappContato = from
-      return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      return await flowAcolhimentoCidade(u, { from })
     }
     // Texto livre = cliente digitou outro número diretamente
     if (text && text !== "revalida_whatsapp_ok") {
@@ -10805,7 +10802,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         u.whatsappVerificado = true
         u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
         const label = formatarTelefoneExibicao(telNorm)
-        if (!u._revalidandoCampos && !u.modoTexto) {
+        if (u._corrigindoWhatsappConfirmacao && !u.modoTexto) {
           try {
             const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Vou usar o número ${label}.`)
             await enviarAudio(from, urlAudioAtendente(ogg))
@@ -10824,7 +10821,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
           })
         }
         // Usuário novo corrigindo WhatsApp antes de ter cidade — retoma coleta de cidade
-        return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+        return await flowAcolhimentoCidade(u, {
+          from,
+          introducaoAudio: `Entendi! Vou usar o número ${label}.`
+        })
       }
       iniciarTimer(from)
       return responderComTimer(from, {
@@ -11159,7 +11159,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.whatsappVerificado = true
       u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
       const label = formatarTelefoneExibicao(telNorm)
-      if (!u._revalidandoCampos && !u.modoTexto) {
+      if (u._corrigindoWhatsappConfirmacao && !u.modoTexto) {
         try {
           const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Vou usar o número ${label}.`)
           await enviarAudio(from, urlAudioAtendente(ogg))
@@ -11178,7 +11178,10 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         })
       }
       // Usuário novo corrigindo WhatsApp antes de ter cidade — retoma coleta de cidade
-      return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      return await flowAcolhimentoCidade(u, {
+        from,
+        introducaoAudio: `Entendi! Vou usar o número ${label}.`
+      })
     } catch (e) {
       logErro("tts", "Falha transcrição whatsapp revalida por áudio", e)
       return { texto: `Não consegui processar seu áudio. Por favor, *digite o número com DDD*.`, opcoes: [{ id: "revalida_whatsapp_ok", title: "✅ Confirmar atual" }] }
@@ -11399,8 +11402,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u._revalidaConfirmados.push("whatsapp")
         return await proximaConfirmacaoProgressiva(from, u)
       }
-      // suprimirAudio=true: o stage COLETA_TEL_WPP_CONFIRMA já enviou áudio de confirmação
-      return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      return await flowAcolhimentoCidade(u, { from })
     }
     if (text === "tel_corrigir") {
       setStage(u, STAGES.COLETA_TEL_WPP)
@@ -12802,8 +12804,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u._revalidaConfirmados.push("whatsapp")
         return await proximaConfirmacaoProgressiva(from, u)
       }
-      // suprimirAudio=true: flowAcolhimentoConfirmaWhatsapp já enviou áudio nesta etapa
-      return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      return await flowAcolhimentoCidade(u, { from })
     }
     if (text === "whatsapp_nao" || text === "nc_outro") {
       // Para terceiro: número de origem não é do atendido → false.
@@ -12890,8 +12891,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         u._revalidaConfirmados.push("whatsapp")
         return await proximaConfirmacaoProgressiva(from, u)
       }
-      // suprimirAudio=true: o stage ACOLHIMENTO_CONFIRMA_WHATSAPP_OUTRO já enviou áudio
-      return await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      return await flowAcolhimentoCidade(u, { from })
     }
     iniciarTimer(from)
     return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nSe quiser usar outro número, é só digitar ou falar com DDD agora. Se preferir continuar com este, toque em *Continuar assim*. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
@@ -13023,7 +13023,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       delete u._ufTemp
       delete u._regiaoTemp
       iniciarTimer(from)
-      if (u.modoTexto === false) await enviarAudioPedidoCidade(from, u.atendente)
+      if (u.modoTexto !== true) await enviarAudioPedidoCidade(from, u.atendente)
       return {
         texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nTudo bem! Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`,
         opcoes: null

@@ -32,7 +32,7 @@ async function handle({
   if (!u.whatsappContato) u.whatsappContato = from
   return {
     success: true,
-    response: await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+    response: await flowAcolhimentoCidade(u, { from })
   }
 }
 

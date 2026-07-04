@@ -46,8 +46,8 @@ function criarContexto(u, overrides = {}) {
         chamadas.voltas.push({ from, usuario })
         return { texto: "voltar para confirmação", opcoes: null }
       },
-      proximaConfirmacaoProgressiva: async (from, usuario) => {
-        chamadas.progressoes.push({ from, usuario })
+      proximaConfirmacaoProgressiva: async (from, usuario, opcoes) => {
+        chamadas.progressoes.push({ from, usuario, opcoes })
         return { texto: "próxima confirmação", opcoes: [] }
       },
       flowAcolhimentoCidade: async (usuario, contexto) => {
@@ -100,6 +100,9 @@ async function main() {
     assert.deepEqual(u._revalidaConfirmados, ["nome", "whatsapp"])
     assert.equal(chamadas.progressoes.length, 1)
     assert.equal(chamadas.progressoes[0].usuario, u)
+    assert.deepEqual(chamadas.progressoes[0].opcoes, {
+      introducaoAudio: "Entendi! Vou usar o número formatado:5581999990000."
+    })
     assert.deepEqual(chamadas.audios, [])
   }
 
@@ -152,7 +155,10 @@ async function main() {
     )
     assert.deepEqual(chamadas.cidades, [{
       usuario: u,
-      contexto: { from: "558188888888", suprimirAudio: true }
+      contexto: {
+        from: "558188888888",
+        introducaoAudio: "Entendi! Vou usar o número formatado:5581999990000."
+      }
     }])
   }
 
@@ -215,7 +221,6 @@ async function main() {
   }
 
   {
-    const erroAudio = new Error("tts indisponível")
     const u = {
       atendente: "Lia",
       modoTexto: false,
@@ -223,14 +228,15 @@ async function main() {
     }
     const { ctx, chamadas } = criarContexto(u, {
       gerarAudioAtendente: async () => {
-        throw erroAudio
+        throw new Error("não deve gerar áudio intermediário")
       }
     })
     const result = await handle(ctx)
     assert.equal(result.success, true)
-    assert.equal(chamadas.audios.length, 1)
-    assert.equal(chamadas.audios[0].tipo, "erro")
-    assert.equal(chamadas.audios[0].args[2], erroAudio)
+    assert.deepEqual(chamadas.audios, [])
+    assert.deepEqual(chamadas.progressoes[0].opcoes, {
+      introducaoAudio: "Entendi! Vou usar o número formatado:5581999990000."
+    })
     assert.deepEqual(u._revalidaConfirmados, ["whatsapp"])
   }
 }

@@ -54,8 +54,7 @@ async function handleConfirmEntryFinalAcceptance({
         // Para si: número alternativo informado ainda é do cliente → true. Para terceiro → false.
         u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
         iniciarTimer(from)
-        // suprimirAudio=true: prepararConfirmacaoEntrada já enviou áudio de confirmação
-        return { handled: true, response: await flowAcolhimentoCidade(u, { from, suprimirAudio: true }) }
+        return { handled: true, response: await flowAcolhimentoCidade(u, { from }) }
       }
       setStage(u, "coleta_nome"); iniciarTimer(from)
       return { handled: true, response: { texto: "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nQual é o *nome completo* da pessoa que será atendida?", opcoes: null } }
@@ -69,7 +68,7 @@ async function handleConfirmEntryFinalAcceptance({
       }
       if (u._novoCasoParaTerceiro) {
         setStage(u, stages.ACOLHIMENTO_CIDADE); iniciarTimer(from)
-        if (u.modoTexto === false) {
+        if (u.modoTexto !== true) {
           const nomeTerceiro = u.nome ? u.nome.split(" ")[0] : null
           await enviarAudioPedidoCidade(from, u.atendente, { nomeTerceiro })
         }
@@ -95,7 +94,7 @@ async function handleConfirmEntryFinalAcceptance({
         }
       }
       setStage(u, stages.ACOLHIMENTO_CIDADE); iniciarTimer(from)
-      if (u.modoTexto === false) await enviarAudioPedidoCidade(from, u.atendente)
+      if (u.modoTexto !== true) await enviarAudioPedidoCidade(from, u.atendente)
       return {
         handled: true,
         response: {

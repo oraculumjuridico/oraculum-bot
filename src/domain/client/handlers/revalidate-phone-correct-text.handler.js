@@ -29,9 +29,9 @@ async function handle({
     u.whatsappContato = telNorm
     u.whatsappVerificado = true
     u.telefoneEhDoCliente = !u.atendimentoParaTerceiro
-    if (!u.modoTexto) {
+    const label = formatarTelefoneExibicao(telNorm)
+    if (u._corrigindoWhatsappConfirmacao && !u.modoTexto) {
       try {
-        const label = formatarTelefoneExibicao(telNorm)
         const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Vou usar o número ${label}.`)
         await enviarAudio(from, urlAudioAtendente(ogg))
         await esperar(2000)
@@ -49,12 +49,17 @@ async function handle({
       u._revalidaConfirmados.push("whatsapp")
       return {
         success: true,
-        response: await proximaConfirmacaoProgressiva(from, u)
+        response: await proximaConfirmacaoProgressiva(from, u, {
+          introducaoAudio: `Entendi! Vou usar o número ${label}.`
+        })
       }
     }
     return {
       success: true,
-      response: await flowAcolhimentoCidade(u, { from, suprimirAudio: true })
+      response: await flowAcolhimentoCidade(u, {
+        from,
+        introducaoAudio: `Entendi! Vou usar o número ${label}.`
+      })
     }
   }
 
