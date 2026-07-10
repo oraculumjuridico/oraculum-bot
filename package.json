@@ -26,6 +26,7 @@
     "meta:waba:validate": "node scripts/validate-meta-waba.js",
     "hubspot:deal-titles:dry": "node scripts/audit-hubspot-deal-titles.js",
     "cases:audit": "node scripts/import-real-cases.js audit",
+    "cases:review": "node scripts/import-real-cases.js review",
     "cases:dry-run": "node scripts/import-real-cases.js dry-run",
     "cases:apply": "node scripts/import-real-cases.js apply --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
     "cases:resume": "node scripts/import-real-cases.js resume --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",

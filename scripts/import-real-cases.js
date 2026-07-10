@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 "use strict"
 
 require("dotenv").config({ quiet: true })
@@ -118,9 +118,57 @@ async function inspectCase(folder) {
   return record
 }
 
+function isOrganizationalFolder(folderName) {
+  return /^\d+\s*-\s*/.test(folderName)
+}
+
+function isInternalFolder(folderName) {
+  const internalPatterns = [
+    /^(processo|processos)$/i,
+    /^(documento|documentos|docs?)$/i,
+    /^contrato$/i,
+    /^(arq\s*comprimido|arquivos?\s*comprimido)$/i,
+    /^procuração$/i,
+    /^__pycache__$/,
+    /^\.git/,
+    /^node_modules$/
+  ]
+  return internalPatterns.some(pattern => pattern.test(folderName))
+}
+
 async function inventory() {
   const entries = await fsp.readdir(root, { withFileTypes: true })
-  const folders = entries.filter(entry => entry.isDirectory()).map(entry => path.join(root, entry.name))
+  const allDirs = entries.filter(entry => entry.isDirectory())
+
+  let folders = []
+
+  // First, collect client folders directly in root (but exclude organizational & internal folders)
+  for (const entry of allDirs) {
+    if (isOrganizationalFolder(entry.name) || isInternalFolder(entry.name)) {
+      continue
+    }
+    folders.push(path.join(root, entry.name))
+  }
+
+  // Then, collect client folders from within organizational folders
+  for (const entry of allDirs) {
+    if (!isOrganizationalFolder(entry.name)) {
+      continue
+    }
+    const orgPath = path.join(root, entry.name)
+    try {
+      const subEntries = await fsp.readdir(orgPath, { withFileTypes: true })
+      for (const subEntry of subEntries) {
+        if (!subEntry.isDirectory() || isInternalFolder(subEntry.name)) {
+          continue
+        }
+        folders.push(path.join(orgPath, subEntry.name))
+      }
+    } catch {
+      // Skip if organizational folder can't be read
+    }
+  }
+
   const records = []
   for (let i = 0; i < folders.length; i += concurrency) {
     records.push(...await Promise.all(folders.slice(i, i + concurrency).map(inspectCase)))
@@ -237,7 +285,7 @@ async function apply(results, checkpoint) {
 
 async function main() {
   if (command === "help") {
-    console.log("Uso: node scripts/import-real-cases.js <audit|dry-run|apply|resume|report> [--root=...] [--concurrency=2]")
+    console.log("Uso: node scripts/import-real-cases.js <audit|review|dry-run|apply|resume|report> [--root=...] [--concurrency=2]")
     return
   }
   if (command === "report") {
@@ -248,7 +296,7 @@ async function main() {
   }
   if (!fs.existsSync(root)) throw new Error("pasta_origem_inexistente")
   const scanned = await inventory()
-  const online = command !== "audit" && Boolean(process.env.HUBSPOT_TOKEN)
+  const online = (command !== "audit" && command !== "review") && Boolean(process.env.HUBSPOT_TOKEN)
   const { results, checkpoint } = await analyze(scanned.records, online)
   if (["apply", "resume"].includes(command)) await apply(results, checkpoint)
   const report = summarize(scanned, results, command)
