@@ -4,15 +4,53 @@
   "description": "Bot Oraculum",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "smoke": "node smoke.js",
+    "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke",
+    "test": "node test/external-state-ci-smoke.test.js && node test/legal-assistant-engine.test.js && node test/legal-copilot.test.js && node test/admin-assisted-ai-static.test.js && node test/admin-assisted-ai-flow.test.js && node test/admin-assisted-ai-hardening.test.js && node test/audio-url-security.test.js && node test/http-security.test.js && node test/template-service-context.test.js && node test/callback-idempotency.test.js && node test/reengagement-engine.test.js && node test/reengagement-planner.test.js && node test/reengagement-routes.test.js && node test/finalization-invariants.test.js && node test/storage-backup-restore.test.js && node test/consultation-state.test.js && node test/consultation-flows.test.js && node test/consultation-idempotency.test.js && node test/consultation-reconcile.test.js && node test/consultation-audit-operational.test.js && node test/consultation-operational-baseline.test.js && node test/consultation-integrity-metrics.test.js && node test/crm-identity-impact-analysis.test.js && node test/crm-case-party.test.js && node test/crm-case-party-decision-audit.test.js && node test/crm-case-party-multi-resolver.test.js && node test/crm-case-party-resolution-stability.test.js && node test/consultation-events.test.js && node test/consultation-read-model.test.js && node test/consultation-enforcement.test.js && node test/consultation-architecture-audit.test.js && node test/consultation-architecture-hard-lock.test.js && node test/consultation-architecture-snapshot.test.js && node test/consultation-immutability.test.js && node test/consultation-replay-consistency.test.js && node test/consultation-legal-proof.test.js && node test/consultation-integrity-hash.test.js && node test/consultation-self-verification-engine.test.js && node test/consultation-drift-detector.test.js && node test/consultation-integrity-drift-detected.test.js && node test/consultation-auto-repair-engine.test.js && node test/consultation-session-recovery.test.js && node test/consultation-self-healed-event.test.js && node test/hubspot-contract.test.js",
+    "storage:backup": "node scripts/storage-snapshot.js backup",
+    "storage:verify": "node scripts/storage-snapshot.js verify",
+    "storage:restore": "node scripts/storage-snapshot.js restore",
+    "audit:consulta": "node scripts/audit-consulta-phase1.js",
+    "consultation:baseline": "node scripts/collect-consultation-operational-baseline.js --live",
+    "consultation:integrity:metrics": "node scripts/consultation-integrity-metrics.js",
+    "crm:identity:impact": "node scripts/crm-identity-impact-analysis.js",
+    "audit:consulta:enforcement": "node scripts/audit-consulta-enforcement.js",
+    "audit:consulta:architecture": "node src/scripts/consultation-architecture-audit.js",
+    "consultation:release-check": "node src/scripts/consultation-release-check.js",
+    "consultation:export:legal": "node src/scripts/consultation-export-legal.js",
+    "consultation:export:dossier": "node src/scripts/consultation-export-dossier.js",
+    "reconcile:consulta": "node scripts/reconcile-consulta.js",
+    "reconcile:consulta:dry": "node scripts/reconcile-consulta.js --dry-run",
+    "migrate:consulta": "node scripts/migrate-consulta-calendar.js",
+    "meta:waba:validate": "node scripts/validate-meta-waba.js",
+    "hubspot:deal-titles:dry": "node scripts/audit-hubspot-deal-titles.js",
+    "cases:audit": "node scripts/import-real-cases.js audit",
+    "cases:review": "node scripts/import-real-cases.js review",
+    "cases:dry-run": "node scripts/import-real-cases.js dry-run",
+    "cases:apply": "node scripts/import-real-cases.js apply --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
+    "cases:resume": "node scripts/import-real-cases.js resume --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
+    "cases:report": "node scripts/import-real-cases.js report"
+    ,"state:migrate:postgres": "node scripts/migrate-state-to-postgres.js"
+    ,"state:migrate:postgres:force": "node scripts/migrate-state-to-postgres.js --force"
+    ,"state:migrate:postgres:dry": "node scripts/migrate-state-to-postgres.js --dry-run"
   },
   "license": "ISC",
   "type": "commonjs",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": "20.x",
+    "npm": "10.x"
+  },
   "dependencies": {
-    "axios": "^1.15.0",
+    "axios": "^1.16.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "googleapis": "^171.4.0",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "nodemailer": "9.0.3",
+    "pg": "^8.22.0",
+    "sharp": "^0.35.3",
+    "tesseract.js": "^7.0.0"
   }
 }

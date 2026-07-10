@@ -1,0 +1,110 @@
+{
+  "name": "Oraculum - Consulta - planejamento de lembretes",
+  "blueprintVersion": "2026-07-08-production-blockers",
+  "dataStore": "consulta_reminders",
+  "states": ["pending", "sent", "skipped", "cancelled"],
+  "timezone": "America/Sao_Paulo",
+  "metadata": {
+    "purpose": "Criar ou substituir lembretes temporizados quando uma consulta e criada ou reagendada no Google Calendar.",
+    "requiredConnections": ["Google Calendar", "HTTP Oraculum", "Data Store consulta_reminders"],
+    "requiredVariables": ["ORACULUM_GOOGLE_CALENDAR_ID", "ORACULUM_BASE_URL", "INTERNAL_WEBHOOK_SECRET", "CONSULTA_LEMBRETE_HOJE_HORA"]
+  },
+  "flow": [
+    {
+      "id": 1,
+      "module": "google-calendar:watchEvents",
+      "version": 5,
+      "parameters": {
+        "select": "update",
+        "showDeleted": true,
+        "calendar": "{{ORACULUM_GOOGLE_CALENDAR_ID}}",
+        "limit": 10
+      },
+      "filter": {
+        "name": "Evento valido para planejamento",
+        "conditions": [
+          "event.id exists",
+          "event.status != cancelled",
+          "event.start.dateTime exists"
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "mapper": {
+        "method": "POST",
+        "url": "{{ORACULUM_BASE_URL}}/consulta-lembrete-dados",
+        "headers": [
+          {
+            "name": "x-internal-secret",
+            "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+          }
+        ],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "body": "{\"eventId\":\"{{1.id}}\"}"
+      }
+    },
+    {
+      "id": 3,
+      "module": "datastore:deleteRecords",
+      "version": 1,
+      "mapper": {
+        "datastore": "consulta_reminders",
+        "filter": "eventId == {{2.body.eventId}} AND status in [pending, skipped, cancelled]"
+      }
+    },
+    {
+      "id": 4,
+      "module": "tools:Iterator",
+      "version": 1,
+      "mapper": {
+        "array": [
+          {
+            "tipo": "24h",
+            "scheduledFor": "{{2.body.reminders.24h}}"
+          },
+          {
+            "tipo": "hoje",
+            "scheduledFor": "{{formatDate(parseDate(2.body.datetime); 'YYYY-MM-DD') + 'T' + CONSULTA_LEMBRETE_HOJE_HORA + ':00-03:00'}}"
+          },
+          {
+            "tipo": "1h",
+            "scheduledFor": "{{2.body.reminders.1h}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "module": "datastore:createRecord",
+      "version": 1,
+      "mapper": {
+        "datastore": "consulta_reminders",
+        "key": "{{2.body.eventId}}:{{4.tipo}}",
+        "record": {
+          "eventId": "{{2.body.eventId}}",
+          "phone": "{{2.body.phone}}",
+          "name": "{{2.body.name}}",
+          "dealId": "{{2.body.dealId}}",
+          "casoId": "{{2.body.casoId}}",
+          "datetime": "{{2.body.datetime}}",
+          "tipo": "{{4.tipo}}",
+          "scheduledFor": "{{4.scheduledFor}}",
+          "status": "pending",
+          "plannedAt": "{{now}}",
+          "source": "calendar-watch"
+        }
+      },
+      "filter": {
+        "name": "Somente lembretes futuros",
+        "conditions": [
+          "4.scheduledFor exists",
+          "parseDate(4.scheduledFor) > now"
+        ]
+      }
+    }
+  ]
+}

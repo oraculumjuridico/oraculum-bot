@@ -1,0 +1,46 @@
+{
+  "consultationVersion": 3,
+  "eventModelHash": "499fb01f6d7b8fe59b0ed47a15ccb442dc6400e8ecf84da11f415d181a2b1f59",
+  "facade": "src/domain/consultation/index.js",
+  "publicExports": [
+    "CONSULTATION_VERSION",
+    "appendConsultaEvent",
+    "assertConsultationArchitecture",
+    "assertConsultationReleaseIntegrity",
+    "assertEventModelVersion",
+    "buscarHorariosDisponiveis",
+    "calcularMetricasConsulta",
+    "cancelarEventosAtivosDoDeal",
+    "classificarEstadoCalendar",
+    "criarEventoConsulta",
+    "definirResultadoConsulta",
+    "eventModelHash",
+    "findConsultaCalendarEvent",
+    "findConsultaCalendarEventInRange",
+    "getConsultaCalendarEventState",
+    "getConsultaView",
+    "getConsultaHistory",
+    "getConsultaStateAt",
+    "getConsultaFullAudit",
+    "getConsultaDecisionHistory",
+    "buildConsultaLegalDossier",
+    "generateConsultaNarrative",
+    "verifyConsultaLegalDossier",
+    "refreshConsultationSessionProjection",
+    "installConsultationDependencyFirewall",
+    "listConsultaCalendarEventsForReconciliation",
+    "listConsultasAtivasViews",
+    "persistirMetricasConsulta",
+    "selecionarEventoConsultaMaisRecente",
+    "vincularEventoConsulta"
+  ],
+  "externalImportWhitelist": {
+    "server.js": ["./src/domain/consultation"],
+    "scripts/audit-consulta-phase1.js": ["../src/domain/consultation"],
+    "scripts/migrate-consulta-calendar.js": ["../src/domain/consultation"],
+    "scripts/reconcile-consulta.js": ["../src/domain/consultation"]
+    ,"src/scripts/consultation-release-check.js": ["../domain/consultation"]
+    ,"src/scripts/consultation-export-legal.js": ["../domain/consultation"]
+    ,"src/scripts/consultation-export-dossier.js": ["../domain/consultation"]
+  }
+}

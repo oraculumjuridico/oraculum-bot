@@ -1,0 +1,69 @@
+name: Consultation Architecture
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Enforce Node.js 20 and npm 10
+        run: |
+          npm install --global npm@10.9.8
+          node -e "if (process.versions.node.split('.')[0] !== '20') process.exit(1)"
+          npm --version | grep -E '^10\.'
+      - run: npm ci
+      - run: npm run audit:consulta:architecture
+        env:
+          NODE_ENV: production
+          CONSULTA_ARCHITECTURE_AUDIT_MODE: strict
+      - run: npm run consultation:release-check
+        env:
+          NODE_ENV: production
+      - run: npm test
+      - name: Validate application startup
+        env:
+          APP_SECRET: ci-startup-validation-secret
+          NODE_ENV: test
+          CI: true
+          CI_SMOKE_TEST: true
+          EXTERNAL_STATE_REQUIRED: true
+          PORT: 10000
+        run: |
+          npm start > startup.log 2>&1 &
+          pid=$!
+          cleanup() {
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for attempt in $(seq 1 30); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat startup.log
+              exit 1
+            fi
+
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              'http://127.0.0.1:10000/health' || true)
+            if [ "$status" = "200" ]; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" != "true" ]; then
+            cat startup.log
+            exit 1
+          fi
+
+          grep -q 'Oraculum v' startup.log
