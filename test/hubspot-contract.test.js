@@ -1,4 +1,4 @@
-﻿const assert = require("assert")
+const assert = require("assert")
 const axios = require("axios")
 const fs = require("fs")
 const path = require("path")
@@ -189,14 +189,14 @@ async function executar() {
 
   const contactId = await hsCriarContato("5511999999999", {
     nome: "Maria",
-    cidade: "SÃ£o Paulo"
+    cidade: "São Paulo"
   })
   assert.equal(contactId, "contact-1")
   const criacaoContato = requests.find(item => item.url.endsWith("/contacts"))
   assert.deepEqual(criacaoContato.body.properties, {
     firstname: "Maria",
     phone: "5511999999999",
-    city: "SÃ£o Paulo"
+    city: "São Paulo"
   })
 
   const propsContatoCompleto = montarPropsContatoHubSpot("5581999990000", {
@@ -289,20 +289,20 @@ async function executar() {
     area: "inss",
     assuntoResumo: "Aposentadoria",
     urgencia: "normal",
-    cidade: "SÃ£o Paulo",
+    cidade: "São Paulo",
     origemCaptacao: "whatsapp"
   })
   assert.equal(dealId, "deal-1")
   const criacaoDeal = requests.find(item => item.url.endsWith("/deals"))
   assert.equal(criacaoDeal.body.properties.pipeline, "default")
   assert.equal(criacaoDeal.body.properties.dealstage, "appointmentscheduled")
-  assert.equal(criacaoDeal.body.properties.dealname, "âšª LF-Prv")
+  assert.equal(criacaoDeal.body.properties.dealname, "⚪ LF-Prv")
   assert.equal(criacaoDeal.body.properties.urgencia, "Moderada")
   assert.equal(criacaoDeal.body.properties.etapa_do_bot, "inicio")
 
   const postSucesso = axios.post
   axios.post = async () => {
-    const error = new Error("HubSpot rejeitou o negÃ³cio")
+    const error = new Error("HubSpot rejeitou o negócio")
     error.response = {
       status: 400,
       data: {
@@ -413,14 +413,14 @@ async function executar() {
 
   await sincronizarContatoNegocioHubSpot({
     contatoId: "contact-2",
-    nome: "JoÃ£o",
+    nome: "João",
     cidade: "Campinas",
     uf: "SP"
   })
   const sincronizacaoContato = requests.find(item =>
     item.method === "patch" && item.url.endsWith("/contacts/contact-2")
   )
-  assert.equal(sincronizacaoContato.body.properties.firstname, "JoÃ£o")
+  assert.equal(sincronizacaoContato.body.properties.firstname, "João")
   assert.equal(sincronizacaoContato.body.properties.city, "Campinas")
   assert.equal(sincronizacaoContato.body.properties.state, "SP")
   assert.equal("uf" in sincronizacaoContato.body.properties, false)
