@@ -1,4 +1,4 @@
-const assert = require("assert")
+﻿const assert = require("assert")
 const axios = require("axios")
 const fs = require("fs")
 const path = require("path")
@@ -60,7 +60,29 @@ function lerCsvSimples(filePath) {
 }
 
 function propriedadesExportadasHubSpot(nomeArquivo) {
-  const csvPath = path.join(__dirname, "..", "..", "Hubspot", nomeArquivo)
+  let csvPath
+
+  // Strategy 1: Use environment variable
+  if (process.env.HUBSPOT_CONTACTS_CSV && nomeArquivo.includes("contacts")) {
+    csvPath = process.env.HUBSPOT_CONTACTS_CSV
+  } else if (process.env.HUBSPOT_DEALS_CSV && nomeArquivo.includes("deals")) {
+    csvPath = process.env.HUBSPOT_DEALS_CSV
+  } else {
+    // Strategy 2: Try sibling folder ../Hubspot
+    const siblingPath = path.join(__dirname, "..", "..", "Hubspot", nomeArquivo)
+    if (fs.existsSync(siblingPath)) {
+      csvPath = siblingPath
+    } else {
+      // Strategy 3: Use fixture in test/fixtures
+      const fixtureName = nomeArquivo.includes("contacts") ? "hubspot-contacts-contract.csv" : "hubspot-deals-contract.csv"
+      csvPath = path.join(__dirname, "fixtures", fixtureName)
+    }
+  }
+
+  if (!fs.existsSync(csvPath)) {
+    throw new Error(`CSV file not found: ${csvPath}`)
+  }
+
   return new Set(lerCsvSimples(csvPath).map(row => row["Nome interno"]).filter(Boolean))
 }
 
@@ -167,14 +189,14 @@ async function executar() {
 
   const contactId = await hsCriarContato("5511999999999", {
     nome: "Maria",
-    cidade: "São Paulo"
+    cidade: "SÃ£o Paulo"
   })
   assert.equal(contactId, "contact-1")
   const criacaoContato = requests.find(item => item.url.endsWith("/contacts"))
   assert.deepEqual(criacaoContato.body.properties, {
     firstname: "Maria",
     phone: "5511999999999",
-    city: "São Paulo"
+    city: "SÃ£o Paulo"
   })
 
   const propsContatoCompleto = montarPropsContatoHubSpot("5581999990000", {
@@ -267,20 +289,20 @@ async function executar() {
     area: "inss",
     assuntoResumo: "Aposentadoria",
     urgencia: "normal",
-    cidade: "São Paulo",
+    cidade: "SÃ£o Paulo",
     origemCaptacao: "whatsapp"
   })
   assert.equal(dealId, "deal-1")
   const criacaoDeal = requests.find(item => item.url.endsWith("/deals"))
   assert.equal(criacaoDeal.body.properties.pipeline, "default")
   assert.equal(criacaoDeal.body.properties.dealstage, "appointmentscheduled")
-  assert.equal(criacaoDeal.body.properties.dealname, "⚪ LF-Prv")
+  assert.equal(criacaoDeal.body.properties.dealname, "âšª LF-Prv")
   assert.equal(criacaoDeal.body.properties.urgencia, "Moderada")
   assert.equal(criacaoDeal.body.properties.etapa_do_bot, "inicio")
 
   const postSucesso = axios.post
   axios.post = async () => {
-    const error = new Error("HubSpot rejeitou o negócio")
+    const error = new Error("HubSpot rejeitou o negÃ³cio")
     error.response = {
       status: 400,
       data: {
@@ -391,14 +413,14 @@ async function executar() {
 
   await sincronizarContatoNegocioHubSpot({
     contatoId: "contact-2",
-    nome: "João",
+    nome: "JoÃ£o",
     cidade: "Campinas",
     uf: "SP"
   })
   const sincronizacaoContato = requests.find(item =>
     item.method === "patch" && item.url.endsWith("/contacts/contact-2")
   )
-  assert.equal(sincronizacaoContato.body.properties.firstname, "João")
+  assert.equal(sincronizacaoContato.body.properties.firstname, "JoÃ£o")
   assert.equal(sincronizacaoContato.body.properties.city, "Campinas")
   assert.equal(sincronizacaoContato.body.properties.state, "SP")
   assert.equal("uf" in sincronizacaoContato.body.properties, false)

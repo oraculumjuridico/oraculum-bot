@@ -1,0 +1,8 @@
+"Nome","Nome interno","Tipo","Descrição"
+"Nome do Negócio","dealname","string","Deal name"
+"Estágio do Negócio","dealstage","enumeration","Deal stage"
+"Pipeline","pipeline","string","Pipeline ID"
+"Urgência","urgencia","enumeration","Urgency level"
+"Etapa do Bot","etapa_do_bot","string","Bot stage"
+"Descrição Completa","descricao_completa","text","Complete description"
+"Tipo de Caso","tipo_de_caso","enumeration","Case type"
