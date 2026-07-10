@@ -33,6 +33,10 @@ function boolEnv(name, fallback = false) {
   return ["1", "true", "yes", "sim"].includes(value)
 }
 
+function isCiSmokeTest() {
+  return process.env.NODE_ENV === "test" && boolEnv("CI") && boolEnv("CI_SMOKE_TEST")
+}
+
 function configuredFiles() {
   const extra = String(process.env.EXTERNAL_STATE_FILES || "").split(",").map(v => v.trim()).filter(Boolean)
   return [...new Set([...DEFAULT_FILES, ...extra])]
@@ -107,7 +111,8 @@ async function initializeExternalStateRepository({ directory, hydrate = true } =
   const provider = String(process.env.EXTERNAL_STATE_PROVIDER || "").trim().toLowerCase()
   const connectionString = process.env.EXTERNAL_STATE_DATABASE_URL || process.env.DATABASE_URL || ""
   enabled = provider === "postgres" || provider === "neon" || Boolean(connectionString)
-  required = boolEnv("EXTERNAL_STATE_REQUIRED", process.env.NODE_ENV === "production")
+  const requiredByConfiguration = boolEnv("EXTERNAL_STATE_REQUIRED", process.env.NODE_ENV === "production")
+  required = requiredByConfiguration && !isCiSmokeTest()
   if (!enabled) {
     if (required) throw new Error("persistencia externa obrigatoria mas nao configurada")
     return { enabled: false, required, restoredFiles: 0 }

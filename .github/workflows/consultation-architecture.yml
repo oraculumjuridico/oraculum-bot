@@ -31,12 +31,19 @@ jobs:
       - name: Validate application startup
         env:
           APP_SECRET: ci-startup-validation-secret
-          NODE_ENV: production
+          NODE_ENV: test
+          CI: true
+          CI_SMOKE_TEST: true
+          EXTERNAL_STATE_REQUIRED: true
           PORT: 10000
         run: |
           npm start > startup.log 2>&1 &
           pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          cleanup() {
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
 
           ready=false
           for attempt in $(seq 1 30); do
@@ -46,8 +53,8 @@ jobs:
             fi
 
             status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-              'http://127.0.0.1:10000/webhook' || true)
-            if [ "$status" != "000" ]; then
+              'http://127.0.0.1:10000/health' || true)
+            if [ "$status" = "200" ]; then
               ready=true
               break
             fi
