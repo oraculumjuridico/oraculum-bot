@@ -1,0 +1,189 @@
+{
+  "name": "Oraculum - Consulta - ciclo de vida e limpeza",
+  "blueprintVersion": "2026-07-08-production-blockers",
+  "dataStore": "consulta_reminders",
+  "states": ["pending", "sent", "skipped", "cancelled"],
+  "timezone": "America/Sao_Paulo",
+  "metadata": {
+    "purpose": "Reagir a cancelamento, exclusao, reagendamento e pos-consulta limpando ou replanejando lembretes.",
+    "requiredConnections": ["Google Calendar", "HTTP Oraculum", "Data Store consulta_reminders"],
+    "requiredVariables": ["ORACULUM_GOOGLE_CALENDAR_ID", "ORACULUM_BASE_URL", "INTERNAL_WEBHOOK_SECRET", "CONSULTA_LEMBRETE_HOJE_HORA"]
+  },
+  "flow": [
+    {
+      "id": 1,
+      "module": "google-calendar:watchEvents",
+      "version": 5,
+      "parameters": {
+        "select": "update",
+        "showDeleted": true,
+        "calendar": "{{ORACULUM_GOOGLE_CALENDAR_ID}}",
+        "limit": 10
+      }
+    },
+    {
+      "id": 2,
+      "module": "router:Router",
+      "version": 1,
+      "routes": [
+        {
+          "name": "Cancelado ou excluido",
+          "filter": "1.status == cancelled OR 1.deleted == true",
+          "modules": [
+            {
+              "id": 21,
+              "module": "datastore:updateRecords",
+              "version": 1,
+              "mapper": {
+                "datastore": "consulta_reminders",
+                "filter": "eventId == {{1.id}} AND status == pending",
+                "record": {
+                  "status": "cancelled",
+                  "cancelledAt": "{{now}}",
+                  "cancelReason": "calendar-cancelled-or-deleted"
+                }
+              }
+            },
+            {
+              "id": 22,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "mapper": {
+                "method": "POST",
+                "url": "{{ORACULUM_BASE_URL}}/evento-cancelado",
+                "headers": [
+                  {
+                    "name": "x-internal-secret",
+                    "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+                  }
+                ],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "body": "{\"eventId\":\"{{1.id}}\"}"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reagendamento",
+          "filter": "1.status != cancelled AND 1.start.dateTime changed",
+          "modules": [
+            {
+              "id": 31,
+              "module": "datastore:updateRecords",
+              "version": 1,
+              "mapper": {
+                "datastore": "consulta_reminders",
+                "filter": "eventId == {{1.id}} AND status == pending",
+                "record": {
+                  "status": "cancelled",
+                  "cancelledAt": "{{now}}",
+                  "cancelReason": "rescheduled"
+                }
+              }
+            },
+            {
+              "id": 32,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "mapper": {
+                "method": "POST",
+                "url": "{{ORACULUM_BASE_URL}}/consulta-lembrete-dados",
+                "headers": [
+                  {
+                    "name": "x-internal-secret",
+                    "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+                  }
+                ],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "body": "{\"eventId\":\"{{1.id}}\"}"
+              }
+            },
+            {
+              "id": 33,
+              "module": "tools:Iterator",
+              "version": 1,
+              "mapper": {
+                "array": [
+                  {
+                    "tipo": "24h",
+                    "scheduledFor": "{{32.body.reminders.24h}}"
+                  },
+                  {
+                    "tipo": "hoje",
+                    "scheduledFor": "{{formatDate(parseDate(32.body.datetime); 'YYYY-MM-DD') + 'T' + CONSULTA_LEMBRETE_HOJE_HORA + ':00-03:00'}}"
+                  },
+                  {
+                    "tipo": "1h",
+                    "scheduledFor": "{{32.body.reminders.1h}}"
+                  }
+                ]
+              }
+            },
+            {
+              "id": 34,
+              "module": "datastore:createRecord",
+              "version": 1,
+              "mapper": {
+                "datastore": "consulta_reminders",
+                "key": "{{32.body.eventId}}:{{33.tipo}}",
+                "record": {
+                  "eventId": "{{32.body.eventId}}",
+                  "phone": "{{32.body.phone}}",
+                  "name": "{{32.body.name}}",
+                  "dealId": "{{32.body.dealId}}",
+                  "casoId": "{{32.body.casoId}}",
+                  "datetime": "{{32.body.datetime}}",
+                  "tipo": "{{33.tipo}}",
+                  "scheduledFor": "{{33.scheduledFor}}",
+                  "status": "pending",
+                  "plannedAt": "{{now}}",
+                  "source": "calendar-reschedule"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consulta encerrada",
+          "filter": "1.end.dateTime <= now AND 1.status != cancelled",
+          "modules": [
+            {
+              "id": 41,
+              "module": "datastore:updateRecords",
+              "version": 1,
+              "mapper": {
+                "datastore": "consulta_reminders",
+                "filter": "eventId == {{1.id}} AND status == pending",
+                "record": {
+                  "status": "skipped",
+                  "skippedAt": "{{now}}",
+                  "skipReason": "consulta-concluida"
+                }
+              }
+            },
+            {
+              "id": 42,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "mapper": {
+                "method": "POST",
+                "url": "{{ORACULUM_BASE_URL}}/pos-consulta",
+                "headers": [
+                  {
+                    "name": "x-internal-secret",
+                    "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+                  }
+                ],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "body": "{\"eventId\":\"{{1.id}}\"}"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

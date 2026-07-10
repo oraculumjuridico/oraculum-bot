@@ -1,0 +1,165 @@
+{
+  "name": "Oraculum - Reengajamento - planejamento de jobs",
+  "blueprintVersion": "2026-07-09-reengagement-planning",
+  "dataStore": "reengagement_jobs",
+  "states": ["pending", "sent", "skipped", "cancelled"],
+  "schedule": {
+    "type": "interval",
+    "everyMinutes": 30
+  },
+  "metadata": {
+    "purpose": "Chamar /reengagement-candidates, iterar candidatos, chamar /reengajamento-dados e criar ou substituir jobs pendentes de reengajamento.",
+    "requiredConnections": ["HTTP Oraculum", "Data Store reengagement_jobs"],
+    "requiredVariables": ["ORACULUM_BASE_URL", "INTERNAL_WEBHOOK_SECRET"],
+    "optionalLegacyVariables": ["REENGAGEMENT_CANDIDATES"],
+    "security": {
+      "internalWebhookProtection": true,
+      "canonicalHeader": "x-internal-secret",
+      "secretVariable": "INTERNAL_WEBHOOK_SECRET"
+    },
+    "candidateSource": "POST /reengagement-candidates e a fonte oficial. REENGAGEMENT_CANDIDATES permanece apenas como legado/fallback opcional fora deste blueprint. O Make nao calcula elegibilidade; apenas chama o bot."
+  },
+  "flow": [
+    {
+      "id": 1,
+      "module": "builtin:BasicTrigger",
+      "version": 1,
+      "parameters": {
+        "interval": 1800
+      }
+    },
+    {
+      "id": 2,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "mapper": {
+        "method": "POST",
+        "url": "{{ORACULUM_BASE_URL}}/reengagement-candidates",
+        "headers": [
+          {
+            "name": "x-internal-secret",
+            "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+          }
+        ],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "body": "{}"
+      },
+      "errorHandlers": [
+        {
+          "name": "Network ou 5xx",
+          "action": "skip-cycle",
+          "reason": "Nao criar registros parciais; o proximo Scheduler tentara novamente."
+        },
+        {
+          "name": "401, 403 ou configuracao",
+          "action": "stop-cycle",
+          "reason": "Corrigir INTERNAL_WEBHOOK_SECRET ou ORACULUM_BASE_URL antes de continuar."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "module": "tools:Iterator",
+      "version": 1,
+      "mapper": {
+        "array": "{{2.body.candidates}}"
+      },
+      "filter": {
+        "name": "Candidato com identificador",
+        "conditions": [
+          "3.phone exists OR 3.dealId exists"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "mapper": {
+        "method": "POST",
+        "url": "{{ORACULUM_BASE_URL}}/reengajamento-dados",
+        "headers": [
+          {
+            "name": "x-internal-secret",
+            "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+          }
+        ],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "body": "{\"phone\":\"{{3.phone}}\",\"dealId\":\"{{3.dealId}}\"}"
+      },
+      "errorHandlers": [
+        {
+          "name": "400 ou 404",
+          "action": "skip-candidate",
+          "reason": "Sem identificador valido ou usuario nao localizado; nao criar pending."
+        },
+        {
+          "name": "Network ou 5xx",
+          "action": "skip-cycle",
+          "reason": "Nao criar registros parciais; o proximo Scheduler tentara novamente."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "module": "tools:Iterator",
+      "version": 1,
+      "mapper": {
+        "array": "{{4.body.jobs}}"
+      },
+      "filter": {
+        "name": "Job planejavel",
+        "conditions": [
+          "5.id exists",
+          "5.tipoEvento exists",
+          "5.scheduledFor exists",
+          "4.body.phone exists"
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "module": "datastore:deleteRecords",
+      "version": 1,
+      "mapper": {
+        "datastore": "reengagement_jobs",
+        "filter": "phone == {{4.body.phone}} AND tipoEvento == {{5.tipoEvento}} AND status == pending"
+      }
+    },
+    {
+      "id": 7,
+      "module": "datastore:createRecord",
+      "version": 1,
+      "mapper": {
+        "datastore": "reengagement_jobs",
+        "key": "{{4.body.phone}}:{{5.tipoEvento}}:{{5.scheduledFor}}",
+        "record": {
+          "id": "{{5.id}}",
+          "phone": "{{4.body.phone}}",
+          "dealId": "{{4.body.dealId}}",
+          "contactId": "{{4.body.contactId}}",
+          "numeroCaso": "{{4.body.numeroCaso}}",
+          "tipoEvento": "{{5.tipoEvento}}",
+          "template": "{{5.template}}",
+          "scheduledFor": "{{5.scheduledFor}}",
+          "prioridade": "{{5.prioridade}}",
+          "status": "pending",
+          "dedupeKey": "{{4.body.phone}}:{{5.tipoEvento}}:{{5.scheduledFor}}",
+          "plannedAt": "{{now}}",
+          "lastCheckedAt": "{{now}}",
+          "source": "reengagement-planning"
+        }
+      },
+      "filter": {
+        "name": "Somente jobs validos",
+        "conditions": [
+          "5.scheduledFor exists",
+          "5.id exists",
+          "4.body.phone exists"
+        ]
+      }
+    }
+  ]
+}

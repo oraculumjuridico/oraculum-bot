@@ -2,6 +2,7 @@ const { google } = require("googleapis")
 const fs = require("fs")
 const path = require("path")
 const os = require("os")
+const { Readable } = require("stream")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
 
@@ -16,6 +17,14 @@ function getDrive() {
   const oauth2 = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, "urn:ietf:wg:oauth:2.0:oob")
   oauth2.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN })
   return google.drive({ version: "v3", auth: oauth2 })
+}
+
+function detalhesErroDrive(e, operation) {
+  const data = e?.response?.data || {}
+  const error = data.error || e?.code || e?.name || "drive_error"
+  const description = data.error_description || data.errorMessage || data.message || e?.message || "Erro Drive"
+  const status = e?.response?.status || "sem_status"
+  return `${operation} [HTTP ${status}] ${error}: ${description}`
 }
 
 function escapeDriveQueryValue(value) {
@@ -87,7 +96,7 @@ async function criarPastaCliente(numeroCaso, nome, area, situacao, tipo) {
     })
     logDebug(`[DRIVE] Pasta criada: ${res.data.name} (área: ${nomeArea})`)
     return res.data
-  } catch (e) { logErro("drive", "criarPasta: " + e.message); return null }
+  } catch (e) { logErro("drive", detalhesErroDrive(e, "criarPasta")); return null }
 }
 
 async function uploadDrive(pastaId, nome, buffer, mimeType) {
@@ -108,13 +117,127 @@ async function uploadDrive(pastaId, nome, buffer, mimeType) {
     logDebug(`[DRIVE] Upload OK: ${res.data.name} (${res.data.id})`)
     return res.data
   } catch (e) {
-    const status  = e.response?.status || "sem_status"
-    const detalhe = e.response?.data?.error?.message || e.response?.data?.message || e.message
-    logErro("drive", `upload "${nome}" [HTTP ${status}]: ${detalhe}`)
+    logErro("drive", `upload "${nome}": ${detalhesErroDrive(e, "upload")}`)
     return null
   } finally {
     try { fs.unlinkSync(tmpPath) } catch {}
   }
+}
+
+async function obterOuCriarSubpastaDrive(pastaPaiId, nomePasta) {
+  if (!pastaPaiId || !nomePasta) return null
+  try {
+    const drive = getDrive()
+    const existentes = await drive.files.list({
+      q: [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        `name = '${escapeDriveQueryValue(nomePasta)}'`,
+        `'${pastaPaiId}' in parents`,
+        "trashed = false"
+      ].join(" and "),
+      fields: "files(id,name,webViewLink)",
+      pageSize: 1
+    })
+
+    if (existentes.data.files?.length) return existentes.data.files[0]
+
+    const criada = await drive.files.create({
+      requestBody: {
+        name: nomePasta,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [pastaPaiId]
+      },
+      fields: "id,name,webViewLink"
+    })
+    logDebug(`[DRIVE] Subpasta criada: ${criada.data.name}`)
+    return criada.data
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "obterOuCriarSubpasta"))
+    return null
+  }
+}
+
+async function buscarArquivoDrivePorNome(pastaId, nomeArquivo) {
+  if (!pastaId || !nomeArquivo) return null
+  try {
+    const existentes = await getDrive().files.list({
+      q: [
+        `name = '${escapeDriveQueryValue(nomeArquivo)}'`,
+        `'${pastaId}' in parents`,
+        "trashed = false"
+      ].join(" and "),
+      fields: "files(id,name,webViewLink,mimeType)",
+      pageSize: 1
+    })
+    return existentes.data.files?.[0] || null
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "buscarArquivoPorNome"))
+    return null
+  }
+}
+
+async function lerJsonDrive(fileId) {
+  if (!fileId) return null
+  try {
+    const res = await getDrive().files.get(
+      { fileId, alt: "media" },
+      { responseType: "text" }
+    )
+    if (!res?.data) return null
+    return JSON.parse(typeof res.data === "string" ? res.data : String(res.data))
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "lerJson"))
+    return null
+  }
+}
+
+async function salvarJsonDrive(pastaId, nomeArquivo, dados) {
+  if (!pastaId || !nomeArquivo) return null
+  const conteudo = JSON.stringify(dados || {}, null, 2)
+  const media = {
+    mimeType: "application/json",
+    body: Readable.from([conteudo])
+  }
+  try {
+    const existente = await buscarArquivoDrivePorNome(pastaId, nomeArquivo)
+    const drive = getDrive()
+    if (existente?.id) {
+      const atualizado = await drive.files.update({
+        fileId: existente.id,
+        requestBody: { name: nomeArquivo },
+        media,
+        fields: "id,name,webViewLink"
+      })
+      logDebug(`[DRIVE] JSON atualizado: ${atualizado.data.name}`)
+      return atualizado.data
+    }
+
+    const criado = await drive.files.create({
+      requestBody: { name: nomeArquivo, parents: [pastaId] },
+      media,
+      fields: "id,name,webViewLink"
+    })
+    logDebug(`[DRIVE] JSON criado: ${criado.data.name}`)
+    return criado.data
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "salvarJson"))
+    return null
+  }
+}
+
+async function lerJsonEmSubpastaDrive(pastaPaiId, nomePasta, nomeArquivo) {
+  const pasta = await obterOuCriarSubpastaDrive(pastaPaiId, nomePasta)
+  if (!pasta?.id) return { pasta: null, arquivo: null, dados: null }
+  const arquivo = await buscarArquivoDrivePorNome(pasta.id, nomeArquivo)
+  const dados = arquivo?.id ? await lerJsonDrive(arquivo.id) : null
+  return { pasta, arquivo, dados }
+}
+
+async function salvarJsonEmSubpastaDrive(pastaPaiId, nomePasta, nomeArquivo, dados) {
+  const pasta = await obterOuCriarSubpastaDrive(pastaPaiId, nomePasta)
+  if (!pasta?.id) return null
+  const arquivo = await salvarJsonDrive(pasta.id, nomeArquivo, dados)
+  return arquivo ? { ...arquivo, folderId: pasta.id } : null
 }
 
 async function marcarArquivoDriveSubstituido(fileId, nomeOriginal = "") {
@@ -132,7 +255,7 @@ async function marcarArquivoDriveSubstituido(fileId, nomeOriginal = "") {
     logDebug("[DRIVE] Arquivo marcado como substituido:", res.data.name)
     return res.data
   } catch (e) {
-    logErro("drive", "marcarSubstituido: " + e.message)
+    logErro("drive", detalhesErroDrive(e, "marcarSubstituido"))
     return null
   }
 }
@@ -149,7 +272,7 @@ async function renomearArquivoDrive(fileId, novoNome = "") {
     logDebug("[DRIVE] Arquivo renomeado:", res.data.name)
     return res.data
   } catch (e) {
-    logErro("drive", "renomearArquivo: " + e.message)
+    logErro("drive", detalhesErroDrive(e, "renomearArquivo"))
     return null
   }
 }
@@ -174,7 +297,7 @@ async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mi
     try { fs.unlinkSync(tmp) } catch {}
     logDebug(`[DRIVE] Áudio: ${res.data.name}`)
     return { ...res.data, folderId: pasta.data.id }
-  } catch (e) { logErro("drive", "uploadAudio: " + e.message); return null }
+  } catch (e) { logErro("drive", detalhesErroDrive(e, "uploadAudio")); return null }
 }
 
 async function salvarAudioTranscritoNoCaso(u, nomeCliente, buffer, mimeType, status) {
@@ -186,9 +309,16 @@ async function salvarAudioTranscritoNoCaso(u, nomeCliente, buffer, mimeType, sta
 module.exports = {
   escapeDriveQueryValue,
   getNomePastaArea,
+  detalhesErroDrive,
   obterOuCriarPastaArea,
   criarPastaCliente,
   uploadDrive,
+  obterOuCriarSubpastaDrive,
+  buscarArquivoDrivePorNome,
+  lerJsonDrive,
+  salvarJsonDrive,
+  lerJsonEmSubpastaDrive,
+  salvarJsonEmSubpastaDrive,
   marcarArquivoDriveSubstituido,
   renomearArquivoDrive,
   uploadPastaAudio,

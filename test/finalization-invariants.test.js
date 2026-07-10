@@ -8,6 +8,10 @@ const {
 const {
   normalizarNumeroWhatsAppEnvio
 } = require("../src/domain/phone-name")
+const {
+  configurarStatePersistence,
+  serializarEstado
+} = require("../src/domain/state-persistence")
 
 function casoValido(overrides = {}) {
   return {
@@ -95,5 +99,35 @@ const primeiroEfeito = server.indexOf("u.numeroCaso =", inicio)
 assert.ok(inicio >= 0)
 assert.ok(guarda > inicio && guarda < telefone)
 assert.ok(guarda < primeiroEfeito)
+
+configurarStatePersistence({
+  gerarBriefingCaso: u => ({
+    scoreEmocional: { valor: 0, nivel: "baixo" },
+    scoreOperacional: 0,
+    documentos: {
+      total: 0,
+      recebidos: [],
+      faltantesCriticos: [],
+      pendentesFluxo: []
+    },
+    consultaAtiva: false,
+    proximaAcao: "Revisar caso."
+  })
+})
+
+const estadoTerceiro = JSON.parse(serializarEstado({
+  nome: "Maria Terceira",
+  atendimentoParaTerceiro: true,
+  telefoneEhDoCliente: false,
+  whatsappContato: "5581888888888",
+  numeroCaso: "ORA-TERCEIRO",
+  _casoAnteriorCliente: {
+    numeroCaso: "ORA-ANTERIOR",
+    nome: "Joao Solicitante",
+    descricao: "Caso anterior que nao deve contaminar o snapshot do terceiro."
+  }
+}))
+assert.equal(Object.hasOwn(estadoTerceiro, "_casoAnteriorCliente"), false)
+assert.equal(estadoTerceiro.numeroCaso, "ORA-TERCEIRO")
 
 console.log("finalization-invariants.test.js: ok")

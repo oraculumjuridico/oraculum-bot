@@ -1,0 +1,12 @@
+const assert = require("node:assert/strict")
+const fs = require("node:fs")
+const source = fs.readFileSync(require("node:path").join(__dirname, "..", "scripts", "import-real-cases.js"), "utf8")
+
+assert.match(source, /confirm-live-import/)
+assert.match(source, /IMPORT_AUTOMATIONS_CONFIRMED_DISABLED/)
+assert.match(source, /cpf_do_cliente.*phone.*email/s)
+assert.match(source, /numero_de_caso/)
+assert.match(source, /checkpoint\.json/)
+assert.match(source, /timeout: 15000/)
+assert.doesNotMatch(source, /console\.log\([^\n]*(cpf|phone|email|name)/i)
+console.log("import-real-cases.test.js: ok")

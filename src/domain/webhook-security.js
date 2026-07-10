@@ -35,6 +35,7 @@ function validarWebhookInterno(req, res, next) {
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : ""
   const informado =
     sanitizarTextoEntrada(req.get("x-oraculum-secret")) ||
+    sanitizarTextoEntrada(req.get("x-internal-secret")) ||
     bearer
 
   if (!compararAssinaturaSegura(informado, segredo)) return res.sendStatus(401)

@@ -1,0 +1,126 @@
+{
+  "name": "Oraculum - Reengajamento - disparo recorrente",
+  "blueprintVersion": "2026-07-09-reengagement-dispatcher",
+  "dataStore": "reengagement_jobs",
+  "states": ["pending", "sent", "skipped", "cancelled"],
+  "schedule": {
+    "type": "interval",
+    "everyMinutes": 5
+  },
+  "metadata": {
+    "purpose": "Buscar jobs de reengajamento pendentes vencidos e chamar /reengajamento no horario seguro.",
+    "requiredConnections": ["HTTP Oraculum", "Data Store reengagement_jobs"],
+    "requiredVariables": ["ORACULUM_BASE_URL", "INTERNAL_WEBHOOK_SECRET"],
+    "security": {
+      "internalWebhookProtection": true,
+      "canonicalHeader": "x-internal-secret",
+      "secretVariable": "INTERNAL_WEBHOOK_SECRET"
+    },
+    "retryPolicy": "Network, timeout e 5xx mantem pending. O proximo Scheduler tenta novamente; a idempotencia do bot evita duplicidade."
+  },
+  "flow": [
+    {
+      "id": 1,
+      "module": "builtin:BasicTrigger",
+      "version": 1,
+      "parameters": {
+        "interval": 300
+      }
+    },
+    {
+      "id": 2,
+      "module": "datastore:searchRecords",
+      "version": 1,
+      "mapper": {
+        "datastore": "reengagement_jobs",
+        "limit": 25,
+        "filter": "status == pending AND parseDate(scheduledFor) <= now"
+      }
+    },
+    {
+      "id": 3,
+      "module": "tools:Iterator",
+      "version": 1,
+      "mapper": {
+        "array": "{{2.records}}"
+      }
+    },
+    {
+      "id": 4,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "mapper": {
+        "method": "POST",
+        "url": "{{ORACULUM_BASE_URL}}/reengajamento",
+        "headers": [
+          {
+            "name": "x-internal-secret",
+            "value": "{{INTERNAL_WEBHOOK_SECRET}}"
+          }
+        ],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "body": "{\"phone\":\"{{3.phone}}\",\"dealId\":\"{{3.dealId}}\",\"jobId\":\"{{3.id}}\",\"tipoEvento\":\"{{3.tipoEvento}}\",\"scheduledFor\":\"{{3.scheduledFor}}\"}"
+      },
+      "errorHandlers": [
+        {
+          "name": "Network, timeout ou 5xx",
+          "action": "leave-pending",
+          "reason": "Retry natural do proximo ciclo; nao criar estado processing."
+        },
+        {
+          "name": "Resposta skipped",
+          "action": "mark-skipped",
+          "reason": "O bot revalidou elegibilidade e recusou o envio."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "module": "datastore:updateRecord",
+      "version": 1,
+      "mapper": {
+        "datastore": "reengagement_jobs",
+        "key": "{{3.key}}",
+        "record": {
+          "status": "sent",
+          "sentAt": "{{now}}",
+          "httpStatus": "{{4.statusCode}}",
+          "lastAttemptAt": "{{now}}",
+          "responseStatus": "{{4.body.status}}"
+        }
+      },
+      "filter": {
+        "name": "Enviado",
+        "conditions": [
+          "4.statusCode >= 200",
+          "4.statusCode < 300",
+          "4.body.status == sent"
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "module": "datastore:updateRecord",
+      "version": 1,
+      "mapper": {
+        "datastore": "reengagement_jobs",
+        "key": "{{3.key}}",
+        "record": {
+          "status": "skipped",
+          "skippedAt": "{{now}}",
+          "skipReason": "{{4.body.reason}}",
+          "httpStatus": "{{4.statusCode}}",
+          "lastAttemptAt": "{{now}}",
+          "responseStatus": "{{4.body.status}}"
+        }
+      },
+      "filter": {
+        "name": "Ignorado pelo bot",
+        "conditions": [
+          "4.body.status == skipped"
+        ]
+      }
+    }
+  ]
+}

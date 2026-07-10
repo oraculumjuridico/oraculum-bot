@@ -216,8 +216,7 @@ function menuCliente(u, casosCliente = null, { textoAudioBase = "" } = {}) {
     acoes: [
       { id: "m_status",   label: "📊 Status do meu caso" },
       { id: "m_docs", label: "📎 Enviar documentos" },
-      { id: "m_adv",      label: "👨‍⚖️ Falar com advogado" },
-      { id: "m_novocaso", label: "➕ Abrir novo caso" }
+      { id: "m_adv",      label: "👨‍⚖️ Falar com advogado" }
     ]
   })
 }

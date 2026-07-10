@@ -9,24 +9,54 @@ function checklistProducaoAdmin() {
   ]
 }
 
+function normalizarSemAcentoAdmin(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+}
+
+function abreviarAreaResumoAdmin(area = "") {
+  const normalizada = normalizarSemAcentoAdmin(area)
+  if (normalizada.includes("inss") || normalizada.includes("previd")) return "PREV"
+  if (normalizada.includes("trabalh")) return "TRAB"
+  if (normalizada.includes("consum")) return "CONS"
+  if (normalizada.includes("famil")) return "FAM"
+  if (normalizada.includes("banc") || normalizada.includes("financ")) return "BANC"
+  if (normalizada.includes("penal") || normalizada.includes("crimin")) return "PEN"
+  if (normalizada.includes("imob")) return "IMOB"
+  if (normalizada.includes("civil") || normalizada.includes("civel")) return "CIV"
+  return "JUR"
+}
+
+function nomeCurtoResumoAdmin(nome = "") {
+  const partes = String(nome || "").trim().split(/\s+/).filter(Boolean)
+  if (!partes.length) return "Cliente"
+  if (partes.length === 1) return partes[0]
+  return `${partes[0]} ${partes[partes.length - 1]}`.slice(0, 28)
+}
+
+function tituloCasoResumoAdmin(b = {}) {
+  return `${abreviarAreaResumoAdmin(b.area)} • Caso ${b.numeroCaso || "sem caso"}`
+}
+
 function textoResumoDiarioOperacional(resumo) {
   const linhaBriefing = item => {
     const b = item.briefing
-    const caso = b.numeroCaso ? `📄 ${b.numeroCaso}` : "📄 Sem caso"
-    const docs = b.documentos.faltantesCriticos.length ? ` · 📎 ${b.documentos.faltantesCriticos.length}` : ""
-    return `👤 ${b.nome} · ${caso} · ${b.area || "area nao definida"} · ${b.stageLabel} · 💬 ${b.scoreEmocional.nivel}/${b.scoreEmocional.valor}${docs}`
+    const titulo = tituloCasoResumoAdmin(b)
+    const docs = b.documentos.faltantesCriticos.length ? ` · Docs: ${b.documentos.faltantesCriticos.length}` : ""
+    return `${titulo} · ${b.stageLabel} · ${b.scoreEmocional.nivel}/${b.scoreEmocional.valor}${docs}\n   Cliente: ${nomeCurtoResumoAdmin(b.nome)}`
   }
   const linhaAlerta = item => {
     const b = item.briefing
     const alerta = item.alertas[0]
-    const caso = b.numeroCaso ? b.numeroCaso : "sem caso"
-    return `🚩 ${b.nome} · ${caso}\n   ${alerta.texto}\n   Acao: ${alerta.acao}`
+    return `${tituloCasoResumoAdmin(b)}\n   ${alerta.texto}\n   Acao: ${alerta.acao}\n   Cliente: ${nomeCurtoResumoAdmin(b.nome)}`
   }
   const linhaAcao = (item, idx) => {
     const b = item.briefing
     const alerta = item.alertas[0]
     const motivo = alerta?.texto || b.stageLabel
-    return `${idx + 1}. ${b.nome} · ${b.numeroCaso || "sem caso"}\n   ${motivo}\n   ${b.proximaAcao}`
+    return `${idx + 1}. ${tituloCasoResumoAdmin(b)}\n   ${motivo}\n   ${b.proximaAcao}`
   }
 
   const urgentes = resumo.filas.urgentes.slice(0, 5).map(linhaBriefing)
@@ -37,36 +67,36 @@ function textoResumoDiarioOperacional(resumo) {
   const checklist = (resumo.checklistProducao || []).map(item => `- ${item}`)
 
   return [
-    "📊 *Resumo diario*",
+    "*Resumo diario*",
     "",
-    "⚙️ *Operacao*",
-    `📂 Casos ativos: ${resumo.totais.casosClientes}`,
-    `📅 Consultas futuras: ${resumo.totais.consultasAtivas}`,
-    `🔎 Em analise: ${resumo.totais.emAnalise}`,
-    `📎 Docs pendentes: ${resumo.totais.documentosPendentes}`,
+    "*Operacao*",
+    `Casos ativos: ${resumo.totais.casosClientes}`,
+    `Consultas futuras: ${resumo.totais.consultasAtivas}`,
+    `Em analise: ${resumo.totais.emAnalise}`,
+    `Docs pendentes: ${resumo.totais.documentosPendentes}`,
     "",
-    "🚨 *Riscos*",
-    `🔥 Urgentes: ${resumo.totais.alertasUrgentes}`,
-    `� Proximas acoes: ${resumo.filas.proximasAcoes.length}`,
-    `�🧮 Itens analisados: ${resumo.totais.itensAnalisados}`,
-    `🧭 Fonte: ${resumo.fonte}`,
+    "*Riscos*",
+    `Urgentes: ${resumo.totais.alertasUrgentes}`,
+    `Proximas acoes: ${resumo.filas.proximasAcoes.length}`,
+    `Itens analisados: ${resumo.totais.itensAnalisados}`,
+    `Fonte: ${resumo.fonte}`,
     "",
-    "🎯 *Agir primeiro*",
-    ...(proximasAcoes.length ? proximasAcoes : ["✅ Nenhuma acao prioritaria agora."]),
+    "*Agir primeiro*",
+    ...(proximasAcoes.length ? proximasAcoes : ["Nenhuma acao prioritaria agora."]),
     "",
-    "🚨 *Alertas operacionais*",
-    ...(alertas.length ? alertas : ["✅ Nenhum alerta operacional aberto."]),
+    "*Alertas operacionais*",
+    ...(alertas.length ? alertas : ["Nenhum alerta operacional aberto."]),
     "",
-    "🔥 *Risco emocional/urgencia*",
-    ...(urgentes.length ? urgentes : ["✅ Nenhum alerta emocional alto."]),
+    "*Risco emocional/urgencia*",
+    ...(urgentes.length ? urgentes : ["Nenhum alerta emocional alto."]),
     "",
-    "📎 *Documentos*",
-    ...(docs.length ? docs : ["✅ Nenhum caso com documento critico pendente."]),
+    "*Documentos*",
+    ...(docs.length ? docs : ["Nenhum caso com documento critico pendente."]),
     "",
-    "🕘 *Recentes*",
-    ...(recentes.length ? recentes : ["✅ Nenhum caso recente encontrado."]),
+    "*Recentes*",
+    ...(recentes.length ? recentes : ["Nenhum caso recente encontrado."]),
     "",
-    "🧪 *Checklist producao*",
+    "*Checklist producao*",
     ...checklist
   ].join("\n")
 }

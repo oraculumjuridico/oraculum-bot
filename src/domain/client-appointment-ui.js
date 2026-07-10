@@ -9,7 +9,7 @@ function telaConsultaAdvogado(cabecalhoCaso = "") {
     acoes: [
       { id: "adv_agendar_ligacao", label: "📅 Agendar consulta" },
       { id: "adv_urg", label: "⚠️ Mensagem urgente" },
-      { id: "m_inicio", label: "🏠 Menu do cliente" }
+      { id: "m_novocaso", label: "➕ Abrir novo caso" }
     ]
   })
 }

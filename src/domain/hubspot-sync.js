@@ -11,6 +11,7 @@ const {
   normalizarTextoCRM
 } = require("../utils/text")
 const { logDebug, logErroHubSpot } = require("../utils/logging")
+const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
 
 let deps = {
   HUBSPOT_TOKEN: "",
@@ -94,7 +95,13 @@ async function atualizarDealstageSemLock(u) {
   logDebug(`[HUBSPOT] Atualizando estágio do negócio: ${stageAtual || "-"} ? ${dealstage}`)
   u._negocioStageIdPendente = dealstage
 
-  const dealId = await hsAtualizarNegocio(u.negocioId, { dealstage })
+  const dealId = await hsAtualizarNegocio(u.negocioId, {
+    dealstage,
+    dealname: montarTituloNegocioHubSpot(
+      { ...u, negocioStageId: dealstage },
+      { HS_STAGE: deps.HS_STAGE, stage: dealstage }
+    )
+  })
   if (dealId) {
     u.negocioStageId = dealstage
     u._hubspotSyncSnapshot = null
@@ -114,7 +121,10 @@ async function sincronizarNegocioSemLock(u) {
 
   try {
     await atualizarDealstageSemLock(u)
-    const props = deps.getHubSpotDealStateProps(u)
+    const props = {
+      ...deps.getHubSpotDealStateProps(u),
+      dealname: montarTituloNegocioHubSpot(u, { HS_STAGE: deps.HS_STAGE })
+    }
 
     if (!Object.keys(props).length) return null
 
@@ -221,7 +231,7 @@ async function sincronizarContatoNegocioHubSpot(u) {
 
   // Atualiza dealname com temperatura atual do lead
   if (u.negocioId) {
-    const dealname = deps.getNomeDeal(u)
+    const dealname = montarTituloNegocioHubSpot(u, { HS_STAGE: deps.HS_STAGE })
     await hsAtualizarNegocioComEstado(u, { dealname })
   }
 }

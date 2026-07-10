@@ -85,7 +85,7 @@ for (const tela of telas) {
 
 assert.deepEqual(
   telaConsultaAdvogado("").acoes.map(acao => acao.id),
-  ["adv_agendar_ligacao", "adv_urg", "m_inicio"]
+  ["adv_agendar_ligacao", "adv_urg", "m_novocaso"]
 )
 assert.deepEqual(
   telaHorariosConsulta({

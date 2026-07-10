@@ -12,6 +12,13 @@ const {
 
 const ultimosAudiosEnviados = new Map()
 
+function mascararTelefoneLog(numero) {
+  const texto = String(numero || "")
+  const digitos = texto.replace(/\D/g, "")
+  if (digitos.length < 8) return "***"
+  return `${digitos.slice(0, 4)}*****${digitos.slice(-4)}`
+}
+
 async function digitando(to, messageId = null, texto = "") {
   if (!messageId) return
   try {
@@ -92,23 +99,43 @@ async function enviarTemplateWhatsApp(to, templateName, params = [], languageCod
     })
   }
 
+  const url = `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      ...(components.length ? { components } : {})
+    }
+  }
+  const authorizationMascarado = WHATSAPP_TOKEN
+    ? `Bearer ***${String(WHATSAPP_TOKEN).slice(-6)}`
+    : "Bearer <ausente>"
+
+  logDebug("[WHATSAPP_TEMPLATE_DIAG] URL:", url)
+  logDebug("[WHATSAPP_TEMPLATE_DIAG] Authorization:", authorizationMascarado)
+  logDebug("[WHATSAPP_TEMPLATE_DIAG] Payload:")
+  logDebug(JSON.stringify(payload, null, 2))
+
   try {
-    await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
-      messaging_product: "whatsapp",
-      to,
-      type: "template",
-      template: {
-        name: templateName,
-        language: { code: languageCode },
-        ...(components.length ? { components } : {})
-      }
-    }, {
+    const resp = await axios.post(url, payload, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
     })
+    const messageId = resp.data?.messages?.[0]?.id || "-"
+    logDebug("[WHATSAPP_TEMPLATE_DIAG] Status HTTP:", resp.status)
+    logDebug("[WHATSAPP_TEMPLATE_DIAG] Resposta Meta:")
+    logDebug(JSON.stringify(resp.data, null, 2))
+    console.log(`[WHATSAPP_TEMPLATE] template=${templateName} status=sucesso http=${resp.status} message_id=${messageId}`)
     return true
   } catch (e) {
-    const msg = e.response?.data?.error?.message || e.message
-    logErro("whatsapp", `template>${to} (${templateName}/${languageCode}): ${msg}`)
+    const status = e.response?.status || "sem_status"
+    const messageId = e.response?.data?.messages?.[0]?.id || "-"
+    logDebug("[WHATSAPP_TEMPLATE_DIAG] Status HTTP:", status)
+    logDebug("[WHATSAPP_TEMPLATE_DIAG] Resposta Meta:")
+    logDebug(JSON.stringify(e.response?.data || { message: e.message }, null, 2))
+    logErro("whatsapp", `template=${templateName} status=erro http=${status} message_id=${messageId} to=${mascararTelefoneLog(to)}`)
     return false
   }
 }

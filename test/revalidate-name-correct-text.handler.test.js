@@ -159,7 +159,7 @@ async function main() {
       {
         success: true,
         response: {
-          texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nNão consegui identificar o nome. Por favor, informe apenas o nome completo. Pode falar ou digitar. 🎙️`,
+          texto: `👤 Etapa 2 de 6 · *SEU NOME*\n\nNão consegui identificar o nome. Por favor, informe apenas o nome completo. Pode falar ou digitar. 🎙️`,
           opcoes: [{ id: "revalida_nome_ok", title: "✅ Confirmar atual" }]
         }
       }

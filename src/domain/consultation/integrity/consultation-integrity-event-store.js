@@ -1,6 +1,7 @@
 const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
+const { mirrorStateFile } = require("../../../infrastructure/external-state-repository")
 
 const SCHEMA_VERSION = 3
 const EVENT_TYPES = new Set([
@@ -8,7 +9,7 @@ const EVENT_TYPES = new Set([
   "consultation.self_healed"
 ])
 const INTEGRITY_EVENTS_FILE = process.env.CONSULTA_INTEGRITY_EVENTS_FILE ||
-  path.join(__dirname, "..", "..", "..", "..", "data", "consultation-integrity-events.jsonl")
+  path.join(path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "..", "..", "..", "..", "data")), "consultation-integrity-events.jsonl")
 const LOCK_FILE = `${INTEGRITY_EVENTS_FILE}.lock`
 
 function sleep(ms) {
@@ -73,6 +74,7 @@ async function appendIntegrityEvent({ type, timestamp, payload }) {
     }
     event.eventHash = hashIntegrityEvent(event)
     fs.appendFileSync(INTEGRITY_EVENTS_FILE, `${JSON.stringify(event)}\n`, "utf8")
+    mirrorStateFile(INTEGRITY_EVENTS_FILE).catch(() => {})
     return event
   } finally {
     try { fs.closeSync(lock) } catch {}

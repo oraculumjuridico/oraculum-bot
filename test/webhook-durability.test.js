@@ -38,6 +38,7 @@ function lerInbox(dataDir) {
 
 async function main() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-webhook-inbox-"))
+  const renameOriginal = fs.renameSync
   try {
     persistence.configurarStatePersistence({ DATA_DIR: dataDir })
     assert.deepEqual(
@@ -141,6 +142,29 @@ async function main() {
       ["wamid.segunda"]
     )
 
+    let falhasRename = 2
+    fs.renameSync = (from, to) => {
+      if (
+        falhasRename > 0 &&
+        String(from).includes("webhook-inbox.json.") &&
+        String(to).endsWith("webhook-inbox.json")
+      ) {
+        falhasRename -= 1
+        throw Object.assign(new Error("arquivo temporariamente bloqueado"), {
+          code: "EPERM"
+        })
+      }
+      return renameOriginal(from, to)
+    }
+    const terceira = registro("wamid.terceira", "terceira mensagem")
+    persistence.registrarMensagensWebhook([terceira])
+    fs.renameSync = renameOriginal
+    assert.equal(falhasRename, 0)
+    assert.equal(
+      lerInbox(dataDir).records["wamid.terceira"].status,
+      "pending"
+    )
+
     const fallbackMessage = {
       from: "5581888888888",
       timestamp: "1783000001",
@@ -183,6 +207,7 @@ async function main() {
       /EEXIST|ENOTDIR/
     )
   } finally {
+    fs.renameSync = renameOriginal
     fs.rmSync(dataDir, { recursive: true, force: true })
   }
 }

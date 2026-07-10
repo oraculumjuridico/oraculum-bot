@@ -101,7 +101,7 @@
     "src/domain/consultation/consultation-change-control.js": "e2e46748c0bfca764b31677a3d84ba641834e59e579bba54a7d9ecf690613e5e",
     "src/domain/consultation/consultation-integrity-check.js": "42d061994da229719cf24becf76ee116c8d133fd69e75519ccca87674505e19d",
     "src/domain/consultation/consultation-replay-engine.js": "85ed2655202b8fe091d9ee202caf5733e4ac6bbbaa53ae9db77a3cb3e0a10f3d",
-    "src/domain/consultation/consultation-decision-audit.js": "32833827beadfa76362545a61ce4a2db0f0c5764ad5da42727a1339e28aa5ba4",
+    "src/domain/consultation/consultation-decision-audit.js": "975cda5fe22cc2b23b5156485750eacc9410440fd5d1171c54051777d2bab224",
     "src/domain/consultation/consultation-legal-snapshot.js": "4748df20cf2d8c35f95a721b1788fb6e7a2c5ab15b9a621bd981404a52790f5d",
     "src/domain/consultation/consultation-legal-dossier-builder.js": "974368c1ef96dfbe254a4a7713a31306e827ef9994484cf22cfae9c018d49965",
     "src/domain/consultation/consultation-narrative-generator.js": "48cf16b4c448578ecfd1d5b12d65ad8242734d0d78b1b00a24dec5231dfbf6f9",
@@ -111,11 +111,11 @@
     "src/domain/consultation/integrity/consultation-drift-detector.js": "c4ac778f7b20784117d4ba40f8e13dae08ad027fa0579ca67883695a90e56572",
     "src/domain/consultation/integrity/consultation-integrity-drift-event.js": "80546595624360ea13ee21c22e743aa15902d8133f058347a8b69a14a3fa9cc5",
     "src/domain/consultation/integrity/consultation-auto-repair-engine.js": "64b358b3ca447afc07480a08d5c2571534ceac10cd8d3cfb1d08b8cadd71f4d0",
-    "src/domain/consultation/integrity/consultation-integrity-event-store.js": "d42a73a8579cab28b71e7a9820008064efab11fefc41d2b9a856cac2378f0964",
+    "src/domain/consultation/integrity/consultation-integrity-event-store.js": "f522fb79e7636758a18138c2a3b506d491019ab97fa42acd6699e0499187c648",
     "src/domain/consultation/integrity/consultation-self-healed-event.js": "680f4b1bb968690b22dc710d92f67ea132518a21986f93a730a269cbcea1c86b",
     "src/domain/consultation/projections/consultation-session-recovery.js": "e15cd24a1ac45b03bb9a370686f3b0b645011abe43a4a19d3a3330e1a4768139",
     "src/domain/consultation-read-model.js": "ec05037655fdf8ed5506d19d54f88f8ad173bbf49453dc0bdbc0f0717fa5b79f",
-    "src/domain/consultation-events.js": "867046d9c29022e3933128c03e7925d1e19233e13e597d17d1a37aebadbda0e7",
+    "src/domain/consultation-events.js": "15e0578bf26dc6d8cdf48c1097d1481ad2d2b3f8c4f7d6a5b1f179cfab03f7de",
     "src/domain/calendar-scheduling.js": "41e750a0f9d0ec6db4e84377143bb97a3fac733b8e7055d5322c878c646ef4f0",
     "src/domain/consultation-metrics.js": "b1c8e20adddb2a3dafdad0783b4baf325b20b55cba574c631c94e97137d7df92",
     "src/domain/consultation-guards.js": "3ec6036dea60bb83c3bd53b8a4530b30f166c0e3b00109407ac2bc5a66075f67",
@@ -123,14 +123,14 @@
     "src/scripts/consultation-release-check.js": "436a327960ca45f089fec63522bdbbeb59badf6bbae81f4a2c24591821ed4789",
     "src/scripts/consultation-export-legal.js": "1b93711fedd9fbed571edeca4fafa442502dfdabd6f8733853ba3207488258bb",
     "src/scripts/consultation-export-dossier.js": "d510469965b0dce561f023efb60ef2828b858e73217b2739cd0800c9c7037534",
-    "consultation-architecture-baseline.json": "14c227907e04bcc50fe1ea9b805b5c7376cf75d76fa31bf03f88090f9175e2a2",
+    "consultation-architecture-baseline.json": "ea473a4323866cb1f0aef45f9685ed30e71eb1e13bf629a4b83681b905d9da4b",
     "consultation-architecture-snapshot.json": "9bc25304b856f8fff9025289b433db477ede2c0f7c2ba3f7137c72d39e55f266"
   },
   "approval": {
     "approved": true,
     "approvedBy": "pilot-readiness",
-    "approvedAt": "2026-07-03T00:00:00-03:00",
-    "changeId": "GOOGLE-CALENDAR-EVENT-ID-HARDENING",
-    "structuralDigest": "bf78ef53ffd2d5e13df41882dc50e3af82ee2f2f68b68d549b9e07bdddb0a395"
+    "approvedAt": "2026-07-10T10:30:00-03:00",
+    "changeId": "FREE-POSTGRES-STATE-MIRROR",
+    "structuralDigest": "d657a4219c2eee994d45c7029b3505b043c4235368fdb84cbe3cb84509d75b69"
   }
 }

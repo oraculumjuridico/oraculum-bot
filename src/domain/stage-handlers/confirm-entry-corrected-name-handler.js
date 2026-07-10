@@ -29,7 +29,7 @@ async function handleConfirmEntryCorrectedName({
   }
 
   u._entradaPendenteValor = nomeLimpo
-  const barra = "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n"
+  const barra = "👤 Etapa 2 de 6 · *SEU NOME*\n\n"
   if (!u.modoTexto) {
     try {
       const ogg = await gerarAudioAtendente(u.atendente, `Entendi! O nome é ${nomeLimpo}. Está correto? Se estiver, toque em Confirmar. Se não estiver, digite o nome correto ou envie um novo áudio.`)

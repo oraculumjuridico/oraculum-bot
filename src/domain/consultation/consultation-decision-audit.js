@@ -1,9 +1,10 @@
 const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
+const { mirrorStateFile } = require("../../infrastructure/external-state-repository")
 
 const DECISIONS_FILE = process.env.CONSULTA_DECISIONS_FILE ||
-  path.join(__dirname, "..", "..", "..", "data", "consultation-decisions.jsonl")
+  path.join(path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "..", "..", "..", "data")), "consultation-decisions.jsonl")
 
 function decisionHash(decision) {
   const { hash, ...payload } = decision
@@ -58,6 +59,7 @@ function appendConsultaDecision({
   entry.hash = decisionHash(entry)
   fs.mkdirSync(path.dirname(DECISIONS_FILE), { recursive: true })
   fs.appendFileSync(DECISIONS_FILE, `${JSON.stringify(entry)}\n`, "utf8")
+  mirrorStateFile(DECISIONS_FILE).catch(() => {})
   return entry
 }
 

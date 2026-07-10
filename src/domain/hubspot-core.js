@@ -3,6 +3,7 @@ const { logErroHubSpot } = require("../utils/logging")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
 const { validateHubSpotProperties } = require("./hubspot-contract")
+const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
 
 let deps = {
   monitor: null,
@@ -22,6 +23,104 @@ function warnHubSpotPayload(warning) {
   console.warn(JSON.stringify(warning))
 }
 
+const CONTACT_SEARCH_PROPERTIES = [
+  "firstname",
+  "email",
+  "phone",
+  "city",
+  "state",
+  "area_juridica",
+  "beneficio",
+  "beneficio_de_interesse",
+  "cpf_do_cliente",
+  "date_of_birth",
+  "numero_caso",
+  "numero_do_caso",
+  "origem_lead",
+  "pasta_drive",
+  "situacao_caso",
+  "tipo_de_caso",
+  "work_email"
+]
+
+function normalizarAreaContatoHubSpot(area) {
+  const texto = sanitizarTextoEntrada(area).toLowerCase()
+  if (!texto) return ""
+  if (texto.includes("inss") || texto.includes("previd")) return "PrevidenciÃ¡rio (INSS)"
+  if (texto.includes("trabalh")) return "Trabalhista"
+  return "Outros"
+}
+
+function normalizarTipoContatoHubSpot(u = {}) {
+  const texto = [
+    u.tipo,
+    u.situacao,
+    u.beneficio,
+    u.beneficioInteresse,
+    u.descricao,
+    u.assuntoResumo
+  ].filter(Boolean).join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  const area = normalizarAreaContatoHubSpot(u.area)
+
+  if (!area && !texto.trim()) return ""
+  if (area === "Trabalhista") return "Direito trabalhista"
+  if (/\b(aposent|aposentadoria)\b/.test(texto)) return "Aposentadoria"
+  if (/\b(auxilio.?doenca|incapacidade|pericia|beneficio por incapacidade)\b/.test(texto)) return "Auxílio-doença"
+  if (/\b(bpc|loas)\b/.test(texto)) return "BPC / LOAS"
+  if (/\b(pensao|pensao por morte|dependente)\b/.test(texto)) return "Pensão por morte"
+  if (/\b(salario.?maternidade|maternidade)\b/.test(texto)) return "Salário-maternidade"
+  if (/\b(revisao|revisar)\b/.test(texto)) return "Revisão de benefício"
+  return "Outro"
+}
+
+function montarPropsContatoHubSpot(from, u = {}) {
+  const telefone = normalizarNumeroWhatsAppEnvio(u.whatsappContato || from)
+  const nomeContato =
+    (u?.nome && String(u.nome).trim()) ||
+    (u?.nomePerfilWhatsApp && String(u.nomePerfilWhatsApp).trim()) ||
+    (u?.nomeWA && String(u.nomeWA).trim()) ||
+    "Lead WhatsApp"
+  const beneficio = sanitizarTextoEntrada(u.beneficio || u.beneficioInteresse || u.situacao)
+  const areaJuridica = normalizarAreaContatoHubSpot(u.area)
+
+  return validateHubSpotProperties(
+    "contacts",
+    filtrarPropsHubSpot({
+      firstname: nomeContato,
+      email: u.email || "",
+      work_email: u.email || "",
+      phone: telefone,
+      city: u.cidade || "",
+      state: u.uf || "",
+      area_juridica: areaJuridica,
+      beneficio,
+      beneficio_de_interesse: beneficio,
+      cpf_do_cliente: u.cpf || "",
+      date_of_birth: u.dataNascimento || u.data_nascimento || "",
+      numero_caso: u.numeroCaso || "",
+      numero_do_caso: u.numeroCaso || "",
+      origem_lead: sanitizarTextoEntrada(u?.origemCaptacao) ? "Bot Whatsapp" : "",
+      pasta_drive: u.pastaDriveLink || "",
+      situacao_caso: u.situacao || u.tipo || "",
+      tipo_de_caso: normalizarTipoContatoHubSpot(u)
+    }),
+    warnHubSpotPayload
+  )
+}
+
+function montarPropsAusentesContatoHubSpot(contatoExistente = {}, props = {}) {
+  const atuais = contatoExistente?.properties || {}
+  return Object.fromEntries(
+    Object.entries(props).filter(([property, value]) => {
+      if (property === "phone") return false
+      if (value === null || value === undefined) return false
+      if (typeof value === "string" && !value.trim()) return false
+      const atual = atuais[property]
+      return atual === null || atual === undefined || String(atual).trim() === ""
+    })
+  )
+}
+
 async function hsBuscarPorPhone(phone) {
   try {
     const phoneNormalizado = normalizarNumeroWhatsAppEnvio(phone)
@@ -29,7 +128,7 @@ async function hsBuscarPorPhone(phone) {
       "https://api.hubapi.com/crm/v3/objects/contacts/search",
       {
         filterGroups: [{ filters: [{ propertyName: "phone", operator: "EQ", value: phoneNormalizado }] }],
-        properties: ["firstname", "area_juridica"]
+        properties: CONTACT_SEARCH_PROPERTIES
       },
       { headers: HS() }
     )
@@ -41,17 +140,7 @@ async function hsBuscarPorPhone(phone) {
 }
 
 async function hsCriarContato(from, u) {
-  const telefone = normalizarNumeroWhatsAppEnvio(from)
-  const nomeContato =
-    (u?.nome && String(u.nome).trim()) ||
-    (u?.nomePerfilWhatsApp && String(u.nomePerfilWhatsApp).trim()) ||
-    (u?.nomeWA && String(u.nomeWA).trim()) ||
-    "Lead WhatsApp"
-  const props = validateHubSpotProperties(
-    "contacts",
-    filtrarPropsHubSpot({ firstname: nomeContato, phone: telefone, city: u.cidade || "" }),
-    warnHubSpotPayload
-  )
+  const props = montarPropsContatoHubSpot(from, u)
   if (!Object.keys(props).length) return null
   try {
     const res = await axios.post("https://api.hubapi.com/crm/v3/objects/contacts", { properties: props }, { headers: HS() })
@@ -64,10 +153,18 @@ async function hsCriarContato(from, u) {
 }
 
 async function hsCriarNegocio(u, opts = {}) {
+  let properties = {}
   try {
     const stage = opts.stage || deps.HS_STAGE.LEAD
-    const dealname = opts.dealname || deps.getNomeDeal(u)
-    const properties = validateHubSpotProperties(
+    const dealname = montarTituloNegocioHubSpot(
+      {
+        ...u,
+        numeroCaso: u.numeroCaso || opts.numeroCaso,
+        negocioStageId: stage
+      },
+      { HS_STAGE: deps.HS_STAGE, stage }
+    )
+    properties = validateHubSpotProperties(
       "deals",
       filtrarPropsHubSpot({
         dealname,
@@ -220,6 +317,8 @@ module.exports = {
   hsCriarNegocio,
   hsAssociar,
   filtrarPropsHubSpot,
+  montarPropsContatoHubSpot,
+  montarPropsAusentesContatoHubSpot,
   hsAtualizarContato,
   hsAtualizarNegocio,
   hsCriarNota,

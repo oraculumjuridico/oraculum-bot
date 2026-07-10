@@ -12,7 +12,7 @@ O piloto somente pode começar quando todos os itens abaixo estiverem comprovado
 - [ ] `npm test`, `consultation:release-check` e auditoria arquitetural aprovados.
 - [ ] Serviço Render saudável e sem reinícios recorrentes.
 - [ ] Uma única instância gravadora está ativa.
-- [ ] Persistent Disk montado em `/opt/render/project/src/data`.
+- [ ] Neon Free configurado; cache efêmero em `/tmp/oraculum`; health PostgreSQL `ok`.
 - [ ] Restart controlado preservou os arquivos de `data/`.
 - [ ] Snapshot diário do Render está ativo.
 - [ ] Último restore testado possui data, responsável e resultado registrados.
@@ -75,7 +75,7 @@ Não registrar valores de segredos neste documento ou no diário do piloto.
 - [ ] `PUBLIC_BASE_URL` e `APP_URL`
 - [ ] `AUTO_REENGAJAMENTO=false` durante o piloto inicial.
 - [ ] Timeouts HTTP, FFMPEG e demais limites estão configurados.
-- [ ] Persistent Disk no caminho exato `/opt/render/project/src/data`.
+- [ ] Migração PostgreSQL e recuperação após restart validadas.
 - [ ] Apenas uma instância.
 - [ ] Snapshot diário disponível no Dashboard.
 - [ ] Espaço livre do disco monitorado.
@@ -297,7 +297,7 @@ pessoais desnecessários. Telefones devem ser mascarados.
 Suspender novas entradas e manter apenas atendimento humano quando ocorrer:
 
 - perda ou corrupção de `data/`;
-- Persistent Disk desmontado ou serviço com mais de uma instância gravadora;
+- PostgreSQL externo indisponível, fila remota pendente ou mais de uma instância gravadora;
 - mensagem reconhecida pelo Meta sem persistência na Durable Inbox;
 - duplicação de mensagens para clientes;
 - caso informado como concluído sem HubSpot ou Drive íntegros;

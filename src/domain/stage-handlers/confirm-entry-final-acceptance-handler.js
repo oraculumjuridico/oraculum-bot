@@ -40,7 +40,7 @@ async function handleConfirmEntryFinalAcceptance({
       setStage(u, "coleta_tel_wpp"); iniciarTimer(from)
       const primeiroNome = primeiroNomeCliente(u) || "você"
       await enviarAudioModoVoz(from, u, `Agora preciso do WhatsApp com DDD de ${primeiroNome}. Pode falar em áudio ou digitar.`, "novo caso terceiro whatsapp")
-      return { handled: true, response: { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nQual é o WhatsApp com DDD de *${primeiroNome}* para contato da equipe?`, opcoes: null } }
+      return { handled: true, response: { texto: `📱 Etapa 4 de 6 · *WHATSAPP*\n\nQual é o WhatsApp com DDD de *${primeiroNome}* para contato da equipe?`, opcoes: null } }
     }
     iniciarTimer(from)
     return { handled: true, response: await flowAcolhimentoConfirmaWhatsapp(u, { from }) }
@@ -57,7 +57,7 @@ async function handleConfirmEntryFinalAcceptance({
         return { handled: true, response: await flowAcolhimentoCidade(u, { from }) }
       }
       setStage(u, "coleta_nome"); iniciarTimer(from)
-      return { handled: true, response: { texto: "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nQual é o *nome completo* da pessoa que será atendida?", opcoes: null } }
+      return { handled: true, response: { texto: "👤 Etapa 2 de 6 · *NOME DA PESSOA ATENDIDA*\n\nQual é o nome completo da pessoa que será atendida?", opcoes: null } }
     }
     if (origem === "coleta_tel_wpp") {
       u.whatsappVerificado = true
@@ -75,7 +75,7 @@ async function handleConfirmEntryFinalAcceptance({
         return {
           handled: true,
           response: {
-            texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nNúmero registrado. ✅\n\nAgora, em qual *cidade* a pessoa atendida mora?\n\nSe preferir, pode informar o *CEP* também.`,
+            texto: `📍 Etapa 5 de 6 · *CIDADE*\n\nAgora, em qual cidade a pessoa atendida mora?\n\nSe preferir, pode informar o CEP também.`,
             opcoes: null
           }
         }
@@ -98,7 +98,7 @@ async function handleConfirmEntryFinalAcceptance({
       return {
         handled: true,
         response: {
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nÓtimo! Número registrado. ✅\n\nAgora, em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`,
+          texto: `📍 Etapa 5 de 6 · *CIDADE*\n\nAgora, em qual cidade você mora?\n\nSe preferir, pode informar o CEP também.`,
           opcoes: null
         }
       }

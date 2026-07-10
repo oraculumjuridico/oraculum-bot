@@ -4,13 +4,18 @@ const crypto = require("crypto")
 const { DOCS_EXTRA } = require("./documents-core")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
+const { normalizarContextoConversa } = require("./conversation-context")
+const { mirrorStateFile } = require("../infrastructure/external-state-repository")
 
 let persistUsersTimeout = null
 let persistUsersMaxTimeout = null
+let persistAdminAssistedTimeout = null
 const PERSIST_DEBOUNCE_MS = 300
 const PERSIST_MAX_WAIT_MS = 2000
 const WEBHOOK_INBOX_SCHEMA_VERSION = 1
 const WEBHOOK_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const ADMIN_ASSISTED_SESSION_SCHEMA_VERSION = 1
+const ADMIN_ASSISTED_SESSION_TTL_MS = 24 * 60 * 60 * 1000
 
 let webhookInbox = criarWebhookInboxVazia()
 
@@ -48,22 +53,58 @@ function arquivoWebhookInbox() {
   return path.join(deps.DATA_DIR, "webhook-inbox.json")
 }
 
+function arquivoSessoesAdminAssistidas() {
+  return path.join(deps.DATA_DIR, "admin-assisted-sessions.json")
+}
+
+function erroArquivoTemporariamenteIndisponivel(error) {
+  return ["EPERM", "EBUSY", "EACCES"].includes(error?.code)
+}
+
+function esperarSync(ms) {
+  const buffer = new SharedArrayBuffer(4)
+  const view = new Int32Array(buffer)
+  Atomics.wait(view, 0, 0, ms)
+}
+
+function renomearComRetry(temporario, destino) {
+  const tentativas = [0, 25, 50, 100, 200, 400, 800]
+  let ultimoErro = null
+
+  for (const espera of tentativas) {
+    if (espera > 0) esperarSync(espera)
+    try {
+      fs.renameSync(temporario, destino)
+      return true
+    } catch (error) {
+      ultimoErro = error
+      if (!erroArquivoTemporariamenteIndisponivel(error)) throw error
+    }
+  }
+
+  throw ultimoErro
+}
+
 function gravarJsonAtomico(caminho, payload) {
   fs.mkdirSync(path.dirname(caminho), { recursive: true })
   const temporario = `${caminho}.${process.pid}.${Date.now()}.tmp`
   let descritor = null
+  let renomeado = false
   try {
     descritor = fs.openSync(temporario, "wx", 0o600)
     fs.writeFileSync(descritor, JSON.stringify(payload, null, 2), "utf8")
     fs.fsyncSync(descritor)
     fs.closeSync(descritor)
     descritor = null
-    fs.renameSync(temporario, caminho)
+    renomeado = renomearComRetry(temporario, caminho)
+    mirrorStateFile(caminho).catch(error => logErro("persistencia_externa", error.message))
   } finally {
     if (descritor !== null) {
       try { fs.closeSync(descritor) } catch {}
     }
-    try { fs.unlinkSync(temporario) } catch {}
+    if (renomeado) {
+      try { fs.unlinkSync(temporario) } catch {}
+    }
   }
 }
 
@@ -227,6 +268,107 @@ function obterEstadoWebhookInbox() {
   return clonarJson(webhookInbox)
 }
 
+function sessaoAdminAssistidaAtiva(sessao = {}) {
+  return Boolean(sessao?.adminAssistido?.ativo)
+}
+
+function sessaoAdminAssistidaExpirada(sessao = {}, agora = Date.now()) {
+  const referencia = Date.parse(
+    sessao?.adminAssistido?.atualizadoEm ||
+    sessao?.adminAssistido?.iniciadoEm ||
+    sessao?.ts ||
+    ""
+  )
+  if (!Number.isFinite(referencia)) return false
+  return agora - referencia > ADMIN_ASSISTED_SESSION_TTL_MS
+}
+
+function serializarSessoesAdminAssistidas(sessoesAdminWhatsApp) {
+  const sessoes = {}
+  if (!sessoesAdminWhatsApp || typeof sessoesAdminWhatsApp.entries !== "function") return sessoes
+
+  const agora = Date.now()
+  for (const [chave, sessao] of sessoesAdminWhatsApp.entries()) {
+    if (!sessaoAdminAssistidaAtiva(sessao)) continue
+    if (sessaoAdminAssistidaExpirada(sessao, agora)) continue
+    sessoes[chave] = {
+      listaAtiva: "admin_assistido",
+      ts: sessao.ts || agora,
+      adminAssistido: sessao.adminAssistido
+    }
+  }
+  return sessoes
+}
+
+function persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp, { propagarErro = false } = {}) {
+  if (persistAdminAssistedTimeout) {
+    clearTimeout(persistAdminAssistedTimeout)
+    persistAdminAssistedTimeout = null
+  }
+
+  try {
+    garantirDiretorioDados()
+    gravarJsonAtomico(arquivoSessoesAdminAssistidas(), {
+      schemaVersion: ADMIN_ASSISTED_SESSION_SCHEMA_VERSION,
+      savedAt: new Date().toISOString(),
+      ttlMs: ADMIN_ASSISTED_SESSION_TTL_MS,
+      sessoes: serializarSessoesAdminAssistidas(sessoesAdminWhatsApp)
+    })
+  } catch (e) {
+    logErro("persistencia", "salvarSessoesAdminAssistidas: " + e.message)
+    if (propagarErro) throw e
+  }
+}
+
+function agendarPersistenciaSessoesAdminAssistidas(sessoesAdminWhatsApp) {
+  if (persistAdminAssistedTimeout) clearTimeout(persistAdminAssistedTimeout)
+  persistAdminAssistedTimeout = setTimeout(() => {
+    persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
+  }, PERSIST_DEBOUNCE_MS)
+}
+
+function carregarSessoesAdminAssistidasPersistidas(sessoesAdminWhatsApp) {
+  try {
+    if (!sessoesAdminWhatsApp || typeof sessoesAdminWhatsApp.set !== "function") return { restauradas: 0, expiradas: 0 }
+    const caminho = arquivoSessoesAdminAssistidas()
+    if (!fs.existsSync(caminho)) return { restauradas: 0, expiradas: 0 }
+
+    const raw = fs.readFileSync(caminho, "utf8")
+    if (!raw.trim()) return { restauradas: 0, expiradas: 0 }
+    const parsed = JSON.parse(raw)
+    if (parsed?.schemaVersion !== ADMIN_ASSISTED_SESSION_SCHEMA_VERSION) {
+      throw new Error(`schema de sessoes admin assistidas incompativel: ${parsed?.schemaVersion}`)
+    }
+
+    const agora = Date.now()
+    let restauradas = 0
+    let expiradas = 0
+    for (const [chave, sessao] of Object.entries(parsed.sessoes || {})) {
+      if (!sessaoAdminAssistidaAtiva(sessao) || sessaoAdminAssistidaExpirada(sessao, agora)) {
+        expiradas += 1
+        continue
+      }
+      sessoesAdminWhatsApp.set(chave, {
+        ...sessao,
+        listaAtiva: "admin_assistido",
+        adminAssistido: {
+          ...sessao.adminAssistido,
+          aguardandoConfirmacaoRetomada: true
+        },
+        ts: Date.now()
+      })
+      restauradas += 1
+    }
+
+    if (expiradas > 0) persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
+    if (restauradas > 0) logDebug(`[PERSISTENCIA] ${restauradas} atendimento(s) assistido(s) restaurado(s)`)
+    return { restauradas, expiradas }
+  } catch (e) {
+    logErro("persistencia", "carregarSessoesAdminAssistidas: " + e.message)
+    return { restauradas: 0, expiradas: 0 }
+  }
+}
+
 function serializarEstado(u) {
   const clone = { ...u }
 
@@ -261,6 +403,8 @@ function serializarEstado(u) {
   delete clone._casoSelecionadoAudio
   delete clone._acaoPendente
   delete clone._menuClienteBoasVindas
+  delete clone._casoAnteriorCliente
+  delete clone.contextoConversa
 
   return JSON.stringify(clone)
 }
@@ -334,6 +478,7 @@ function persistirUsersAgora({ propagarErro = false } = {}) {
 
     fs.renameSync(arquivoTemporario, deps.USERS_STATE_FILE)
     arquivoTemporario = null
+    mirrorStateFile(deps.USERS_STATE_FILE, conteudo).catch(error => logErro("persistencia_externa", error.message))
   } catch (e) {
     logErro("persistencia", "salvarUsers: " + e.message)
     if (propagarErro) throw e
@@ -429,6 +574,7 @@ function hidratarUsuarioPersistido(data) {
   hidratado.origemCaptacao = hidratado.origemCaptacao || "whatsapp"
   hidratado.consultaStatus = sanitizarTextoEntrada(hidratado.consultaStatus) || "sem_consulta"
   hidratado.tipoConsulta = sanitizarTextoEntrada(hidratado.tipoConsulta) || "inicial"
+  hidratado.contextoConversa = normalizarContextoConversa(hidratado.contextoConversa)
   hidratado._menuClienteCasoAtivo = false
   hidratado._casosMenuCliente = null
   hidratado._acaoPendente = null
@@ -474,6 +620,9 @@ module.exports = {
   serializarUsers,
   persistirUsersAgora,
   agendarPersistenciaUsers,
+  persistirSessoesAdminAssistidasAgora,
+  agendarPersistenciaSessoesAdminAssistidas,
+  carregarSessoesAdminAssistidasPersistidas,
   hidratarUsuarioPersistido,
   carregarUsersPersistidos
 }

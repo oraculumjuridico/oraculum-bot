@@ -1,6 +1,7 @@
 const crypto = require("crypto")
 const fs = require("fs")
 const path = require("path")
+const { mirrorStateFile } = require("../infrastructure/external-state-repository")
 const { forbidDirectEventStoreUsage } = require("./consultation-guards")
 const {
   assertEventModelVersion,
@@ -10,7 +11,7 @@ const {
 assertEventModelVersion()
 
 const EVENTS_FILE = process.env.CONSULTA_EVENTS_FILE ||
-  path.join(__dirname, "..", "..", "data", "consulta-events.jsonl")
+  path.join(path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "..", "..", "data")), "consulta-events.jsonl")
 const LOCK_FILE = `${EVENTS_FILE}.lock`
 const TIPOS = new Set([
   "consulta.scheduled",
@@ -150,6 +151,7 @@ async function appendConsultaEvent({
     }
     evento.eventHash = calcularHashEvento(evento)
     fs.appendFileSync(EVENTS_FILE, `${JSON.stringify(evento)}\n`, "utf8")
+    mirrorStateFile(EVENTS_FILE).catch(() => {})
     return { evento, appended: true }
   } finally {
     try { fs.closeSync(lock) } catch {}

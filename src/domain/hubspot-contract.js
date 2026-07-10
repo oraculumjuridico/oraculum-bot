@@ -1,8 +1,21 @@
 const CONTACT_WRITE_PROPERTIES = new Set([
   "firstname",
+  "email",
   "phone",
   "city",
-  "state"
+  "state",
+  "area_juridica",
+  "beneficio",
+  "beneficio_de_interesse",
+  "cpf_do_cliente",
+  "date_of_birth",
+  "numero_caso",
+  "numero_do_caso",
+  "origem_lead",
+  "pasta_drive",
+  "situacao_caso",
+  "tipo_de_caso",
+  "work_email"
 ])
 
 const DEAL_WRITE_PROPERTIES = new Set([
@@ -42,8 +55,22 @@ const DEAL_ENUM_VALUES = {
     "outros_livre"
   ]),
   temperatura_lead: new Set(["Frio", "Morno", "Quente"]),
-  hs_priority: new Set(["low", "medium", "high"]),
-  urgencia: new Set(["Alta", "Moderada", "Baixa"])
+  hs_priority: new Set(["low", "medium", "high"])
+}
+
+const CONTACT_ENUM_VALUES = {
+  area_juridica: new Set(["PrevidenciÃ¡rio (INSS)", "Trabalhista", "Outros"]),
+  origem_lead: new Set(["Bot Whatsapp"]),
+  tipo_de_caso: new Set([
+    "Aposentadoria",
+    "Auxílio-doença",
+    "BPC / LOAS",
+    "Pensão por morte",
+    "Salário-maternidade",
+    "Revisão de benefício",
+    "Direito trabalhista",
+    "Outro"
+  ])
 }
 
 function validateHubSpotProperties(objectType, properties = {}, onWarning = () => {}) {
@@ -52,7 +79,11 @@ function validateHubSpotProperties(objectType, properties = {}, onWarning = () =
     : objectType === "deals"
       ? DEAL_WRITE_PROPERTIES
       : new Set()
-  const enumValues = objectType === "deals" ? DEAL_ENUM_VALUES : {}
+  const enumValues = objectType === "contacts"
+    ? CONTACT_ENUM_VALUES
+    : objectType === "deals"
+      ? DEAL_ENUM_VALUES
+      : {}
   const validProperties = {}
   const unknownProperties = []
   const invalidEnums = []
@@ -84,6 +115,7 @@ function validateHubSpotProperties(objectType, properties = {}, onWarning = () =
 module.exports = {
   CONTACT_WRITE_PROPERTIES,
   DEAL_WRITE_PROPERTIES,
+  CONTACT_ENUM_VALUES,
   DEAL_ENUM_VALUES,
   validateHubSpotProperties
 }

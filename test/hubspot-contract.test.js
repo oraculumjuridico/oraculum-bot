@@ -1,12 +1,16 @@
 const assert = require("assert")
 const axios = require("axios")
+const fs = require("fs")
+const path = require("path")
 const {
   configurarHubSpotCore,
   hsCriarContato,
   hsCriarNegocio,
   hsAtualizarContato,
   hsAtualizarNegocio,
-  filtrarPropsHubSpot
+  filtrarPropsHubSpot,
+  montarPropsContatoHubSpot,
+  montarPropsAusentesContatoHubSpot
 } = require("../src/domain/hubspot-core")
 const {
   configurarHubSpotSync,
@@ -27,18 +31,65 @@ const axiosOriginal = {
   put: axios.put
 }
 const consoleWarnOriginal = console.warn
+const consoleErrorOriginal = console.error
+
+function lerCsvSimples(filePath) {
+  const linhas = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean)
+  const headers = linhas.shift().split(",").map(header => header.replace(/^"|"$/g, ""))
+  return linhas.map(linha => {
+    const colunas = []
+    let atual = ""
+    let aspas = false
+    for (let i = 0; i < linha.length; i++) {
+      const char = linha[i]
+      if (char === '"' && linha[i + 1] === '"') {
+        atual += '"'
+        i++
+      } else if (char === '"') {
+        aspas = !aspas
+      } else if (char === "," && !aspas) {
+        colunas.push(atual)
+        atual = ""
+      } else {
+        atual += char
+      }
+    }
+    colunas.push(atual)
+    return Object.fromEntries(headers.map((header, index) => [header, colunas[index] || ""]))
+  })
+}
+
+function propriedadesExportadasHubSpot(nomeArquivo) {
+  const csvPath = path.join(__dirname, "..", "..", "Hubspot", nomeArquivo)
+  return new Set(lerCsvSimples(csvPath).map(row => row["Nome interno"]).filter(Boolean))
+}
 
 function restaurarAxios() {
   Object.assign(axios, axiosOriginal)
   console.warn = consoleWarnOriginal
+  console.error = consoleErrorOriginal
 }
 
 async function executar() {
   const requests = []
   const warnings = []
+  const errors = []
   console.warn = warning => warnings.push(JSON.parse(warning))
+  console.error = message => errors.push(String(message))
+
+  const contatosExportados = propriedadesExportadasHubSpot("hubspot-properties-export-contacts-2026-06-26.csv")
+  const negociosExportados = propriedadesExportadasHubSpot("hubspot-properties-export-deals-2026-06-27.csv")
+  for (const property of CONTACT_WRITE_PROPERTIES) {
+    assert.equal(contatosExportados.has(property), true, `propriedade de contato ausente no export HubSpot: ${property}`)
+  }
+  for (const property of DEAL_WRITE_PROPERTIES) {
+    assert.equal(negociosExportados.has(property), true, `propriedade de negocio ausente no export HubSpot: ${property}`)
+  }
 
   assert.equal(CONTACT_WRITE_PROPERTIES.has("firstname"), true)
+  assert.equal(CONTACT_WRITE_PROPERTIES.has("cpf_do_cliente"), true)
+  assert.equal(CONTACT_WRITE_PROPERTIES.has("date_of_birth"), true)
+  assert.equal(CONTACT_WRITE_PROPERTIES.has("email"), true)
   assert.equal(CONTACT_WRITE_PROPERTIES.has("dealstage"), false)
   assert.equal(DEAL_WRITE_PROPERTIES.has("dealstage"), true)
   assert.equal(DEAL_WRITE_PROPERTIES.has("phone"), false)
@@ -54,9 +105,9 @@ async function executar() {
     validateHubSpotProperties("deals", {
       dealname: "Caso",
       phone: "5511999999999",
-      urgencia: "Urgentíssima"
+      urgencia: "Urgentissima"
     }, warning => warnings.push(warning)),
-    { dealname: "Caso" }
+    { dealname: "Caso", urgencia: "Urgentissima" }
   )
   assert.deepEqual(warnings, [
     {
@@ -69,9 +120,22 @@ async function executar() {
       event: "hubspot_payload_validation",
       objectType: "deals",
       unknownProperties: ["phone"],
-      invalidEnums: ["urgencia"]
+      invalidEnums: []
     }
   ])
+
+  assert.deepEqual(
+    validateHubSpotProperties("contacts", {
+      area_juridica: "Familia",
+      origem_lead: "Bot Whatsapp",
+      tipo_de_caso: "Outro"
+    }, warning => warnings.push(warning)),
+    {
+      origem_lead: "Bot Whatsapp",
+      tipo_de_caso: "Outro"
+    }
+  )
+  assert.equal(warnings.at(-1).invalidEnums.includes("area_juridica"), true)
 
   axios.post = async (url, body) => {
     requests.push({ method: "post", url, body })
@@ -113,6 +177,66 @@ async function executar() {
     city: "São Paulo"
   })
 
+  const propsContatoCompleto = montarPropsContatoHubSpot("5581999990000", {
+    nome: "Ana Cliente",
+    email: "ana@example.com",
+    cpf: "123.456.789-00",
+    dataNascimento: "1990-01-02",
+    cidade: "Recife",
+    uf: "PE",
+    area: "Trabalhista",
+    tipo: "Verbas rescisorias",
+    beneficio: "Rescisao",
+    origemCaptacao: "admin_assistido_ia",
+    numeroCaso: "CLT.260708.001",
+    pastaDriveLink: "https://drive.example/folder"
+  })
+  assert.deepEqual(propsContatoCompleto, {
+    firstname: "Ana Cliente",
+    email: "ana@example.com",
+    work_email: "ana@example.com",
+    phone: "558199990000",
+    city: "Recife",
+    state: "PE",
+    area_juridica: "Trabalhista",
+    beneficio: "Rescisao",
+    beneficio_de_interesse: "Rescisao",
+    cpf_do_cliente: "123.456.789-00",
+    date_of_birth: "1990-01-02",
+    numero_caso: "CLT.260708.001",
+    numero_do_caso: "CLT.260708.001",
+    origem_lead: "Bot Whatsapp",
+    pasta_drive: "https://drive.example/folder",
+    situacao_caso: "Verbas rescisorias",
+    tipo_de_caso: "Direito trabalhista"
+  })
+  assert.deepEqual(
+    montarPropsAusentesContatoHubSpot({
+      properties: {
+        firstname: "Ana Antiga",
+        email: "ana-antiga@example.com",
+        cpf_do_cliente: "",
+        date_of_birth: null,
+        city: "Recife"
+      }
+    }, propsContatoCompleto),
+    {
+      work_email: "ana@example.com",
+      state: "PE",
+      area_juridica: "Trabalhista",
+      beneficio: "Rescisao",
+      beneficio_de_interesse: "Rescisao",
+      cpf_do_cliente: "123.456.789-00",
+      date_of_birth: "1990-01-02",
+      numero_caso: "CLT.260708.001",
+      numero_do_caso: "CLT.260708.001",
+      origem_lead: "Bot Whatsapp",
+      pasta_drive: "https://drive.example/folder",
+      situacao_caso: "Verbas rescisorias",
+      tipo_de_caso: "Direito trabalhista"
+    }
+  )
+
   await hsAtualizarContato("contact-1", {
     firstname: "Maria",
     city: "",
@@ -150,8 +274,38 @@ async function executar() {
   const criacaoDeal = requests.find(item => item.url.endsWith("/deals"))
   assert.equal(criacaoDeal.body.properties.pipeline, "default")
   assert.equal(criacaoDeal.body.properties.dealstage, "appointmentscheduled")
+  assert.equal(criacaoDeal.body.properties.dealname, "⚪ LF-Prv")
   assert.equal(criacaoDeal.body.properties.urgencia, "Moderada")
   assert.equal(criacaoDeal.body.properties.etapa_do_bot, "inicio")
+
+  const postSucesso = axios.post
+  axios.post = async () => {
+    const error = new Error("HubSpot rejeitou o negócio")
+    error.response = {
+      status: 400,
+      data: {
+        category: "VALIDATION_ERROR",
+        message: "Property value was not valid"
+      }
+    }
+    throw error
+  }
+  assert.equal(
+    await hsCriarNegocio({
+      nome: "Terceiro",
+      area: "Civil",
+      descricao: "Caso para terceiro",
+      urgencia: "normal",
+      cidade: "Recife"
+    }, { dealname: "Terceiro - Civil - ORA-TESTE" }),
+    null
+  )
+  assert.equal(errors.some(message =>
+    message.includes("\"operation\":\"criarNegocio\"") &&
+    message.includes("\"httpStatus\":400") &&
+    message.includes("\"properties\"")
+  ), true)
+  axios.post = postSucesso
 
   await hsAtualizarNegocio("deal-1", {
     urgencia: "Alta",
@@ -170,13 +324,13 @@ async function executar() {
   const requestsAntesDoEnumInvalido = requests.length
   await hsAtualizarNegocio("deal-1", {
     dealname: "Caso atualizado",
-    urgencia: "Urgentíssima"
+    tipo_de_caso: "valor_inexistente"
   })
   assert.equal(requests.length, requestsAntesDoEnumInvalido + 1)
   assert.deepEqual(requests.at(-1).body.properties, { dealname: "Caso atualizado" })
   assert.equal(warnings.some(warning =>
     warning.objectType === "deals" &&
-    warning.invalidEnums.includes("urgencia")
+    warning.invalidEnums.includes("tipo_de_caso")
   ), true)
 
   const requestsAntesDoDealVazio = requests.length
@@ -270,6 +424,10 @@ async function executar() {
   assert.equal(
     mapearTipoCaso({ area: " INSS ", tipo: " APOSENTADORIA " }),
     "inss_aposentadoria"
+  )
+  assert.equal(
+    mapearTipoCaso({ area: "Trabalhista", tipo: "Verbas rescisorias" }),
+    "trab_demissao"
   )
 
   for (const entrada of [

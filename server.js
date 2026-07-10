@@ -21,6 +21,8 @@ const express    = require("express")
 const axios      = require("axios")
 const { google } = require("googleapis")
 const path       = require("path")
+const fs         = require("fs")
+const crypto     = require("crypto")
 const { gerarAudioAtendente } = require("./tts")
 const nodemailer = require("nodemailer")
 const {
@@ -188,6 +190,12 @@ const {
   montarTextoResumoRetomada
 } = require("./src/domain/retomada-summary")
 const {
+  avaliarElegibilidadeReengajamento
+} = require("./src/domain/reengagement-engine")
+const {
+  planejarReengajamentos
+} = require("./src/domain/reengagement-planner")
+const {
   checklistProducaoAdmin,
   textoResumoDiarioOperacional
 } = require("./src/domain/admin-summary-ui")
@@ -200,6 +208,9 @@ const {
   tituloOpcaoCasoAdmin,
   opcoesAposAcaoCasoAdmin
 } = require("./src/domain/admin-case-ui")
+const {
+  montarDossieJuridicoAdminWhatsApp
+} = require("./src/domain/admin-legal-dossier-ui")
 const {
   numeroPorExtenso,
   formatarSlot,
@@ -232,8 +243,12 @@ const {
   salvarAudioTranscritoNoCaso
 } = require("./src/domain/drive-files")
 const {
+  processarAnaliseDocumentalPosUpload
+} = require("./src/domain/document-analysis-integration")
+const {
   configurarLogging,
   logDebug,
+  logInfo,
   logContextoExecucao,
   logErro,
   detalhesErroHubSpot,
@@ -242,11 +257,12 @@ const {
 const {
   digitando,
   enviar,
-  enviarTemplateWhatsApp,
   enviarAudio,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados
 } = require("./src/domain/whatsapp-transport")
+const templateService = require("./src/domain/template-service")
+const { validarMetaWabaNoBoot } = require("./src/domain/meta-waba-validator")
 const {
   validarAssinaturaMeta,
   validarWebhookInterno
@@ -265,6 +281,9 @@ const {
   desserializarEstado,
   persistirUsersAgora,
   agendarPersistenciaUsers,
+  persistirSessoesAdminAssistidasAgora,
+  agendarPersistenciaSessoesAdminAssistidas,
+  carregarSessoesAdminAssistidasPersistidas,
   hidratarUsuarioPersistido,
   carregarUsersPersistidos,
   criarChaveWebhookDuravel,
@@ -273,8 +292,29 @@ const {
   listarWebhookPendentes,
   marcarWebhookProcessing,
   marcarWebhookCompleted,
-  marcarWebhookError
+  marcarWebhookError,
+  obterEstadoWebhookInbox
 } = require("./src/domain/state-persistence")
+const {
+  CALLBACK_IDEMPOTENCY_FILE,
+  createCallbackKey,
+  beginCallbackExecution,
+  completeCallbackExecution,
+  abandonCallbackExecution,
+  recoverCallbackIdempotencyAbandonedProcessing
+} = require("./src/domain/callback-idempotency")
+const {
+  initializeExternalStateRepository,
+  flushExternalState,
+  externalStateHealth,
+  closeExternalStateRepository
+} = require("./src/infrastructure/external-state-repository")
+const {
+  dispatchConversationContext
+} = require("./src/domain/conversation-context-dispatcher")
+const {
+  cancelarReengajamentosPendentes
+} = require("./src/domain/reengagement-cancel-webhook")
 const {
   transcrever
 } = require("./src/domain/assemblyai-transcription")
@@ -286,6 +326,8 @@ const {
   hsCriarNegocio,
   hsAssociar,
   filtrarPropsHubSpot,
+  montarPropsContatoHubSpot,
+  montarPropsAusentesContatoHubSpot,
   hsAtualizarContato,
   hsCriarNota,
   hsCriarNotaNegocio
@@ -325,6 +367,15 @@ const {
   autenticarAdminWhatsApp,
   bloquearAdminWhatsApp
 } = require("./src/domain/admin-auth")
+const {
+  atendimentoAssistidoAdminAtivo,
+  iniciarAtendimentoAssistidoAdmin,
+  processarAtendimentoAssistidoAdmin
+} = require("./src/domain/admin-assisted-ai-flow")
+const {
+  montarTituloNegocioHubSpot,
+  aplicarTituloNegocioHubSpot
+} = require("./src/domain/hubspot-deal-title")
 
 const {
   primeiroNomeCliente,
@@ -350,6 +401,59 @@ const app = express()
 app.set("trust proxy", 1)
 app.disable("x-powered-by")
 app.use(aplicarHeadersSeguranca)
+
+function criarRequestId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${crypto.randomBytes(8).toString("hex")}`
+}
+
+function primeiroValorObservabilidade(...valores) {
+  return valores.find(valor => sanitizarTextoEntrada(valor))
+}
+
+function contextoObservabilidade(req, extras = {}) {
+  const body = req?.body || {}
+  const query = req?.query || {}
+  return {
+    route: req?.route?.path || req?.path || extras.route || "",
+    requestId: req?.requestId || "",
+    phone: primeiroValorObservabilidade(extras.phone, body.phone, body.numero, body.whatsapp, body.from, query.phone),
+    dealId: primeiroValorObservabilidade(extras.dealId, body.dealId, body.casoId, query.dealId),
+    contactId: primeiroValorObservabilidade(extras.contactId, body.contactId, query.contactId),
+    numeroCaso: primeiroValorObservabilidade(extras.numeroCaso, body.numeroCaso, query.numeroCaso),
+    ...extras
+  }
+}
+
+function logOperacional(req, event, extras = {}) {
+  return logInfo({
+    event,
+    ...contextoObservabilidade(req, extras)
+  })
+}
+
+function logSkipOperacional(req, reason, extras = {}) {
+  return logOperacional(req, `operational_skip.${reason}`, {
+    status: reason,
+    ...extras
+  })
+}
+
+const ROTAS_OBSERVADAS = new Set([
+  "/webhook",
+  "/reengagement-candidates",
+  "/reengajamento-dados",
+  "/reengajamento",
+  "/agendamento",
+  "/lembrete",
+  "/consulta-status"
+])
+
+app.use((req, res, next) => {
+  req.requestId = criarRequestId()
+  res.setHeader("x-request-id", req.requestId)
+  next()
+})
 
 const limitarWebhookMeta = criarRateLimiter({
   limite: 1000,
@@ -387,6 +491,18 @@ app.use(express.json({
     req.rawBody = Buffer.from(buf)
   }
 }))
+app.use((req, res, next) => {
+  if (!ROTAS_OBSERVADAS.has(req.path)) return next()
+  const startedAt = Date.now()
+  logOperacional(req, "endpoint.start", { status: "started" })
+  res.on("finish", () => {
+    logOperacional(req, "endpoint.finish", {
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt
+    })
+  })
+  next()
+})
 app.use(
   "/audios",
   limitarAudios,
@@ -405,10 +521,9 @@ const WHATSAPP_ADMIN   = process.env.WHATSAPP_ADMIN   || ""
 const HUBSPOT_PORTAL   = process.env.HUBSPOT_PORTAL   || "51306019"
 const GMAIL_USER       = process.env.GMAIL_USER       || ""
 const GMAIL_PASS       = process.env.GMAIL_PASS       || ""
-const WHATSAPP_TEMPLATE_TERCEIRO = process.env.WHATSAPP_TEMPLATE_TERCEIRO || ""
-const WHATSAPP_TEMPLATE_LANG     = process.env.WHATSAPP_TEMPLATE_LANG     || "pt_BR"
-const WHATSAPP_TEMPLATE_TERCEIRO_IMAGEM_URL = process.env.WHATSAPP_TEMPLATE_TERCEIRO_IMAGEM_URL || ""
 const AUTO_REENGAJAMENTO = String(process.env.AUTO_REENGAJAMENTO || "").toLowerCase() === "true"
+const REENGAGEMENT_SCHEDULE_TOLERANCE_MS = 300000
+const REENGAGEMENT_MAX_DELAY_HOURS = 24
 
 // Parceiros por área — adicione aqui quando fechar parceria
 // Exemplo: { whatsapp: "5581999999999", email: "parceiro@email.com" }
@@ -555,7 +670,7 @@ const {
   GROQ_KEY
 } = process.env
 
-const DATA_DIR = path.join(__dirname, "data")
+const DATA_DIR = path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "data"))
 const USERS_STATE_FILE = path.join(DATA_DIR, "users-state.json")
 
 const HS_PIPELINE = "default"
@@ -705,6 +820,7 @@ function novoUsuario(nomeWA) {
     pastaDriveId: null, pastaDriveLink: null,
     consultaStatus: "sem_consulta",
     tipoConsulta: "inicial",
+    contextoConversa: null,
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
@@ -1244,13 +1360,13 @@ async function respostaAposCidade(from, u) {
   const primeiroNomeAtendido = ehTerceiro && u.nome ? u.nome.split(" ")[0] : null
 
   const textoTela = primeiroNomeAtendido
-    ? `●●●○○○ 📝 Etapa 3 de 6 · *Relato*\n\nAgora me conte a situação de *${primeiroNomeAtendido}* com detalhes para eu preparar o caso.\n\n💬 Você pode responder por mensagem de texto ou, se preferir, enviar um áudio. 🎙️`
+    ? textoExplicarSituacaoTerceiro(primeiroNomeAtendido)
     : `●●●○○○ 📝 Etapa 3 de 6 · *Relato*\n\nAgora me conte sua situação com detalhes para eu preparar seu caso, *${primeiroNome}*.\n\n💬 Você pode responder por mensagem de texto ou, se preferir, enviar um áudio. 🎙️`
 
   if (!u.modoTexto) {
     try {
       const textoAudio = primeiroNomeAtendido
-        ? `Agora me conte a situação de ${primeiroNomeAtendido} com detalhes para eu preparar o caso. Pode enviar um áudio ou digitar.`
+        ? audioExplicarSituacaoTerceiro(primeiroNomeAtendido)
         : `Agora me conte sua situação com detalhes para eu preparar seu caso, ${primeiroNome}. Pode enviar um áudio ou digitar.`
       const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
       await enviarAudio(from, urlAudioAtendente(ogg))
@@ -1580,10 +1696,11 @@ function getHubSpotDealStateProps(u) {
 }
 
 function getHubSpotDealProps(u, extraProps = {}) {
-  return filtrarPropsHubSpot({
-    ...extraProps,
-    ...getHubSpotDealStateProps(u)
+  const props = filtrarPropsHubSpot({
+    ...getHubSpotDealStateProps(u),
+    ...extraProps
   })
+  return aplicarTituloNegocioHubSpot(u, props, { HS_STAGE })
 }
 
 function mapearStageParaDealstage(u) {
@@ -1623,39 +1740,7 @@ function getLabelOrigemCaptacao(u) {
 }
 
 function getNomeDeal(u) {
-  const temperatura = definirTemperatura(u)
-  const origem = getLabelOrigemCaptacao(u)
-
-  // Quando já tem número de caso — nome completo
-  if (u?.numeroCaso) {
-    const primeiroNome = getPrimeiroNome(u) || null
-    const tipoCase = u?.situacao
-      ? u.situacao.charAt(0).toUpperCase() + u.situacao.slice(1)
-      : u?.area || "Jurídico"
-    const nomeLabel = primeiroNome ? ` · ${primeiroNome}` : ""
-    return `${u.numeroCaso}${nomeLabel} · ${tipoCase}`
-  }
-
-  // Sem número de caso — progressão por temperatura
-  const primeiroNome = getPrimeiroNome(u) || null
-  const areaLabel = u?.area || null
-  const tipoLabel = u?.situacao
-    ? u.situacao.charAt(0).toUpperCase() + u.situacao.slice(1)
-    : areaLabel
-
-  if (temperatura === "quente") {
-    const extra = tipoLabel ? ` · ${tipoLabel}` : ""
-    const nome = primeiroNome ? ` · ${primeiroNome}` : ""
-    return `🟢 Lead via ${origem}${nome}${extra}`
-  }
-
-if (temperatura === "morno") {
-  const nome = primeiroNome ? ` · ${primeiroNome}` : ""
-  const area = u?.area ? ` · ${u.area}` : ""
-  return `🟡 Lead via ${origem}${nome}${area}`
-}
-
-  return `⚪ Lead via ${origem}`
+  return montarTituloNegocioHubSpot(u, { HS_STAGE })
 }
 
 configurarHubSpotCore({
@@ -1916,8 +2001,7 @@ async function capturarLeadTerceiroIncompleto(from, u, motivo = "interrupcao") {
   if (!contatoId) return null
 
   const negocioId = await hsCriarNegocio(lead, {
-    stage: HS_STAGE.LEAD,
-    dealname: `🟡 Terceiro incompleto · ${nomeTerceiro || nomeQuemAbriu || "Indicação"}`
+    stage: HS_STAGE.LEAD
   })
   if (negocioId) {
     await hsAssociar(contatoId, negocioId)
@@ -1999,14 +2083,13 @@ async function registrarCasoTerceiroNoWhatsAppInformado(from, u, numeroCaso, cas
   }
 
   let enviado = false
-  if (sessaoTerceiroPreparada && WHATSAPP_TEMPLATE_TERCEIRO) {
-    const imagemTemplateTerceiro = WHATSAPP_TEMPLATE_TERCEIRO_IMAGEM_URL
-    enviado = await enviarTemplateWhatsApp(telefoneTerceiro, WHATSAPP_TEMPLATE_TERCEIRO, [
-      primeiroNomeCliente(u) || u.nome || "tudo bem",
-      nomeQuemAbriu || "uma pessoa próxima",
+  if (sessaoTerceiroPreparada) {
+    enviado = await templateService.casoTerceiro(telefoneTerceiro, {
+      nomeAtendido: primeiroNomeCliente(u) || u.nome || "tudo bem",
+      nomeSolicitante: nomeQuemAbriu || "uma pessoa próxima",
       numeroCaso,
-      u.area || "Jurídico"
-    ], WHATSAPP_TEMPLATE_LANG, { headerImageUrl: imagemTemplateTerceiro })
+      area: u.area || "Jurídico"
+    })
   }
 
   if (sessaoTerceiroPreparada && !enviado) {
@@ -2391,7 +2474,9 @@ async function prepararConfirmacaoEntrada(from, u, tipo, valor, origem) {
         ? "confirmar cidade"
         : "confirmar entrada"
   const textoAudio = tipo === "nome"
-    ? `Entendi. O nome informado foi ${labelAudio}. Está correto? Se sim, toque em Confirmar. Se não estiver, me diga o nome correto agora, pode falar ou digitar.`
+    ? (origem === "coleta_tel_outro"
+        ? audioConfirmarNomePessoaAtendida(labelAudio)
+        : `Entendi. O nome informado foi ${labelAudio}. Está correto? Se sim, toque em Confirmar. Se não estiver, me diga o nome correto agora, pode falar ou digitar.`)
     : tipo === "telefone"
       ? `O número informado foi ${labelAudio}. Está correto? Se sim, toque em Confirmar. Se não estiver, me diga o número correto agora, pode falar ou digitar.`
       : tipo === "cidade"
@@ -2399,14 +2484,16 @@ async function prepararConfirmacaoEntrada(from, u, tipo, valor, origem) {
         : `Você informou ${labelAudio}. Está correto? Se sim, toque em Confirmar. Se não estiver, me diga a informação correta agora, pode falar ou digitar.`
   await enviarAudioModoVoz(from, u, textoAudio, contextoAudio)
   const barra = tipo === "nome"
-      ? "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n"
+      ? (origem === "coleta_tel_outro" ? null : "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n")
     : tipo === "telefone"
-      ? "●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\n"
+      ? "●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\n"
     : tipo === "cidade"
-        ? "●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n"
+        ? "●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n"
       : ""
   return {
-    texto: `${barra}Você informou: *${label}*\nEstá correto? Se não estiver, é só me dizer a informação correta agora. Pode falar ou digitar. 🎙️`,
+    texto: origem === "coleta_tel_outro"
+      ? textoConfirmarNomePessoaAtendida(label)
+      : `${barra || ""}Você informou: *${label}*\nEstá correto? Se não estiver, é só me dizer a informação correta agora. Pode falar ou digitar. 🎙️`,
     opcoes: [
       { id: "entrada_ok", title: "✅ Confirmar" }
     ]
@@ -2765,9 +2852,83 @@ async function perguntarNomeProprio(from, u) {
     } catch (e) { logErro("tts", "Falha audio nome proprio", e) }
   }
   return {
-    texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n🙋 *Atendimento para você*\n\nQual é o seu *nome completo*?\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
+    texto: `●●○○○○ 👤 Etapa 2 de 6 · *SEU NOME*\n\n🙋 *Atendimento para você*\n\nQual é o seu *nome completo*?\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
     opcoes: null
   }
+}
+
+function textoSolicitarNomeRepresentante() {
+  return `●●○○○○ 👤 Etapa 2 de 6 · *SEU NOME*
+
+👥 Você está abrindo um caso para outra pessoa.
+
+⚠️ Agora preciso do seu nome, ou seja, da pessoa que está conversando conosco neste WhatsApp.
+
+🎙️ Você pode digitar ou enviar um áudio.`
+}
+
+function textoConfirmarNomeRepresentante(representativeName) {
+  return `●●○○○○ 👤 Etapa 2 de 6 · *SEU NOME*
+
+👥 Você está abrindo um caso para outra pessoa.
+
+✅ Entendi. Seu nome é ${representativeName}.
+
+Está correto?
+
+Se precisar corrigir, basta informar seu nome novamente por texto ou áudio. 🎙️`
+}
+
+function textoSolicitarNomePessoaAtendida(representativeName) {
+  return `●●○○○○ 👤 Etapa 2 de 6 · *NOME DA PESSOA ATENDIDA*
+
+✅ Ótimo, ${representativeName}!
+
+Agora preciso do nome completo da pessoa para quem você está abrindo este atendimento.
+
+🎙️ Você pode digitar ou enviar um áudio.`
+}
+
+function textoConfirmarNomePessoaAtendida(clientName) {
+  return `●●○○○○ 👤 Etapa 2 de 6 · *NOME DA PESSOA ATENDIDA*
+
+✅ O nome da pessoa atendida é ${clientName}.
+
+Está correto?
+
+Se precisar corrigir, basta informar o nome novamente por texto ou áudio. 🎙️`
+}
+
+function textoExplicarSituacaoTerceiro(clientName) {
+  return `●●●○○○ 📝 Etapa 3 de 6 · *EXPLIQUE A SITUAÇÃO*
+
+📝 Agora me conte o que está acontecendo com ${clientName}.
+
+Quanto mais detalhes você puder informar, melhor poderemos entender o caso.
+
+🎙️ Você pode enviar um áudio ou digitar sua mensagem.
+
+⚖️ Essas informações serão organizadas para que o advogado já conheça o caso antes do atendimento.`
+}
+
+function audioSolicitarNomeRepresentante() {
+  return "Você está abrindo um caso para outra pessoa. Agora preciso do seu nome, ou seja, da pessoa que está conversando conosco neste WhatsApp. Você pode digitar ou enviar um áudio."
+}
+
+function audioConfirmarNomeRepresentante(representativeName) {
+  return `Você está abrindo um caso para outra pessoa. Entendi. Seu nome é ${representativeName}. Está correto? Se precisar corrigir, informe seu nome novamente por texto ou áudio. Se estiver correto, toque em Sim, está certo.`
+}
+
+function audioSolicitarNomePessoaAtendida(representativeName) {
+  return `Ótimo, ${representativeName}! Agora preciso do nome completo da pessoa para quem você está abrindo este atendimento. Você pode digitar ou enviar um áudio.`
+}
+
+function audioConfirmarNomePessoaAtendida(clientName) {
+  return `O nome da pessoa atendida é ${clientName}. Está correto? Se precisar corrigir, informe o nome novamente por texto ou áudio. Se estiver correto, toque em Sim, está certo.`
+}
+
+function audioExplicarSituacaoTerceiro(clientName) {
+  return `Agora me conte o que está acontecendo com ${clientName}. Quanto mais detalhes você puder informar, melhor poderemos entender o caso. Você pode enviar um áudio ou digitar sua mensagem. Essas informações serão organizadas para que o advogado já conheça o caso antes do atendimento.`
 }
 
 // Pede o relato do caso após a coleta do(s) nome(s), antes de WhatsApp e cidade.
@@ -2801,8 +2962,10 @@ async function pedirRelatoAposNome(from, u) {
 
   if (!u.modoTexto) {
     try {
-      const ogg = await gerarAudioAtendente(u.atendente,
-        `Entendido${saudacao}! Agora me conta ${alvoAudio}. Pode falar em áudio ou digitar, do jeito que for mais fácil para você.`)
+      const textoAudioRelato = u.atendimentoParaTerceiro
+        ? audioExplicarSituacaoTerceiro(primeiroNomeAtendido)
+        : `Entendido${saudacao}! Agora me conta ${alvoAudio}. Pode falar em áudio ou digitar, do jeito que for mais fácil para você.`
+      const ogg = await gerarAudioAtendente(u.atendente, textoAudioRelato)
       await enviarAudio(from, urlAudioAtendente(ogg))
       await new Promise(r => setTimeout(r, 4000))
     } catch (e) { logErro("tts", "Falha áudio relato pós-nome", e) }
@@ -2812,7 +2975,9 @@ async function pedirRelatoAposNome(from, u) {
     ? `o que está acontecendo com *${primeiroNomeAtendido}*`
     : "a *sua situação*"
 
-  const textoRelato = `●●●○○○ 📝 *Etapa 3 de 6 · Relato*\n\n📝 *Agora me conta o caso${saudacao}*\n\nMe conta ${textoAlvoTela} com detalhes.\n\nPode falar em áudio 🎙️ ou digitar 💬, do jeito que for mais fácil pra você.\n\n_Vou preparar tudo para o advogado já chegar pronto para te atender._ ⚖️`
+  const textoRelato = u.atendimentoParaTerceiro
+    ? textoExplicarSituacaoTerceiro(primeiroNomeAtendido)
+    : `●●●○○○ 📝 *Etapa 3 de 6 · EXPLIQUE A SITUAÇÃO*\n\n📝 *Agora me conta o caso${saudacao}*\n\nMe conta ${textoAlvoTela} com detalhes.\n\nPode falar em áudio 🎙️ ou digitar 💬, do jeito que for mais fácil pra você.\n\n_Vou preparar tudo para o advogado já chegar pronto para te atender._ ⚖️`
 
   if (process.env.IMAGEM_RELATO_URL) {
     try {
@@ -2832,7 +2997,7 @@ function perguntarCidade(u, stage = null) {
   const textoCidade = primeiroNomeAtendido
     ? `Em qual *cidade* ${primeiroNomeAtendido} mora?\n\nSe preferir, pode informar o *CEP* também.`
     : `Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`
-  return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n${textoCidade}`, opcoes: null }
+  return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n${textoCidade}`, opcoes: null }
 }
 
 function perguntarDescricao(u, stage = STAGES.COLETA_DESC_AUDIO) {
@@ -2879,7 +3044,9 @@ async function iniciarFluxoRelatoLivre(from, u, { boasVindas = true } = {}) {
 
   if (boasVindas) {
     try {
-      await enviarImagemWhatsApp(from, "https://i.imgur.com/ztcFIuG.png", `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`)
+      const textoBoasVindas = `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`
+      const imagemUrl = IMAGEM_BOAS_VINDAS_URL || "https://i.imgur.com/ztcFIuG.png"
+      await enviarImagemWhatsApp(from, imagemUrl, textoBoasVindas)
     } catch (e) {
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
       await enviar(from, `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`)
@@ -3381,6 +3548,265 @@ async function localizarUsuarioAgendamento({ eventId = "", dealId = "", phone = 
   return { from: null, u: null }
 }
 
+function localizarUsuarioReengajamento({ dealId = "", phone = "" } = {}) {
+  const negocio = sanitizarTextoEntrada(dealId)
+  const numero = normalizarNumeroWhatsAppEnvio(phone)
+
+  for (const [from, u] of Object.entries(users)) {
+    if (negocio && String(u?.negocioId || "") === negocio) return { from, u }
+    if (numero && normalizarNumeroWhatsAppEnvio(from) === numero) return { from, u }
+    if (numero && normalizarNumeroWhatsAppEnvio(u?._numero) === numero) return { from, u }
+    if (numero && normalizarNumeroWhatsAppEnvio(u?.phone) === numero) return { from, u }
+    if (numero && normalizarNumeroWhatsAppEnvio(u?.telefone) === numero) return { from, u }
+    if (numero && normalizarNumeroWhatsAppEnvio(u?.whatsappContato) === numero) return { from, u }
+  }
+
+  return { from: null, u: null }
+}
+
+function telefoneCandidatoReengajamento(from, usuario = {}) {
+  for (const valor of [
+    from ||
+    null,
+    usuario?._numero,
+    usuario?.phone,
+    usuario?.telefone,
+    usuario?.whatsapp,
+    usuario?.whatsappContato,
+    usuario?.numero
+  ]) {
+    const normalizado = normalizarNumeroWhatsAppEnvio(valor)
+    if (normalizado) return normalizado
+  }
+  return ""
+}
+
+function candidateReasonsReengajamento(usuario = {}) {
+  const reasons = []
+  if (sanitizarTextoEntrada(usuario?.numeroCaso)) reasons.push("possui_numero_caso")
+  else reasons.push("sem_numero_caso")
+  if (sanitizarTextoEntrada(usuario?.negocioId)) reasons.push("possui_deal")
+  else reasons.push("sem_deal")
+  if (Array.isArray(usuario?.docsAusentes) && usuario.docsAusentes.length > 0) reasons.push("docs_ausentes")
+  if (Array.isArray(usuario?.docsParciais) && usuario.docsParciais.length > 0) reasons.push("docs_parciais")
+  if (sanitizarTextoEntrada(usuario?.consultaStatus) === "nao_compareceu") reasons.push("consulta_no_show")
+  if (sanitizarTextoEntrada(usuario?.consultaStatus) === "sem_consulta") reasons.push("sem_consulta")
+  if (usuario?.leadIncompletoCapturado === true) reasons.push("lead_incompleto_capturado")
+  if (sanitizarTextoEntrada(usuario?.stage)) reasons.push(`stage:${sanitizarTextoEntrada(usuario.stage)}`)
+  if (usuario?.ultimaMsg) reasons.push("possui_ultima_msg")
+  return reasons
+}
+
+function montarCandidatoReengajamento(from, usuario = {}, source = "memory") {
+  const phone = telefoneCandidatoReengajamento(from, usuario)
+  if (!phone) return null
+  if (usuario?.encerrado === true || usuario?.optOut === true || usuario?._fluxoEncerrado === true) return null
+
+  return {
+    phone,
+    dealId: sanitizarTextoEntrada(usuario?.negocioId) || null,
+    contactId: sanitizarTextoEntrada(usuario?.contatoId) || null,
+    numeroCaso: sanitizarTextoEntrada(usuario?.numeroCaso) || null,
+    source,
+    candidateReasons: candidateReasonsReengajamento(usuario)
+  }
+}
+
+function adicionarCandidatoReengajamento(candidatos, vistos, from, usuario, source) {
+  const candidato = montarCandidatoReengajamento(from, usuario, source)
+  if (!candidato) return
+  const chave = candidato.phone || (candidato.dealId ? `deal:${candidato.dealId}` : "")
+  if (!chave || vistos.has(chave)) return
+  vistos.add(chave)
+  candidatos.push(candidato)
+}
+
+function lerUsersPersistidosParaReengajamento() {
+  try {
+    if (!fs.existsSync(USERS_STATE_FILE)) return {}
+    const raw = fs.readFileSync(USERS_STATE_FILE, "utf8")
+    if (!raw.trim()) return {}
+    const parsed = JSON.parse(raw)
+    return parsed?.users && typeof parsed.users === "object" ? parsed.users : {}
+  } catch (e) {
+    logErro("reengagement-candidates", "Falha ao ler users persistidos: " + e.message, e)
+    return {}
+  }
+}
+
+function descobrirCandidatosReengajamento() {
+  const candidatos = []
+  const vistos = new Set()
+
+  for (const [from, usuario] of Object.entries(users)) {
+    adicionarCandidatoReengajamento(candidatos, vistos, from, usuario, "memory")
+  }
+
+  for (const [from, usuario] of Object.entries(lerUsersPersistidosParaReengajamento())) {
+    adicionarCandidatoReengajamento(candidatos, vistos, from, usuario, "persisted_state")
+  }
+
+  return candidatos
+}
+
+function criarContextoReengajamentoTemplate({ tipoEvento, jobId, dealId, numeroCaso, scheduledFor }) {
+  return {
+    tipo: "template_reengajamento",
+    origem: "meta_template",
+    entidade: {
+      jobId: jobId || null,
+      dealId: dealId || null,
+      casoId: numeroCaso || dealId || null
+    },
+    acaoEsperada: "retomada_atendimento",
+    dados: {
+      tipoEvento: tipoEvento || null,
+      scheduledFor: scheduledFor || null
+    },
+    expiracao: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  }
+}
+
+function validarJanelaEnvioReengajamento(scheduledFor, agora = Date.now()) {
+  const agendado = new Date(scheduledFor || "")
+  if (isNaN(agendado.getTime())) return { ok: false, motivo: "scheduledFor_invalido" }
+
+  const toleranciaAntecipacaoMs = 60 * 1000
+  if (agora + toleranciaAntecipacaoMs < agendado.getTime()) {
+    return {
+      ok: false,
+      motivo: "reengajamento_antecipado",
+      scheduledFor: agendado.toISOString()
+    }
+  }
+
+  return { ok: true, alvo: agendado }
+}
+
+function validarScheduledForReengajamento(scheduledForRecebido, scheduledForPlanejado) {
+  const recebido = new Date(scheduledForRecebido || "")
+  const planejado = new Date(scheduledForPlanejado || "")
+  if (isNaN(recebido.getTime()) || isNaN(planejado.getTime())) {
+    return { ok: false, motivo: "scheduledFor_invalido" }
+  }
+
+  const diferencaMs = Math.abs(recebido.getTime() - planejado.getTime())
+  if (diferencaMs > REENGAGEMENT_SCHEDULE_TOLERANCE_MS) {
+    return {
+      ok: false,
+      motivo: "scheduledFor_divergente",
+      diferencaMs,
+      toleranciaMs: REENGAGEMENT_SCHEDULE_TOLERANCE_MS
+    }
+  }
+
+  return { ok: true, diferencaMs, toleranciaMs: REENGAGEMENT_SCHEDULE_TOLERANCE_MS }
+}
+
+function validarExpiracaoReengajamento(scheduledFor, agora = Date.now()) {
+  const agendado = new Date(scheduledFor || "")
+  if (isNaN(agendado.getTime())) return { ok: false, motivo: "scheduledFor_invalido" }
+
+  const atrasoMs = agora - agendado.getTime()
+  const maxDelayMs = REENGAGEMENT_MAX_DELAY_HOURS * 60 * 60 * 1000
+  if (atrasoMs > maxDelayMs) {
+    return {
+      ok: false,
+      motivo: "job_expirado",
+      atrasoMs,
+      maxDelayMs
+    }
+  }
+
+  return { ok: true, atrasoMs, maxDelayMs }
+}
+
+async function enviarJobReengajamento(numero, usuario, job, contextoConversa) {
+  const options = {
+    usuario,
+    contextoConversa,
+    requireContextoConversa: true,
+    forceTemplate: true
+  }
+
+  if (job.template === "retomada_atendimento") {
+    return templateService.retomadaAtendimento(numero, {
+      ultimaMsg: usuario.ultimaMsg,
+      params: []
+    }, options)
+  }
+
+  if (job.template === "caso_atualizacao") {
+    return templateService.casoAtualizacao(numero, [], options)
+  }
+
+  return false
+}
+
+function tipoLembreteConsultaValido(tipo) {
+  return ["24h", "hoje", "1h"].includes(String(tipo || "").trim().toLowerCase())
+}
+
+function calcularAlvoLembreteConsulta(tipo, inicioConsulta, scheduledFor = "") {
+  const inicio = new Date(inicioConsulta || "")
+  const agendado = new Date(scheduledFor || "")
+  if (!isNaN(agendado.getTime())) return agendado
+  if (isNaN(inicio.getTime())) return null
+
+  const chave = String(tipo || "").trim().toLowerCase()
+  if (chave === "24h") return new Date(inicio.getTime() - 24 * 60 * 60 * 1000)
+  if (chave === "1h") return new Date(inicio.getTime() - 60 * 60 * 1000)
+  return null
+}
+
+function validarJanelaEnvioLembreteConsulta({ tipo, inicioConsulta, scheduledFor, agora = Date.now() }) {
+  if (!tipoLembreteConsultaValido(tipo)) return { ok: false, status: 400, motivo: "tipo_invalido" }
+
+  const inicio = new Date(inicioConsulta || "")
+  if (isNaN(inicio.getTime())) return { ok: false, status: 400, motivo: "datetime_invalido" }
+  if (inicio.getTime() <= agora) return { ok: false, status: 409, motivo: "consulta_passada" }
+
+  const alvo = calcularAlvoLembreteConsulta(tipo, inicioConsulta, scheduledFor)
+  if (String(tipo || "").trim().toLowerCase() === "hoje" && !alvo) {
+    return { ok: false, status: 400, motivo: "scheduledFor_obrigatorio_para_lembrete_hoje" }
+  }
+  if (!alvo) return { ok: true, alvo: null }
+
+  const toleranciaAntecipacaoMs = 60 * 1000
+  if (agora + toleranciaAntecipacaoMs < alvo.getTime()) {
+    return {
+      ok: false,
+      status: 409,
+      motivo: "lembrete_antecipado",
+      scheduledFor: alvo.toISOString()
+    }
+  }
+
+  return { ok: true, alvo }
+}
+
+function criarContextoConsultaTemplate({ tipo, eventId, dealId, casoId, inicioConsulta }) {
+  const templateTipo = templateService.templateTipoConsultaLembrete(tipo)
+  if (!templateTipo) return null
+
+  const inicio = new Date(inicioConsulta || "")
+  const baseExpiracao = !isNaN(inicio.getTime()) ? inicio.getTime() : Date.now()
+  return {
+    tipo: "template_consulta",
+    origem: "meta_template",
+    entidade: {
+      eventId: eventId || null,
+      dealId: dealId || null,
+      casoId: casoId || null
+    },
+    acaoEsperada: "confirmacao_consulta",
+    dados: {
+      templateTipo
+    },
+    expiracao: new Date(baseExpiracao + 2 * 60 * 60 * 1000).toISOString()
+  }
+}
+
 async function liberarAgendamentoERecalcularStage(u, motivo = "agendamento_liberado") {
   if (!u) return { atualizado: false, motivo: "usuario_nao_encontrado" }
 
@@ -3475,6 +3901,7 @@ const ADMIN_IDS = {
   alertasUrgentes: "adm_alertas_urgentes",
   alertasSemResposta: "adm_alertas_sem_resposta",
   resumo: "adm_resumo_diario",
+  atendimentoAssistidoIa: "adm_atendimento_assistido_ia",
   casoLinks: "adm_caso_links",
   casoPedirDocs: "adm_caso_pedir_docs",
   casoLembrete: "adm_caso_lembrete",
@@ -3608,11 +4035,39 @@ async function mapearComLimite(itens = [], limite = 5, fn) {
   return saida
 }
 
+async function reconciliarTituloNegocioHubSpotAdmin(negocio = {}, item = {}) {
+  const dealId = sanitizarTextoEntrada(negocio.id)
+  const props = negocio.properties || {}
+  if (!dealId) return false
+
+  const tituloEsperado = montarTituloNegocioHubSpot({
+    ...(item.u || {}),
+    area: props.area_juridica || item.u?.area,
+    numeroCaso: getNumeroCasoOficialDoNegocio(negocio) || item.u?.numeroCaso,
+    negocioStageId: props.dealstage || negocio.stageId || item.u?.negocioStageId,
+    temperatura: props.temperatura_lead
+  }, {
+    HS_STAGE,
+    stage: props.dealstage || negocio.stageId
+  })
+  const tituloAtual = sanitizarTextoEntrada(props.dealname)
+  if (!tituloEsperado || tituloAtual === tituloEsperado) return false
+
+  const atualizado = await hsAtualizarNegocioSerializado(dealId, { dealname: tituloEsperado })
+  if (atualizado) {
+    negocio.properties = { ...props, dealname: tituloEsperado }
+    if (item.u && (!item.u.nome || item.u.nome === tituloAtual)) item.u.nome = item.u.nomeWA || "Cliente"
+  }
+  return Boolean(atualizado)
+}
+
 async function hsAdminItensPorStages(stages = [], limit = 30) {
   const negocios = await hsAdminBuscarNegociosPorStages(stages, limit)
   return mapearComLimite(negocios, 5, async (negocio) => {
     const contato = await hsAdminBuscarContatoDoNegocio(negocio.id)
-    return normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
+    const item = normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
+    await reconciliarTituloNegocioHubSpotAdmin(negocio, item)
+    return item
   })
 }
 
@@ -3631,7 +4086,9 @@ async function hsAdminItemPorDealId(dealId) {
       properties: res.data?.properties || {}
     }
     const contato = await hsAdminBuscarContatoDoNegocio(id)
-    return normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
+    const item = normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
+    await reconciliarTituloNegocioHubSpotAdmin(negocio, item)
+    return item
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarDealPorCalendar", dealId: id })
     return null
@@ -3982,6 +4439,7 @@ function textoDetalheCasoAdmin(item) {
   const alerta = maiorAlertaOperacionalAdmin(item)
   const relato = sanitizarTextoEntrada(briefing.relato || briefing.resumo || u.descricao || u.assuntoResumo)
   const relatoCurto = relato ? relato.slice(0, 700) + (relato.length > 700 ? "..." : "") : "Sem relato consolidado."
+  const dossieJuridico = montarDossieJuridicoAdminWhatsApp(item)
   return [
     `👤 *${briefing.nome || "Cliente"}*`,
     "",
@@ -4001,7 +4459,8 @@ function textoDetalheCasoAdmin(item) {
     relatoCurto,
     "",
     "🎯 *Proxima acao*",
-    briefing.proximaAcao || "Acompanhar caso."
+    briefing.proximaAcao || "Acompanhar caso.",
+    dossieJuridico ? "\n" + dossieJuridico : ""
   ].filter(Boolean).join("\n")
 }
 
@@ -4033,7 +4492,8 @@ async function telaAdminPrincipal() {
       { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
-      { id: ADMIN_IDS.resumo, title: "📊 Resumo" }
+      { id: ADMIN_IDS.resumo, title: "📊 Resumo" },
+      { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento Assistido por IA" }
     ],
     registrarPergunta: false
   }
@@ -4053,13 +4513,17 @@ async function telaAdminPrioridades(from) {
     }
   }
 
-  const linhas = itens.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1))
+  const itensExibidos = itens.slice(0, 8)
+  const linhas = itensExibidos.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1))
   return {
     texto: ["📌 *Prioridades*", "", ...linhas, "", "Toque em um caso para ver o detalhe."].join("\n\n"),
-    opcoes: itens.map((item, idx) => ({
+    opcoes: [
+      ...itensExibidos.map((item, idx) => ({
       id: `admin_caso_${idx}`,
       title: tituloOpcaoCasoAdmin(item, idx)
-    })),
+      })),
+      { id: ADMIN_IDS.menu, title: "Menu admin" }
+    ],
     registrarPergunta: false
   }
 }
@@ -4137,13 +4601,18 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
     }
   }
 
-  const linhas = itens.slice(0, 10).map((item, idx) => resumoCasoAdmin(item, idx + 1))
+  const itensExibidos = itens.slice(0, 8)
+  const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1))
   return {
     texto: [titulo, "", ...linhas, "", "Toque em um caso para ver o detalhe operacional."].join("\n\n"),
-    opcoes: itens.slice(0, 10).map((item, idx) => ({
-      id: `admin_caso_${idx}`,
-      title: tituloOpcaoCasoAdmin(item, idx)
-    })),
+    opcoes: [
+      ...itensExibidos.map((item, idx) => ({
+        id: `admin_caso_${idx}`,
+        title: tituloOpcaoCasoAdmin(item, idx)
+      })),
+      { id: voltar, title: "Voltar" },
+      { id: ADMIN_IDS.menu, title: "Menu admin" }
+    ],
     registrarPergunta: false
   }
 }
@@ -4582,13 +5051,17 @@ async function telaConsultasAdmin(from) {
     }
   }
 
-  const linhas = consultas.slice(0, 10).map((item, idx) => resumoConsultaAdmin(item, idx + 1))
+  const consultasExibidas = consultas.slice(0, 8)
+  const linhas = consultasExibidas.map((item, idx) => resumoConsultaAdmin(item, idx + 1))
   return {
     texto: ["📅 *Consultas futuras*", "", ...linhas, "", "Toque em uma consulta para ver as acoes."].join("\n"),
-    opcoes: consultas.slice(0, 10).map((item, idx) => ({
-      id: `admin_consulta_${idx}`,
-      title: `${idx + 1}. ${(item.u?.nome || "Cliente").slice(0, 16)}`
-    })),
+    opcoes: [
+      ...consultasExibidas.map((item, idx) => ({
+        id: `admin_consulta_${idx}`,
+        title: `${idx + 1}. ${(item.u?.nome || "Cliente").slice(0, 16)}`
+      })),
+      { id: ADMIN_IDS.menu, title: "Menu admin" }
+    ],
     registrarPergunta: false
   }
 }
@@ -4825,7 +5298,7 @@ async function cancelarEventoConsultaUsuario(u, motivo = "consulta_cancelada", e
   return await liberarAgendamentoERecalcularStage(u, motivo)
 }
 
-async function processarAdminWhatsApp(from, text) {
+async function processarAdminWhatsApp(from, text, msgObj = null) {
   const comando = normalizarTextoGatilho(text)
 
   if (["sair", "bloquear", "logout"].includes(comando)) {
@@ -4856,6 +5329,48 @@ async function processarAdminWhatsApp(from, text) {
       tentativaInvalida,
       bloqueado: adminWhatsAppBloqueado(from)
     })
+  }
+
+  const depsAtendimentoAssistido = {
+    sessoesAdminWhatsApp,
+    normalizarNumeroWhatsAppEnvio,
+    telaAdminPrincipal,
+    finalizarCadastroAssistido: finalizarCadastroAssistidoAdmin,
+    agendarPersistenciaSessoesAdminAssistidas,
+    logDebug,
+    logErro,
+    logAdminAssistido: evento => logDebug("[ADMIN_ASSISTIDO]", JSON.stringify(evento)),
+    transcreverAudioAdmin: async msg => {
+      const mediaId = msg?.audio?.id || msg?.voice?.id
+      if (!mediaId) return ""
+      const midia = await baixarMidia(mediaId)
+      if (!midia) return ""
+      return await transcrever(midia.buffer, midia.mimeType, {
+        origem: "admin_atendimento_assistido"
+      })
+    }
+  }
+
+  if (["admin_atendimento_assistido_ia", ADMIN_IDS.atendimentoAssistidoIa].includes(comando)) {
+    return iniciarAtendimentoAssistidoAdmin(from, depsAtendimentoAssistido)
+  }
+
+  if (atendimentoAssistidoAdminAtivo(from, depsAtendimentoAssistido)) {
+    return processarAtendimentoAssistidoAdmin(from, text, msgObj, depsAtendimentoAssistido)
+  }
+
+  if (["voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"].includes(comando)) {
+    const chave = normalizarNumeroWhatsAppEnvio(from)
+    const sessaoAdmin = sessoesAdminWhatsApp.get(chave) || {}
+    if (comando.includes("cancelar")) {
+      sessoesAdminWhatsApp.set(chave, { ts: Date.now(), listaAtiva: null })
+      return await telaAdminPrincipal()
+    }
+    if (sessaoAdmin.listaAtiva === "consultas") return await telaConsultasAdmin(from)
+    if (sessaoAdmin.origemCasos === ADMIN_IDS.alertas) return await telaAdminAlertas()
+    if (sessaoAdmin.origemCasos === ADMIN_IDS.prioridades) return await telaAdminPrioridades(from)
+    if (sessaoAdmin.listaAtiva === "casos") return await telaAdminCasos()
+    return await telaAdminPrincipal()
   }
 
   if (["", "admin", "menu", "inicio", "admin_menu", ADMIN_IDS.menu].includes(comando)) {
@@ -5061,7 +5576,6 @@ async function capturarLeadIncompleto(from, u) {
     if (!negocioId) {
       logDebug("➡️ Indo criar negócio...")
       const temperatura = definirTemperatura(lead)
-      const nomeDeal = getNomeDeal(lead)
       const notaLead = getNotaLead(lead)
 
       logDebug("🌡️ Temperatura do lead:", temperatura)
@@ -5069,11 +5583,9 @@ async function capturarLeadIncompleto(from, u) {
         const negocioCriadoId = await hsCriarNegocio({
           ...lead,
           nome,
-          area,
-          numeroCaso: "LEAD-INCOMPLETO"
+          area
         }, {
-          stage: HS_STAGE.LEAD,
-          dealname: nomeDeal
+          stage: HS_STAGE.LEAD
         })
         negocioId = negocioCriadoId
 
@@ -5139,6 +5651,7 @@ async function baixarMidia(mediaId) {
   } catch (e) { logErro("whatsapp", "baixarMidia: " + e.message); return null }
 }
 
+const IMAGEM_BOAS_VINDAS_URL = process.env.IMAGEM_BOAS_VINDAS_URL || ""
 const IMAGEM_MENU_CLIENTE_URL = process.env.IMAGEM_MENU_CLIENTE_URL || ""
 const IMAGEM_GUIA_DOCS_URL = process.env.IMAGEM_GUIA_DOCS_URL || ""
 const IMAGEM_CONFIRMACAO_URL = process.env.IMAGEM_CONFIRMACAO_URL || ""
@@ -5341,11 +5854,12 @@ async function finalizarCadastro(from, u) {
     contatoId = await hsCriarContato(telefoneContato, u)
   } else {
     logDebug("Contato encontrado no HubSpot:", contatoId)
-    // Para caso próprio do cliente: nome confirmado sobrepõe o anterior no HubSpot
-    // Para caso de terceiro: só atualiza se o contato já é do terceiro (mesmo nome)
-    if (u.nomeConfirmado && u.nome && !ehTerceiro) {
-      await hsAtualizarContato(contatoId, { firstname: u.nome })
-    }
+    const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
+    const propsAusentes = montarPropsAusentesContatoHubSpot(existente, propsContato)
+    // Para caso próprio do cliente: nome confirmado sobrepõe o anterior no HubSpot.
+    // Os demais campos só completam lacunas, sem apagar informação já existente.
+    if (u.nomeConfirmado && u.nome && !ehTerceiro) propsAusentes.firstname = u.nome
+    if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
   }
   assertFinalizationOperation("hubspot_contact", contatoId)
   u.contatoId = contatoId
@@ -5362,13 +5876,14 @@ async function finalizarCadastro(from, u) {
     }
   }
 
-  const dealnameFinal = ehTerceiro
-    ? `Terceiro - ${u.area || "Atendimento"} - ${numeroCaso}${nomeTerceiro ? " - " + nomeTerceiro : ""}`
-    : `Cliente - ${u.area || "Atendimento"} - ${numeroCaso}`
+  const dealnameFinal = montarTituloNegocioHubSpot(
+    { ...u, numeroCaso, negocioStageId: HS_STAGE.ANALISE },
+    { HS_STAGE, stage: HS_STAGE.ANALISE }
+  )
 
   if (!negocioId) {
     logDebug("Nenhum negócio encontrado, criando novo")
-    negocioId = await hsCriarNegocio(u, { dealname: dealnameFinal, stage: HS_STAGE.ANALISE })
+    negocioId = await hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
     u.negocioId = negocioId
   } else {
     logDebug("Negócio já existe, atualizando dealname:", negocioId)
@@ -5390,6 +5905,10 @@ async function finalizarCadastro(from, u) {
     const etapaAtualizada = await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
     assertFinalizationOperation("hubspot_stage", etapaAtualizada)
     u.negocioStageId = HS_STAGE.ANALISE
+  }
+  if (contatoId) {
+    const propsContatoPosCaso = montarPropsAusentesContatoHubSpot(existente, montarPropsContatoHubSpot(telefoneContato, u))
+    if (Object.keys(propsContatoPosCaso).length) await hsAtualizarContato(contatoId, propsContatoPosCaso)
   }
   const associado = await hsAssociar(contatoId, negocioId)
   assertFinalizationOperation("hubspot_association", associado)
@@ -5440,6 +5959,30 @@ async function finalizarCadastro(from, u) {
   u.leadIncompletoCapturado = false
   agendarPersistenciaUsers()
   return numeroCaso
+}
+
+async function finalizarCadastroAssistidoAdmin(from, u) {
+  const telefone = normalizarNumeroWhatsAppEnvio(u?.whatsappContato || from)
+  if (!telefone) return finalizarCadastro(from, u)
+
+  const tinhaSessaoAnterior = Object.prototype.hasOwnProperty.call(users, telefone)
+  const sessaoAnterior = tinhaSessaoAnterior ? users[telefone] : null
+  users[telefone] = u
+
+  try {
+    const numeroCaso = await finalizarCadastro(telefone, u)
+    users[telefone] = u
+    return numeroCaso
+  } catch (e) {
+    if (tinhaSessaoAnterior) users[telefone] = sessaoAnterior
+    else delete users[telefone]
+    try {
+      persistirUsersAgora({ propagarErro: true })
+    } catch (persistError) {
+      logErro("admin_assistido", "Falha ao persistir rollback local: " + persistError.message, persistError)
+    }
+    throw e
+  }
 }
 
 async function tela_confirmacao(u) {
@@ -5629,12 +6172,13 @@ async function prepararConfirmacaoCorrecao(from, u, campo, valor, extra = {}) {
     // Determinar se é o nome do contato (quem está no WhatsApp) ou da pessoa atendida
     const subcampoNome = u._correcaoPendenteSubcampo || "nome"
     const ehNomeContato = subcampoNome === "nomeContato"
-    const textoConfNome = ehNomeContato
-      ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${valor}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-      : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${valor}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-    const audioConfNome = textoAudioConfirmacaoNome(valor, {
-      pessoaAtendida: !ehNomeContato
-    })
+    const ehFluxoTerceiro = Boolean(u.atendimentoParaTerceiro || u._novoCasoParaTerceiro)
+    const textoConfNome = ehFluxoTerceiro
+      ? (ehNomeContato ? textoConfirmarNomeRepresentante(valor) : textoConfirmarNomePessoaAtendida(valor))
+      : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${valor}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
+    const audioConfNome = ehFluxoTerceiro
+      ? (ehNomeContato ? audioConfirmarNomeRepresentante(valor) : audioConfirmarNomePessoaAtendida(valor))
+      : textoAudioConfirmacaoNome(valor)
     if (!u.modoTexto) {
       try {
         const ogg = await gerarAudioAtendente(u.atendente, audioConfNome)
@@ -5664,7 +6208,7 @@ async function prepararConfirmacaoCorrecao(from, u, campo, valor, extra = {}) {
       } catch (e) { logErro("tts", "Falha áudio confirmar correção cidade", e) }
     }
     return responderComTimer(from, {
-      texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ Localizei: *${textoExib}*.\n\nEstá correto? Se não estiver, é só me dizer a cidade certa agora. Pode falar ou digitar. 🎙️`,
+      texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${textoExib}*.\n\nEstá correto? Se não estiver, é só me dizer a cidade certa agora. Pode falar ou digitar. 🎙️`,
       opcoes: [{ id: "cidade_correcao_confirmar", title: "✅ Sim, está certo" }]
     })
   }
@@ -6334,13 +6878,17 @@ async function proximaEtapaNovoCasoClienteAposModo(from, u) {
     if (!u.nomeConfirmado || !u.nome) {
       setStage(u, "coleta_tel_outro")
       iniciarTimer(from)
+      const representativeName = (u.nomeContato || u._casoAnteriorCliente?.nome || "").split(" ")[0] || "você"
       if (!u.modoTexto) {
-        await enviarAudioModoVoz(from, u, "Agora preciso do nome completo da pessoa que será atendida. Pode falar em áudio ou digitar.", "novo caso terceiro nome")
+        await enviarAudioModoVoz(from, u, audioSolicitarNomePessoaAtendida(representativeName), "novo caso terceiro nome")
       }
       return {
-        texto: "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nQual é o nome completo da pessoa que será atendida?",
+        texto: textoSolicitarNomePessoaAtendida(representativeName),
         opcoes: null
       }
+    }
+    if (!u._audioCanalTranscricao && !u.descricao) {
+      return await pedirRelatoAposNome(from, u)
     }
     if (!u.whatsappContato || !u.whatsappVerificado) {
       setStage(u, "coleta_tel_wpp")
@@ -6349,7 +6897,7 @@ async function proximaEtapaNovoCasoClienteAposModo(from, u) {
         await enviarAudioModoVoz(from, u, `Agora preciso do WhatsApp com DDD de ${primeiroNomeCliente(u) || "essa pessoa"}.`, "novo caso terceiro whatsapp")
       }
       return {
-        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nQual é o WhatsApp com DDD de *${primeiroNomeCliente(u) || "essa pessoa"}* para contato da equipe?`,
+        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nQual é o WhatsApp com DDD de *${primeiroNomeCliente(u) || "essa pessoa"}* para contato da equipe?`,
         opcoes: null
       }
     }
@@ -6917,8 +7465,8 @@ async function responderImprevistoPreAtendimento(from, u, stage, tipo, textoOrig
     }
     setStage(u, STAGES.ACOLHIMENTO_NOME_CONTATO)
     salvarEtapa(u._numero || from, STAGES.ACOLHIMENTO_NOME_CONTATO)
-    texto = `*👥 Atendimento para outra pessoa*\n\n✅ Combinado! Só me diga uma coisa antes: *qual é o seu nome*?\n\nPreciso saber quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`
-    audio = `Entendi! Vamos registrar o atendimento para ${alvoTexto}. Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.`
+    texto = textoSolicitarNomeRepresentante()
+    audio = audioSolicitarNomeRepresentante()
     return await responderTelaComAudio(
       from,
       u,
@@ -7043,14 +7591,14 @@ async function redirecionarCorrecaoPreAtendimento(from, u, campo) {
       } catch (e) { logErro("tts", "Falha áudio redirecionarCorrecao whatsapp", e) }
     }
     return responderComTimer(from, {
-      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nSeu WhatsApp está como *${numeroAtual || from}*.\n\nEsse é o número correto? Se quiser usar outro, é só digitar ou falar com DDD agora. 🎙️`,
+      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nSeu WhatsApp está como *${numeroAtual || from}*.\n\nEsse é o número correto? Se quiser usar outro, é só digitar ou falar com DDD agora. 🎙️`,
       opcoes: [{ id: "revalida_whatsapp_ok", title: "✅ Confirmar" }]
     })
   }
   if (campoNorm === "cidade") {
     return await irParaEditar(
       STAGES.EDITAR_CIDADE,
-      `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nEntendido! Qual é a cidade correta?\n\nDigite a cidade com o estado (ex: *Recife, PE*) ou informe o CEP.`,
+      `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\nEntendido! Qual é a cidade correta?\n\nDigite a cidade com o estado (ex: *Recife, PE*) ou informe o CEP.`,
       `Entendido! Me diga a cidade correta com o estado, ou informe o CEP.`
     )
   }
@@ -7332,7 +7880,7 @@ async function flowAcolhimentoCidade(u, ctx = {}) {
     ? `Em qual *cidade* ${primeiroNomeAtendido} mora?\n\n_Pode digitar o nome da cidade, informar o CEP ou enviar um áudio._`
     : `Em qual *cidade* você mora${primeiroNome ? `, *${primeiroNome}*` : ""}?\n\n_Pode digitar o nome da cidade, informar o CEP ou enviar um áudio._`
   return {
-    texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*
+    texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*
 
 ${textoCidadeTela}`,
     opcoes: null,
@@ -7378,8 +7926,8 @@ async function flowAcolhimentoConfirmaWhatsapp(u, ctx = {}) {
   salvarEtapa(u._numero || from, "acolhimento_confirma_whatsapp")
   const textoNome = primeiroNome ? `*${primeiroNome}*` : `você`
   const textoTela = ehParaSi
-    ? `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nVamos registrar seu número de contato, ${textoNome}.\n\nSeu WhatsApp é o *${numeroFormatado}*?\n\nConfirme ou informe outro número com DDD agora. 🎙️`
-    : `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nPrecisamos confirmar seu número de contato, ${textoNome}.\n\nO número *${numeroFormatado}* é o seu WhatsApp?\n\nSe não for, é só digitar ou falar o número correto com DDD agora. 🎙️`
+    ? `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nVamos registrar seu número de contato, ${textoNome}.\n\nSeu WhatsApp é o *${numeroFormatado}*?\n\nConfirme ou informe outro número com DDD agora. 🎙️`
+    : `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nPrecisamos confirmar seu número de contato, ${textoNome}.\n\nO número *${numeroFormatado}* é o seu WhatsApp?\n\nSe não for, é só digitar ou falar o número correto com DDD agora. 🎙️`
   return {
     texto: textoTela,
     opcoes: [
@@ -7517,7 +8065,7 @@ function flowConfirmarEntrada(u, ctx) {
     const barra = u._entradaPendenteTipo === "nome"
       ? "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n"
       : u._entradaPendenteTipo === "cidade"
-        ? "●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n"
+        ? "●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n"
         : ""
     return {
       texto: `${barra}Você informou: *${label}*\nEstá correto? Se não estiver, é só me dizer a informação correta agora. Pode falar ou digitar. 🎙️`,
@@ -7561,7 +8109,7 @@ function flowColetaTelOutro(u, ctx) {
 function flowColetaTelWpp(u, ctx) {
   setStage(u, STAGES.COLETA_TEL_WPP)
   const primeiroNome = primeiroNomeCliente(u) || "você"
-          return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nQual é o WhatsApp com DDD de *${primeiroNome}* para contato da equipe?`, opcoes: null }
+          return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nQual é o WhatsApp com DDD de *${primeiroNome}* para contato da equipe?`, opcoes: null }
 }
 
 async function flowColetaTelWppContato(u, ctx) {
@@ -7577,7 +8125,7 @@ async function flowColetaTelWppContato(u, ctx) {
     } catch (e) { logErro("tts", "Falha áudio coleta wpp contato", e) }
   }
   return {
-    texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nO atendimento de *${primeiroNomeAtendido}* será pelo número *${numeroFormatado}*?\n\nSe for outro número, é só digitar ou falar o WhatsApp com DDD agora. 🎙️`,
+    texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nO atendimento de *${primeiroNomeAtendido}* será pelo número *${numeroFormatado}*?\n\nSe for outro número, é só digitar ou falar o WhatsApp com DDD agora. 🎙️`,
     opcoes: [
       { id: "wpp_contato_esse", title: "✅ Confirmar" }
     ]
@@ -8319,6 +8867,32 @@ async function tentarRestaurarClienteHubSpotParaMenu(from, u) {
   return true
 }
 
+async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, nomeOriginal, contexto = {} }) {
+  try {
+    const resultado = await processarAnaliseDocumentalPosUpload({
+      pastaDriveId: u?.pastaDriveId,
+      arquivo,
+      buffer,
+      mimeType,
+      nomeOriginal,
+      contexto: {
+        numeroCaso: u?.numeroCaso || null,
+        area: u?.area || null,
+        tipo: u?.tipo || null,
+        subTipo: u?.subTipo || null,
+        ...contexto
+      }
+    })
+    if (resultado?.reason && !resultado.skipped) {
+      logErro("document_analysis", resultado.reason)
+    }
+    return resultado
+  } catch (e) {
+    logErro("document_analysis", `falha nao bloqueante: ${e.message}`, e)
+    return { ok: false, skipped: false, reason: e.message }
+  }
+}
+
 async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (!(ehAudio || ehDoc)) return null
   if (![STAGES.CLIENTE, STAGES.AGUARDANDO_URGENTE, STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) return null
@@ -8446,6 +9020,17 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         ]
       }))
     }
+    await processarAnaliseDocumentalSegura({
+      u,
+      arquivo,
+      buffer: midia.buffer,
+      mimeType: midia.mimeType,
+      nomeOriginal: nomeArq,
+      contexto: {
+        fluxoDocumento: "avulso_pendente",
+        nomeSalvo: nomeFinal
+      }
+    })
     u._docClientePendenteArquivo = arquivo.webViewLink || null
     u._docClientePendenteId = arquivo.id || null
     u._docClientePendenteNome = nomeFinal
@@ -8502,6 +9087,20 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }))
   }
 
+  await processarAnaliseDocumentalSegura({
+    u,
+    arquivo,
+    buffer: midia.buffer,
+    mimeType: midia.mimeType,
+    nomeOriginal: nomeArq,
+    contexto: {
+      fluxoDocumento: "guiado",
+      documentoId: docAtual?.id || null,
+      documentoLabel: lblD,
+      folha,
+      nomeSalvo: nArqFinal
+    }
+  })
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
@@ -8632,7 +9231,7 @@ async function proximaConfirmacaoProgressiva(from, u, opcoesAudio = {}) {
         const _b1 = _dig.slice(5, 9)
         const _b2 = _dig.slice(9, 13)
         const numExib = `(${_ddd}) ${_nono} ${_b1}-${_b2}`
-        const pergunta = `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nSeu WhatsApp está como *${numExib}*. Está correto?\n\nSe não estiver, é só digitar ou falar o número correto com DDD agora. 🎙️`
+        const pergunta = `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nSeu WhatsApp está como *${numExib}*. Está correto?\n\nSe não estiver, é só digitar ou falar o número correto com DDD agora. 🎙️`
         const opcoes = [
           { id: "revalida_whatsapp_ok", title: "✅ Confirmar" }
         ]
@@ -8668,7 +9267,7 @@ async function proximaConfirmacaoProgressiva(from, u, opcoesAudio = {}) {
         iniciarTimer(from)
         const primeiroNome = primeiroNomeCliente(u) || "você"
         return responderComTimer(from, {
-          texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nPerfeito, *${primeiroNome}*! 😊\n\nEste número *${numExib}* é o seu WhatsApp?\n\nSe não for, é só digitar ou falar o número correto com DDD agora. 🎙️`,
+          texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nPerfeito, *${primeiroNome}*! 😊\n\nEste número *${numExib}* é o seu WhatsApp?\n\nSe não for, é só digitar ou falar o número correto com DDD agora. 🎙️`,
           opcoes: [
             { id: "nc_meu", title: "✅ Confirmar" }
           ]
@@ -8681,7 +9280,7 @@ async function proximaConfirmacaoProgressiva(from, u, opcoesAudio = {}) {
       confirmar: async () => {
         const cidadeExib = u.uf ? `${u.cidade}, ${u.uf}` : u.cidade
         const regiaoExib = u.regiao ? ` (${u.regiao})` : ``
-        const pergunta = `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ A cidade que você informou é *${cidadeExib}*${regiaoExib}. Está correto?\n\nSe não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`
+        const pergunta = `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ A cidade que você informou é *${cidadeExib}*${regiaoExib}. Está correto?\n\nSe não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`
         const opcoes = [
           { id: "revalida_cidade_ok", title: "✅ Confirmar" }
         ]
@@ -8698,7 +9297,7 @@ async function proximaConfirmacaoProgressiva(from, u, opcoesAudio = {}) {
         return responderComTimer(from, { texto: pergunta, opcoes })
       },
       coletar: async () => {
-        const pergunta = `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nÓtimo! Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`
+        const pergunta = `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\nÓtimo! Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`
         if (!u.modoTexto) {
           try {
             const ogg = await gerarAudioAtendente(u.atendente, textoComIntroducaoAudio(`Em qual cidade você mora?`))
@@ -8865,6 +9464,7 @@ async function processarAudioNoFluxo(from, nomeWA, u, msgObj, tipo, ehAudio) {
   if (u.numeroCaso) return null
   if ([
     STAGES.CLIENTE,
+    STAGES.ACOLHIMENTO,
     STAGES.AGUARDANDO_URGENTE,
     STAGES.COLETA_DESC_AUDIO,
     STAGES.DESC_CONFIRMA,
@@ -8971,7 +9571,7 @@ async function processarUrgenciaOuCorrecao(from, u, text, msgObj, ehDoc, ehAudio
     const barra = u._correcaoPendenteCampo === "nome"
       ? "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n"
       : u._correcaoPendenteCampo === "cidade"
-        ? "●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n"
+        ? "●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n"
         : ""
     return responderComTimer(from, {
       texto: `${barra}Você informou: *${valorExibido}*.\n\nEstá correto?`,
@@ -9080,7 +9680,14 @@ async function processarUrgenciaOuCorrecao(from, u, text, msgObj, ehDoc, ehAudio
         }
         return responderComTimer(from, { texto: textoCasoReg, opcoes: opcoesCasoReg })
       } catch (e) {
-        logErro("finalizarCadastro", "Falha ao finalizar cadastro (conf_ok): " + e.message)
+        const detalhesErroFinalizacao = [
+          `Falha ao finalizar cadastro (conf_ok): ${e.message}`,
+          e.code ? `code=${e.code}` : null,
+          e.operation ? `operation=${e.operation}` : null,
+          Array.isArray(e.violations) && e.violations.length ? `violations=${e.violations.join(",")}` : null
+        ].filter(Boolean).join(" | ")
+        logErro("finalizarCadastro", detalhesErroFinalizacao, e)
+        setStage(u, STAGES.CONFIRMACAO)
         return responderComTimer(from, {
           texto: `⚠️ Ocorreu um problema ao registrar seu caso. Seus dados estão salvos.\n\nPor favor, tente confirmar novamente.`,
           opcoes: [
@@ -9362,8 +9969,8 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       const ehContato = u._correcaoPendenteSubcampo === "nomeContato"
       const nomeAtual = ehContato ? u.nomeContato : u.nome
       const textoTela = ehContato
-        ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nSeu nome atual é *${nomeAtual || "não informado"}*.\n\nQual é o nome correto?\n\n_Digite ou envie um áudio com seu nome completo._`
-        : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nO nome atual da pessoa atendida é *${nomeAtual || "não informado"}*.\n\nQual é o nome correto?\n\n_Digite ou envie um áudio com o nome completo._`
+        ? `●●○○○○ 👤 Etapa 2 de 6 · IDENTIFICAÇÃO\n\nSeu nome atual é ${nomeAtual || "não informado"}.\n\nQual é o nome correto?\n\n🎙️ Você pode digitar ou enviar um áudio.`
+        : `●●○○○○ 👤 Etapa 3 de 6 · IDENTIFICAÇÃO\n\nO nome atual da pessoa atendida é ${nomeAtual || "não informado"}.\n\nQual é o nome correto?\n\n🎙️ Você pode digitar ou enviar um áudio.`
       const textoAudio = ehContato
         ? `Seu nome está como ${nomeAtual || "não informado"}. Qual é o nome correto? Pode falar ou digitar.`
         : `O nome da pessoa atendida está como ${nomeAtual || "não informado"}. Qual é o nome correto? Pode falar ou digitar.`
@@ -9485,7 +10092,7 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       }
       iniciarTimer(from)
       return responderComTimer(from, {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🔍 Encontrei *${locCidadeEdit.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer, diga ou digite o nome com o estado._`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🔍 Encontrei *${locCidadeEdit.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer, diga ou digite o nome com o estado._`,
         opcoes: opcoesListaEdit
       })
     }
@@ -9629,8 +10236,8 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       if (ehAudio) return await responderFalhaAudioCorrecao(from, u)
       const nomeAtual = u._correcaoPendenteValor || ""
       const textoReapres = ehNomeContato
-        ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeAtual}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-        : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeAtual}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
+        ? textoConfirmarNomeRepresentante(nomeAtual)
+        : textoConfirmarNomePessoaAtendida(nomeAtual)
       return responderComTimer(from, {
         texto: textoReapres,
         opcoes: [{ id: "nome_correcao_confirmar", title: "✅ Sim, está certo" }]
@@ -9647,11 +10254,11 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
     u._correcaoPendenteValor = nomeLimpo
     iniciarTimer(from)
     const textoReconf = ehNomeContato
-      ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-      : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
-    const audioReconf = textoAudioConfirmacaoNome(nomeLimpo, {
-      pessoaAtendida: !ehNomeContato
-    })
+      ? textoConfirmarNomeRepresentante(nomeLimpo)
+      : textoConfirmarNomePessoaAtendida(nomeLimpo)
+    const audioReconf = ehNomeContato
+      ? audioConfirmarNomeRepresentante(nomeLimpo)
+      : audioConfirmarNomePessoaAtendida(nomeLimpo)
     if (!u.modoTexto) {
       try {
         const ogg = await gerarAudioAtendente(u.atendente, audioReconf)
@@ -9688,7 +10295,7 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       const regiaoAtual = u._correcaoPendenteExtra?.regiao || ""
       const textoExib = `${cidadeAtual}${ufAtual ? `, ${ufAtual}` : ""}${regiaoAtual ? ` (${regiaoAtual})` : ""}`
       return responderComTimer(from, {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ Localizei: *${textoExib}*.\n\nEstá correto? Se não estiver, é só me dizer a cidade certa agora. Pode falar ou digitar. 🎙️`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${textoExib}*.\n\nEstá correto? Se não estiver, é só me dizer a cidade certa agora. Pode falar ou digitar. 🎙️`,
         opcoes: [{ id: "cidade_correcao_confirmar", title: "✅ Sim, está certo" }]
       })
     }
@@ -9727,7 +10334,7 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
         } catch (e) { logErro("tts", "Falha áudio cidades múltiplas confirmar correção cidade", e) }
       }
       return responderComTimer(from, {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🔍 Encontrei *${locConf.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer, diga ou digite o nome com o estado._`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🔍 Encontrei *${locConf.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer, diga ou digite o nome com o estado._`,
         opcoes: opcoesLista
       })
     }
@@ -10085,10 +10692,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
             from,
             u,
             {
-              texto: `*👥 Atendimento para outra pessoa*\n\n✅ Combinado! Só me diga uma coisa antes: *qual é o seu nome*?\n\nPreciso saber quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
+              texto: textoSolicitarNomeRepresentante(),
               opcoes: null
             },
-            "Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.",
+            audioSolicitarNomeRepresentante(),
             "pre atendimento pede nome contato"
           )
         }
@@ -10097,10 +10704,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
           from,
           u,
           {
-            texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n👥 *Atendimento para outra pessoa*\n\nQual é o *nome completo* da pessoa atendida?`,
+            texto: textoSolicitarNomePessoaAtendida((u.nomeContato || "").split(" ")[0] || u.nomeContato),
             opcoes: null
           },
-          "Qual é o nome completo da pessoa atendida?",
+          audioSolicitarNomePessoaAtendida((u.nomeContato || "").split(" ")[0] || u.nomeContato),
           "pre atendimento nome terceiro"
         )
       }
@@ -10139,10 +10746,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         from,
         u,
         {
-          texto: `👤 *Atendimento para outra pessoa*\n\nAntes de continuar, preciso saber o *seu nome*, de quem está aqui no WhatsApp cuidando desse caso.\n\n*Como você se chama?*`,
+          texto: textoSolicitarNomeRepresentante(),
           opcoes: null
         },
-        "Entendido! Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.",
+        audioSolicitarNomeRepresentante(),
         "pre atendimento terceiro pede nome contato"
       )
     }
@@ -10202,10 +10809,10 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         from,
         u,
         {
-          texto: `*👥 Atendimento para outra pessoa*\n\n✅ Combinado! Só me diga uma coisa antes: *qual é o seu nome*?\n\nPreciso saber quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
+          texto: textoSolicitarNomeRepresentante(),
           opcoes: null
         },
-        "Entendido! Antes de continuar, preciso saber o seu nome, de quem está aqui no WhatsApp. Pode falar ou digitar.",
+        audioSolicitarNomeRepresentante(),
         "pre atendimento terceiro pede nome contato"
       )
     }
@@ -10726,13 +11333,13 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
         }
         iniciarTimer(from)
         return responderComTimer(from, {
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🔍 Encontrei *${loc.opcoes.length} cidades* com esse nome. Qual é a correta?\n\n_Se não aparecer, diga ou digite o nome com o estado._`,
+          texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🔍 Encontrei *${loc.opcoes.length} cidades* com esse nome. Qual é a correta?\n\n_Se não aparecer, diga ou digite o nome com o estado._`,
           opcoes: opcoesLista
         })
       }
       iniciarTimer(from)
       return responderComTimer(from, {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nNão consegui identificar essa cidade. Informe cidade e estado (ex: *Recife, PE*) ou o CEP. Pode falar ou digitar. 🎙️`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\nNão consegui identificar essa cidade. Informe cidade e estado (ex: *Recife, PE*) ou o CEP. Pode falar ou digitar. 🎙️`,
         opcoes: [{ id: "revalida_cidade_ok", title: "✅ Confirmar atual" }]
       })
     }
@@ -10828,7 +11435,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       }
       iniciarTimer(from)
       return responderComTimer(from, {
-        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nNão consegui identificar o número. Informe com DDD. Pode falar ou digitar. 🎙️`,
+        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nNão consegui identificar o número. Informe com DDD. Pode falar ou digitar. 🎙️`,
         opcoes: [{ id: "revalida_whatsapp_ok", title: "✅ Confirmar atual" }]
       })
     }
@@ -10907,7 +11514,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         await new Promise(r => setTimeout(r, 4000))
       } catch (e) { logErro("tts", "Falha áudio confirmar nome contato (áudio)", e) }
       return {
-        texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n👥 *Atendimento para outra pessoa*\n\n✅ Entendi! Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer agora. Pode falar ou digitar. 🎙️`,
+        texto: textoConfirmarNomeRepresentante(nomeLimpo),
         opcoes: [
           { id: "confirma_nome_contato_sim", title: "✅ Sim, está certo" }
         ]
@@ -10977,20 +11584,23 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._nomeTemp = nomeLimpo
       setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
       iniciarTimer(from)
+      const coletandoNomeAtendido = u.atendimentoParaTerceiro && !!u.nomeContato
 
       try {
         const ogg = await gerarAudioAtendente(
           u.atendente,
-          textoAudioConfirmacaoNome(nomeLimpo, {
-            pessoaAtendida: u.atendimentoParaTerceiro && !!u.nomeContato
-          })
+          coletandoNomeAtendido
+            ? audioConfirmarNomePessoaAtendida(nomeLimpo)
+            : textoAudioConfirmacaoNome(nomeLimpo)
         )
         await enviarAudio(from, urlAudioAtendente(ogg))
         await new Promise(r => setTimeout(r, 4000))
       } catch (e) { logErro("tts", "Falha áudio confirmar nome", e) }
 
       return {
-      texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer agora. Pode falar ou digitar. 🎙️`,
+      texto: coletandoNomeAtendido
+        ? textoConfirmarNomePessoaAtendida(nomeLimpo)
+        : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer agora. Pode falar ou digitar. 🎙️`,
         opcoes: [
           { id: "nome_confirmar", title: "✅ Sim, está certo" }
         ]
@@ -11023,7 +11633,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           await new Promise(r => setTimeout(r, 3500))
         } catch (e) { logErro("tts", "Falha áudio transcrição cidade null", e) }
         iniciarTimer(from)
-        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🎙️ Não consegui ouvir seu áudio. Tente novamente ou *digite o nome da cidade ou CEP*. `, opcoes: null }
+        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🎙️ Não consegui ouvir seu áudio. Tente novamente ou *digite o nome da cidade ou CEP*. `, opcoes: null }
       }
       const cidadeLimpa = await extrairCidadeAudio(transcricao)
       logDebug(`[CIDADE_AUDIO] Após extrairCidadeAudio: "${cidadeLimpa}"`)
@@ -11084,7 +11694,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           }
           iniciarTimer(from)
           return responderComTimer(from, {
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🔍 Encontrei *${localizacao.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer, diga ou digite o nome com o estado._`,
+          texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🔍 Encontrei *${localizacao.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer, diga ou digite o nome com o estado._`,
             opcoes: opcoesLista
           })
         }
@@ -11102,7 +11712,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           await enviarAudio(from, urlAudioAtendente(ogg))
           await new Promise(r => setTimeout(r, 4000))
         } catch (e) { logErro("tts", "Falha áudio erro cidade", e) }
-        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🎙️ Não consegui entender sua cidade. Digite o nome, informe o CEP ou envie outro áudio.`, opcoes: null }
+        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🎙️ Não consegui entender sua cidade. Digite o nome, informe o CEP ou envie outro áudio.`, opcoes: null }
       }
 
       u.cidade = cidadeIdentificada
@@ -11116,7 +11726,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       iniciarTimer(from)
       // formato padrão "Cidade, UF" com vírgula
       return {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ Localizei: *${cidadeIdentificada}${u.uf ? `, ${u.uf}` : ""}* (${u.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${cidadeIdentificada}${u.uf ? `, ${u.uf}` : ""}* (${u.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
         opcoes: [
           { id: "cidade_confirmar", title: "✅ Confirmar cidade" }
         ]
@@ -11151,7 +11761,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         } catch (e) { logErro("tts", "Falha áudio número inválido revalida whatsapp", e) }
         iniciarTimer(from)
         return responderComTimer(from, {
-          texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nNão consegui identificar o número. Por favor, informe com DDD. Pode falar ou digitar. 🎙️`,
+          texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nNão consegui identificar o número. Por favor, informe com DDD. Pode falar ou digitar. 🎙️`,
           opcoes: [{ id: "revalida_whatsapp_ok", title: "✅ Confirmar atual" }]
         })
       }
@@ -11253,7 +11863,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           await new Promise(r => setTimeout(r, 3500))
         } catch (e) { logErro("tts", "Falha áudio transcrição cidade revalida null", e) }
         iniciarTimer(from)
-        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🎙️ Não consegui ouvir seu áudio. Tente novamente ou *digite o nome da cidade ou CEP*.`, opcoes: null }
+        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🎙️ Não consegui ouvir seu áudio. Tente novamente ou *digite o nome da cidade ou CEP*.`, opcoes: null }
       }
       const cidadeLimpa = await extrairCidadeAudio(transcricao)
       const digitosCidade = cidadeLimpa.replace(/\D/g, "")
@@ -11289,7 +11899,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           }
           iniciarTimer(from)
           return responderComTimer(from, {
-            texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🔍 Encontrei *${localizacao.opcoes.length} cidades* com esse nome. Qual é a correta?\n\n_Se não aparecer, diga ou digite o nome com o estado._`,
+            texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🔍 Encontrei *${localizacao.opcoes.length} cidades* com esse nome. Qual é a correta?\n\n_Se não aparecer, diga ou digite o nome com o estado._`,
             opcoes: opcoesLista
           })
         }
@@ -11300,7 +11910,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           await enviarAudio(from, urlAudioAtendente(ogg))
           await new Promise(r => setTimeout(r, 4000))
         } catch (e) { logErro("tts", "Falha áudio erro cidade revalida", e) }
-        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🎙️ Não consegui entender sua cidade. Digite o nome, informe o CEP ou envie outro áudio.`, opcoes: null }
+        return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🎙️ Não consegui entender sua cidade. Digite o nome, informe o CEP ou envie outro áudio.`, opcoes: null }
       }
       u.cidade = cidadeIdentificada
       u.uf = localizacao.uf
@@ -11372,7 +11982,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       } catch (e) { logErro("tts", "Falha áudio confirmar telefone", e) }
 
       return {
-        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\n📋 O número informado é *${numeroFormatado}*.\n\nEstá correto?`,
+        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\n📋 O número informado é *${numeroFormatado}*.\n\nEstá correto?`,
         opcoes: [
           { id: "tel_confirmar", title: "✅ Sim, está correto" },
           { id: "tel_corrigir", title: "✏️ Corrigir número" }
@@ -11512,7 +12122,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
 
     // Apresentação completa — somente no atendimento inicial (imagem + texto juntos via caption)
     try {
-      await enviarImagemWhatsApp(from, "https://i.imgur.com/ztcFIuG.png", `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)
+      const textoBoasVindasCompleto = `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`
+      const imagemUrl = IMAGEM_BOAS_VINDAS_URL || "https://i.imgur.com/ztcFIuG.png"
+      await enviarImagemWhatsApp(from, imagemUrl, textoBoasVindasCompleto)
     } catch (e) {
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
       await enviar(from, `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)
@@ -11889,7 +12501,14 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         }
         return { texto: textoCasoRegAudio, opcoes: opcoesCasoRegAudio }
       } catch (e) {
-        logErro("finalizarCadastro", "Falha ao finalizar cadastro (audio_dados_confirmar): " + e.message)
+        const detalhesErroFinalizacaoAudio = [
+          `Falha ao finalizar cadastro (audio_dados_confirmar): ${e.message}`,
+          e.code ? `code=${e.code}` : null,
+          e.operation ? `operation=${e.operation}` : null,
+          Array.isArray(e.violations) && e.violations.length ? `violations=${e.violations.join(",")}` : null
+        ].filter(Boolean).join(" | ")
+        logErro("finalizarCadastro", detalhesErroFinalizacaoAudio, e)
+        setStage(u, STAGES.AUDIO_CONFIRMAR_DADOS)
         return responderComTimer(from, {
           texto: `⚠️ Ocorreu um problema ao registrar seu caso. Seus dados estão salvos.\n\nPor favor, tente confirmar novamente.`,
           opcoes: [
@@ -12244,7 +12863,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         esposa: "sua esposa", esposo: "seu esposo", conjuge: "seu cônjuge",
         irmao: "seu irmão", irma: "sua irmã", avo: "seu avô ou avó", terceiro: "outra pessoa"
       }[_relacaoAudioParaOutro] || descricaoRelacaoTerceiroPreAtendimento(_relacaoAudioParaOutro) || "outra pessoa"
-      const audioNomeContato = `Combinado! Vou registrar o caso para ${_labelAudioParaOutro}. Antes de continuar, preciso saber o seu nome. Como você se chama?`
+      const audioNomeContato = audioSolicitarNomeRepresentante()
       if (!u.modoTexto) {
         try {
           const ogg = await gerarAudioAtendente(u.atendente, audioNomeContato)
@@ -12253,7 +12872,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         } catch (e) { logErro("tts", "Falha áudio nome_contato terceiro", e) }
       }
       return {
-        texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n*👥 Atendimento para outra pessoa*\n\nAntes de continuar, preciso saber *o seu nome*, de quem está aqui no WhatsApp cuidando desse caso. 😊\n\n_Digite ou envie um áudio com seu nome._ 🎙️`,
+        texto: textoSolicitarNomeRepresentante(),
         opcoes: null
       }
     }
@@ -12307,7 +12926,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u._nomeContatoTemp = nomeLimpo
       setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME_CONTATO)
       iniciarTimer(from)
-      const audioConfirmar = textoAudioConfirmacaoNome(nomeLimpo)
+      const audioConfirmar = audioConfirmarNomeRepresentante(nomeLimpo)
       if (!u.modoTexto) {
         try {
           const ogg = await gerarAudioAtendente(u.atendente, audioConfirmar)
@@ -12316,7 +12935,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         } catch (e) { logErro("tts", "Falha áudio confirmar nome contato", e) }
       }
       return {
-        texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n👥 *Atendimento para outra pessoa*\n\n✅ Entendi! Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome agora. Pode falar ou digitar. 🎙️`,
+        texto: textoConfirmarNomeRepresentante(nomeLimpo),
         opcoes: [
           { id: "confirma_nome_contato_sim", title: "✅ Sim, está certo" }
         ]
@@ -12383,7 +13002,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }[relacao] || "dela"
       setStage(u, STAGES.ACOLHIMENTO_NOME)
       iniciarTimer(from)
-      const audioAtendido = `Ótimo, ${primeiroNomeContato}! Agora preciso do nome completo de ${labelRelacao}, a pessoa para quem você está abrindo o caso. Pode falar ou digitar.`
+      const audioAtendido = audioSolicitarNomePessoaAtendida(primeiroNomeContato)
       if (!u.modoTexto) {
         try {
           const ogg = await gerarAudioAtendente(u.atendente, audioAtendido)
@@ -12392,7 +13011,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         } catch (e) { logErro("tts", "Falha áudio pede nome atendido após confirma contato", e) }
       }
       return {
-        texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Ótimo, *${primeiroNomeContato}*!\n\nAgora preciso do *nome completo* de ${labelRelacao}, a pessoa para quem você está abrindo o caso.\n\n_Digite ou fale o nome ${pronomeRelacao}._`,
+        texto: textoSolicitarNomePessoaAtendida(primeiroNomeContato),
         opcoes: null
       }
     }
@@ -12406,7 +13025,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         ehNomeAparente(nomeCorrecaoContato, nomeCorrecaoContato) === true
       ) {
         u._nomeContatoTemp = nomeCorrecaoContato
-        const audioReconfirmar = textoAudioConfirmacaoNome(nomeCorrecaoContato)
+        const audioReconfirmar = audioConfirmarNomeRepresentante(nomeCorrecaoContato)
         if (!u.modoTexto) {
           try {
             const ogg = await gerarAudioAtendente(u.atendente, audioReconfirmar)
@@ -12415,7 +13034,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           } catch (e) { logErro("tts", "Falha áudio reconfirmar nome contato correcao explicita", e) }
         }
         return {
-          texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n👥 *Atendimento para outra pessoa*\n\n✅ Entendi! Seu nome é *${nomeCorrecaoContato}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome agora. Pode falar ou digitar. 🎙️`,
+          texto: textoConfirmarNomeRepresentante(nomeCorrecaoContato),
           opcoes: [{ id: "confirma_nome_contato_sim", title: "✅ Sim, está certo" }]
         }
       }
@@ -12433,7 +13052,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const validacaoNomeConfContato = ehNomeAparente(nomeLimpo, text)
       if (validacaoNomeConfContato === true) {
         u._nomeContatoTemp = nomeLimpo
-        const audioReconfirmar = textoAudioConfirmacaoNome(nomeLimpo)
+        const audioReconfirmar = audioConfirmarNomeRepresentante(nomeLimpo)
         if (!u.modoTexto) {
           try {
             const ogg = await gerarAudioAtendente(u.atendente, audioReconfirmar)
@@ -12442,7 +13061,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           } catch (e) { logErro("tts", "Falha áudio reconfirmar nome contato", e) }
         }
         return {
-          texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n👥 *Atendimento para outra pessoa*\n\n✅ Entendi! Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome agora. Pode falar ou digitar. 🎙️`,
+          texto: textoConfirmarNomeRepresentante(nomeLimpo),
           opcoes: [{ id: "confirma_nome_contato_sim", title: "✅ Sim, está certo" }]
         }
       }
@@ -12489,11 +13108,11 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
     iniciarTimer(from)
 
-    const textoConfirmarAudio = textoAudioConfirmacaoNome(nomeLimpo, {
-      pessoaAtendida: coletandoNomeAtendido
-    })
+    const textoConfirmarAudio = coletandoNomeAtendido
+      ? audioConfirmarNomePessoaAtendida(nomeLimpo)
+      : textoAudioConfirmacaoNome(nomeLimpo)
     const textoConfirmarTela = coletandoNomeAtendido
-      ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
+      ? textoConfirmarNomePessoaAtendida(nomeLimpo)
       : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
 
     if (!u.modoTexto) {
@@ -12527,7 +13146,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           } else {
             const coletandoNomeAtendido = u.atendimentoParaTerceiro && !!u.nomeContato
             const telaFalha = coletandoNomeAtendido
-              ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${u._nomeTemp || "informado"}*.\n\nNão consegui entender o áudio. Pode digitar o nome correto ou tocar em Confirmar se estiver certo. 🎙️`
+              ? `${textoConfirmarNomePessoaAtendida(u._nomeTemp || "informado")}\n\nNão consegui entender o áudio.`
               : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${u._nomeTemp || "informado"}*.\n\nNão consegui entender o áudio. Pode digitar o nome correto ou tocar em Confirmar se estiver certo. 🎙️`
             return responderComTimer(from, { texto: telaFalha, opcoes: [{ id: "nome_confirmar", title: "✅ Sim, está certo" }] })
           }
@@ -12570,11 +13189,11 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       ) {
         u._nomeTemp = nomeCorrecaoExplicita
         u._nomeTitularPendente = null
-        const audioReconfirmar = textoAudioConfirmacaoNome(nomeCorrecaoExplicita, {
-          pessoaAtendida: coletandoNomeAtendido
-        })
+        const audioReconfirmar = coletandoNomeAtendido
+          ? audioConfirmarNomePessoaAtendida(nomeCorrecaoExplicita)
+          : textoAudioConfirmacaoNome(nomeCorrecaoExplicita)
         const telaReconfirmar = coletandoNomeAtendido
-          ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeCorrecaoExplicita}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
+          ? textoConfirmarNomePessoaAtendida(nomeCorrecaoExplicita)
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeCorrecaoExplicita}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
         if (!u.modoTexto) {
           try {
@@ -12605,11 +13224,11 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       if (validacaoNomeConf === true) {
         u._nomeTemp = nomeLimpo
         u._nomeTitularPendente = null
-        const audioReconfirmar = textoAudioConfirmacaoNome(nomeLimpo, {
-          pessoaAtendida: coletandoNomeAtendido
-        })
+        const audioReconfirmar = coletandoNomeAtendido
+          ? audioConfirmarNomePessoaAtendida(nomeLimpo)
+          : textoAudioConfirmacaoNome(nomeLimpo)
         const telaReconfirmar = coletandoNomeAtendido
-          ? `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ O nome da pessoa atendida é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer o nome certo agora. Pode falar ou digitar. 🎙️`
+          ? textoConfirmarNomePessoaAtendida(nomeLimpo)
           : `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n✅ Seu nome é *${nomeLimpo}*.\n\nEstá correto? Se não estiver, é só me dizer seu nome correto agora. Pode falar ou digitar. 🎙️`
         if (!u.modoTexto) {
           try {
@@ -12646,12 +13265,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         setStage(u, STAGES.ACOLHIMENTO_NOME)
         iniciarTimer(from)
         const primeiroNomeContato = (u.nomeContato || "").split(" ")[0] || "você"
-        const audioAtendido = `Entendido, ${primeiroNomeContato}! Agora preciso do nome completo da pessoa que será atendida. Pode falar em áudio ou digitar.`
+        const audioAtendido = audioSolicitarNomePessoaAtendida(primeiroNomeContato)
         return await responderTelaComAudio(
           from,
           u,
           {
-            texto: `●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\n👥 *Atendimento para outra pessoa*\n\nEntendido, *${primeiroNomeContato}*! ✅\n\nAgora preciso do *nome completo* da pessoa que será atendida, a pessoa para quem você está abrindo o caso.\n\n_Digite ou fale o nome dela._`,
+            texto: textoSolicitarNomePessoaAtendida(primeiroNomeContato),
             opcoes: null
           },
           audioAtendido,
@@ -12823,7 +13442,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
 
       return {
-        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\n📱 Entendido! Se quiser usar outro número, é só digitar ou falar o número com DDD agora. Pode falar ou digitar. 🎙️\n\nSe preferir continuar com este número, toque em *Continuar assim*.`,
+        texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\n📱 Entendido! Se quiser usar outro número, é só digitar ou falar o número com DDD agora. Pode falar ou digitar. 🎙️\n\nSe preferir continuar com este número, toque em *Continuar assim*.`,
         opcoes: [
           { id: "wpp_continuar_assim", title: "✅ Continuar assim" }
         ]
@@ -12844,7 +13463,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
     iniciarTimer(from)
     return {
-      texto: "●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nPor favor, confirme se este é o seu WhatsApp. Se não for, é só digitar ou falar o número correto com DDD agora. 🎙️",
+      texto: "●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nPor favor, confirme se este é o seu WhatsApp. Se não for, é só digitar ou falar o número correto com DDD agora. 🎙️",
       opcoes: [
         { id: "whatsapp_sim", title: "✅ Confirmar" }
       ]
@@ -12862,7 +13481,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           await new Promise(r => setTimeout(r, 3000))
         } catch (e) { logErro("tts", "Falha áudio orientar número legado", e) }
       }
-      return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nDigite ou fale o número com DDD agora. Pode falar ou digitar. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
+      return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nDigite ou fale o número com DDD agora. Pode falar ou digitar. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
     }
     // Texto livre = número informado diretamente
     if (text && text !== "wpp_continuar_assim") {
@@ -12873,7 +13492,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
       // Número inválido — orienta
       iniciarTimer(from)
-      return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nNão consegui identificar o número. Por favor, informe com DDD. Pode falar ou digitar. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
+      return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nNão consegui identificar o número. Por favor, informe com DDD. Pode falar ou digitar. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
     }
     if (text === "wpp_continuar_assim") {
       u.whatsappVerificado = true
@@ -12894,7 +13513,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       return await flowAcolhimentoCidade(u, { from })
     }
     iniciarTimer(from)
-    return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nSe quiser usar outro número, é só digitar ou falar com DDD agora. Se preferir continuar com este, toque em *Continuar assim*. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
+    return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nSe quiser usar outro número, é só digitar ou falar com DDD agora. Se preferir continuar com este, toque em *Continuar assim*. 🎙️`, opcoes: [{ id: "wpp_continuar_assim", title: "✅ Continuar assim" }] }
   }
 
   if (clientPostIntakeActionAtual === CLIENT_POST_INTAKE_ACTIONS.COLLECT_CITY && text) {
@@ -12910,7 +13529,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         } catch (e) { logErro("tts", "Falha audio nenhuma cidade", e) }
       }
       return responderComTimer(from, {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🏙️ Tudo bem. Informe novamente a *cidade com o estado* ou o *CEP*.\n\nExemplos:\n• Condado, Pernambuco\n• 55940-000`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🏙️ Tudo bem. Informe novamente a *cidade com o estado* ou o *CEP*.\n\nExemplos:\n• Condado, Pernambuco\n• 55940-000`,
         opcoes: null
       })
     }
@@ -12949,7 +13568,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         if (!u.modoTexto) await enviarAudioConfirmacaoLocalizacao(from, u.atendente, escolhida.cidade, escolhida.uf || "UF não identificada", escolhida.regiao || "não identificada", "cidade")
         // formato "Cidade, UF" com vírgula, não barra
         return responderComTimer(from, {
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ Localizei: *${escolhida.cidade}${escolhida.uf ? `, ${escolhida.uf}` : ""}* (${escolhida.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
+          texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${escolhida.cidade}${escolhida.uf ? `, ${escolhida.uf}` : ""}* (${escolhida.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
           opcoes: [
             { id: "cidade_confirmar", title: "✅ Confirmar cidade" }
           ]
@@ -12996,7 +13615,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
       const _nomeTerceiroCidadeTela = u.atendimentoParaTerceiro && u.nome ? u.nome.split(" ")[0] : null
       return {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nSem problema! ${_nomeTerceiroCidadeTela ? `Me diga a cidade onde *${_nomeTerceiroCidadeTela}* mora` : "Me diga sua cidade"} agora. Pode falar ou digitar. 🎙️`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\nSem problema! ${_nomeTerceiroCidadeTela ? `Me diga a cidade onde *${_nomeTerceiroCidadeTela}* mora` : "Me diga sua cidade"} agora. Pode falar ou digitar. 🎙️`,
         opcoes: null
       }
     }
@@ -13025,7 +13644,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       iniciarTimer(from)
       if (u.modoTexto !== true) await enviarAudioPedidoCidade(from, u.atendente)
       return {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nTudo bem! Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\nTudo bem! Em qual *cidade* você mora?\n\nSe preferir, pode informar o *CEP* também.`,
         opcoes: null
       }
     }
@@ -13051,7 +13670,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         if (!u.modoTexto) await enviarAudioConfirmacaoLocalizacao(from, u.atendente, infoCEP.cidade, infoCEP.uf, infoCEP.regiao, "cep")
         return {
           // formato padronizado com vírgula
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ Localizei: *${infoCEP.cidade}, ${infoCEP.uf}* (${infoCEP.regiao}). Está correto?`,
+          texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${infoCEP.cidade}, ${infoCEP.uf}* (${infoCEP.regiao}). Está correto?`,
           opcoes: [
             { id: "cidade_sim", title: "✅ Sim, correto" },
             { id: "cidade_nao", title: "❌ Não, informar outra" }
@@ -13064,7 +13683,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           from,
           u,
           {
-            texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n📍 Não consegui localizar este CEP.\n\nTente novamente ou informe a cidade diretamente.`,
+            texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n📍 Não consegui localizar este CEP.\n\nTente novamente ou informe a cidade diretamente.`,
             opcoes: [
               { id: "tentar_cep", title: "🔄 Tentar outro CEP" },
               { id: "informar_cidade", title: "🏙️ Informar cidade" }
@@ -13094,7 +13713,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           } catch (e) { logErro("tts", "Falha áudio cidades múltiplas digitadas", e) }
         }
         return responderComTimer(from, {
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n🔍 Encontrei *${localizacao.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer nas opções, diga ou digite o nome com o estado._`,
+          texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🔍 Encontrei *${localizacao.opcoes.length} cidades* com esse nome. Qual é a sua?\n\n_Se a sua cidade não aparecer nas opções, diga ou digite o nome com o estado._`,
           // títulos curtos para caber no botão do WhatsApp
           opcoes: [
             ...localizacao.opcoes.slice(0, 4).map((op, i) => ({
@@ -13113,7 +13732,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         // áudio de confirmação ao digitar cidade (modo voz)
         if (!u.modoTexto) await enviarAudioConfirmacaoLocalizacao(from, u.atendente, localizacao.cidade, localizacao.uf || "UF não identificada", localizacao.regiao || "não identificada", "cidade")
         return {
-          texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n✅ Localizei: *${localizacao.cidade}${localizacao.uf ? `, ${localizacao.uf}` : ""}* (${localizacao.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
+          texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${localizacao.cidade}${localizacao.uf ? `, ${localizacao.uf}` : ""}* (${localizacao.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
           opcoes: [
             { id: "cidade_confirmar", title: "✅ Confirmar cidade" }
           ]
@@ -13130,7 +13749,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           await new Promise(r => setTimeout(r, 3500))
         } catch (e) { logErro("tts", "Falha áudio cidade não encontrada", e) }
       }
-      return responderComTimer(from, { texto: `●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\n📍 Não consegui encontrar essa cidade. Tente novamente ou informe o *CEP*.`, opcoes: null })
+      return responderComTimer(from, { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n📍 Não consegui encontrar essa cidade. Tente novamente ou informe o *CEP*.`, opcoes: null })
     }
   }
 
@@ -13404,17 +14023,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.regiao = null
       u.cidade = null
       u.uf = null
-      setStage(u, STAGES.AUDIO_AGUARDANDO); iniciarTimer(from)
-      await enviarAudioModoVoz(from, u, "Tudo bem. Vamos abrir um atendimento para outra pessoa. Primeiro, me conte a situação dela. Depois eu peço os dados da pessoa que será atendida. Pode falar em áudio ou digitar.", "novo caso terceiro relato")
-      const textoRelatoTerceiro = `➕ *Novo caso · Atendimento para outra pessoa*\n\n📝 Primeiro, me conte a situação dela.\n\nDepois eu peço os dados da pessoa que será atendida.\n\n🎙️ Pode falar em áudio ou digitar.`
-      if (process.env.IMAGEM_RELATO_URL) {
-        const enviada = await enviarImagemWhatsApp(from, process.env.IMAGEM_RELATO_URL, textoRelatoTerceiro, null)
-        if (enviada) return { texto: null, opcoes: null }
-      }
-      return {
-        texto: textoRelatoTerceiro,
-        opcoes: null
-      }
+      return await proximaEtapaNovoCasoClienteAposModo(from, u)
     }
   }
   if (u.stage === "coleta_tel_outro" && text) {
@@ -13452,7 +14061,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       await new Promise(r => setTimeout(r, 3500))
     } catch (e) { logErro("tts", "Falha áudio confirmar telefone digitado", e) }
     return {
-      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nVocê informou: *${labelTel}*\n\nEstá correto? Se não estiver, é só me dizer o número correto agora. Pode falar ou digitar. 🎙️`,
+      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nVocê informou: *${labelTel}*\n\nEstá correto? Se não estiver, é só me dizer o número correto agora. Pode falar ou digitar. 🎙️`,
       opcoes: [
       { id: "entrada_ok", title: "✅ Confirmar" }
       ]
@@ -13493,7 +14102,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     if (u.whatsappVerificado) return avancarAposTelefoneConfirmado(from, u)
     setStage(u, "coleta_verif_tel"); iniciarTimer(from)
     return {
-      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\n📱 Esse número *${from}* é o seu WhatsApp?\n\nPreciso saber para que nossa equipe entre em contato corretamente.`,
+      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\n📱 Esse número *${from}* é o seu WhatsApp?\n\nPreciso saber para que nossa equipe entre em contato corretamente.`,
       opcoes: [
       { id: "tel_meu", title: "✅ Sim, é meu" },
       { id: "tel_outro", title: "👤 Não, é de outra pessoa" }
@@ -13505,7 +14114,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.whatsappVerificado = true
       u.telefoneEhDoCliente = false
       setStage(u, "coleta_tel_wpp_contato"); iniciarTimer(from)
-      return { texto: "●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nQual é o WhatsApp com DDD da pessoa que será atendida?", opcoes: null }
+      return { texto: "●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nQual é o WhatsApp com DDD da pessoa que será atendida?", opcoes: null }
     }
     u.whatsappVerificado = true
     u.telefoneEhDoCliente = true
@@ -13531,7 +14140,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     if (text === "wpp_contato_outro") {
       iniciarTimer(from)
       await enviarAudioModoVoz(from, u, "Tudo bem. Diga agora o WhatsApp com DDD da pessoa atendida, por áudio ou digitando.", "informar outro whatsapp atendido")
-      return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nDigite ou fale o WhatsApp com DDD da pessoa atendida agora. 🎙️`, opcoes: [{ id: "wpp_contato_esse", title: "✅ Usar número atual" }] }
+      return { texto: `●●●●○○ 📱 Etapa 4 de 6 · *WHATSAPP*\n\nDigite ou fale o WhatsApp com DDD da pessoa atendida agora. 🎙️`, opcoes: [{ id: "wpp_contato_esse", title: "✅ Usar número atual" }] }
     }
     // Digitou o número diretamente
     if (text) {
@@ -14334,10 +14943,6 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
 }
 
 async function processar(from, nomeWA, text, msgObj) {
-  if (ehWhatsAppAdmin(from)) {
-    return await processarAdminWhatsApp(from, text)
-  }
-
   // Fila por usuário: enfileira e processa em série, sem perder mensagens
   // enviadas enquanto o processamento anterior ainda está em curso.
   return new Promise((resolve) => {
@@ -14359,7 +14964,9 @@ async function drenaFilaUsuario(from) {
     try {
       resultado = await executarComLockUsuario(
         from,
-        () => processarComLock(from, nomeWA, text, msgObj)
+        () => ehWhatsAppAdmin(from)
+          ? processarAdminWhatsApp(from, text, msgObj)
+          : processarComLock(from, nomeWA, text, msgObj)
       )
     } catch (e) {
       logErro("fila_usuario", `Erro ao drenar fila | USER: ${sanitizarTextoEntrada(from) || "-"}`, e)
@@ -14386,6 +14993,26 @@ async function processarComLock(from, nomeWA, text, msgObj) {
     }
     const estadoHubSpotAntes = serializarEstado(u)
 
+    cancelarReengajamentosPendentes({
+      phone: normalizarNumeroWhatsAppEnvio(from),
+      dealId: u.negocioId,
+      contactId: u.contatoId,
+      numeroCaso: u.numeroCaso,
+      reason: "user_replied",
+      receivedAt: new Date().toISOString()
+    })
+
+    const contextoResultado = await dispatchConversationContext({
+      from,
+      nomeWA: nomeWAEfetivo,
+      text: textoSanitizado,
+      msgObj,
+      usuario: u
+    })
+    if (contextoResultado?.consumiu && !contextoResultado.seguirFluxoNormal) {
+      return contextoResultado.resposta
+    }
+
     const resposta = await processarInterno(from, nomeWAEfetivo, textoSanitizado, msgObj, u)
     if (deveSincronizarEstadoHubSpot(estadoHubSpotAntes, u)) {
       await sincronizarNegocio(u)
@@ -14405,9 +15032,103 @@ async function processarComLock(from, nomeWA, text, msgObj) {
 //  WEBHOOK
 // ================================================================
 
+function arquivoExiste(caminho) {
+  try { return Boolean(caminho && fs.existsSync(caminho)) }
+  catch { return false }
+}
+
+function dataModificacaoArquivo(caminho) {
+  try {
+    if (!caminho || !fs.existsSync(caminho)) return null
+    return fs.statSync(caminho).mtime.toISOString()
+  } catch {
+    return null
+  }
+}
+
+function resumirCallbackIdempotency() {
+  const resumo = {
+    totalRecords: 0,
+    processing: 0,
+    completed: 0,
+    expired: 0
+  }
+  try {
+    if (!fs.existsSync(CALLBACK_IDEMPOTENCY_FILE)) return resumo
+    const parsed = JSON.parse(fs.readFileSync(CALLBACK_IDEMPOTENCY_FILE, "utf8"))
+    const records = parsed?.records && typeof parsed.records === "object" ? parsed.records : {}
+    const agora = Date.now()
+    for (const record of Object.values(records)) {
+      resumo.totalRecords += 1
+      if (record?.status === "processing") resumo.processing += 1
+      if (record?.status === "completed") resumo.completed += 1
+      if (Date.parse(record?.expiresAt || "") <= agora) resumo.expired += 1
+    }
+  } catch {
+    return resumo
+  }
+  return resumo
+}
+
+function resumirWebhookInbox() {
+  const resumo = {
+    pending: 0,
+    processing: 0,
+    completed: 0,
+    error: 0
+  }
+  try {
+    const inbox = obterEstadoWebhookInbox()
+    for (const record of Object.values(inbox.records || {})) {
+      if (record?.status === "pending") resumo.pending += 1
+      else if (record?.status === "processing") resumo.processing += 1
+      else if (record?.status === "error") resumo.error += 1
+    }
+    resumo.completed = Object.keys(inbox.receipts || {}).length
+  } catch {
+    return resumo
+  }
+  return resumo
+}
+
+function agruparUltimosErrosPorCategoria() {
+  return (monitor.erros || []).reduce((acc, erro) => {
+    const tipo = sanitizarTextoEntrada(erro?.tipo).toLowerCase() || "sem_categoria"
+    acc[tipo] = (acc[tipo] || 0) + 1
+    return acc
+  }, {})
+}
+
+function montarHealthInternoOperacional() {
+  const webhookInboxFile = path.join(DATA_DIR, "webhook-inbox.json")
+  return {
+    callbackIdempotency: resumirCallbackIdempotency(),
+    webhookInbox: resumirWebhookInbox(),
+    persistencia: {
+      dataDirConfigured: Boolean(sanitizarTextoEntrada(process.env.ORACULUM_DATA_DIR)),
+      dataDirWritable: (() => {
+        try { fs.accessSync(DATA_DIR, fs.constants.W_OK); return true } catch { return false }
+      })(),
+      usersStateExists: arquivoExiste(USERS_STATE_FILE),
+      usersStateLastModified: dataModificacaoArquivo(USERS_STATE_FILE),
+      webhookInboxExists: arquivoExiste(webhookInboxFile),
+      callbackStoreExists: arquivoExiste(CALLBACK_IDEMPOTENCY_FILE)
+    },
+    ultimosErrosPorCategoria: agruparUltimosErrosPorCategoria(),
+    reengajamento: {
+      AUTO_REENGAJAMENTO,
+      REENGAGEMENT_CANCEL_WEBHOOK_URL_configurado: Boolean(sanitizarTextoEntrada(process.env.REENGAGEMENT_CANCEL_WEBHOOK_URL))
+    }
+  }
+}
+
 app.get("/", (_, res) => res.send("Oraculum v6.4"))
-app.get("/health", (_, res) => res.json({ status: "ok", version: "Oraculum v6.4" }))
-app.get("/health-interno", validarWebhookInterno, (_, res) => res.json({
+app.get("/health", async (_, res) => {
+  const persistence = await externalStateHealth({ probe: true })
+  const healthy = !persistence.required || persistence.database === "ok"
+  return res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "degraded", version: "Oraculum v6.4" })
+})
+app.get("/health-interno", validarWebhookInterno, async (_, res) => res.json({
   status: "ok",
   version: "Oraculum v6.4",
   uptime: Math.floor((Date.now() - monitor.inicio) / 1000),
@@ -14415,7 +15136,9 @@ app.get("/health-interno", validarWebhookInterno, (_, res) => res.json({
   cadastros: monitor.cadastros,
   ativos: Object.keys(users).length,
   erros_count: monitor.erros.length,
-  ram_mb: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)
+  ram_mb: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1),
+  persistenciaExterna: await externalStateHealth({ probe: true }),
+  ...montarHealthInternoOperacional()
 }))
 app.get("/resumo-diario", validarWebhookInterno, async (req, res) => {
   try {
@@ -14472,9 +15195,11 @@ async function drenarWebhookInbox() {
         await processarMensagemWebhook(record.payload?.value || {}, record.payload?.message || {})
         persistirUsersAgora({ propagarErro: true })
         marcarWebhookCompleted(record.key)
+        await flushExternalState()
       } catch (err) {
         try {
           marcarWebhookError(record.key, err)
+          await flushExternalState({ throwOnError: false })
         } catch (persistError) {
           logErro("webhook_inbox", `Falha ao persistir erro da mensagem ${record.messageId || record.key}: ${persistError.message}`, persistError)
         }
@@ -14486,7 +15211,7 @@ async function drenarWebhookInbox() {
   }
 }
 
-app.post("/webhook", validarAssinaturaMeta, (req, res) => {
+app.post("/webhook", validarAssinaturaMeta, async (req, res) => {
   try {
     const mensagens = []
     for (const entry of req.body?.entry || []) {
@@ -14508,6 +15233,7 @@ app.post("/webhook", validarAssinaturaMeta, (req, res) => {
     }
 
     registrarMensagensWebhook(mensagens)
+    await flushExternalState()
     res.sendStatus(200)
     if (!mensagens.length) return
 
@@ -14520,9 +15246,6 @@ app.post("/webhook", validarAssinaturaMeta, (req, res) => {
 })
 
 const PORT = process.env.PORT || 10000
-carregarUsersPersistidos()
-carregarWebhookInbox()
-restaurarTimersPersistidos()
 // ------------------------------------------------------------------
 // ROTA /agendamento — confirmação de ligação agendada
 // Como usar GRATUITAMENTE (sem pagar HubSpot):
@@ -14556,6 +15279,15 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
       }
     } catch {}
 
+    const callbackKey = createCallbackKey("agendamento", {
+      phone: numero,
+      datetime: datetime || "",
+      caseid: caseid || "",
+      eventId: eventId || ""
+    })
+    const callbackExecution = beginCallbackExecution(callbackKey, { route: "/agendamento" })
+    if (!callbackExecution.started) return res.sendStatus(200)
+
     const msg = [
       "📅 *Consulta confirmada!*",
       "",
@@ -14571,6 +15303,8 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
     ].join("\n")
 
     await enviar(numero, msg, null, false)
+    completeCallbackExecution(callbackKey)
+    await flushExternalState()
 
     // Compatibilidade: esta rota apenas notifica. O estado da agenda vem do Calendar.
     if (caseid) {
@@ -14593,11 +15327,15 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     persistirUsersAgora()
+    persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
     process.exit(0)
   })
 }
 
-process.on("beforeExit", persistirUsersAgora)
+process.on("beforeExit", () => {
+  persistirUsersAgora()
+  persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
+})
 
 // ------------------------------------------------------------------
 // ROTA /buscar-contato-reuniao — recebe horário do evento do Calendar e retorna phone + name + tipo
@@ -14768,6 +15506,264 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
 })
 
 // ------------------------------------------------------------------
+// ROTA /consulta-lembrete-dados - dados estaveis para o Make agendar lembretes
+// Body: { eventId }
+// O envio continua exclusivo da rota /lembrete, chamada apenas no horario agendado.
+// ------------------------------------------------------------------
+app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => {
+  try {
+    const { eventId } = req.body || {}
+    if (!eventId) return res.status(400).json({ erro: "eventId obrigatorio" })
+
+    const evento = await getConsultaCalendarEventState(eventId)
+    if (!evento?.encontrado) return res.status(404).json({ erro: "evento nao encontrado no Google Calendar" })
+    if (evento.cancelado || evento.status === "cancelled") return res.status(409).json({ erro: "evento cancelado" })
+
+    const metadataEvento = evento.metadata || evento.extendedProperties?.private || {}
+    const dealId = sanitizarTextoEntrada(metadataEvento.dealId)
+    const contactId = sanitizarTextoEntrada(metadataEvento.contactId || metadataEvento.personId)
+    const inicioConsulta = evento.inicio || evento.start?.dateTime || evento.start?.date || null
+    if (!inicioConsulta) return res.status(400).json({ erro: "inicio da consulta ausente" })
+
+    let phone = null
+    let name = "cliente"
+    if (contactId) {
+      const contato = await axios.get(
+        `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,phone`,
+        { headers: HS() }
+      )
+      const props = contato.data?.properties || {}
+      phone = props.phone || null
+      name = (props.firstname || "cliente").trim()
+    }
+
+    if (!phone && dealId) {
+      const localizado = await localizarUsuarioAgendamento({ eventId, dealId })
+      phone = localizado.from || localizado.u?.whatsappContato || null
+      name = localizado.u?.nome || localizado.u?.nomeCliente || name
+    }
+
+    const numero = normalizarNumeroWhatsAppEnvio(phone)
+    if (!numero) return res.status(404).json({ erro: "telefone nao encontrado para a consulta" })
+
+    return res.json({
+      phone: numero,
+      name,
+      eventId: evento.eventId || eventId,
+      dealId: dealId || null,
+      casoId: dealId || null,
+      datetime: inicioConsulta,
+      reminders: {
+        "24h": new Date(new Date(inicioConsulta).getTime() - 24 * 60 * 60 * 1000).toISOString(),
+        "1h": new Date(new Date(inicioConsulta).getTime() - 60 * 60 * 1000).toISOString()
+      }
+    })
+  } catch (e) {
+    logErro("consulta-lembrete-dados", e.message, e)
+    return res.sendStatus(500)
+  }
+})
+
+// ------------------------------------------------------------------
+// ROTA /reengagement-candidates - descoberta interna de candidatos potenciais
+// Nao decide elegibilidade, nao planeja jobs e nao aciona integracoes externas.
+// ------------------------------------------------------------------
+app.post("/reengagement-candidates", validarWebhookInterno, async (_req, res) => {
+  try {
+    return res.json({ candidates: descobrirCandidatosReengajamento() })
+  } catch (e) {
+    logErro("reengagement-candidates", e.message, e)
+    return res.sendStatus(500)
+  }
+})
+
+// ------------------------------------------------------------------
+// ROTA /reengajamento-dados - dados estaveis para o Make planejar reengajamentos
+// Body aceito: { phone } ou { dealId }
+// Nao envia mensagens, nao chama templates e nao cria agendamentos.
+// ------------------------------------------------------------------
+app.post("/reengajamento-dados", validarWebhookInterno, async (req, res) => {
+  try {
+    const { phone, dealId } = req.body || {}
+    if (!phone && !dealId) return res.status(400).json({ erro: "phone ou dealId obrigatorio" })
+
+    const localizado = localizarUsuarioReengajamento({ phone, dealId })
+    if (!localizado.u) return res.status(404).json({ erro: "usuario nao encontrado" })
+
+    const numero = normalizarNumeroWhatsAppEnvio(
+      localizado.from ||
+      localizado.u?._numero ||
+      localizado.u?.phone ||
+      localizado.u?.telefone ||
+      localizado.u?.whatsappContato ||
+      phone
+    )
+    if (!numero) return res.status(404).json({ erro: "telefone nao encontrado para o usuario" })
+
+    const usuario = {
+      ...localizado.u,
+      phone: numero,
+      _numero: numero
+    }
+    const avaliacao = avaliarElegibilidadeReengajamento(usuario)
+    const planejamento = avaliacao.elegivel
+      ? planejarReengajamentos(usuario, { agora: Date.now() })
+      : { jobs: [], avisos: avaliacao.avisos || [], erros: avaliacao.erros || [] }
+
+    return res.json({
+      phone: numero,
+      dealId: usuario.negocioId || null,
+      contactId: usuario.contatoId || null,
+      numeroCaso: usuario.numeroCaso || null,
+      jobs: (planejamento.jobs || []).map(job => ({
+        id: job.id,
+        tipoEvento: job.tipoEvento,
+        template: job.template,
+        scheduledFor: job.scheduledFor,
+        prioridade: job.prioridade
+      }))
+    })
+  } catch (e) {
+    logErro("reengajamento-dados", e.message, e)
+    return res.sendStatus(500)
+  }
+})
+
+// ------------------------------------------------------------------
+// ROTA /reengajamento - disparo de reengajamento chamado pelo Make
+// Body: { phone, tipoEvento, jobId, dealId, scheduledFor }
+// Revalida elegibilidade e envia somente o template planejado.
+// ------------------------------------------------------------------
+app.post("/reengajamento", validarWebhookInterno, async (req, res) => {
+  try {
+    const { phone, tipoEvento, jobId, dealId, scheduledFor } = req.body || {}
+    if (!phone || !tipoEvento || !jobId || !scheduledFor) {
+      return res.status(400).json({ status: "skipped", reason: "payload_invalido" })
+    }
+
+    const numero = normalizarNumeroWhatsAppEnvio(phone)
+    if (!numero) return res.status(400).json({ status: "skipped", reason: "phone_invalido" })
+
+    const validacaoJanela = validarJanelaEnvioReengajamento(scheduledFor)
+    if (!validacaoJanela.ok) {
+      return res.status(409).json({
+        status: "skipped",
+        reason: validacaoJanela.motivo,
+        scheduledFor: validacaoJanela.scheduledFor
+      })
+    }
+
+    const localizado = localizarUsuarioReengajamento({ phone: numero, dealId })
+    if (!localizado.u || !localizado.from) {
+      return res.status(404).json({ status: "skipped", reason: "usuario_nao_encontrado" })
+    }
+
+    if (dealId && String(localizado.u.negocioId || "") !== String(dealId)) {
+      logSkipOperacional(req, "dealId_divergente", { phone: numero, dealId })
+      return res.status(409).json({ status: "skipped", reason: "dealId_divergente" })
+    }
+
+    const usuario = {
+      ...localizado.u,
+      phone: numero,
+      _numero: numero
+    }
+    const avaliacao = avaliarElegibilidadeReengajamento(usuario)
+    if (!avaliacao.elegivel) {
+      logSkipOperacional(req, "usuario_nao_elegivel", {
+        phone: numero,
+        dealId: usuario.negocioId || dealId,
+        contactId: usuario.contatoId,
+        numeroCaso: usuario.numeroCaso
+      })
+      return res.json({ status: "skipped", reason: "usuario_nao_elegivel" })
+    }
+
+    const planejamento = planejarReengajamentos(usuario, { agora: Date.now() })
+    const job = (planejamento.jobs || []).find(item =>
+      item.id === jobId &&
+      item.tipoEvento === tipoEvento
+    )
+    if (!job) {
+      logSkipOperacional(req, "job_nao_planejado", {
+        phone: numero,
+        dealId: usuario.negocioId || dealId,
+        contactId: usuario.contatoId,
+        numeroCaso: usuario.numeroCaso
+      })
+      return res.json({ status: "skipped", reason: "job_nao_planejado" })
+    }
+
+    const validacaoScheduledFor = validarScheduledForReengajamento(scheduledFor, job.scheduledFor)
+    if (!validacaoScheduledFor.ok) {
+      logSkipOperacional(req, "scheduledFor_divergente", {
+        phone: numero,
+        dealId: usuario.negocioId || dealId,
+        contactId: usuario.contatoId,
+        numeroCaso: usuario.numeroCaso
+      })
+      return res.json({
+        status: "skipped",
+        reason: validacaoScheduledFor.motivo
+      })
+    }
+
+    const validacaoExpiracao = validarExpiracaoReengajamento(scheduledFor)
+    if (!validacaoExpiracao.ok) {
+      logSkipOperacional(req, "job_expirado", {
+        phone: numero,
+        dealId: usuario.negocioId || dealId,
+        contactId: usuario.contatoId,
+        numeroCaso: usuario.numeroCaso
+      })
+      return res.json({
+        status: "skipped",
+        reason: validacaoExpiracao.motivo
+      })
+    }
+
+    const callbackKey = createCallbackKey("reengajamento", {
+      phone: numero,
+      tipoEvento,
+      jobId,
+      dealId: dealId || "",
+      scheduledFor
+    })
+    const callbackExecution = beginCallbackExecution(callbackKey, { route: "/reengajamento" })
+    if (!callbackExecution.started) {
+      return res.json({ status: "skipped", reason: "duplicado" })
+    }
+
+    const contextoConversa = criarContextoReengajamentoTemplate({
+      tipoEvento,
+      jobId,
+      dealId: usuario.negocioId || dealId || null,
+      numeroCaso: usuario.numeroCaso || null,
+      scheduledFor
+    })
+    const enviado = await enviarJobReengajamento(numero, localizado.u, job, contextoConversa)
+    if (!enviado) {
+      abandonCallbackExecution(callbackKey)
+      await flushExternalState()
+      return res.status(502).json({ status: "skipped", reason: "falha_envio_template" })
+    }
+
+    agendarPersistenciaUsers()
+    completeCallbackExecution(callbackKey)
+    await flushExternalState()
+    return res.json({
+      status: "sent",
+      jobId: job.id,
+      tipoEvento: job.tipoEvento,
+      template: job.template
+    })
+  } catch (e) {
+    logErro("reengajamento", e.message, e)
+    return res.sendStatus(500)
+  }
+})
+
+// ------------------------------------------------------------------
 // ROTA /evento-cancelado - encerra o vínculo ativo quando Calendar/Make avisa cancelamento
 // Body aceito: { eventId } ou { dealId } ou { phone }
 // ------------------------------------------------------------------
@@ -14880,89 +15876,118 @@ app.post("/consulta-status", validarWebhookInterno, async (req, res) => {
 
 // ------------------------------------------------------------------
 // ROTA /lembrete - lembrete automatico antes da consulta
-// Chamar via Make.com ou n8n com Google Calendar como gatilho:
-//   - padrao: POST /lembrete com { phone, name, eventId, datetime, tipo: "24h" }
-//   - no dia: POST /lembrete com { phone, name, eventId, datetime, tipo: "hoje" }
-//   - 1h antes:  POST /lembrete com { phone, name, eventId, datetime, tipo: "1h" }
+// Chamar via Make.com somente no horario temporizado:
+//   - 24h: POST /lembrete com { phone, name, eventId, datetime, tipo: "24h", scheduledFor }
+//   - hoje: POST /lembrete com { phone, name, eventId, datetime, tipo: "hoje", scheduledFor }
+//   - 1h:  POST /lembrete com { phone, name, eventId, datetime, tipo: "1h", scheduledFor }
 // ------------------------------------------------------------------
 app.post("/lembrete", validarWebhookInterno, async (req, res) => {
   try {
-    const { phone, name, datetime, tipo, eventId } = req.body
+    const { phone, name, datetime, tipo, eventId, scheduledFor, dealId, casoId, params } = req.body
     if (!phone) return res.sendStatus(400)
+    if (!tipoLembreteConsultaValido(tipo)) return res.status(400).json({ erro: "tipo de lembrete invalido" })
     const numero = normalizarNumeroWhatsAppEnvio(phone)
     if (!numero) return res.sendStatus(400)
-    const nomeCliente = (name || "cliente").trim()
 
-    let dataFormatada = datetime || "em breve"
     let dataEvento = datetime
+    let evento = null
     if (eventId) {
-      const evento = await getConsultaCalendarEventState(eventId)
+      evento = await getConsultaCalendarEventState(eventId)
       if (!evento?.encontrado) return res.status(404).json({ erro: "evento nao encontrado" })
+      if (evento.cancelado || evento.status === "cancelled") return res.status(409).json({ erro: "evento cancelado" })
       dataEvento = evento.inicio || dataEvento
     }
-    try {
-      if (dataEvento) {
-        const d = new Date(dataEvento)
-        if (!isNaN(d.getTime())) {
-          dataFormatada = d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "short", timeStyle: "short" })
-        }
-      }
-    } catch {}
-
-    const msgReagendamento = "Para reagendar, é só nos chamar aqui no WhatsApp."
-
-    let msg
-    if (tipo === "1h") {
-      msg = [
-        "⏰ *Sua consulta começa em 1 hora!*",
-        "",
-        `Olá, *${nomeCliente}*! Daqui a pouco você tem sua consulta com um advogado da Oráculum.`,
-        "",
-        `🗓️ *Horário:* ${dataFormatada}`,
-        "",
-        "📞 Deixe o celular por perto. Nosso advogado vai te ligar!",
-        "",
-        "Precisa reagendar de última hora?",
-        msgReagendamento,
-      ].join("\n")
-    } else if (tipo === "hoje") {
-      msg = [
-        "📅 *Lembrete: sua consulta é hoje!*",
-        "",
-        `Olá, *${nomeCliente}*! Sua consulta com um advogado da Oráculum é *hoje*.`,
-        "",
-        `🗓️ *Horário:* ${dataFormatada}`,
-        "",
-        "📞 Nosso advogado vai te ligar no número cadastrado. Fique atento!",
-        "",
-        "Precisa reagendar?",
-        msgReagendamento,
-      ].join("\n")
-    } else {
-      msg = [
-        "✅ *Consulta confirmada*",
-        "",
-        `Olá, *${nomeCliente}*! Sua consulta com um advogado da Oráculum está confirmada.`,
-        "",
-        `🗓️ *Data e horário:* ${dataFormatada}`,
-        "",
-        "📞 Nosso advogado vai te ligar no número cadastrado.",
-        "",
-        "Precisa reagendar?",
-        msgReagendamento,
-      ].join("\n")
+    const validacaoJanela = validarJanelaEnvioLembreteConsulta({ tipo, inicioConsulta: dataEvento, scheduledFor })
+    if (!validacaoJanela.ok) {
+      return res.status(validacaoJanela.status).json({
+        erro: validacaoJanela.motivo,
+        scheduledFor: validacaoJanela.scheduledFor
+      })
     }
 
-    await enviar(numero, msg, null, false)
-    return res.sendStatus(200)
+    const dealIdContexto = sanitizarTextoEntrada(dealId || evento?.metadata?.dealId)
+    const casoIdContexto = sanitizarTextoEntrada(casoId || dealIdContexto)
+    const localizado = await localizarUsuarioAgendamento({ eventId, dealId: dealIdContexto, phone: numero })
+    const contextoConversa = criarContextoConsultaTemplate({
+      tipo,
+      eventId,
+      dealId: dealIdContexto,
+      casoId: casoIdContexto,
+      inicioConsulta: dataEvento
+    })
+    if (!localizado.u || !localizado.from) {
+      return res.status(404).json({ erro: "usuario_nao_encontrado_para_contexto" })
+    }
+    if (!contextoConversa) {
+      return res.status(422).json({ erro: "contexto_conversa_template_invalido" })
+    }
+
+    const callbackKey = createCallbackKey("lembrete", {
+      phone: numero,
+      datetime: datetime || "",
+      tipo: tipo || "",
+      eventId: eventId || ""
+    })
+    const callbackExecution = beginCallbackExecution(callbackKey, { route: "/lembrete" })
+    if (!callbackExecution.started) return res.sendStatus(200)
+
+    const parametrosTemplate = Array.isArray(params) ? params : []
+    const enviado = await templateService.consultaLembrete(numero, tipo, parametrosTemplate, {
+      usuario: localizado.u,
+      contextoConversa,
+      requireContextoConversa: true
+    })
+    if (!enviado) {
+      abandonCallbackExecution(callbackKey)
+      await flushExternalState()
+      return res.status(502).json({ erro: "falha_envio_template" })
+    }
+
+    if (localizado.u) agendarPersistenciaUsers()
+    completeCallbackExecution(callbackKey)
+    await flushExternalState()
+    return res.json({
+      ok: true,
+      templateTipo: templateService.templateTipoConsultaLembrete(tipo),
+      contextoCriado: Boolean(localizado.u && contextoConversa)
+    })
   } catch (e) { logErro("lembrete", e.message); return res.sendStatus(500) }
 })
 
-app.listen(PORT, () => {
-  console.log(`Oraculum v6.4 — porta ${PORT}`)
-  setImmediate(() => {
-    drenarWebhookInbox().catch(err =>
-      logErro("webhook_inbox", "Falha no replay da inbox: " + err.message, err)
-    )
+async function iniciarServidor() {
+  try {
+    const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
+    console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)
+    carregarUsersPersistidos()
+    carregarWebhookInbox()
+    carregarSessoesAdminAssistidasPersistidas(sessoesAdminWhatsApp)
+    restaurarTimersPersistidos()
+    await validarMetaWabaNoBoot()
+    const callbackRecovery = recoverCallbackIdempotencyAbandonedProcessing()
+    if (callbackRecovery.recovered > 0) {
+      console.log(`[CALLBACK_IDEMPOTENCY] processing_abandonado_recuperado=${callbackRecovery.recovered}`)
+    }
+  } catch (err) {
+    logErro("meta_waba", err.message, err)
+    process.exitCode = 1
+    return
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Oraculum v6.4 — porta ${PORT}`)
+    setImmediate(() => {
+      drenarWebhookInbox().catch(err =>
+        logErro("webhook_inbox", "Falha no replay da inbox: " + err.message, err)
+      )
+    })
   })
-})
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, () => {
+    closeExternalStateRepository()
+      .finally(() => process.exit(0))
+  })
+}
+
+iniciarServidor()

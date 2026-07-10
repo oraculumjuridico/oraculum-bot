@@ -67,7 +67,7 @@ async function handle({
   return {
     success: true,
     response: responderComTimer(from, {
-      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nNão consegui identificar o número. Informe com DDD. Pode falar ou digitar. 🎙️`,
+      texto: `📱 Etapa 4 de 6 · *WHATSAPP*\n\nNão consegui identificar o número. Informe com DDD. Pode falar ou digitar. 🎙️`,
       opcoes: [{ id: "revalida_whatsapp_ok", title: "✅ Confirmar atual" }]
     })
   }

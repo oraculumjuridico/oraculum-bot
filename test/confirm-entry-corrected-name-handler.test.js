@@ -52,7 +52,7 @@ async function main() {
       {
         handled: true,
         response: {
-          texto: "●●○○○○ 👤 Etapa 2 de 6 · *Nome*\n\nVocê informou: *Maria Silva*\nEstá correto? Se não estiver, é só me dizer o nome correto agora. Pode falar ou digitar. 🎙️",
+          texto: "👤 Etapa 2 de 6 · *SEU NOME*\n\nVocê informou: *Maria Silva*\nEstá correto? Se não estiver, é só me dizer o nome correto agora. Pode falar ou digitar. 🎙️",
           opcoes: [{ id: "entrada_ok", title: "✅ Confirmar" }]
         }
       }

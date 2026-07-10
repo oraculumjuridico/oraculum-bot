@@ -38,7 +38,7 @@ async function handleConfirmEntryPhone({
   return {
     handled: true,
     response: {
-      texto: `●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nVocê informou: *${label}*\nEstá correto? Se não estiver, é só me dizer o número correto agora. Pode falar ou digitar. 🎙️`,
+      texto: `📱 Etapa 4 de 6 · *WHATSAPP*\n\nVocê informou: *${label}*\nEstá correto? Se não estiver, é só me dizer o número correto agora. Pode falar ou digitar. 🎙️`,
       opcoes: [{ id: "entrada_ok", title: "✅ Confirmar" }]
     }
   }

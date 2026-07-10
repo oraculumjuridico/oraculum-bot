@@ -213,14 +213,24 @@ function mapearTipoCaso(u) {
   }
 
   const areaNormalizada = (() => {
-    const area = sanitizarTextoEntrada(u.area).toLowerCase()
+    const area = normalizarTextoGatilho(u.area)
     if (area === "inss") return "inss"
     if (area === "trabalhista") return "trabalhista"
     if (area === "outros") return "outros"
     return area
   })()
   const area = areaMap[areaNormalizada]
-  const tipo = tipoMap[sanitizarTextoEntrada(u.tipo).toLowerCase()]
+  const tipoNormalizado = normalizarTextoGatilho(u.tipo)
+  const tipo = tipoMap[tipoNormalizado] ||
+    (area === "trab" && /\b(demiss|rescis|verbas|fgts|acerto)\b/.test(tipoNormalizado) ? "demissao" : null) ||
+    (area === "trab" && /\b(assedio|assedi)\b/.test(tipoNormalizado) ? "assedio" : null) ||
+    (area === "trab" && /\b(acidente|doenca ocupacional)\b/.test(tipoNormalizado) ? "acidente" : null) ||
+    (area === "trab" && /\b(salario|horas extras|ferias|direitos)\b/.test(tipoNormalizado) ? "direitos" : null) ||
+    (area === "inss" && /\b(aposent)\b/.test(tipoNormalizado) ? "aposentadoria" : null) ||
+    (area === "inss" && /\b(bpc|loas)\b/.test(tipoNormalizado) ? "bpc" : null) ||
+    (area === "inss" && /\b(auxilio|doenca|incapacidade|pericia)\b/.test(tipoNormalizado) ? "incapacidade" : null) ||
+    (area === "inss" && /\b(pensao|dependente|morte)\b/.test(tipoNormalizado) ? "dependentes" : null) ||
+    (area === "outros" && /\b(revisao|revisar)\b/.test(tipoNormalizado) ? "revisao" : null)
 
   if (!area || !tipo) return null
 

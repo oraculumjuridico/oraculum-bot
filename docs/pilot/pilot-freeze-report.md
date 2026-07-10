@@ -73,7 +73,7 @@ como evidência de uma release limpa e aumenta o risco de inclusão acidental.
 
 Após publicar o commit, ainda devem ser confirmados:
 
-- Persistent Disk montado no caminho correto;
+- PostgreSQL externo gratuito configurado e recovery validado;
 - instância única;
 - snapshot diário e restore testado;
 - Meta App Secret configurado;
@@ -112,7 +112,7 @@ ser controlados pelo checklist operacional.
 4. Implantar o mesmo SHA no Render.
 5. Confirmar o SHA no runtime.
 6. Executar smoke controlado de WhatsApp, caso, Drive, HubSpot e Calendar.
-7. Confirmar Persistent Disk, Inbox, snapshot e instância única.
+7. Confirmar Neon, Inbox, migração/recovery e instância única.
 8. Registrar evidências e declarar o SHA como baseline congelado.
 
 Depois disso, durante o piloto:

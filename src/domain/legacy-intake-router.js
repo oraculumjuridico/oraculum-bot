@@ -36,7 +36,7 @@ function criarLegacyIntakeRouter({
       const val = UF_MAP[text]
       if (!val) { iniciarTimer(from); return { handled: true, response: telaUFsRegiao(u._regiao || "reg_n") } }
       u.uf = val; setStage(u, "coleta_cidade_regiao"); iniciarTimer(from)
-      return { handled: true, response: { texto: "●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nDigite a cidade onde você mora", opcoes: null } }
+      return { handled: true, response: { texto: "📍 Etapa 5 de 6 · *CIDADE*\n\nDigite a cidade onde você mora", opcoes: null } }
     }
     if (u.stage === "coleta_cidade_regiao" && text) {
       const cidadeLimpa = formatarCidade(limparTextoSomenteLetras(text))

@@ -31,7 +31,7 @@ const usuario = {
 const menu = menuCliente(usuario, null, {
   textoAudioBase: "Bom dia, Maria. Seu atendimento atual está em análise"
 })
-const idsMenu = ["m_status", "m_docs", "m_adv", "m_novocaso"]
+const idsMenu = ["m_status", "m_docs", "m_adv"]
 
 assert.equal(isClientScreen(menu), true)
 assert.equal(menu.id, "menu_principal_cliente")

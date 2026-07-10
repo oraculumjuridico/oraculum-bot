@@ -12,6 +12,40 @@ function logDebug(...args) {
   if (DEBUG_LOGS) console.log(...args)
 }
 
+function mascararTelefoneLog(numero) {
+  const digitos = String(numero || "").replace(/\D/g, "")
+  if (digitos.length < 8) return ""
+  return `${digitos.slice(0, 4)}*****${digitos.slice(-4)}`
+}
+
+function sanitizarCampoLog(valor) {
+  return sanitizarTextoEntrada(valor)
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, "[CPF REDACTED]")
+}
+
+function logInfo(evento = {}) {
+  const payload = {
+    event: sanitizarCampoLog(evento.event),
+    route: sanitizarCampoLog(evento.route),
+    status: sanitizarCampoLog(evento.status),
+    requestId: sanitizarCampoLog(evento.requestId),
+    phoneMasked: mascararTelefoneLog(evento.phoneMasked || evento.phone),
+    dealId: sanitizarCampoLog(evento.dealId),
+    contactId: sanitizarCampoLog(evento.contactId),
+    numeroCaso: sanitizarCampoLog(evento.numeroCaso),
+    timestamp: evento.timestamp || new Date().toISOString()
+  }
+
+  if (evento.durationMs !== undefined) {
+    const durationMs = Number(evento.durationMs)
+    if (Number.isFinite(durationMs)) payload.durationMs = durationMs
+  }
+
+  console.log(JSON.stringify(payload))
+  return payload
+}
+
 function logContextoExecucao({ from = "", stage = "", flow = "", msg = "" } = {}) {
   logDebug(`[USER] ${sanitizarTextoEntrada(from) || "-"}`)
   logDebug(`[STAGE] ${sanitizarTextoEntrada(stage) || "-"}`)
@@ -78,6 +112,7 @@ function logErroHubSpot(erro, contexto = {}) {
 module.exports = {
   configurarLogging,
   logDebug,
+  logInfo,
   logContextoExecucao,
   logErro,
   sanitizarMensagemHubSpot,

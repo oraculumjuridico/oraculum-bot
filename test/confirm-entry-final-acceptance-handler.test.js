@@ -95,7 +95,7 @@ async function main() {
       {
         handled: true,
         response: {
-          texto: "●●●●○○ 📱 Etapa 4 de 6 · *WhatsApp*\n\nQual é o WhatsApp com DDD de *Maria* para contato da equipe?",
+          texto: "📱 Etapa 4 de 6 · *WHATSAPP*\n\nQual é o WhatsApp com DDD de *Maria* para contato da equipe?",
           opcoes: null
         }
       }

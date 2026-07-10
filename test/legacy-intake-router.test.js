@@ -101,7 +101,7 @@ async function main() {
       {
         handled: true,
         response: {
-          texto: "●●●●●○ 📍 Etapa 5 de 6 · *Cidade*\n\nDigite a cidade onde você mora",
+          texto: "📍 Etapa 5 de 6 · *CIDADE*\n\nDigite a cidade onde você mora",
           opcoes: null
         }
       }

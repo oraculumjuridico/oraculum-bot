@@ -15,7 +15,7 @@ function rotaEntre(inicio, fim) {
 
 const buscarContato = rotaEntre(
   'app.post("/buscar-contato-reuniao"',
-  'app.post("/evento-cancelado"'
+  'app.post("/consulta-lembrete-dados"'
 )
 assert.match(buscarContato, /const \{ eventId, datetime \} = req\.body/)
 assert.match(buscarContato, /if \(eventId\) \{\s+eventoCalendar = await getConsultaCalendarEventState\(eventId\)/)
@@ -24,6 +24,16 @@ assert.match(buscarContato, /let dealId = sanitizarTextoEntrada\(metadataEvento\
 assert.match(buscarContato, /if \(!dealId\) \{\s+const buscaReuniao = await axios\.post/)
 assert.match(buscarContato, /if \(!eventoCalendarId\) \{\s+try \{\s+eventoCalendar = await findConsultaCalendarEventInRange/)
 assert.match(buscarContato, /return res\.json\(\{ phone, name, eventId: eventoCalendarId/)
+
+const dadosLembrete = rotaEntre(
+  'app.post("/consulta-lembrete-dados"',
+  'app.post("/evento-cancelado"'
+)
+assert.match(dadosLembrete, /const \{ eventId \} = req\.body/)
+assert.match(dadosLembrete, /const evento = await getConsultaCalendarEventState\(eventId\)/)
+assert.match(dadosLembrete, /reminders: \{/)
+assert.match(dadosLembrete, /"24h": new Date\(new Date\(inicioConsulta\)\.getTime\(\) - 24 \* 60 \* 60 \* 1000\)\.toISOString\(\)/)
+assert.match(dadosLembrete, /"1h": new Date\(new Date\(inicioConsulta\)\.getTime\(\) - 60 \* 60 \* 1000\)\.toISOString\(\)/)
 
 const confirmacao = rotaEntre(
   'app.post("/agendamento"',
@@ -55,9 +65,16 @@ assert.match(consultaStatus, /if \(!eventId \|\| !\["realizada", "nao_compareceu
 assert.match(consultaStatus, /await definirResultadoConsulta\(eventId, status\)/)
 
 const lembrete = server.slice(server.indexOf('app.post("/lembrete"'))
-assert.match(lembrete, /const \{ phone, name, datetime, tipo, eventId \} = req\.body/)
-assert.match(lembrete, /const evento = await getConsultaCalendarEventState\(eventId\)/)
+assert.match(lembrete, /const \{ phone, name, datetime, tipo, eventId, scheduledFor, dealId, casoId, params \} = req\.body/)
+assert.match(lembrete, /evento = await getConsultaCalendarEventState\(eventId\)/)
 assert.match(lembrete, /dataEvento = evento\.inicio \|\| dataEvento/)
+assert.match(lembrete, /validarJanelaEnvioLembreteConsulta\(\{ tipo, inicioConsulta: dataEvento, scheduledFor \}\)/)
+assert.match(lembrete, /const contextoConversa = criarContextoConsultaTemplate/)
+assert.match(lembrete, /usuario_nao_encontrado_para_contexto/)
+assert.match(lembrete, /contexto_conversa_template_invalido/)
+assert.match(lembrete, /templateService\.consultaLembrete\(numero, tipo, parametrosTemplate, \{/)
+assert.match(lembrete, /requireContextoConversa: true/)
+assert.match(lembrete, /abandonCallbackExecution\(callbackKey\)/)
 
 const classificado = classificarEstadoEvento({
   id: "evento-exato",

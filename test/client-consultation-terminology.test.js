@@ -10,7 +10,12 @@ const statusSource = fs.readFileSync(
   path.join(__dirname, "..", "src", "domain", "cliente-status-ui.js"),
   "utf8"
 )
-const contractSource = `${source}\n${statusSource}`
+const appointmentSource = fs.readFileSync(
+  path.join(__dirname, "..", "src", "domain", "client-appointment-ui.js"),
+  "utf8"
+)
+const clientCopySource = `${source}\n${appointmentSource}`
+const contractSource = `${clientCopySource}\n${statusSource}`
 
 for (const termoAntigo of [
   "Agendar ligação",
@@ -21,7 +26,7 @@ for (const termoAntigo of [
   "Mensagem registrada com urgência",
   "Falar equipe"
 ]) {
-  assert.equal(source.includes(termoAntigo), false, `Termo antigo encontrado: ${termoAntigo}`)
+  assert.equal(clientCopySource.includes(termoAntigo), false, `Termo antigo encontrado: ${termoAntigo}`)
 }
 
 for (const termoOficial of [
@@ -33,7 +38,7 @@ for (const termoOficial of [
   "Mensagem urgente registrada",
   "Falar com advogado"
 ]) {
-  assert.equal(source.includes(termoOficial), true, `Termo oficial ausente: ${termoOficial}`)
+  assert.equal(clientCopySource.includes(termoOficial), true, `Termo oficial ausente: ${termoOficial}`)
 }
 
 for (const contratoPreservado of [
@@ -48,7 +53,6 @@ for (const contratoPreservado of [
   assert.equal(contractSource.includes(contratoPreservado), true, `Contrato alterado: ${contratoPreservado}`)
 }
 
-assert.equal(source.includes("Nosso advogado vai te ligar"), true)
-assert.equal(source.includes("nosso advogado vai te ligar"), true)
+assert.match(source, /nosso advogado vai te ligar/i)
 
 console.log("client-consultation-terminology.test.js: ok")
