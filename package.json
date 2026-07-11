@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "pretest": "node test/drive-files-security.test.js && node test/document-registry.test.js && node test/document-grouper.test.js && node test/document-pdf-composer.test.js && node test/document-analysis-integration.test.js && node test/document-consolidation.test.js && node test/document-consolidation-server-static.test.js && node test/client-document-integrity.test.js && node test/client-document-intent-priority.test.js",
+    "pretest": "node test/graceful-shutdown.test.js && node test/external-state-repository.test.js && node test/migrate-state-dry-run.test.js && node test/media-download-security.test.js && node test/import-todo-cases.test.js && node test/drive-files-security.test.js && node test/document-registry.test.js && node test/document-grouper.test.js && node test/document-pdf-composer.test.js && node test/document-analysis-integration.test.js && node test/document-consolidation.test.js && node test/document-consolidation-server-static.test.js && node test/client-document-integrity.test.js && node test/client-document-intent-priority.test.js",
     "test:case-analysis": "node test/local-case-document-analysis.test.js",
     "smoke": "node smoke.js",
     "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke",
@@ -28,6 +28,7 @@
     "meta:waba:validate": "node scripts/validate-meta-waba.js",
     "hubspot:deal-titles:dry": "node scripts/audit-hubspot-deal-titles.js",
     "cases:audit": "node scripts/import-real-cases.js audit",
+    "cases:import-todo": "node scripts/import-todo-cases.js",
     "cases:analyze": "node scripts/analyze-real-case-documents.js",
     "cases:review": "node scripts/import-real-cases.js review",
     "cases:dry-run": "node scripts/import-real-cases.js dry-run",

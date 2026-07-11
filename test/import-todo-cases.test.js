@@ -1,0 +1,27 @@
+const assert = require("node:assert/strict")
+const fs = require("node:fs")
+const os = require("node:os")
+const path = require("node:path")
+const { spawnSync } = require("node:child_process")
+const { parseCsv, extrairCaso } = require("../scripts/import-todo-cases")
+
+assert.deepEqual(parseCsv('titulo,notas\n"Caso ficticio","Tipo trabalhista, falta documento"')[0], { titulo: "Caso ficticio", notas: "Tipo trabalhista, falta documento" })
+const caso = extrairCaso("Caso exclusivamente ficticio\nTipo trabalhista\nPendente: documento de teste", "Caso ficticio")
+assert.equal(caso.tipo.toLowerCase(), "trabalhista")
+assert.equal(caso.pendencias.length, 1)
+assert.ok(caso.camposIncertos.includes("telefone"))
+
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-todo-import-"))
+try {
+  const input = path.join(temp, "tarefas.json")
+  const output = path.join(temp, "saida")
+  fs.writeFileSync(input, JSON.stringify([{ title: "Caso Alfa ficticio", notes: "Consumidor\nAguardando documento" }]))
+  const result = spawnSync(process.execPath, [path.join(__dirname, "..", "scripts", "import-todo-cases.js"), `--input=${input}`, `--output=${output}`], { encoding: "utf8" })
+  assert.equal(result.status, 0, result.stderr)
+  const intermediate = JSON.parse(fs.readFileSync(path.join(output, "todo-cases-intermediate.json"), "utf8"))
+  const report = JSON.parse(fs.readFileSync(path.join(output, "todo-cases-report.json"), "utf8"))
+  assert.equal(intermediate.casos.length, 1)
+  assert.equal(intermediate.casos[0].textoOriginal.includes("Aguardando documento"), true)
+  assert.equal(report.revisaoManual, 1)
+} finally { fs.rmSync(temp, { recursive: true, force: true }) }
+console.log("import-todo-cases.test.js: ok")

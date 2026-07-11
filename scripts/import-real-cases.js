@@ -22,6 +22,8 @@ const option = name => {
 const root = path.resolve(option("root") || process.env.CASE_IMPORT_ROOT || DEFAULT_ROOT)
 const concurrency = Math.max(1, Math.min(5, Number(option("concurrency") || 2)))
 const liveConfirmation = option("confirm-live-import")
+const allowReadonlyHubSpot = option("allow-readonly-hubspot") === "true"
+const pilotSize = Math.max(0, Math.min(10, Number(option("pilot-size") || 0)))
 
 const sha = value => crypto.createHash("sha256").update(String(value)).digest("hex")
 const normalizeDigits = value => String(value || "").replace(/\D/g, "")
@@ -238,6 +240,7 @@ async function analyze(records, online) {
 
 function summarize(inventoryResult, results, mode) {
   const count = (object, status) => results.filter(item => item[object]?.status === status).length
+  const ready = results.filter(item => !item.reviewReasons.length && !item.error && !["duplicate"].includes(item.contact.status) && !["duplicate"].includes(item.deal.status))
   return {
     generatedAt: new Date().toISOString(), mode, rootHash: inventoryResult.rootHash,
     totalFolders: inventoryResult.totalFolders, recognizedCases: results.length,
@@ -247,6 +250,9 @@ function summarize(inventoryResult, results, mode) {
     incomplete: results.filter(item => item.reviewReasons.length).length,
     errors: results.filter(item => item.error).length,
     manualReview: results.filter(item => item.reviewReasons.length || item.error || item.contact.status === "duplicate" || item.deal.status === "duplicate").length,
+    ready: ready.length,
+    blocked: results.length - ready.length,
+    pilotCandidates: pilotSize ? ready.slice(0, pilotSize).map(item => ({ importId: item.importId, sourceHash: item.sourceHash })) : [],
     cases: results.map(item => ({
       importId: item.importId, sourceFolderHash: item.sourceFolderHash, sourceHash: item.sourceHash,
       evidence: { name: Boolean(item.name), cpf: Boolean(item.cpf), phone: Boolean(item.phone), email: Boolean(item.email), officialNumber: Boolean(item.officialNumber), documents: item.documents },
@@ -296,7 +302,8 @@ async function main() {
   }
   if (!fs.existsSync(root)) throw new Error("pasta_origem_inexistente")
   const scanned = await inventory()
-  const online = (command !== "audit" && command !== "review") && Boolean(process.env.HUBSPOT_TOKEN)
+  const offlineByDefault = command === "audit" || command === "review" || command === "dry-run"
+  const online = Boolean(process.env.HUBSPOT_TOKEN) && (!offlineByDefault || allowReadonlyHubSpot)
   const { results, checkpoint } = await analyze(scanned.records, online)
   if (["apply", "resume"].includes(command)) await apply(results, checkpoint)
   const report = summarize(scanned, results, command)

@@ -245,6 +245,7 @@ const {
 const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
+const { criarGracefulShutdown } = require("./src/infrastructure/graceful-shutdown")
 const {
   consolidarDocumentosDoCaso
 } = require("./src/domain/document-consolidation")
@@ -5633,6 +5634,7 @@ async function capturarLeadIncompleto(from, u) {
 }
 
 const CALENDAR_ID = "oraculum.juridico@gmail.com"
+const WHATSAPP_MEDIA_MAX_BYTES = Math.max(1024, Number(process.env.WHATSAPP_MEDIA_MAX_BYTES || 20 * 1024 * 1024))
 
 function getCalendar() {
   const oauth2 = new google.auth.OAuth2(
@@ -5647,11 +5649,18 @@ function getCalendar() {
 async function baixarMidia(mediaId) {
   try {
     const info = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } })
-    const file = await axios.get(info.data.url, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }, responseType: "arraybuffer" })
+    if (Number(info.data.file_size || 0) > WHATSAPP_MEDIA_MAX_BYTES) throw Object.assign(new Error("midia excede limite"), { code: "MEDIA_SIZE_LIMIT" })
+    const file = await axios.get(info.data.url, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+      responseType: "arraybuffer",
+      maxContentLength: WHATSAPP_MEDIA_MAX_BYTES,
+      maxBodyLength: WHATSAPP_MEDIA_MAX_BYTES
+    })
     const buffer = Buffer.from(file.data)
+    if (buffer.length > WHATSAPP_MEDIA_MAX_BYTES) throw Object.assign(new Error("midia excede limite"), { code: "MEDIA_SIZE_LIMIT" })
     logDebug(`[WHATSAPP] Midia baixada | mime=${info.data.mime_type || "application/octet-stream"} | bytes=${buffer.length}`)
     return { buffer, mimeType: info.data.mime_type || "application/octet-stream" }
-  } catch (e) { logErro("whatsapp", "baixarMidia: " + e.message); return null }
+  } catch (e) { logErro("whatsapp", `baixarMidia: ${e.code || e.name || "erro"}`); return null }
 }
 
 const IMAGEM_BOAS_VINDAS_URL = process.env.IMAGEM_BOAS_VINDAS_URL || ""
@@ -15347,14 +15356,6 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
   } catch (e) { logErro("agendamento", e.message); return res.sendStatus(500) }
 })
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    persistirUsersAgora()
-    persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
-    process.exit(0)
-  })
-}
-
 process.on("beforeExit", () => {
   persistirUsersAgora()
   persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
@@ -15977,6 +15978,7 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
   } catch (e) { logErro("lembrete", e.message); return res.sendStatus(500) }
 })
 
+let httpServer = null
 async function iniciarServidor() {
   try {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
@@ -15996,7 +15998,7 @@ async function iniciarServidor() {
     return
   }
 
-  app.listen(PORT, () => {
+  httpServer = app.listen(PORT, () => {
     console.log(`Oraculum v6.4 — porta ${PORT}`)
     setImmediate(() => {
       drenarWebhookInbox().catch(err =>
@@ -16006,11 +16008,17 @@ async function iniciarServidor() {
   })
 }
 
-for (const signal of ["SIGTERM", "SIGINT"]) {
-  process.once(signal, () => {
-    closeExternalStateRepository()
-      .finally(() => process.exit(0))
-  })
-}
+const encerrarServidor = criarGracefulShutdown({
+  persistirUsersAgora,
+  persistirSessoesAdminAssistidasAgora,
+  sessoesAdminWhatsApp,
+  fecharServidorHttp: () => new Promise((resolve, reject) => {
+    if (!httpServer) return resolve()
+    httpServer.close(error => error ? reject(error) : resolve())
+  }),
+  closeExternalStateRepository,
+  logErro
+})
+for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { encerrarServidor(signal) })
 
 iniciarServidor()

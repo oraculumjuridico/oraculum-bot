@@ -229,6 +229,7 @@ async function closeExternalStateRepository() {
 
 module.exports = {
   DEFAULT_FILES,
+  configuredFiles,
   initializeExternalStateRepository,
   mirrorStateFile,
   flushExternalState,

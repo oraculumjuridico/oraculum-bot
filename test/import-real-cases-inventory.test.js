@@ -48,9 +48,9 @@ console.log("  ✓ Review command recognized")
 
 // Test 5: Verify HubSpot skipped in audit/review
 console.log("\n✓ Test 5: HubSpot disabled in audit/review")
-assert.match(scriptContent, /online\s*=.*command\s*!==?\s*["']audit["']/s,
+assert.match(scriptContent, /offlineByDefault\s*=.*command\s*===\s*["']audit["']/s,
   "audit should disable HubSpot")
-assert.match(scriptContent, /online\s*=.*command\s*!==?\s*["']review["']/s,
+assert.match(scriptContent, /offlineByDefault\s*=.*command\s*===\s*["']review["']/s,
   "review should disable HubSpot")
 console.log("  ✓ online flag correctly gates HubSpot calls")
 

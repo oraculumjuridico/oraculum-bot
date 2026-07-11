@@ -7,6 +7,7 @@ const fs = require("node:fs")
 const crypto = require("node:crypto")
 const {
   initializeExternalStateRepository,
+  configuredFiles,
   migrateLocalState,
   externalStateHealth,
   closeExternalStateRepository
@@ -17,8 +18,9 @@ async function main() {
   const dryRun = process.argv.includes("--dry-run")
   const directory = path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "..", "data"))
   if (dryRun) {
+    const permitidos = new Set(configuredFiles())
     const files = fs.existsSync(directory)
-      ? fs.readdirSync(directory).filter(name => name.endsWith(".json") || name.endsWith(".jsonl")).map(name => {
+      ? fs.readdirSync(directory).filter(name => permitidos.has(name)).map(name => {
           const content = fs.readFileSync(path.join(directory, name))
           return { namespace: name, bytes: content.length, checksum: crypto.createHash("sha256").update(content).digest("hex") }
         })
