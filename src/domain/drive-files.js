@@ -176,6 +176,56 @@ async function buscarArquivoDrivePorNome(pastaId, nomeArquivo) {
   }
 }
 
+async function listarArquivosDriveNaPasta(pastaId) {
+  if (!pastaId) return []
+  try {
+    const drive = getDrive()
+    const arquivos = []
+    let pageToken
+    do {
+      const resposta = await drive.files.list({
+        q: [`'${escapeDriveQueryValue(pastaId)}' in parents`, "trashed = false", "mimeType != 'application/vnd.google-apps.folder'"].join(" and "),
+        fields: "nextPageToken,files(id,name,mimeType,webViewLink,parents,modifiedTime)",
+        pageSize: 1000,
+        ...(pageToken ? { pageToken } : {})
+      })
+      arquivos.push(...(resposta.data.files || []))
+      pageToken = resposta.data.nextPageToken
+    } while (pageToken)
+    return arquivos
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "listarArquivosNaPasta"))
+    return []
+  }
+}
+
+async function baixarArquivoDrive(fileId) {
+  if (!fileId) return null
+  try {
+    const resposta = await getDrive().files.get({ fileId, alt: "media" }, { responseType: "arraybuffer" })
+    return resposta?.data == null ? null : Buffer.from(resposta.data)
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "baixarArquivo"))
+    return null
+  }
+}
+
+async function salvarArquivoBinarioDrive(pastaId, nomeArquivo, buffer, mimeType = "application/octet-stream") {
+  if (!pastaId || !nomeArquivo || !Buffer.isBuffer(buffer) || !buffer.length) return null
+  try {
+    const existente = await buscarArquivoDrivePorNome(pastaId, nomeArquivo)
+    const drive = getDrive()
+    const media = { mimeType, body: Readable.from([buffer]) }
+    const resposta = existente?.id
+      ? await drive.files.update({ fileId: existente.id, requestBody: { name: nomeArquivo }, media, fields: "id,name,webViewLink,mimeType" })
+      : await drive.files.create({ requestBody: { name: nomeArquivo, parents: [pastaId] }, media, fields: "id,name,webViewLink,mimeType" })
+    return { ...resposta.data, mimeType: resposta.data.mimeType || mimeType, folderId: pastaId }
+  } catch (e) {
+    logErro("drive", detalhesErroDrive(e, "salvarArquivoBinario"))
+    return null
+  }
+}
+
 async function lerJsonDrive(fileId) {
   if (!fileId) return null
   try {
@@ -315,6 +365,9 @@ module.exports = {
   uploadDrive,
   obterOuCriarSubpastaDrive,
   buscarArquivoDrivePorNome,
+  listarArquivosDriveNaPasta,
+  baixarArquivoDrive,
+  salvarArquivoBinarioDrive,
   lerJsonDrive,
   salvarJsonDrive,
   lerJsonEmSubpastaDrive,

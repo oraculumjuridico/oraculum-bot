@@ -144,6 +144,53 @@ function main() {
   assert.equal(comPdf.pdfs[0].drive.fileId, "pdf-rg-v1")
   assert.equal(comPdf.estatisticas.totalPdfs, 1)
 
+  const pdfIdempotenteInicial = registrarPdfs(comPdf, [{
+    tipo: "DocumentosPessoais",
+    arquivo: "01_Documentos_Pessoais.pdf",
+    paginas: 2,
+    hash: "hash-pdf-ficticio-v1",
+    fileId: "pdf-ficticio-1",
+    dataGeracao: "2026-07-08T16:10:00.000Z",
+    originais: [
+      { fileId: "original-a", nome: "original-a.png", referenciaArquivoOriginal: "origem-a", pageNumber: 1, metadadoPreservado: "a" },
+      { fileId: "original-b", arquivo: "original-b.png", referenciaArquivoOriginal: "origem-b", folha: 2, metadadoPreservado: "b" }
+    ]
+  }], { now: "2026-07-08T16:10:00.000Z" })
+  const pdfIdempotente = pdfIdempotenteInicial.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf")
+  assert.equal(pdfIdempotente.versao, 1)
+  assert.equal(pdfIdempotente.dataGeracao, "2026-07-08T16:10:00.000Z")
+  assert.equal(pdfIdempotente.originais[0].metadadoPreservado, "a")
+
+  const pdfIgual = registrarPdfs(pdfIdempotenteInicial, [{
+    tipo: "DocumentosPessoais", arquivo: "01_Documentos_Pessoais.pdf", paginas: 2,
+    hash: "hash-pdf-ficticio-v1", fileId: "pdf-ficticio-1",
+    originais: pdfIdempotente.originais
+  }], { now: "2026-07-08T16:20:00.000Z" })
+  assert.equal(pdfIgual.pdfs.length, 2)
+  assert.equal(pdfIgual.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf").versao, 1)
+  assert.equal(pdfIgual.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf").dataGeracao, "2026-07-08T16:10:00.000Z")
+
+  const pdfOrdemInvertida = registrarPdfs(pdfIgual, [{
+    tipo: "DocumentosPessoais", arquivo: "01_Documentos_Pessoais.pdf", paginas: 2,
+    hash: "hash-pdf-ficticio-v1", fileId: "pdf-ficticio-1",
+    originais: [...pdfIdempotente.originais].reverse()
+  }], { now: "2026-07-08T16:30:00.000Z" })
+  assert.equal(pdfOrdemInvertida.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf").versao, 1)
+  assert.equal(pdfOrdemInvertida.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf").dataGeracao, "2026-07-08T16:10:00.000Z")
+
+  const pdfHashAlterado = registrarPdfs(pdfOrdemInvertida, [{
+    tipo: "DocumentosPessoais", arquivo: "01_Documentos_Pessoais.pdf", paginas: 2,
+    hash: "hash-pdf-ficticio-v2", fileId: "pdf-ficticio-1", originais: pdfIdempotente.originais
+  }], { now: "2026-07-08T16:40:00.000Z" })
+  assert.equal(pdfHashAlterado.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf").versao, 2)
+
+  const pdfOriginalAlterado = registrarPdfs(pdfHashAlterado, [{
+    tipo: "DocumentosPessoais", arquivo: "01_Documentos_Pessoais.pdf", paginas: 2,
+    hash: "hash-pdf-ficticio-v2", fileId: "pdf-ficticio-1",
+    originais: [pdfIdempotente.originais[0], { ...pdfIdempotente.originais[1], fileId: "original-c" }]
+  }], { now: "2026-07-08T16:50:00.000Z" })
+  assert.equal(pdfOriginalAlterado.pdfs.find(pdf => pdf.arquivo === "01_Documentos_Pessoais.pdf").versao, 3)
+
   const pdfSubstituido = registrarPdfs(comPdf, [{
     tipo: "RG",
     arquivo: "RG.pdf",

@@ -246,6 +246,9 @@ const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
 const {
+  consolidarDocumentosDoCaso
+} = require("./src/domain/document-consolidation")
+const {
   configurarLogging,
   logDebug,
   logInfo,
@@ -8893,6 +8896,20 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
   }
 }
 
+async function consolidarDocumentosDoCasoSeguro({ u, contexto = {} }) {
+  try {
+    return await consolidarDocumentosDoCaso({
+      pastaDriveId: u?.pastaDriveId,
+      numeroCaso: u?.numeroCaso,
+      documentosEsperados: getDocumentosListaCaso(u),
+      contexto
+    })
+  } catch (e) {
+    logErro("document_consolidation", `falha nao bloqueante: ${e.code || e.name || "erro"}`)
+    return { ok: false, skipped: false, reason: "falha tecnica de consolidacao", erros: [{ code: e.code || "DOCUMENT_CONSOLIDATION_ERROR" }] }
+  }
+}
+
 async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (!(ehAudio || ehDoc)) return null
   if (![STAGES.CLIENTE, STAGES.AGUARDANDO_URGENTE, STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) return null
@@ -14789,6 +14806,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         // Todas as folhas do documento atual foram enviadas — avança para o próximo documento
         if (docAtual4?.id) marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
         u.docAtualIdx = 0
+      }
+      if (getDocsPendentes(u).length === 0) {
+        await consolidarDocumentosDoCasoSeguro({
+          u,
+          contexto: { origem: "conclusao_fluxo_guiado" }
+        })
       }
       // Se ainda há folhas pendentes no documento atual, mantém o documento e avança só o índice da folha
       u.ultimoArqId = null

@@ -8,6 +8,7 @@ const EMPTY_GROUPS = Object.freeze([
   "rgFrentesSemVerso",
   "rgVersosSemFrente",
   "comprovantesResidencia",
+  "ctps",
   "holerites",
   "laudos",
   "exames",
@@ -354,6 +355,18 @@ function normalizarPdf(pdf = {}, options = {}) {
   }
 }
 
+function normalizarOriginaisParaComparacao(originais) {
+  return normalizarArray(originais).map(original => {
+    const material = {
+      fileId: original?.fileId || original?.drive?.fileId || null,
+      nome: original?.nome || original?.arquivo || original?.name || null,
+      referenciaArquivoOriginal: original?.referenciaArquivoOriginal || null,
+      pageNumber: original?.pageNumber ?? original?.folha ?? original?.pagina ?? null
+    }
+    return Object.fromEntries(Object.entries(material).filter(([, valor]) => valor !== null && valor !== undefined && valor !== ""))
+  }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+}
+
 function registrarPdfs(registry = {}, pdfs = [], options = {}) {
   const estado = clonarRegistry(registry)
   for (const pdf of normalizarArray(pdfs)) {
@@ -364,9 +377,17 @@ function registrarPdfs(registry = {}, pdfs = [], options = {}) {
       (normalizado.arquivo && item.arquivo === normalizado.arquivo)
     )
     if (index >= 0) {
+      const anterior = estado.pdfs[index]
+      const materialIgual = anterior.tipo === normalizado.tipo &&
+        anterior.arquivo === normalizado.arquivo &&
+        anterior.hash === normalizado.hash &&
+        anterior.drive?.fileId === normalizado.drive?.fileId &&
+        JSON.stringify(normalizarOriginaisParaComparacao(anterior.originais)) === JSON.stringify(normalizarOriginaisParaComparacao(normalizado.originais))
       estado.pdfs[index] = {
         ...normalizado,
-        versao: Number(estado.pdfs[index].versao || 1) + 1
+        originais: materialIgual ? anterior.originais : normalizado.originais,
+        dataGeracao: materialIgual ? anterior.dataGeracao : normalizado.dataGeracao,
+        versao: materialIgual ? Number(anterior.versao || 1) : Number(anterior.versao || 1) + 1
       }
     } else {
       estado.pdfs.push(normalizado)
