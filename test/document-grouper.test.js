@@ -26,7 +26,11 @@ function main() {
     doc("RG frente", "documentos_pessoais", "identidade", { rg: "99.999.999-9" }, "rg-frente-sem-verso.jpg"),
     doc("CPF", "documentos_pessoais", "cadastro_pessoa_fisica", { cpf: "123.456.789-09" }, "cpf.jpg"),
     doc("CNH", "documentos_pessoais", "habilitacao", { cpf: "123.456.789-09" }, "cnh.jpg"),
+    doc("Certidao de nascimento", "documentos_pessoais", "civil", {}, "certidao-ficticia.jpg"),
     doc("Comprovante de residencia", "documentos_pessoais", "endereco", { nome: "MARIA" }, "luz.jpg"),
+    { ...doc("CTPS pagina", "documentos_pessoais", "trabalho", {}, "ctps-a-p2.jpg"), grupoDocumento: "carteira-a", pageNumber: 2 },
+    { ...doc("CTPS pagina", "documentos_pessoais", "trabalho", {}, "ctps-a-p1.jpg"), grupoDocumento: "carteira-a", pageNumber: 1 },
+    { ...doc("Carteira de trabalho", "documentos_pessoais", "trabalho", { numero: "FICT-2", serie: "S2", uf: "ZZ" }, "ctps-b.jpg"), pageNumber: 1 },
     doc("Holerite", "trabalhista", "remuneracao", { competencia: "05/2026" }, "holerite-05.jpg"),
     doc("Holerite", "trabalhista", "remuneracao", { competencia: "06/2026" }, "holerite-06.jpg"),
     doc("Laudo", "medico", "laudo_medico", { cid: "M54.5" }, "laudo-1.jpg"),
@@ -46,6 +50,9 @@ function main() {
 
   assert.equal(grupos.erros.length, 0)
   assert.equal(grupos.documentosPessoais.length, 6)
+  assert.ok(grupos.documentosPessoais.some(item => item.tipoDocumento === "Certidao de nascimento"))
+  assert.equal(grupos.documentosPessoais.some(item => /ctps|carteira de trabalho/i.test(item.tipoDocumento)), false)
+  assert.equal(grupos.documentosPessoais.some(item => /comprovante/i.test(item.tipoDocumento)), false)
   assert.equal(grupos.rgPares.length, 1)
   assert.equal(grupos.rgPares[0].frente.referenciaArquivoOriginal, "rg-frente.jpg")
   assert.equal(grupos.rgPares[0].verso.referenciaArquivoOriginal, "rg-verso.jpg")
@@ -55,13 +62,16 @@ function main() {
   assert.ok(grupos.avisos.some(aviso => aviso.code === "DOCUMENT_GROUPER_RG_INCOMPLETE"))
 
   assert.equal(grupos.comprovantesResidencia.length, 1)
+  assert.equal(grupos.ctps.length, 2)
+  assert.deepEqual(grupos.ctps[0].documentos.map(item => item.pageNumber), [1, 2])
   assert.equal(grupos.holerites.length, 2)
   assert.deepEqual(grupos.holerites.map(item => item.camposExtraidos.competencia), ["05/2026", "06/2026"])
   assert.equal(grupos.laudos.length, 2)
   assert.equal(grupos.exames.length, 1)
   assert.equal(grupos.receitas.length, 1)
   assert.equal(grupos.documentosPrevidenciarios.length, 2)
-  assert.equal(grupos.documentosTrabalhistas.length, 4)
+  assert.equal(grupos.documentosTrabalhistas.length, 2)
+  assert.equal(grupos.documentosTrabalhistas.some(item => item.tipoDocumento === "Holerite"), false)
   assert.equal(grupos.documentosProcessuais.length, 2)
   assert.equal(grupos.outros.length, 1)
   assert.equal(grupos.outros[0].referenciaArquivoOriginal, "desconhecido.jpg")
@@ -83,6 +93,13 @@ function main() {
   assert.equal(gruposPipeline.laudos[0].tipoDocumento, "Laudo")
   assert.equal(gruposPipeline.laudos[0].camposExtraidos.cid, "M75")
   assert.equal(gruposPipeline.laudos[0].referenciaArquivoOriginal, "pipeline-laudo.jpg")
+
+  const incerta = agruparDocumentosProcessados([
+    doc("CTPS pagina", "documentos_pessoais", "trabalho", {}, "origem-ficticia-a.png"),
+    doc("CTPS pagina", "documentos_pessoais", "trabalho", {}, "origem-ficticia-b.png")
+  ])
+  assert.equal(incerta.ctps.length, 2)
+  assert.ok(incerta.avisos.some(aviso => aviso.code === "DOCUMENT_GROUPER_CTPS_REVIEW"))
 
   const invalido = agruparDocumentosProcessados(null)
   assert.equal(invalido.erros[0].code, "DOCUMENT_GROUPER_INPUT_INVALID")

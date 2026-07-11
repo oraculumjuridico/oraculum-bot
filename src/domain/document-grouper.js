@@ -4,6 +4,7 @@ const GRUPOS_DOCUMENTAIS = Object.freeze([
   "rgFrentesSemVerso",
   "rgVersosSemFrente",
   "comprovantesResidencia",
+  "ctps",
   "holerites",
   "laudos",
   "exames",
@@ -60,18 +61,21 @@ function adicionarDocumentoPessoal(documento, grupos) {
   const tipo = normalizarTexto(documento.tipoDocumento)
   const categoria = normalizarTexto(documento.categoria)
 
+  if (tipo.includes("comprovante de residencia")) {
+    grupos.comprovantesResidencia.push(documento)
+    return
+  }
+  if (tipo.includes("ctps") || tipo.includes("carteira de trabalho")) return
+
   if (
     categoria === "documentos_pessoais" ||
-    ["cpf", "cnh", "ctps", "certidao", "comprovante de residencia"].some(parte => tipo.includes(parte)) ||
+    ["cpf", "cnh", "certidao"].some(parte => tipo.includes(parte)) ||
     isRGFrente(documento) ||
     isRGVerso(documento)
   ) {
     grupos.documentosPessoais.push(documento)
   }
 
-  if (tipo.includes("comprovante de residencia")) {
-    grupos.comprovantesResidencia.push(documento)
-  }
 }
 
 function adicionarDocumentoMedico(documento, grupos) {
@@ -106,10 +110,10 @@ function adicionarDocumentoJuridico(documento, grupos) {
     grupos.documentosPrevidenciarios.push(documento)
   }
 
-  if (
+  if (!tipo.includes("holerite") && (
     categoria === "trabalhista" ||
-    ["holerite", "trct", "contrato de trabalho", "extrato fgts"].some(parte => tipo.includes(parte))
-  ) {
+    ["trct", "contrato de trabalho", "extrato fgts"].some(parte => tipo.includes(parte))
+  )) {
     grupos.documentosTrabalhistas.push(documento)
   }
 
@@ -119,6 +123,36 @@ function adicionarDocumentoJuridico(documento, grupos) {
   ) {
     grupos.documentosProcessuais.push(documento)
   }
+}
+
+function chaveCTPS(documento) {
+  const campos = documento.camposExtraidos || {}
+  const explicita = documento.grupoDocumento || documento.documentGroup || documento.groupId || documento.carteiraId || documento.ctpsId
+  if (explicita) return { chave: `explicita:${normalizarTexto(explicita)}`, confiavel: true }
+  if (campos.numero && campos.serie && campos.uf) return { chave: `campos:${normalizarTexto(campos.numero)}:${normalizarTexto(campos.serie)}:${normalizarTexto(campos.uf)}`, confiavel: true }
+  const origem = documento.fileId || documento.referenciaArquivoOriginal || documento.arquivoOriginal
+  if (origem) return { chave: `origem:${normalizarTexto(origem)}`, confiavel: false }
+  return { chave: `entrada:${documento.indiceEntrada}`, confiavel: false }
+}
+
+function agruparCTPS(documentos, grupos, avisos) {
+  const carteiras = new Map()
+  for (const documento of documentos) {
+    const tipo = normalizarTexto(documento.tipoDocumento)
+    if (!tipo.includes("ctps") && !tipo.includes("carteira de trabalho")) continue
+    const identificacao = chaveCTPS(documento)
+    if (!carteiras.has(identificacao.chave)) carteiras.set(identificacao.chave, { ...identificacao, documentos: [] })
+    carteiras.get(identificacao.chave).documentos.push(documento)
+  }
+  grupos.ctps.push(...[...carteiras.values()].map(carteira => ({
+    ...carteira,
+    documentos: carteira.documentos.sort((a, b) => {
+      const paginaA = Number.isFinite(Number(a.pageNumber)) ? Number(a.pageNumber) : Number.MAX_SAFE_INTEGER
+      const paginaB = Number.isFinite(Number(b.pageNumber)) ? Number(b.pageNumber) : Number.MAX_SAFE_INTEGER
+      return paginaA - paginaB || a.indiceEntrada - b.indiceEntrada
+    })
+  })))
+  if (grupos.ctps.some(carteira => !carteira.confiavel)) avisos.push({ code: "DOCUMENT_GROUPER_CTPS_REVIEW", message: "separacao de CTPS requer revisao manual" })
 }
 
 function agruparRG(documentos, grupos) {
@@ -160,6 +194,8 @@ function agruparRG(documentos, grupos) {
 function documentoFoiAgrupado(documento, grupos) {
   return [
     grupos.documentosPessoais,
+    grupos.comprovantesResidencia,
+    grupos.ctps.flatMap(carteira => carteira.documentos),
     grupos.holerites,
     grupos.laudos,
     grupos.exames,
@@ -195,6 +231,7 @@ function agruparDocumentosProcessados(documentos = []) {
   }
 
   agruparRG(normalizados, grupos)
+  agruparCTPS(normalizados, grupos, avisos)
 
   for (const documento of normalizados) {
     if (!documentoFoiAgrupado(documento, grupos)) {

@@ -6,33 +6,14 @@ const PAGE_MARGIN = 36
 
 const PDF_DEFINITIONS = Object.freeze([
   {
-    tipo: "RG",
-    arquivo: "RG.pdf",
-    getDocumentos: grupos => [
-      ...(grupos.rgPares || []).flatMap(par => [par.frente, par.verso].filter(Boolean)),
-      ...(grupos.rgFrentesSemVerso || []),
-      ...(grupos.rgVersosSemFrente || [])
-    ]
-  },
-  {
-    tipo: "CNH",
-    arquivo: "CNH.pdf",
-    getDocumentos: grupos => filtrarPorTipo(grupos.documentosPessoais, ["cnh"])
-  },
-  {
-    tipo: "CTPS",
-    arquivo: "CTPS.pdf",
-    getDocumentos: grupos => filtrarPorTipo(grupos.documentosPessoais, ["ctps"])
-  },
-  {
-    tipo: "Certidao",
-    arquivo: "Certidao.pdf",
-    getDocumentos: grupos => filtrarPorTipo(grupos.documentosPessoais, ["certidao", "certidão"])
-  },
-  {
     tipo: "DocumentosPessoais",
-    arquivo: "DocumentosPessoais.pdf",
+    arquivo: "01_Documentos_Pessoais.pdf",
     getDocumentos: grupos => grupos.documentosPessoais || []
+  },
+  {
+    tipo: "ComprovanteResidencia",
+    arquivo: "04_Comprovante_de_Residencia.pdf",
+    getDocumentos: grupos => grupos.comprovantesResidencia || []
   },
   {
     tipo: "Laudos",
@@ -62,7 +43,7 @@ const PDF_DEFINITIONS = Object.freeze([
   {
     tipo: "DocumentosTrabalhistas",
     arquivo: "DocumentosTrabalhistas.pdf",
-    getDocumentos: grupos => grupos.documentosTrabalhistas || []
+    getDocumentos: grupos => (grupos.documentosTrabalhistas || []).filter(documento => !normalizarTexto(documento?.tipoDocumento).includes("holerite"))
   },
   {
     tipo: "DocumentosProcessuais",
@@ -347,7 +328,13 @@ async function comporPdfsDocumentais(grupos = {}, options = {}) {
 
   registrarAvisosRGIncompleto(grupos, avisos)
 
-  for (const definicao of definicoes) {
+  const definicoesCTPS = (grupos.ctps || []).map((carteira, index) => ({
+    tipo: `CTPS_${index + 1}`,
+    arquivo: index === 0 ? "02_CTPS_1.pdf" : index === 1 ? "03_CTPS_2.pdf" : `CTPS_${index + 1}.pdf`,
+    getDocumentos: () => carteira.documentos || []
+  }))
+
+  for (const definicao of [...definicoes.slice(0, 1), ...definicoesCTPS, ...definicoes.slice(1)]) {
     try {
       const pdf = await gerarPdfDefinicao(definicao, grupos, avisos)
       if (pdf) pdfsGerados.push(pdf)

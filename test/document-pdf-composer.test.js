@@ -23,6 +23,7 @@ function gruposVazios() {
     rgFrentesSemVerso: [],
     rgVersosSemFrente: [],
     comprovantesResidencia: [],
+    ctps: [],
     holerites: [],
     laudos: [],
     exames: [],
@@ -43,7 +44,7 @@ function doc(tipoDocumento, buffer, referencia, extra = {}) {
     mimeType: "image/png",
     fileId: referencia,
     referenciaArquivoOriginal: `${referencia}.png`,
-    webViewLink: `https://drive.google.com/file/d/${referencia}/view`
+    webViewLink: `fixture://${referencia}`
   }
 }
 
@@ -62,6 +63,11 @@ function assertPdfValido(pdf, paginas) {
 async function main() {
   const frente = doc("RG frente", await imagem("#ffffff"), "rg-frente", { categoria: "documentos_pessoais" })
   const verso = doc("RG verso", await imagem("#eeeeee"), "rg-verso", { categoria: "documentos_pessoais" })
+  const certidao = doc("Certidao de nascimento", await imagem("#fafafa"), "certidao-ficticia", { categoria: "documentos_pessoais" })
+  const residencia = doc("Comprovante de residencia", await imagem("#f0f0f0"), "residencia-ficticia", { categoria: "documentos_pessoais" })
+  const ctpsA1 = { ...doc("CTPS pagina", await imagem("#e0e0ff"), "ctps-a-1"), pageNumber: 1 }
+  const ctpsA2 = { ...doc("CTPS pagina", await imagem("#d0d0ff"), "ctps-a-2"), pageNumber: 2 }
+  const ctpsB = { ...doc("CTPS pagina", await imagem("#c0c0ff"), "ctps-b-1"), pageNumber: 1 }
   const holerite1 = doc("Holerite", await imagem("#d0e8ff"), "holerite-05", { categoria: "trabalhista" })
   const holerite2 = doc("Holerite", await imagem("#c0ddff"), "holerite-06", { categoria: "trabalhista" })
   const laudo1 = doc("Laudo", await imagem("#ffe0e0"), "laudo-1", { categoria: "medico" })
@@ -69,13 +75,22 @@ async function main() {
   const desconhecido = doc("Documento desconhecido", await imagem("#dddddd"), "outro-1", { categoria: "outros" })
 
   const gruposRGCompleto = gruposVazios()
-  gruposRGCompleto.documentosPessoais.push(frente, verso)
+  gruposRGCompleto.documentosPessoais.push(frente, verso, certidao)
   gruposRGCompleto.rgPares.push({ chave: "maria", frente, verso })
+  gruposRGCompleto.comprovantesResidencia.push(residencia)
+  gruposRGCompleto.ctps.push({ chave: "a", confiavel: true, documentos: [ctpsA1, ctpsA2] }, { chave: "b", confiavel: true, documentos: [ctpsB] })
 
   const resultadoRGCompleto = await comporPdfsDocumentais(gruposRGCompleto)
-  assertPdfValido(porTipo(resultadoRGCompleto, "RG"), 2)
-  assert.equal(porTipo(resultadoRGCompleto, "RG").arquivo, "RG.pdf")
-  assert.equal(porTipo(resultadoRGCompleto, "RG").originais[0].fileId, "rg-frente")
+  assertPdfValido(porTipo(resultadoRGCompleto, "DocumentosPessoais"), 3)
+  assert.equal(porTipo(resultadoRGCompleto, "DocumentosPessoais").arquivo, "01_Documentos_Pessoais.pdf")
+  assert.equal(porTipo(resultadoRGCompleto, "DocumentosPessoais").originais[0].fileId, "rg-frente")
+  assertPdfValido(porTipo(resultadoRGCompleto, "ComprovanteResidencia"), 1)
+  assert.equal(porTipo(resultadoRGCompleto, "ComprovanteResidencia").arquivo, "04_Comprovante_de_Residencia.pdf")
+  assertPdfValido(porTipo(resultadoRGCompleto, "CTPS_1"), 2)
+  assert.equal(porTipo(resultadoRGCompleto, "CTPS_1").arquivo, "02_CTPS_1.pdf")
+  assert.deepEqual(porTipo(resultadoRGCompleto, "CTPS_1").originais.map(item => item.fileId), ["ctps-a-1", "ctps-a-2"])
+  assert.equal(porTipo(resultadoRGCompleto, "CTPS_2").arquivo, "03_CTPS_2.pdf")
+  assert.equal(resultadoRGCompleto.pdfsGerados.some(pdf => ["RG.pdf", "CNH.pdf", "Certidao.pdf"].includes(pdf.arquivo)), false)
   assert.equal(resultadoRGCompleto.avisos.some(aviso => aviso.code === "DOCUMENT_PDF_RG_INCOMPLETE"), false)
 
   const gruposRGFrente = gruposVazios()
@@ -83,7 +98,7 @@ async function main() {
   gruposRGFrente.rgFrentesSemVerso.push(frente)
 
   const resultadoRGFrente = await comporPdfsDocumentais(gruposRGFrente)
-  assertPdfValido(porTipo(resultadoRGFrente, "RG"), 1)
+  assertPdfValido(porTipo(resultadoRGFrente, "DocumentosPessoais"), 1)
   assert.ok(resultadoRGFrente.avisos.some(aviso => aviso.code === "DOCUMENT_PDF_RG_INCOMPLETE"))
 
   const gruposHolerites = gruposVazios()
@@ -91,7 +106,7 @@ async function main() {
   gruposHolerites.documentosTrabalhistas.push(holerite1, holerite2)
   const resultadoHolerites = await comporPdfsDocumentais(gruposHolerites)
   assertPdfValido(porTipo(resultadoHolerites, "Holerites"), 2)
-  assertPdfValido(porTipo(resultadoHolerites, "DocumentosTrabalhistas"), 2)
+  assert.equal(porTipo(resultadoHolerites, "DocumentosTrabalhistas"), undefined)
 
   const gruposLaudos = gruposVazios()
   gruposLaudos.laudos.push(laudo1, laudo2)
