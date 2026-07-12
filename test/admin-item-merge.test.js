@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mesclarItemAdminHubspotComMemoria } = require('../src/domain/admin-item-merge.js');
+const {
+  mesclarItemAdminHubspotComMemoria,
+  mesclarItensAdminPorIdentidade
+} = require('../src/domain/admin-item-merge.js');
 
 console.log('\n=== Teste da Funcao mesclarItemAdminHubspotComMemoria ===\n');
 
@@ -226,6 +229,219 @@ console.log('  OK - Campos protegidos mantidos, campos nao permitidos ignorados\
 
 console.log('✓ Todos os testes da funcao de merge passaram\n');
 
+function itemHubspot({ testeId, telefone, negocioId, stage = 'appointmentscheduled' }) {
+  return {
+    testeId,
+    from: telefone,
+    u: {
+      negocioId,
+      contatoId: `contato-${negocioId}`,
+      negocioStageId: stage,
+      stage,
+      hubspotLink: 'https://fixture.invalid/hubspot'
+    },
+    negocio: { id: negocioId, properties: { dealstage: stage } },
+    contato: { id: `contato-${negocioId}` },
+    properties: { origem: 'hubspot' },
+    linkExterno: 'https://fixture.invalid/externo'
+  }
+}
+
+function itemLocal({ testeId, telefone, negocioId = '', stage = 'acolhimento_modo' }) {
+  return {
+    testeId,
+    from: telefone,
+    u: { negocioId, stage, documentos: [{ tipo: 'fixture' }], _testeOrigem: testeId }
+  }
+}
+
+const telefoneA = '5511911110001'
+const telefoneB = '5511922220002'
+const ids = itens => itens.map(item => item.testeId)
+
+// 1 HubSpot + 1 local: negocioId explícito e único.
+const porNegocio = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-id-1', telefone: telefoneA, negocioId: 'negocio-ficticio-a' })],
+  [itemLocal({ testeId: 'local-id-1', telefone: telefoneB, negocioId: 'negocio-ficticio-a' })]
+)
+assert.equal(porNegocio.length, 1)
+assert.equal(porNegocio[0].testeId, 'hubspot-id-1')
+assert.equal(porNegocio[0].u.negocioId, 'negocio-ficticio-a')
+assert.equal(porNegocio[0].u.stage, 'acolhimento_modo')
+
+// Ambiguidade por negocioId preserva todos e a ordem original.
+const ambiguoIdUmHs = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-id-2', telefone: telefoneA, negocioId: 'negocio-ficticio-b' })],
+  [
+    itemLocal({ testeId: 'local-id-2', telefone: telefoneA, negocioId: 'negocio-ficticio-b' }),
+    itemLocal({ testeId: 'local-id-3', telefone: telefoneB, negocioId: 'negocio-ficticio-b' })
+  ]
+)
+assert.deepEqual(ids(ambiguoIdUmHs), ['hubspot-id-2', 'local-id-2', 'local-id-3'])
+
+const ambiguoIdDoisHs = mesclarItensAdminPorIdentidade([
+  itemHubspot({ testeId: 'hubspot-id-3', telefone: telefoneA, negocioId: 'negocio-ficticio-c' }),
+  itemHubspot({ testeId: 'hubspot-id-4', telefone: telefoneB, negocioId: 'negocio-ficticio-c' })
+], [itemLocal({ testeId: 'local-id-4', telefone: telefoneA, negocioId: 'negocio-ficticio-c' })])
+assert.deepEqual(ids(ambiguoIdDoisHs), ['hubspot-id-3', 'hubspot-id-4', 'local-id-4'])
+
+const ambiguoIdAmbos = mesclarItensAdminPorIdentidade([
+  itemHubspot({ testeId: 'hubspot-id-5', telefone: telefoneA, negocioId: 'negocio-ficticio-d' }),
+  itemHubspot({ testeId: 'hubspot-id-6', telefone: telefoneB, negocioId: 'negocio-ficticio-d' })
+], [
+  itemLocal({ testeId: 'local-id-5', telefone: telefoneA, negocioId: 'negocio-ficticio-d' }),
+  itemLocal({ testeId: 'local-id-6', telefone: telefoneB, negocioId: 'negocio-ficticio-d' })
+])
+assert.deepEqual(ids(ambiguoIdAmbos), ['hubspot-id-5', 'hubspot-id-6', 'local-id-5', 'local-id-6'])
+
+// ID local divergente bloqueia fallback, mesmo com telefone igual.
+const idDivergente = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-divergente', telefone: telefoneA, negocioId: 'negocio-ficticio-e' })],
+  [itemLocal({ testeId: 'local-divergente', telefone: telefoneA, negocioId: 'negocio-ficticio-f' })]
+)
+assert.deepEqual(ids(idDivergente), ['hubspot-divergente', 'local-divergente'])
+
+// Fallback único por telefone formatado e normalizado.
+const hsTelefone = itemHubspot({ testeId: 'hubspot-telefone', telefone: telefoneA, negocioId: 'negocio-ficticio-g' })
+const localTelefone = itemLocal({ testeId: 'local-telefone', telefone: '+55 (11) 91111-0001' })
+const porTelefone = mesclarItensAdminPorIdentidade([hsTelefone], [localTelefone])
+assert.equal(porTelefone.length, 1)
+assert.equal(porTelefone[0].testeId, 'hubspot-telefone')
+assert.equal(porTelefone[0].u.negocioId, 'negocio-ficticio-g')
+assert.equal(porTelefone[0].u.contatoId, 'contato-negocio-ficticio-g')
+assert.equal(porTelefone[0].u.negocioStageId, 'appointmentscheduled')
+assert.equal(porTelefone[0].u.stage, 'acolhimento_modo')
+assert.equal(porTelefone[0].from, localTelefone.from)
+assert.equal(porTelefone[0].u.from, undefined)
+assert.deepEqual(porTelefone[0].properties, { origem: 'hubspot' })
+assert.equal(porTelefone[0].negocio, hsTelefone.negocio)
+assert.equal(porTelefone[0].contato, hsTelefone.contato)
+assert.equal(porTelefone[0].linkExterno, hsTelefone.linkExterno)
+assert.equal(porTelefone[0].u.hubspotLink, hsTelefone.u.hubspotLink)
+
+const telefoneNacionalNormalizado = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-nacional', telefone: telefoneA, negocioId: 'negocio-ficticio-g2' })],
+  [itemLocal({ testeId: 'local-nacional', telefone: '11911110001' })]
+)
+assert.equal(telefoneNacionalNormalizado.length, 1)
+assert.equal(telefoneNacionalNormalizado[0].testeId, 'hubspot-nacional')
+
+// Telefones diferentes, vazios e inválidos permanecem separados.
+for (const [telefoneHubspot, telefoneLocal] of [
+  [telefoneA, telefoneB],
+  ['', ''],
+  ['119111100011', '119111100011'],
+  ['1191111000111', '1191111000111'],
+  ['5511', '5511'],
+  ['55119111100011234', '55119111100011234']
+]) {
+  const separados = mesclarItensAdminPorIdentidade(
+    [itemHubspot({ testeId: 'hubspot-invalido', telefone: telefoneHubspot, negocioId: 'negocio-ficticio-h' })],
+    [itemLocal({ testeId: 'local-invalido', telefone: telefoneLocal })]
+  )
+  assert.deepEqual(ids(separados), ['hubspot-invalido', 'local-invalido'])
+}
+
+// Ambiguidade por telefone preserva marcadores e ordem exata.
+const doisHsTelefone = mesclarItensAdminPorIdentidade([
+  itemHubspot({ testeId: 'hubspot-tel-1', telefone: telefoneA, negocioId: 'negocio-ficticio-i' }),
+  itemHubspot({ testeId: 'hubspot-tel-2', telefone: telefoneA, negocioId: 'negocio-ficticio-j' })
+], [itemLocal({ testeId: 'local-tel-1', telefone: telefoneA })])
+assert.deepEqual(ids(doisHsTelefone), ['hubspot-tel-1', 'hubspot-tel-2', 'local-tel-1'])
+
+const doisLocaisTelefone = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-tel-3', telefone: telefoneA, negocioId: 'negocio-ficticio-k' })],
+  [
+    itemLocal({ testeId: 'local-tel-2', telefone: telefoneA }),
+    itemLocal({ testeId: 'local-tel-3', telefone: telefoneA })
+  ]
+)
+assert.deepEqual(ids(doisLocaisTelefone), ['hubspot-tel-3', 'local-tel-2', 'local-tel-3'])
+
+const ambosTelefone = mesclarItensAdminPorIdentidade([
+  itemHubspot({ testeId: 'hubspot-tel-4', telefone: telefoneA, negocioId: 'negocio-ficticio-l' }),
+  itemHubspot({ testeId: 'hubspot-tel-5', telefone: telefoneA, negocioId: 'negocio-ficticio-m' })
+], [
+  itemLocal({ testeId: 'local-tel-4', telefone: telefoneA }),
+  itemLocal({ testeId: 'local-tel-5', telefone: telefoneA })
+])
+assert.deepEqual(ids(ambosTelefone), ['hubspot-tel-4', 'hubspot-tel-5', 'local-tel-4', 'local-tel-5'])
+
+// Colisões cruzadas: cada posição HubSpot e local participa de no máximo um merge.
+const cruzadoHubspot = itemHubspot({ testeId: 'hubspot-cruzado-1', telefone: telefoneA, negocioId: 'negocio-cruzado-a' })
+const cruzadoLocalId = itemLocal({ testeId: 'local-cruzado-id-1', telefone: telefoneB, negocioId: 'negocio-cruzado-a' })
+const cruzadoLocalTelefone = itemLocal({ testeId: 'local-cruzado-tel-1', telefone: telefoneA })
+const snapshotCruzado = structuredClone([cruzadoHubspot, cruzadoLocalId, cruzadoLocalTelefone])
+const colisaoCruzada = mesclarItensAdminPorIdentidade(
+  [cruzadoHubspot],
+  [cruzadoLocalId, cruzadoLocalTelefone]
+)
+assert.deepEqual(ids(colisaoCruzada), ['hubspot-cruzado-1', 'local-cruzado-tel-1'])
+assert.equal(colisaoCruzada[0].u._testeOrigem, 'local-cruzado-id-1')
+assert.equal(colisaoCruzada[1].u._testeOrigem, 'local-cruzado-tel-1')
+assert.deepEqual([cruzadoHubspot, cruzadoLocalId, cruzadoLocalTelefone], snapshotCruzado)
+
+const mesmoTelefoneLocais = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-cruzado-2', telefone: telefoneA, negocioId: 'negocio-cruzado-b' })],
+  [
+    itemLocal({ testeId: 'local-cruzado-id-2', telefone: telefoneA, negocioId: 'negocio-cruzado-b' }),
+    itemLocal({ testeId: 'local-cruzado-tel-2', telefone: telefoneA })
+  ]
+)
+assert.deepEqual(ids(mesmoTelefoneLocais), ['hubspot-cruzado-2', 'local-cruzado-tel-2'])
+assert.equal(mesmoTelefoneLocais[0].u._testeOrigem, 'local-cruzado-id-2')
+
+const idEmUmTelefoneNoOutro = mesclarItensAdminPorIdentidade([
+  itemHubspot({ testeId: 'hubspot-cruzado-3', telefone: telefoneA, negocioId: 'negocio-cruzado-c' }),
+  itemHubspot({ testeId: 'hubspot-cruzado-4', telefone: telefoneB, negocioId: 'negocio-cruzado-d' })
+], [itemLocal({ testeId: 'local-cruzado-id-3', telefone: telefoneB, negocioId: 'negocio-cruzado-c' })])
+assert.deepEqual(ids(idEmUmTelefoneNoOutro), ['hubspot-cruzado-3', 'hubspot-cruzado-4'])
+assert.equal(idEmUmTelefoneNoOutro[0].u._testeOrigem, 'local-cruzado-id-3')
+assert.equal(idEmUmTelefoneNoOutro[1].u._testeOrigem, undefined)
+
+const ordemInversaCruzada = mesclarItensAdminPorIdentidade(
+  [itemHubspot({ testeId: 'hubspot-cruzado-5', telefone: telefoneA, negocioId: 'negocio-cruzado-e' })],
+  [
+    itemLocal({ testeId: 'local-cruzado-tel-3', telefone: telefoneA }),
+    itemLocal({ testeId: 'local-cruzado-id-4', telefone: telefoneB, negocioId: 'negocio-cruzado-e' })
+  ]
+)
+assert.deepEqual(ids(ordemInversaCruzada), ['hubspot-cruzado-5', 'local-cruzado-tel-3'])
+assert.equal(ordemInversaCruzada[0].u._testeOrigem, 'local-cruzado-id-4')
+
+const hubspotSemId = itemHubspot({ testeId: 'hubspot-sem-id', telefone: telefoneA, negocioId: '' })
+const fallbackHubspotSemId = mesclarItensAdminPorIdentidade(
+  [hubspotSemId],
+  [itemLocal({ testeId: 'local-sem-id', telefone: telefoneA })]
+)
+assert.equal(fallbackHubspotSemId.length, 1)
+assert.equal(fallbackHubspotSemId[0].u._testeOrigem, 'local-sem-id')
+
+// Itens órfãos permanecem intactos e a ordem geral é estável.
+const hsOrfao = itemHubspot({ testeId: 'hubspot-orfao', telefone: telefoneA, negocioId: 'negocio-ficticio-n' })
+assert.strictEqual(mesclarItensAdminPorIdentidade([hsOrfao], [])[0], hsOrfao)
+const localOrfao = itemLocal({ testeId: 'local-orfao', telefone: telefoneB })
+assert.strictEqual(mesclarItensAdminPorIdentidade([], [localOrfao])[0], localOrfao)
+const ordemGeral = mesclarItensAdminPorIdentidade([
+  itemHubspot({ testeId: 'hubspot-ordem-1', telefone: telefoneA, negocioId: 'negocio-ficticio-o' }),
+  itemHubspot({ testeId: 'hubspot-ordem-2', telefone: telefoneB, negocioId: 'negocio-ficticio-p' })
+], [
+  itemLocal({ testeId: 'local-ordem-1', telefone: '5511933330003' }),
+  itemLocal({ testeId: 'local-ordem-2', telefone: '5511944440004' })
+])
+assert.deepEqual(ids(ordemGeral), ['hubspot-ordem-1', 'hubspot-ordem-2', 'local-ordem-1', 'local-ordem-2'])
+
+// Arrays, itens e estruturas internas de entrada não são mutados.
+const entradasHubspot = [itemHubspot({ testeId: 'hubspot-imutavel', telefone: telefoneA, negocioId: 'negocio-ficticio-q' })]
+const entradasLocais = [itemLocal({ testeId: 'local-imutavel', telefone: '+55 (11) 91111-0001' })]
+const snapshotHubspot = structuredClone(entradasHubspot)
+const snapshotLocais = structuredClone(entradasLocais)
+mesclarItensAdminPorIdentidade(entradasHubspot, entradasLocais)
+assert.deepEqual(entradasHubspot, snapshotHubspot)
+assert.deepEqual(entradasLocais, snapshotLocais)
+
+console.log('✓ Composição por identidade e proteções de ambiguidade passaram\n');
+
 // ====================================================================
 // VERIFICACOES DE INTEGRACAO COM server.js
 // ====================================================================
@@ -236,30 +452,22 @@ const serverPath = path.join(__dirname, '..', 'server.js');
 const serverContent = fs.readFileSync(serverPath, 'utf8');
 
 // Verificacao 1: Import da funcao
-console.log('Verificacao 1: Import de mesclarItemAdminHubspotComMemoria');
+console.log('Verificacao 1: Import de mesclarItensAdminPorIdentidade');
 const importRegex = /require\s*\(\s*["']\.\/src\/domain\/admin-item-merge["']\s*\)/;
 assert.match(serverContent, importRegex, 'server.js deve importar de ./src/domain/admin-item-merge');
-const importLineMatch = serverContent.match(/const\s*{\s*mesclarItemAdminHubspotComMemoria\s*}\s*=\s*require\s*\(\s*["']\.\/src\/domain\/admin-item-merge["']\s*\)/);
-assert(importLineMatch, 'server.js deve exportar mesclarItemAdminHubspotComMemoria no require');
+const importLineMatch = serverContent.match(/const\s*{\s*mesclarItensAdminPorIdentidade\s*}\s*=\s*require\s*\(\s*["']\.\/src\/domain\/admin-item-merge["']\s*\)/);
+assert(importLineMatch, 'server.js deve importar mesclarItensAdminPorIdentidade');
 console.log('  OK - Import encontrado\n');
 
-// Verificacao 2: Chamada da funcao em adminResumoOperacional
-console.log('Verificacao 2: Chamada de mesclarItemAdminHubspotComMemoria em adminResumoOperacional');
-const callRegex = /mesclarItemAdminHubspotComMemoria\s*\(\s*todos\[idx\]\s*,\s*item\s*\)/;
-assert.match(serverContent, callRegex, 'server.js deve chamar mesclarItemAdminHubspotComMemoria(todos[idx], item)');
+// Verificacao 2: Composição aplicada em adminResumoOperacional
+console.log('Verificacao 2: Chamada de mesclarItensAdminPorIdentidade em adminResumoOperacional');
+const callRegex = /const\s+todos\s*=\s*mesclarItensAdminPorIdentidade\s*\(\s*ativos\s*,\s*memoria\s*\)/;
+assert.match(serverContent, callRegex, 'adminResumoOperacional deve compor ativos e memoria pelo helper puro');
+const inicioResumo = serverContent.indexOf('async function adminResumoOperacional()')
+const fimResumo = serverContent.indexOf('function gerarAlertasOperacionaisAdmin', inicioResumo)
+const trechoResumo = serverContent.slice(inicioResumo, fimResumo)
+assert.doesNotMatch(trechoResumo, /const\s+vistos\s*=|for\s*\(const\s+item\s+of\s+memoria\)/, 'loop antigo não deve permanecer em adminResumoOperacional')
 console.log('  OK - Chamada encontrada\n');
-
-// Verificacao 3: Atribuicao do resultado de volta ao array
-console.log('Verificacao 3: Atribuicao do resultado de volta ao array');
-const assignmentRegex = /todos\[idx\]\s*=\s*mesclarItemAdminHubspotComMemoria\s*\(\s*todos\[idx\]\s*,\s*item\s*\)/;
-assert.match(serverContent, assignmentRegex, 'server.js deve atribuir o resultado: todos[idx] = mesclarItemAdminHubspotComMemoria(todos[idx], item)');
-console.log('  OK - Atribuicao encontrada\n');
-
-// Verificacao 4: Contexto de duplicacao de negocioId
-console.log('Verificacao 4: Contexto de tratamento de negocioId duplicado');
-const contextRegex = /else\s+if\s*\(\s*id\s*&&\s*vistos\.has\s*\(\s*id\s*\)\s*\)/;
-assert.match(serverContent, contextRegex, 'server.js deve verificar negocioId duplicado com: else if (id && vistos.has(id))');
-console.log('  OK - Contexto de duplicacao encontrado\n');
 
 console.log('✓ Todas as verificacoes de integracao com server.js passaram\n');
 
