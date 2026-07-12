@@ -1577,7 +1577,9 @@ function gerarBriefingCaso(u = {}) {
   const emocional = scoreEmocional(u)
   const relato = sanitizarTextoEntrada(u._resumoDescricaoIA || u.assuntoResumo || u.descricao || u._audioCanalTranscricao)
   const cidade = u.cidade ? `${u.cidade}${u.uf ? " - " + u.uf : ""}` : ""
-  const stage = u.negocioStageId || mapearStageParaDealstage(u) || u.stage || ""
+  const stage = u.stage === STAGES.ACOLHIMENTO_MODO
+    ? u.stage
+    : u.negocioStageId || mapearStageParaDealstage(u) || u.stage || ""
   const proximaAcao = (() => {
     if (!u.numeroCaso) return "Concluir pre-atendimento e gerar caso."
     if (u.consultaStatus === "agendada") return "Acompanhar consulta agendada."
