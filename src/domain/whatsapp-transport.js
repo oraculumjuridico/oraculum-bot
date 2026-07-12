@@ -1,4 +1,5 @@
 const axios = require("axios")
+const { validatePublicImageUrl } = require("./public-image-validator")
 const {
   logDebug,
   logErro
@@ -160,6 +161,12 @@ async function enviarAudio(to, audioUrl) {
 async function enviarImagemWhatsApp(to, imageUrl, caption = "", opcoes = null) {
   if (!imageUrl) {
     logDebug("[IMAGEM] URL vazia — abortando")
+    return false
+  }
+
+  const validation = await validatePublicImageUrl(imageUrl)
+  if (!validation.ok) {
+    logErro("whatsapp", `imagem indisponivel: ${validation.code}`)
     return false
   }
 

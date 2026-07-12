@@ -517,7 +517,6 @@ app.use(
     fallthrough: false
   })
 )
-
 // ================================================================
 //  NOTIFICAÇÕES — WhatsApp pessoal + E-mail
 // ================================================================
@@ -1314,10 +1313,11 @@ async function telaConfirmarDadosAudio(from, u, opcoesAudio = {}) {
     { id: "audio_dados_corrigir", title: "✏️ Corrigir" },
     { id: "conf_menu", title: "⬅️ Voltar" }
   ]
-  const imagemUrl = IMAGEM_CONFIRMACAO_URL || "https://i.imgur.com/JhM9azm.png"
+  const imagemUrl = IMAGEM_CONFIRMACAO_URL
   try {
-    await enviarImagemWhatsApp(from, imagemUrl, textoConfirmacao, opcoesConfirmacao)
-    return { texto: null, opcoes: null }
+    const enviada = await enviarImagemWhatsApp(from, imagemUrl, textoConfirmacao, opcoesConfirmacao)
+    if (enviada) return { texto: null, opcoes: null }
+    return { texto: textoConfirmacao, opcoes: opcoesConfirmacao }
   } catch (e) {
     logErro("confirmacao", "Falha ao enviar imagem de confirmacao audio", e)
     return { texto: textoConfirmacao, opcoes: opcoesConfirmacao }
@@ -3049,8 +3049,9 @@ async function iniciarFluxoRelatoLivre(from, u, { boasVindas = true } = {}) {
   if (boasVindas) {
     try {
       const textoBoasVindas = `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`
-      const imagemUrl = IMAGEM_BOAS_VINDAS_URL || "https://i.imgur.com/ztcFIuG.png"
-      await enviarImagemWhatsApp(from, imagemUrl, textoBoasVindas)
+      const imagemUrl = IMAGEM_BOAS_VINDAS_URL
+      const enviada = await enviarImagemWhatsApp(from, imagemUrl, textoBoasVindas)
+      if (!enviada) await enviar(from, textoBoasVindas)
     } catch (e) {
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
       await enviar(from, `Olá 😊\n\nSeja bem-vindo(a) à *Oráculum Advocacia.* Eu sou *${u.atendente}* e vou acompanhar este atendimento.\n\nFarei algumas perguntas para preparar seu caso. Ao final, você poderá falar com um advogado.\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\n_Seus dados são tratados com sigilo e usados exclusivamente para fins jurídicos, conforme a LGPD._`)
@@ -5683,7 +5684,7 @@ const IMAGEM_DOC_ANEXADO_URL = process.env.IMAGEM_DOC_ANEXADO_URL || ""
 const IMAGEM_ENVIO_EXTRA_URL = process.env.IMAGEM_ENVIO_EXTRA_URL || ""
 
 const CAPTION_GUIA_DOCS = "📎 Guia rápido: veja como fotografar e enviar seu documento com segurança."
-const IMAGEM_DOC_RECEBIDO_URL = "https://i.imgur.com/91SqyKX.png"
+const IMAGEM_DOC_RECEBIDO_URL = process.env.IMAGEM_DOC_RECEBIDO_URL || ""
 const TEXTO_INTRO_DOCS = [
   "📎 *Antes de enviar seus documentos*",
   "",
@@ -6043,11 +6044,12 @@ async function tela_confirmacao(u) {
 
 async function telaConfirmacaoComImagem(from, u) {
   const tela = await tela_confirmacao(u)
-  const imagemUrl = IMAGEM_CONFIRMACAO_URL || "https://i.imgur.com/JhM9azm.png"
+  const imagemUrl = IMAGEM_CONFIRMACAO_URL
   await enviarAudioModoVoz(from, u, textoAudioConfirmacaoDados(u), "confirmacao dados")
   try {
-    await enviarImagemWhatsApp(from, imagemUrl, tela.texto, tela.opcoes)
-    return { texto: null, opcoes: null }
+    const enviada = await enviarImagemWhatsApp(from, imagemUrl, tela.texto, tela.opcoes)
+    if (enviada) return { texto: null, opcoes: null }
+    return tela
   } catch (e) {
     logErro("confirmacao", "Falha ao enviar imagem de confirmacao", e)
     return tela
@@ -12149,8 +12151,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     // Apresentação completa — somente no atendimento inicial (imagem + texto juntos via caption)
     try {
       const textoBoasVindasCompleto = `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`
-      const imagemUrl = IMAGEM_BOAS_VINDAS_URL || "https://i.imgur.com/ztcFIuG.png"
-      await enviarImagemWhatsApp(from, imagemUrl, textoBoasVindasCompleto)
+      const imagemUrl = IMAGEM_BOAS_VINDAS_URL
+      const enviada = await enviarImagemWhatsApp(from, imagemUrl, textoBoasVindasCompleto)
+      if (!enviada) await enviar(from, textoBoasVindasCompleto)
     } catch (e) {
       logErro("boas-vindas", "Falha ao enviar imagem de boas-vindas", e)
       await enviar(from, `Olá 😊\n\nSeja muito bem-vindo(a) à *Oráculum Advocacia.*\n\nEu sou *${u.atendente}* e vou acompanhar você durante este atendimento. Nossa equipe atua nas áreas *Previdenciária*, *Trabalhista* e em outras demandas jurídicas, sempre com atenção e cuidado com o seu caso. 💙\n\n⚖️ *Ao final do cadastro, você poderá falar diretamente com um advogado.*\n\nVocê pode digitar *recomeçar* ou *encerrar* a qualquer momento.\n\nConte comigo.\n\n━━━━━━━━━━━━━━━\n_Seus dados são tratados com sigilo e utilizados exclusivamente para fins jurídicos, conforme a LGPD._`)

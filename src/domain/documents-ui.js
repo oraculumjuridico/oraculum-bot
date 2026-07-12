@@ -10,8 +10,8 @@ const { sanitizarTextoEntrada } = require("../utils/text")
 const { cabecalhoCasoAtivo } = require("./client-menu-ui")
 const { createClientScreen: criarTela } = require("./declarative-screen-guard")
 
-const IMAGEM_DOCS_FINAL_URL = process.env.IMAGEM_DOCS_FINAL_URL || "https://i.imgur.com/LRvw2m8.png"
-const IMAGEM_DOCS_PENDENTES_URL = "https://i.imgur.com/mKmFGHO.png"
+const IMAGEM_DOCS_FINAL_URL = process.env.IMAGEM_DOCS_FINAL_URL || ""
+const IMAGEM_DOCS_PENDENTES_URL = process.env.IMAGEM_DOCS_PENDENTES_URL || ""
 
 const IMAGENS_DOCS = {
   aposentadoria:  process.env.IMAGEM_DOC_APOSENTADORIA_URL || "",
@@ -63,6 +63,18 @@ function imagemPorAreaTipo(area, tipo, situacao, detalhe = null) {
 function imagemPorCaso(u = {}) {
   const chave = chaveDocumentosCaso(u)
   return IMAGENS_DOCS[chave] || ""
+}
+
+function criarTelaComImagemValidada(config = {}) {
+  const { imagemUrl, ...rest } = config
+  const urlValidada =
+    imagemUrl && String(imagemUrl).trim()
+      ? String(imagemUrl).trim()
+      : null
+  return criarTela({
+    ...rest,
+    imagemUrl: urlValidada
+  })
 }
 
 function fraseEnvioDocumentoAudio(doc = {}, folha = "", fIdx = 0, totalF = 1) {
@@ -127,7 +139,7 @@ function telaDocsPendentesComImagem(u) {
     "recebido parcialmente": "enviado incompleto"
   }
   const lista = faltantes.map(item => `• ${item.doc.label} _(${labelStatus[item.status] || item.status})_`).join("\n")
-  return criarTela({
+  return criarTelaComImagemValidada({
     id: "documentos_pendentes",
     titulo: "Documentos pendentes",
     texto: `📎 *Documentos pendentes*\n\n${primeiroNome}, alguns documentos deste caso ficaram faltando ou incompletos.\n\n⚠️ *Ainda precisamos de:*\n${lista}\n\n📲 Quer enviar esses documentos agora?`,
@@ -179,7 +191,7 @@ function telaConcluido(u) {
   const textoBase = faltantes.length
     ? `🎉 *Muito bem, ${primeiroNome}!*\n\nRecebemos os documentos enviados para o caso *${u.numeroCaso}*.${blocoRecebidos}${blocoFaltantes}\n\nNossa equipe já pode organizar o material recebido. Se tiver os documentos faltantes depois, é só voltar em *Enviar documentos*.`
     : `🎉 *Muito bem, ${primeiroNome}!*\n\nRecebemos todos os documentos previstos para o caso *${u.numeroCaso}*.${blocoRecebidos}\n\nNossa equipe já pode analisar tudo com mais segurança.`
-  return criarTela({
+  return criarTelaComImagemValidada({
     id: "documentos_concluidos",
     titulo: "Documentos concluídos",
     texto: textoBase,
@@ -257,6 +269,7 @@ module.exports = {
   textoAudioTelaDocumentoCaso,
   imagemPorAreaTipo,
   imagemPorCaso,
+  criarTelaComImagemValidada,
   telaDocsPendentesComImagem,
   montarStatusDocumentosVisual,
   telaConcluido,
