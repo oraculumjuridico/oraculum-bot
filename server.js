@@ -212,6 +212,9 @@ const {
   montarDossieJuridicoAdminWhatsApp
 } = require("./src/domain/admin-legal-dossier-ui")
 const {
+  mesclarItemAdminHubspotComMemoria
+} = require("./src/domain/admin-item-merge")
+const {
   numeroPorExtenso,
   formatarSlot,
   formatarSlotAudio
@@ -4165,7 +4168,14 @@ async function adminResumoOperacional() {
   const vistos = new Set(ativos.map(item => String(item.u?.negocioId || "")).filter(Boolean))
   for (const item of memoria) {
     const id = String(item.u?.negocioId || "")
-    if (!id || !vistos.has(id)) todos.push(item)
+    if (!id || !vistos.has(id)) {
+      todos.push(item)
+    } else if (id && vistos.has(id)) {
+      const idx = todos.findIndex(i => String(i.u?.negocioId || "") === id)
+      if (idx >= 0) {
+        todos[idx] = mesclarItemAdminHubspotComMemoria(todos[idx], item)
+      }
+    }
   }
   await mapearComLimite(todos, 5, async ({ u }) => {
     if (u?.negocioId) {
