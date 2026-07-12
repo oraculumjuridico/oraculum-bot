@@ -415,13 +415,23 @@ function primeiroValorObservabilidade(...valores) {
   return valores.find(valor => sanitizarTextoEntrada(valor))
 }
 
+function telefoneRemetenteWebhookMeta(body = {}) {
+  for (const entry of body.entry || []) {
+    for (const change of entry?.changes || []) {
+      const remetente = change?.value?.messages?.find(message => sanitizarTextoEntrada(message?.from))?.from
+      if (remetente) return remetente
+    }
+  }
+  return ""
+}
+
 function contextoObservabilidade(req, extras = {}) {
   const body = req?.body || {}
   const query = req?.query || {}
   return {
     route: req?.route?.path || req?.path || extras.route || "",
     requestId: req?.requestId || "",
-    phone: primeiroValorObservabilidade(extras.phone, body.phone, body.numero, body.whatsapp, body.from, query.phone),
+    phone: primeiroValorObservabilidade(extras.phone, body.phone, body.numero, body.whatsapp, body.from, telefoneRemetenteWebhookMeta(body), query.phone),
     dealId: primeiroValorObservabilidade(extras.dealId, body.dealId, body.casoId, query.dealId),
     contactId: primeiroValorObservabilidade(extras.contactId, body.contactId, query.contactId),
     numeroCaso: primeiroValorObservabilidade(extras.numeroCaso, body.numeroCaso, query.numeroCaso),

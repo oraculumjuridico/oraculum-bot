@@ -117,5 +117,6 @@ module.exports = {
   logErro,
   sanitizarMensagemHubSpot,
   detalhesErroHubSpot,
-  logErroHubSpot
+  logErroHubSpot,
+  mascararTelefoneLog
 }

@@ -146,6 +146,29 @@ function postJson(server, pathUrl, body) {
       assert.equal(fim.requestId, resposta.requestId)
       assert.equal(fim.status, "200")
       assert.equal(typeof fim.durationMs, "number")
+
+      logs.length = 0
+      const webhookComRemetente = await postJson(server, "/webhook", {
+        entry: [{ changes: [{ value: { messages: [{ from: "5511666666666", id: "wamid.fixture" }] } }] }]
+      })
+      assert.ok([401, 503].includes(webhookComRemetente.status))
+      const logsComRemetente = logs.map(item => {
+        try { return JSON.parse(item) } catch { return null }
+      }).filter(Boolean)
+      assert.ok(logsComRemetente.length >= 2)
+      assert.ok(logsComRemetente.every(item => item.phoneMasked === "5511*****6666"))
+      assert.ok(logs.every(item => !item.includes("5511666666666")))
+
+      logs.length = 0
+      const webhookSemRemetente = await postJson(server, "/webhook", {
+        entry: [{ changes: [{ value: { statuses: [{ id: "wamid.status.fixture", status: "delivered" }] } }] }]
+      })
+      assert.ok([401, 503].includes(webhookSemRemetente.status))
+      const logsSemRemetente = logs.map(item => {
+        try { return JSON.parse(item) } catch { return null }
+      }).filter(Boolean)
+      assert.ok(logsSemRemetente.length >= 2)
+      assert.ok(logsSemRemetente.every(item => item.phoneMasked === ""))
     } finally {
       await fechar(server)
     }

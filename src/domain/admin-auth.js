@@ -1,5 +1,6 @@
 const crypto = require("crypto")
 const { sanitizarTextoEntrada } = require("../utils/text")
+const { mascararTelefoneLog } = require("../utils/logging")
 
 const ADMIN_WHATSAPP_PASSWORD = sanitizarTextoEntrada(process.env.ADMIN_WHATSAPP_PASSWORD)
 const ADMIN_WHATSAPP_PASSWORD_HASH = sanitizarTextoEntrada(process.env.ADMIN_WHATSAPP_PASSWORD_HASH)
@@ -30,8 +31,9 @@ function chaveAdminWhatsApp(from) {
 }
 
 function logSegurancaAdmin(from, evento) {
-  const numero = chaveAdminWhatsApp(from) || "-"
-  console.warn(`[admin-seguranca] ${evento} numero=${numero}`)
+  const numeroCheio = chaveAdminWhatsApp(from) || ""
+  const numeroMascarado = numeroCheio ? mascararTelefoneLog(numeroCheio) : "-"
+  console.warn(`[admin-seguranca] ${evento} numero=${numeroMascarado}`)
 }
 
 function hashSenhaAdmin(valor) {
