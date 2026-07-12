@@ -896,10 +896,14 @@ function resolverNomeBaseWhatsApp(nomeWA, sessaoAtual = null) {
 }
 
 function resolverNomeBriefing(u = {}) {
+  const nomeWA = nomeValidoParaExibicao(u.nomeWA)
+  const nomePerfilWhatsApp = nomeValidoParaExibicao(u.nomePerfilWhatsApp)
+  const nomeWhatsApp = nomeWA && !/\s/.test(nomeWA) && /\s/.test(nomePerfilWhatsApp)
+    ? nomePerfilWhatsApp
+    : nomeWA || nomePerfilWhatsApp
   return (u.nomeConfirmado ? nomeValidoParaExibicao(u.nome) : "") ||
     nomeValidoParaExibicao(u.nomeHubspot) ||
-    nomeValidoParaExibicao(u.nomeWA) ||
-    nomeValidoParaExibicao(u.nomePerfilWhatsApp) ||
+    nomeWhatsApp ||
     "Cliente"
 }
 
@@ -3953,7 +3957,9 @@ configurarAdminCaseUi({
   ADMIN_IDS,
   labelStageAdmin,
   resolverNomeBriefing,
-  mascararTelefoneLog,
+  resolverTelefoneAdminAutenticado: (item, adminAutenticado) => adminAutenticado
+    ? normalizarNumeroWhatsAppEnvio(item?.from || item?.u?._numero || item?.u?.whatsappContato)
+    : "",
   primeiroEUltimoNome
 })
 
@@ -4456,21 +4462,26 @@ async function gerarPrioridadesAdmin(limite = 10) {
     .slice(0, limite)
 }
 
-function linhaPrioridadeAdmin(item, idx) {
+function resolverTelefoneInterfaceAdmin(item, adminAutenticado = false) {
+  if (!adminAutenticado) return ""
+  return normalizarNumeroWhatsAppEnvio(item?.from || item?.u?._numero || item?.u?.whatsappContato)
+}
+
+function linhaPrioridadeAdmin(item, idx, { adminAutenticado = false } = {}) {
   const u = item.u
   const briefing = gerarBriefingCaso(u)
   const caso = briefing.numeroCaso ? `📄 Caso ${briefing.numeroCaso}` : "📄 Sem caso"
-  const telefoneMascarado = mascararTelefoneLog(item.from || u?._numero || u?.whatsappContato)
+  const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
   return [
     `${idx}. 👤 *${briefing.nome || "Cliente"}*`,
-    telefoneMascarado ? `   📱 ${telefoneMascarado}` : null,
+    telefoneAdmin ? `   📱 ${telefoneAdmin}` : null,
     `   🚩 ${motivoPrioridadeAdmin(u, briefing)}`,
     `   ${caso} · ${briefing.stageLabel}`,
     `   🎯 Acao: ${briefing.proximaAcao || "acompanhar"}`
   ].filter(Boolean).join("\n")
 }
 
-function textoDetalheCasoAdmin(item) {
+function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
   const { from, u } = item
   const briefing = gerarBriefingCaso(u)
   const docs = briefing.documentos
@@ -4482,11 +4493,12 @@ function textoDetalheCasoAdmin(item) {
   const relato = sanitizarTextoEntrada(briefing.relato || briefing.resumo || u.descricao || u.assuntoResumo)
   const relatoCurto = relato ? relato.slice(0, 700) + (relato.length > 700 ? "..." : "") : "Sem relato consolidado."
   const dossieJuridico = montarDossieJuridicoAdminWhatsApp(item)
+  const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
   return [
     `👤 *${briefing.nome || "Cliente"}*`,
     "",
     `📄 Caso: ${briefing.numeroCaso || "sem caso"}`,
-    `📱 WhatsApp: ${from || briefing.whatsapp || "-"}`,
+    telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : "",
     `⚖️ Area: ${briefing.area || "nao definida"}`,
     `📌 Status: ${briefing.stageLabel}`,
     `💬 Emocional: ${briefing.scoreEmocional.nivel}/${briefing.scoreEmocional.valor}`,
@@ -4556,7 +4568,7 @@ async function telaAdminPrioridades(from) {
   }
 
   const itensExibidos = itens.slice(0, 8)
-  const linhas = itensExibidos.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1))
+  const linhas = itensExibidos.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1, { adminAutenticado: true }))
   return {
     texto: ["📌 *Prioridades*", "", ...linhas, "", "Toque em um caso para ver o detalhe."].join("\n\n"),
     opcoes: [
@@ -4644,7 +4656,7 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
   }
 
   const itensExibidos = itens.slice(0, 8)
-  const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1))
+  const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1, { adminAutenticado: true }))
   const nomesOpcoes = itensExibidos.map(item => primeiroEUltimoNome(resolverNomeBriefing(item.u)) || "Cliente")
   const contagemNomes = nomesOpcoes.reduce((acc, nome) => {
     const chave = normalizarNomeComparacao(nome)
@@ -4744,7 +4756,7 @@ function telaDetalheCasoAdmin(from, idx) {
   const voltar = sessao.origemCasos || ADMIN_IDS.prioridades
 
   return {
-    texto: textoDetalheCasoAdmin(item),
+    texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
     opcoes: [
       { id: ADMIN_IDS.casoRevisado, title: "✅ Revisado" },
       { id: ADMIN_IDS.casoMarcarUrgente, title: "🚨 Marcar urgente" },
@@ -4774,6 +4786,7 @@ function telaLinksCasoAdmin(from) {
   }
 
   const { u } = item
+  const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, true)
   return {
     texto: [
       "🔗 *Links do caso*",
@@ -4782,7 +4795,7 @@ function telaLinksCasoAdmin(from) {
       `📄 Caso: ${u.numeroCaso || "-"}`,
       u.negocioId ? `🔗 HubSpot: ${linkHubSpot(u.negocioId)}` : "⚠️ HubSpot: nao encontrado",
       u.pastaDriveLink ? `🗂️ Drive: ${u.pastaDriveLink}` : "⚠️ Drive: nao encontrado",
-      item.from ? `📱 WhatsApp: ${item.from}` : ""
+      telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : ""
     ].filter(Boolean).join("\n"),
     opcoes: [
       { id: ADMIN_IDS.casoRevisado, title: "✅ Revisado" },

@@ -5,7 +5,7 @@ let deps = {
   ADMIN_IDS: {},
   labelStageAdmin: stage => sanitizarTextoEntrada(stage) || "Sem stage",
   resolverNomeBriefing: u => sanitizarTextoEntrada(u?.nome || u?.nomeWA) || "Cliente",
-  mascararTelefoneLog: () => "",
+  resolverTelefoneAdminAutenticado: () => "",
   primeiroEUltimoNome: nome => sanitizarTextoEntrada(nome)
 }
 
@@ -66,15 +66,15 @@ function tituloCasoCurtoAdmin(u = {}, nome = "Cliente") {
   return `${abreviarAreaAdmin(u.area)} - Caso ${caso}`
 }
 
-function resumoCasoAdmin({ from, u }, idx = null) {
+function resumoCasoAdmin({ from, u }, idx = null, { adminAutenticado = false } = {}) {
   const prefixo = idx !== null ? `${idx}. ` : ""
   const cliente = deps.resolverNomeBriefing(u)
   const titulo = tituloCasoCurtoAdmin(u, nomeCurtoAdmin(cliente))
   const stage = deps.labelStageAdmin(u.negocioStageId || u.stage)
   const docs = calcularStatusDocumentos(u)
   const faltantes = docs.faltantesCriticos.length ? `\n   Docs: ${docs.faltantesCriticos.length} faltante(s)` : ""
-  const telefoneMascarado = deps.mascararTelefoneLog(from || u?._numero || u?.whatsappContato)
-  const telefone = telefoneMascarado ? `\n   WhatsApp: ${telefoneMascarado}` : ""
+  const telefoneAdmin = deps.resolverTelefoneAdminAutenticado({ from, u }, adminAutenticado)
+  const telefone = telefoneAdmin ? `\n   WhatsApp: ${telefoneAdmin}` : ""
   return `${prefixo}*${titulo}*\n   Cliente: ${cliente}\n   ${stage}${faltantes}${telefone}`
 }
 
