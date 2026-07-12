@@ -24,10 +24,23 @@ assert.doesNotMatch(serverSource, /async function processar\(from, nomeWA, text,
 
 const inicioIdx = serverSource.indexOf("iniciarAtendimentoAssistidoAdmin(from, depsAtendimentoAssistido)")
 const ativoIdx = serverSource.indexOf("atendimentoAssistidoAdminAtivo(from, depsAtendimentoAssistido)")
+const midiaSemContextoIdx = serverSource.indexOf("tipoMidiaAdminSemContexto")
 const menuIdx = serverSource.indexOf('["", "admin", "menu", "inicio", "admin_menu", ADMIN_IDS.menu]')
 assert.ok(inicioIdx > 0, "handler de inicio do atendimento assistido ausente")
 assert.ok(ativoIdx > inicioIdx, "handler ativo deve ficar apos o clique de inicio")
+assert.ok(midiaSemContextoIdx > ativoIdx, "midia sem contexto deve ser tratada apos atendimento assistido")
+assert.ok(menuIdx > midiaSemContextoIdx, "midia sem contexto deve ser tratada antes do menu normal")
 assert.ok(menuIdx > ativoIdx, "modo assistido deve interceptar antes do menu normal")
+assert.match(serverSource, /\["image", "document", "video"\]\.includes\(tipoMidiaAdminSemContexto\)/)
+assert.match(serverSource, /Abra \*Casos\* para escolher um caso ou \*Atendimento Assistido\*/)
+
+const inicioProcessarAdmin = serverSource.indexOf("async function processarAdminWhatsApp(from, text, msgObj = null)")
+const fimProcessarAdmin = serverSource.indexOf("function detalharErroHubspot", inicioProcessarAdmin)
+const trechoProcessarAdmin = serverSource.slice(inicioProcessarAdmin, fimProcessarAdmin)
+const inicioRegraMidia = trechoProcessarAdmin.indexOf("const tipoMidiaAdminSemContexto")
+const fimRegraMidia = trechoProcessarAdmin.indexOf('if (["voltar", "retornar", "cancelar"', inicioRegraMidia)
+const trechoRegraMidia = trechoProcessarAdmin.slice(inicioRegraMidia, fimRegraMidia)
+assert.doesNotMatch(trechoRegraMidia, /baixarMidia|uploadDrive|salvar/)
 
 assert.doesNotMatch(flowSource, /hsCriar|HubSpot|HUBSPOT|GROQ|OpenAI|openai|processarInterno/)
 assert.match(flowSource, /deps\.finalizarCadastroAssistido/)

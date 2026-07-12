@@ -5374,6 +5374,20 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return processarAtendimentoAssistidoAdmin(from, text, msgObj, depsAtendimentoAssistido)
   }
 
+  const tipoMidiaAdminSemContexto = sanitizarTextoEntrada(msgObj?.type).toLowerCase()
+  if (["image", "document", "video"].includes(tipoMidiaAdminSemContexto)) {
+    return {
+      texto: "Recebi a midia, mas preciso de um contexto para usa-la. Abra *Casos* para escolher um caso ou *Atendimento Assistido* para iniciar um atendimento.",
+      opcoes: [
+        { id: ADMIN_IDS.casos, title: "📂 Casos" },
+        { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento IA" },
+        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      ],
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
   if (["voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"].includes(comando)) {
     const chave = normalizarNumeroWhatsAppEnvio(from)
     const sessaoAdmin = sessoesAdminWhatsApp.get(chave) || {}
