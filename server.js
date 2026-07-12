@@ -882,12 +882,32 @@ function novoUsuario(nomeWA) {
   }
 }
 
+function nomeValidoParaExibicao(valor) {
+  const nome = sanitizarTextoEntrada(valor)
+  return nome && nome.toLowerCase() !== "cliente" ? nome : ""
+}
+
+function resolverNomeBaseWhatsApp(nomeWA, sessaoAtual = null) {
+  return nomeValidoParaExibicao(nomeWA) ||
+    nomeValidoParaExibicao(sessaoAtual?.nomeWA) ||
+    nomeValidoParaExibicao(sessaoAtual?.nomePerfilWhatsApp) ||
+    "Cliente"
+}
+
+function resolverNomeBriefing(u = {}) {
+  return (u.nomeConfirmado ? nomeValidoParaExibicao(u.nome) : "") ||
+    nomeValidoParaExibicao(u.nomeHubspot) ||
+    nomeValidoParaExibicao(u.nomeWA) ||
+    nomeValidoParaExibicao(u.nomePerfilWhatsApp) ||
+    "Cliente"
+}
+
 async function resolverUsuarioPorHubSpot(from, nomeWA) {
   const contato = await hsBuscarPorPhone(from)
   const sessaoAtual = users[from] || null
   let u = null
-  const nomePerfilWhatsApp = nomeWA || sessaoAtual?.nomePerfilWhatsApp || "Cliente"
-  const nomeBase = contato?.id ? (nomeWA || sessaoAtual?.nomeWA || "Cliente") : "Cliente"
+  const nomePerfilWhatsApp = nomeValidoParaExibicao(nomeWA) || nomeValidoParaExibicao(sessaoAtual?.nomePerfilWhatsApp) || "Cliente"
+  const nomeBase = resolverNomeBaseWhatsApp(nomeWA, sessaoAtual)
   const podeReutilizarSessaoLocalSemHubSpot = Boolean(
     !contato?.id &&
     sessaoAtual &&
@@ -1566,7 +1586,7 @@ function gerarBriefingCaso(u = {}) {
 
   return {
     numeroCaso: u.numeroCaso || null,
-    nome: u.nome || u.nomeWA || u.nomePerfilWhatsApp || "Cliente",
+    nome: resolverNomeBriefing(u),
     whatsapp: u._numero || u.whatsappContato || null,
     cidade: cidade || null,
     area: u.area || null,
