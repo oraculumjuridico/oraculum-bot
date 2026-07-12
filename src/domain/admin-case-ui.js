@@ -3,7 +3,10 @@ const { sanitizarTextoEntrada } = require("../utils/text")
 
 let deps = {
   ADMIN_IDS: {},
-  labelStageAdmin: stage => sanitizarTextoEntrada(stage) || "Sem stage"
+  labelStageAdmin: stage => sanitizarTextoEntrada(stage) || "Sem stage",
+  resolverNomeBriefing: u => sanitizarTextoEntrada(u?.nome || u?.nomeWA) || "Cliente",
+  mascararTelefoneLog: () => "",
+  primeiroEUltimoNome: nome => sanitizarTextoEntrada(nome)
 }
 
 function configurarAdminCaseUi(config = {}) {
@@ -57,27 +60,32 @@ function nomeCurtoAdmin(nome = "") {
   return `${partes[0]} ${partes[partes.length - 1]}`.slice(0, 28)
 }
 
-function tituloCasoCurtoAdmin(u = {}) {
+function tituloCasoCurtoAdmin(u = {}, nome = "Cliente") {
   const caso = sanitizarTextoEntrada(u.numeroCaso || "")
-  return `${abreviarAreaAdmin(u.area)} • Caso ${caso || "sem numero"}`
+  if (!caso) return `${nome} - sem caso`
+  return `${abreviarAreaAdmin(u.area)} - Caso ${caso}`
 }
 
 function resumoCasoAdmin({ from, u }, idx = null) {
   const prefixo = idx !== null ? `${idx}. ` : ""
-  const titulo = tituloCasoCurtoAdmin(u)
-  const cliente = nomeCurtoAdmin(u.nome || u.nomeWA || "Cliente")
-  const stage = deps.labelStageAdmin(u.negocioStageId)
+  const cliente = deps.resolverNomeBriefing(u)
+  const titulo = tituloCasoCurtoAdmin(u, nomeCurtoAdmin(cliente))
+  const stage = deps.labelStageAdmin(u.negocioStageId || u.stage)
   const docs = calcularStatusDocumentos(u)
   const faltantes = docs.faltantesCriticos.length ? `\n   Docs: ${docs.faltantesCriticos.length} faltante(s)` : ""
-  const telefone = from ? `\n   WhatsApp: ${from}` : ""
+  const telefoneMascarado = deps.mascararTelefoneLog(from || u?._numero || u?.whatsappContato)
+  const telefone = telefoneMascarado ? `\n   WhatsApp: ${telefoneMascarado}` : ""
   return `${prefixo}*${titulo}*\n   Cliente: ${cliente}\n   ${stage}${faltantes}${telefone}`
 }
 
-function tituloOpcaoCasoAdmin(item, idx) {
+function tituloOpcaoCasoAdmin(item, idx, options = {}) {
   const u = item?.u || {}
-  const caso = sanitizarTextoEntrada(u.numeroCaso || "")
-  const titulo = `${abreviarAreaAdmin(u.area)} ${caso || "sem caso"}`
-  return `${idx + 1}. ${titulo}`.slice(0, 24)
+  const nome = options.nomeCurto || deps.primeiroEUltimoNome(deps.resolverNomeBriefing(u)) || "Cliente"
+  const telefone = String(item?.from || u?._numero || u?.whatsappContato || "").replace(/\D/g, "")
+  const sufixo = options.duplicado && telefone.length >= 4 ? ` - ${telefone.slice(-4)}` : ""
+  const prefixo = `${idx + 1}. `
+  const limiteNome = Math.max(1, 24 - prefixo.length - sufixo.length)
+  return `${prefixo}${nome.slice(0, limiteNome).trim()}${sufixo}`
 }
 
 function opcoesAposAcaoCasoAdmin() {

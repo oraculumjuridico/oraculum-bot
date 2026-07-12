@@ -256,7 +256,8 @@ const {
   logContextoExecucao,
   logErro,
   detalhesErroHubSpot,
-  logErroHubSpot
+  logErroHubSpot,
+  mascararTelefoneLog
 } = require("./src/utils/logging")
 const {
   digitando,
@@ -3915,7 +3916,8 @@ function labelStageAdmin(stage) {
     [HS_STAGE.DOCS]: "📁 Docs recebidos",
     [HS_STAGE.PROTOCOLO]: "📮 Protocolo",
     [HS_STAGE.PROCESSO]: "⚖️ Processo",
-    [HS_STAGE.FINAL]: "✅ Encerrado"
+    [HS_STAGE.FINAL]: "✅ Encerrado",
+    [STAGES.ACOLHIMENTO_MODO]: "Pré-atendimento"
   }
   return mapa[stage] || sanitizarTextoEntrada(stage) || "⚪ Sem stage"
 }
@@ -3949,7 +3951,10 @@ const ADMIN_IDS = {
 }
 configurarAdminCaseUi({
   ADMIN_IDS,
-  labelStageAdmin
+  labelStageAdmin,
+  resolverNomeBriefing,
+  mascararTelefoneLog,
+  primeiroEUltimoNome
 })
 
 const ADMIN_REVISADO_TTL_MS = 6 * 60 * 60 * 1000
@@ -4455,12 +4460,14 @@ function linhaPrioridadeAdmin(item, idx) {
   const u = item.u
   const briefing = gerarBriefingCaso(u)
   const caso = briefing.numeroCaso ? `📄 Caso ${briefing.numeroCaso}` : "📄 Sem caso"
+  const telefoneMascarado = mascararTelefoneLog(item.from || u?._numero || u?.whatsappContato)
   return [
     `${idx}. 👤 *${briefing.nome || "Cliente"}*`,
+    telefoneMascarado ? `   📱 ${telefoneMascarado}` : null,
     `   🚩 ${motivoPrioridadeAdmin(u, briefing)}`,
     `   ${caso} · ${briefing.stageLabel}`,
     `   🎯 Acao: ${briefing.proximaAcao || "acompanhar"}`
-  ].join("\n")
+  ].filter(Boolean).join("\n")
 }
 
 function textoDetalheCasoAdmin(item) {
@@ -4638,12 +4645,21 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
 
   const itensExibidos = itens.slice(0, 8)
   const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1))
+  const nomesOpcoes = itensExibidos.map(item => primeiroEUltimoNome(resolverNomeBriefing(item.u)) || "Cliente")
+  const contagemNomes = nomesOpcoes.reduce((acc, nome) => {
+    const chave = normalizarNomeComparacao(nome)
+    acc.set(chave, (acc.get(chave) || 0) + 1)
+    return acc
+  }, new Map())
   return {
     texto: [titulo, "", ...linhas, "", "Toque em um caso para ver o detalhe operacional."].join("\n\n"),
     opcoes: [
       ...itensExibidos.map((item, idx) => ({
         id: `admin_caso_${idx}`,
-        title: tituloOpcaoCasoAdmin(item, idx)
+        title: tituloOpcaoCasoAdmin(item, idx, {
+          nomeCurto: nomesOpcoes[idx],
+          duplicado: contagemNomes.get(normalizarNomeComparacao(nomesOpcoes[idx])) > 1
+        })
       })),
       { id: voltar, title: "Voltar" },
       { id: ADMIN_IDS.menu, title: "Menu admin" }
