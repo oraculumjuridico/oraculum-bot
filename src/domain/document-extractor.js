@@ -7,7 +7,8 @@ const CAMPOS_POR_DOCUMENTO = Object.freeze({
   cnis: ["nb", "der", "dib", "dcb", "beneficio"],
   cartaInss: ["nb", "tipoDecisao", "data", "beneficio"],
   laudo: ["medico", "crm", "especialidade", "cid", "dataLaudo"],
-  processo: ["numero", "vara", "tribunal"]
+  processo: ["numero", "vara", "tribunal"],
+  cpf: ["cpf", "nome"]
 })
 
 function normalizarTexto(texto = "") {
@@ -55,6 +56,7 @@ function resolverFamiliaDocumento(tipoDocumento, resultadoClassificador = {}) {
   const categoria = normalizarTexto(resultadoClassificador.categoria)
   const subtipo = normalizarTexto(resultadoClassificador.subtipo)
 
+  if (tipo.includes("cpf") && !tipo.includes("rg")) return "cpf"
   if (tipo.includes("rg")) return "rg"
   if (tipo.includes("cnh") || tipo.includes("habilitacao")) return "cnh"
   if (tipo.includes("ctps") || tipo.includes("carteira de trabalho")) return "ctps"
@@ -273,6 +275,24 @@ function extrairProcesso(texto) {
   }
 }
 
+function extrairCPF(texto) {
+  return {
+    cpf: primeiroValor(
+      encontrarPorRegex(texto, [
+        /\bcpf\s*[:.-]?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})/i,
+        /\b(\d{3}\.\d{3}\.\d{3}-\d{2})\b/
+      ], 0.9),
+      encontrarPorRegex(texto, [
+        /\bcpf\s*[:.-]?\s*(\d{11})\b/i
+      ], 0.82)
+    ),
+    nome: primeiroValor(
+      encontrarPorLinha(texto, ["nome civil", "nome"], 0.84),
+      encontrarPorRegex(texto, [/\bnome\s*[:.-]?\s*([A-ZÀ-Ý][A-ZÀ-Ý\s.'-]{4,})/i], 0.78)
+    )
+  }
+}
+
 const EXTRATORES = Object.freeze({
   rg: extrairRG,
   cnh: extrairCNH,
@@ -282,7 +302,8 @@ const EXTRATORES = Object.freeze({
   cnis: extrairCNIS,
   cartaInss: extrairCartaINSS,
   laudo: extrairLaudo,
-  processo: extrairProcesso
+  processo: extrairProcesso,
+  cpf: extrairCPF
 })
 
 function extrairDadosDocumento(input = {}) {
