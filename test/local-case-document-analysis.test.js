@@ -9,7 +9,7 @@ const net = require("node:net")
 const childProcess = require("node:child_process")
 const Module = require("node:module")
 const { createCanvas } = require("@napi-rs/canvas")
-const { analyzeCaseFolder, consolidateCase, renderPdfPages, writeAnalysisReports, readCache, normalizeName, ocrWithTimeout } = require("../src/domain/local-case-document-analysis")
+const { analyzeCaseFolder, consolidateCase, renderPdfPages, writeAnalysisReports, readCache, normalizeName, ocrWithTimeout, sanitizeCaseAnalysis } = require("../src/domain/local-case-document-analysis")
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-case-analysis-"))
 const originalNetwork = { httpRequest: http.request, httpGet: http.get, httpsRequest: https.request, httpsGet: https.get, netConnect: net.connect, fetch: global.fetch, moduleLoad: Module._load }
@@ -58,7 +58,7 @@ async function main() {
   }
   const missingCaseFolder = childProcess.spawnSync(process.execPath, [path.join(__dirname, "..", "scripts", "analyze-real-case-documents.js")], { encoding: "utf8", env: { ...process.env, CASE_IMPORT_ROOT: "" } })
   assert.notEqual(missingCaseFolder.status, 0)
-  assert.match(missingCaseFolder.stderr, /case_folder_obrigatorio/)
+  assert.match(missingCaseFolder.stderr, /ANALYSIS_CONFIRMATION_REQUIRED/)
   assert.equal(normalizeName("  CLIENTE   FICTICIO  "), "CLIENTE FICTICIO")
   const caseFolder = path.join(root, "CASO FICTICIO")
   await fsp.mkdir(caseFolder)
@@ -146,12 +146,51 @@ async function main() {
   assert.ok(timedOutCase.ignoredFiles.some(item => item.reason === "ocr_timeout" && item.code === "OCR_TIMEOUT"))
   assert.equal(timedOutCase.documentosClassificados.length, 0, "pagina com timeout nao pode ser classificada")
 
+  const zipFolder = path.join(root, "CASO ZIP FICTICIO")
+  await fsp.mkdir(zipFolder)
+  const zipFile = path.join(zipFolder, "SEGREDO-ARQUIVO-FICTICIO.zip")
+  await fsp.writeFile(zipFile, Buffer.from("PK\x03\x04CONTEUDO ZIP FICTICIO NAO EXTRAIR"))
+  const zipBefore = await fsp.readFile(zipFile)
+  const zipCase = await analyzeCaseFolder(zipFolder, { relativeRoot: root, processPage: async () => { throw new Error("zip_nao_deve_executar_pipeline") } })
+  assert.equal(zipCase.documentosClassificados.length, 0)
+  assert.ok(zipCase.ignoredFiles.some(item => item.reason === "unsupported_or_invalid_content"))
+  assert.deepEqual(await fsp.readFile(zipFile), zipBefore)
+  const cliRun = childProcess.spawnSync(process.execPath, [
+    path.join(__dirname, "..", "scripts", "analyze-real-case-documents.js"),
+    `--case-folder=${zipFolder}`,
+    "--max-files-per-case=2",
+    "--ocr-timeout-ms=20"
+  ], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, CASE_DOCUMENT_ANALYSIS_CONFIRM: "ANALYZE_LOCAL_DOCUMENTS_SANITIZED" }
+  })
+  assert.equal(cliRun.status, 0, cliRun.stderr)
+  for (const secret of ["CASO ZIP FICTICIO", "SEGREDO-ARQUIVO-FICTICIO.zip", zipFolder]) {
+    assert.equal(`${cliRun.stdout}${cliRun.stderr}`.includes(secret), false)
+  }
+
   const stateDir = path.join(root, "state")
   await writeAnalysisReports(stateDir, { version: 1, cases: [first] }, cache)
   const reportText = await fsp.readFile(path.join(stateDir, "latest-analysis.json"), "utf8")
-  assert.equal(reportText.includes("Contato (11)"), false, "texto OCR bruto nao pode ser persistido")
+  const csvText = await fsp.readFile(path.join(stateDir, "latest-analysis-summary.csv"), "utf8")
   const cacheText = await fsp.readFile(path.join(stateDir, "analysis-cache.json"), "utf8")
-  for (const sensitive of ["CLIENTE FICTICIO", "52998224725", "5511999990000", "ficticio@example.test", "1234567890", "0000001-00.2026.8.00.0001", "1990-02-01"]) assert.equal(cacheText.includes(sensitive), false)
+  for (const sensitive of ["CASO FICTICIO", "identidade.png", "CLIENTE FICTICIO", "52998224725", "5511999990000", "ficticio@example.test", "1234567890", "0000001-00.2026.8.00.0001", "1990-02-01", "Contato (11)"]) {
+    assert.equal(reportText.includes(sensitive), false, `JSON nao pode conter ${sensitive}`)
+    assert.equal(csvText.includes(sensitive), false, `CSV nao pode conter ${sensitive}`)
+    assert.equal(cacheText.includes(sensitive), false, `cache nao pode conter ${sensitive}`)
+  }
+  const sanitized = sanitizeCaseAnalysis(first)
+  assert.equal(sanitized.importId, "caso-001")
+  assert.equal(sanitized.campos.identidade, "encontrado")
+  assert.equal(sanitized.campos.cpf, "encontrado")
+  assert.equal(sanitized.campos.contato, "encontrado")
+  assert.equal(sanitized.campos.numeroOficial, "encontrado")
+  assert.equal(sanitized.arquivos.every(item => /^arquivo-\d{3}$/.test(item.arquivoId)), true)
+  assert.equal(sanitizeCaseAnalysis(differentCpfs).campos.cpf, "conflitante")
+  const persistedReport = JSON.parse(reportText)
+  assert.equal(Object.hasOwn(persistedReport, "rootHash"), false)
+  assert.equal(reportText.includes(first.importId), false)
   assert.deepEqual(Object.keys((await readCache(path.join(stateDir, "analysis-cache.json"))).files).length > 0, true)
   const analyzerSource = await fsp.readFile(path.join(__dirname, "..", "scripts", "analyze-real-case-documents.js"), "utf8")
   const domainSource = await fsp.readFile(path.join(__dirname, "..", "src", "domain", "local-case-document-analysis.js"), "utf8")

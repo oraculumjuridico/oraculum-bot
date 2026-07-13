@@ -335,21 +335,105 @@ function csvEscape(value) {
   return `"${text.replace(/"/g, '""')}"`
 }
 
+function sanitizedFieldState(count, conflicting = false, illegible = false) {
+  if (conflicting || count > 1) return "conflitante"
+  if (count === 1) return "encontrado"
+  if (illegible) return "ilegível"
+  return "não encontrado"
+}
+
+function sanitizeCaseAnalysis(item = {}, caseIndex = 0) {
+  const originalFiles = unique([
+    ...(item.documentosClassificados || []).map(document => document.file),
+    ...(item.ignoredFiles || []).map(document => document.file),
+    ...(item.quarantinedDocuments || []).map(document => document.file)
+  ]).sort()
+  const fileIds = new Map(originalFiles.map((file, index) => [file, `arquivo-${String(index + 1).padStart(3, "0")}`]))
+  const ignoredFiles = (item.ignoredFiles || []).map(document => ({
+    arquivoId: fileIds.get(document.file) || "arquivo-não-identificado",
+    ...(document.pageNumber ? { pagina: document.pageNumber } : {}),
+    motivo: document.reason || "processing_error",
+    ...(document.code ? { codigo: document.code } : {}),
+    ...(document.totalPages ? { totalPaginas: document.totalPages } : {})
+  }))
+  const classified = (item.documentosClassificados || []).map(document => ({
+    arquivoId: fileIds.get(document.file) || "arquivo-não-identificado",
+    pagina: document.pageNumber,
+    categoria: document.tipo || "Documento desconhecido",
+    confianca: Number(document.confidence || 0)
+  }))
+  const categories = Object.entries(classified.reduce((result, document) => {
+    result[document.categoria] = (result[document.categoria] || 0) + 1
+    return result
+  }, {})).sort(([left], [right]) => left.localeCompare(right)).map(([categoria, quantidade]) => ({ categoria, quantidade }))
+  const conflicts = unique(item.conflicts || [])
+  const illegible = !classified.length && ignoredFiles.length > 0
+  const count = key => Array.isArray(item[key]) ? item[key].length : 0
+  const fields = {
+    identidade: sanitizedFieldState(count("nomesEncontrados"), conflicts.includes("divergent_names"), illegible),
+    cpf: sanitizedFieldState(count("cpfsEncontrados"), conflicts.includes("multiple_valid_cpfs"), illegible),
+    contato: sanitizedFieldState(Math.min(1, count("telefonesEncontrados") + count("emailsEncontrados")), false, illegible),
+    numeroBeneficio: sanitizedFieldState(count("numerosBeneficioEncontrados"), false, illegible),
+    numeroOficial: sanitizedFieldState(count("numerosProcessoEncontrados"), false, illegible),
+    tipoPrevidenciario: sanitizedFieldState(count("tiposBeneficioEncontrados"), false, illegible),
+    dataRelevante: sanitizedFieldState(count("datasNascimentoEncontradas"), false, illegible)
+  }
+  const limitsReached = unique(ignoredFiles.filter(document => /limit|timeout/.test(`${document.motivo} ${document.codigo || ""}`)).map(document => document.motivo))
+  const unsupportedFormats = ignoredFiles.filter(document => ["unsupported_or_invalid_content", "extension_content_mismatch"].includes(document.motivo)).length
+  const status = conflicts.length ? "CONFLITO DOCUMENTAL" : illegible ? "DOCUMENTOS ILEGÍVEIS" : Object.values(fields).some(value => value === "não encontrado") ? "DADOS AINDA INSUFICIENTES" : "CANDIDATO A REVISÃO HUMANA PARA LOTE PILOTO"
+  return {
+    importId: `caso-${String(caseIndex + 1).padStart(3, "0")}`,
+    status,
+    contagens: {
+      arquivos: Number(item.fileCount || 0),
+      arquivosAnalisados: Number(item.analyzedFileCount || 0),
+      arquivosIgnorados: Number(item.ignoredFileCount || 0),
+      paginasClassificadas: classified.length,
+      formatosNaoSuportados: unsupportedFormats
+    },
+    campos: fields,
+    categoriasDocumentais: categories,
+    confianca: Number(item.confidence || 0),
+    conflitos: conflicts,
+    motivosRevisao: unique(item.reviewReasons || []),
+    limitesAtingidos: limitsReached,
+    avisosSeguranca: unique([
+      ...(conflicts.length ? ["divergencia_documental"] : []),
+      ...(unsupportedFormats ? ["formato_nao_suportado"] : []),
+      ...(illegible ? ["conteudo_nao_analisado"] : [])
+    ]),
+    hashesTecnicos: unique(item.contentHashes || []),
+    arquivos: classified,
+    arquivosIgnorados: ignoredFiles
+  }
+}
+
+function sanitizeAnalysisReport(report = {}) {
+  return {
+    version: report.version,
+    generatedAt: report.generatedAt,
+    caseCount: Number(report.caseCount || 0),
+    durationMs: Number(report.durationMs || 0),
+    cases: (report.cases || []).map((item, index) => sanitizeCaseAnalysis(item, index))
+  }
+}
+
 function analysisSummaryCsv(cases) {
-  const columns = ["sourceFolder", "importId", "fileCount", "analyzedFileCount", "ignoredFileCount", "nomesEncontrados", "cpfCount", "telefoneCount", "emailCount", "numeroBeneficioCount", "numeroProcessoCount", "confidence", "conflicts", "reviewReasons", "safeToPlanHubSpot"]
-  const rows = cases.map(item => [item.sourceFolder, item.importId, item.fileCount, item.analyzedFileCount, item.ignoredFileCount, item.nomesEncontrados, item.cpfsEncontrados.length, item.telefonesEncontrados.length, item.emailsEncontrados.length, item.numerosBeneficioEncontrados.length, item.numerosProcessoEncontrados.length, item.confidence, item.conflicts, item.reviewReasons, item.safeToPlanHubSpot])
+  const columns = ["importId", "status", "arquivos", "arquivosAnalisados", "arquivosIgnorados", "identidade", "cpf", "contato", "numeroOficial", "tipoPrevidenciario", "conflitos", "ilegibilidade", "formatosNaoSuportados", "confianca", "revisaoHumana"]
+  const rows = cases.map(item => [item.importId, item.status, item.contagens.arquivos, item.contagens.arquivosAnalisados, item.contagens.arquivosIgnorados, item.campos.identidade, item.campos.cpf, item.campos.contato, item.campos.numeroOficial, item.campos.tipoPrevidenciario, item.conflitos.length, item.status === "DOCUMENTOS ILEGÍVEIS", item.contagens.formatosNaoSuportados, item.confianca, item.status !== "CANDIDATO A REVISÃO HUMANA PARA LOTE PILOTO"])
   return [columns, ...rows].map(row => row.map(csvEscape).join(",")).join("\n") + "\n"
 }
 
 async function writeAnalysisReports(stateDir, report, cache) {
   await fsp.mkdir(stateDir, { recursive: true })
-  await atomicJson(path.join(stateDir, "latest-analysis.json"), report)
-  await fsp.writeFile(path.join(stateDir, "latest-analysis-summary.csv"), analysisSummaryCsv(report.cases), { encoding: "utf8", mode: 0o600 })
+  const sanitizedReport = sanitizeAnalysisReport(report)
+  await atomicJson(path.join(stateDir, "latest-analysis.json"), sanitizedReport)
+  await fsp.writeFile(path.join(stateDir, "latest-analysis-summary.csv"), analysisSummaryCsv(sanitizedReport.cases), { encoding: "utf8", mode: 0o600 })
   await atomicJson(path.join(stateDir, "analysis-cache.json"), cache)
 }
 
 module.exports = {
   ALLOWED_MIME_TYPES, DEFAULT_LIMITS, validCpf, normalizePhone, normalizeEmail, detectMime,
   renderPdfPages, canonicalizePipeline, consolidateCase, analyzeCaseFolder, readCache, normalizeName, namesSignificantlyDiverge, ocrWithTimeout,
-  writeAnalysisReports, analysisSummaryCsv, sha256
+  writeAnalysisReports, analysisSummaryCsv, sanitizeCaseAnalysis, sanitizeAnalysisReport, sha256
 }

@@ -7,6 +7,8 @@ const path = require("node:path")
 const crypto = require("node:crypto")
 const { analyzeCaseFolder, readCache, writeAnalysisReports } = require("../src/domain/local-case-document-analysis")
 
+const ANALYSIS_CONFIRMATION = "ANALYZE_LOCAL_DOCUMENTS_SANITIZED"
+
 const option = name => {
   const prefix = `--${name}=`
   const argument = process.argv.find(value => value.startsWith(prefix))
@@ -18,6 +20,11 @@ const cacheFile = path.join(stateDir, "analysis-cache.json")
 const numberOption = (name, fallback) => Math.max(1, Number(option(name) || process.env[`CASE_ANALYZE_${name.replace(/-/g, "_").toUpperCase()}`] || fallback))
 
 async function main() {
+  if (process.env.CASE_DOCUMENT_ANALYSIS_CONFIRM !== ANALYSIS_CONFIRMATION) {
+    const error = new Error("analysis_confirmation_required")
+    error.code = "ANALYSIS_CONFIRMATION_REQUIRED"
+    throw error
+  }
   if (!caseFolderOption) throw new Error("case_folder_obrigatorio_use_--case-folder")
   const folders = [path.resolve(caseFolderOption)]
   for (const folder of folders) {
@@ -60,8 +67,8 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => {
-  console.error(JSON.stringify({ ok: false, error: error.message }))
+  console.error(JSON.stringify({ ok: false, error: error.code || "LOCAL_ANALYSIS_FAILED" }))
   process.exitCode = 1
 })
 
-module.exports = { main }
+module.exports = { main, ANALYSIS_CONFIRMATION }
