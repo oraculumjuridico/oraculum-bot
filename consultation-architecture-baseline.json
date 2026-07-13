@@ -125,6 +125,12 @@
       "consultation": ["buildConsultaLegalDossier"]
     }
   },
+  "controlledCalendarDirectAccess": {
+    "scripts/calendar-controlled-test.js": {
+      "methods": ["calendarList.get", "events.list", "events.insert", "events.get", "events.delete"],
+      "justification": "Ferramenta controlada com dados exclusivamente ficticios, manifesto local, confirmacoes obrigatorias, sem fluxos produtivos, participantes, notificacoes ou Meet, e rollback limitado ao ID do manifesto."
+    }
+  },
   "registeredConsultationRoutes": [
     "/agendamento",
     "/buscar-contato-reuniao",

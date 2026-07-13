@@ -177,8 +177,16 @@ function auditArchitecture({ root, baselinePath, mode = "strict" }) {
     }
 
     conteudo.split(/\r?\n/).forEach((linhaTexto, index) => {
-      if (arquivo !== "src/domain/calendar-scheduling.js" && /\.events\.(get|list)\s*\(/.test(linhaTexto)) {
-        avisar(arquivo, "calendar_direto", linhaTexto.trim(), index + 1)
+      const caminhoFerramentaControlada = "scripts/calendar-controlled-test.js"
+      const acessoControlado = baseline.controlledCalendarDirectAccess?.[arquivo]
+      const metodosPermitidos = Array.isArray(acessoControlado?.methods) ? acessoControlado.methods : []
+      for (const match of linhaTexto.matchAll(/\.(calendarList|events|freebusy)\.(get|list|insert|delete|patch|update|query)\s*\(/g)) {
+        const metodo = `${match[1]}.${match[2]}`
+        const metodoHistoricamenteProtegido = ["events.get", "events.list"].includes(metodo)
+        const deveAuditar = arquivo === caminhoFerramentaControlada || metodoHistoricamenteProtegido
+        if (arquivo !== "src/domain/calendar-scheduling.js" && deveAuditar && !metodosPermitidos.includes(metodo)) {
+          avisar(arquivo, "calendar_direto", `${metodo}: ${linhaTexto.trim()}`, index + 1)
+        }
       }
       if (/require\s*\(\s*[^"'`\s][^)]*\)/.test(linhaTexto) ||
           /require\s*\(\s*[`"'][^`"']*\$\{/.test(linhaTexto)) {

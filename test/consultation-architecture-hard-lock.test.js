@@ -16,6 +16,28 @@ function arquivosJs(diretorio) {
   })
 }
 
+function auditarFixtureCalendar(arquivo, conteudo, controlledCalendarDirectAccess = {}) {
+  const rootFixture = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "calendar-hard-lock-"))
+  try {
+    const destino = path.join(rootFixture, arquivo)
+    fs.mkdirSync(path.dirname(destino), { recursive: true })
+    fs.writeFileSync(destino, conteudo)
+    const baselinePath = path.join(rootFixture, "baseline.json")
+    fs.writeFileSync(baselinePath, JSON.stringify({
+      baselineVersion: 1,
+      protectedModules: {},
+      officialDomainEntries: [],
+      allowedDependencies: {},
+      controlledCalendarDirectAccess,
+      registeredConsultationRoutes: [],
+      scan: { include: ["scripts"], exclude: [] }
+    }))
+    return auditArchitecture({ root: rootFixture, baselinePath, mode: "strict" })
+  } finally {
+    fs.rmSync(rootFixture, { recursive: true, force: true })
+  }
+}
+
 function main() {
   const permitidos = new Set([
     "src/domain/consultation-read-model.js",
@@ -41,6 +63,18 @@ function main() {
     mode: "strict"
   })
   assert.equal(resultado.status, "ok")
+
+  const caminhoControlado = "scripts/calendar-controlled-test.js"
+  const metodosControlados = ["calendarList.get", "events.list", "events.insert", "events.get", "events.delete"]
+  const excecaoExata = { [caminhoControlado]: { methods: metodosControlados } }
+  const chamadasAutorizadas = "calendar.calendarList.get({}); calendar.events.list({}); calendar.events.insert({}); calendar.events.get({}); calendar.events.delete({});"
+  assert.equal(auditarFixtureCalendar(caminhoControlado, chamadasAutorizadas, excecaoExata).status, "ok")
+  assert.equal(auditarFixtureCalendar("scripts/outro.js", "calendar.events.list({});", excecaoExata).status, "failed")
+  assert.equal(auditarFixtureCalendar(caminhoControlado, "calendar.events.patch({});", excecaoExata).status, "failed")
+  assert.equal(auditarFixtureCalendar(caminhoControlado, "calendar.events.update({});", excecaoExata).status, "failed")
+  assert.equal(auditarFixtureCalendar(caminhoControlado, "calendar.freebusy.query({});", excecaoExata).status, "failed")
+  assert.equal(auditarFixtureCalendar(caminhoControlado, chamadasAutorizadas, {}).status, "failed")
+  assert.equal(auditarFixtureCalendar(caminhoControlado, chamadasAutorizadas, { "scripts/*": { methods: metodosControlados } }).status, "failed")
 
   const direto = spawnSync(process.execPath, ["-e", `
     process.env.CONSULTATION_FIREWALL_MODE = "strict";

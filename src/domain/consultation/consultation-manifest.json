@@ -116,14 +116,14 @@
     "src/domain/consultation/projections/consultation-session-recovery.js": "e15cd24a1ac45b03bb9a370686f3b0b645011abe43a4a19d3a3330e1a4768139",
     "src/domain/consultation-read-model.js": "ec05037655fdf8ed5506d19d54f88f8ad173bbf49453dc0bdbc0f0717fa5b79f",
     "src/domain/consultation-events.js": "15e0578bf26dc6d8cdf48c1097d1481ad2d2b3f8c4f7d6a5b1f179cfab03f7de",
-    "src/domain/calendar-scheduling.js": "41e750a0f9d0ec6db4e84377143bb97a3fac733b8e7055d5322c878c646ef4f0",
+    "src/domain/calendar-scheduling.js": "63c477fcd929c6f49055576c7d3708421a7536f602b1d64f3572c88668d2bb02",
     "src/domain/consultation-metrics.js": "b1c8e20adddb2a3dafdad0783b4baf325b20b55cba574c631c94e97137d7df92",
     "src/domain/consultation-guards.js": "3ec6036dea60bb83c3bd53b8a4530b30f166c0e3b00109407ac2bc5a66075f67",
-    "src/scripts/consultation-architecture-audit.js": "855ce32ac5e5d2e40ea262b93e5e4a6972f6da54b23144f3d521a96ce7cd35bb",
+    "src/scripts/consultation-architecture-audit.js": "7166149eee67e14e106728dac2e277c43a0819743388d605590f1fabb5a9a870",
     "src/scripts/consultation-release-check.js": "436a327960ca45f089fec63522bdbbeb59badf6bbae81f4a2c24591821ed4789",
     "src/scripts/consultation-export-legal.js": "1b93711fedd9fbed571edeca4fafa442502dfdabd6f8733853ba3207488258bb",
     "src/scripts/consultation-export-dossier.js": "d510469965b0dce561f023efb60ef2828b858e73217b2739cd0800c9c7037534",
-    "consultation-architecture-baseline.json": "ea473a4323866cb1f0aef45f9685ed30e71eb1e13bf629a4b83681b905d9da4b",
+    "consultation-architecture-baseline.json": "418b8b62ade2fff5786f7bf5f5bdace2a047a22e7cccb37e4a7e123229d08220",
     "consultation-architecture-snapshot.json": "9bc25304b856f8fff9025289b433db477ede2c0f7c2ba3f7137c72d39e55f266"
   },
   "approval": {
@@ -131,6 +131,6 @@
     "approvedBy": "pilot-readiness",
     "approvedAt": "2026-07-10T10:30:00-03:00",
     "changeId": "FREE-POSTGRES-STATE-MIRROR",
-    "structuralDigest": "d657a4219c2eee994d45c7029b3505b043c4235368fdb84cbe3cb84509d75b69"
+    "structuralDigest": "78061237dd4f6c12cd6b22dbbf024b5b965f7490f226ade9e17a254f7a983b29"
   }
 }

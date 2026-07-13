@@ -5,6 +5,7 @@ const fs = require("node:fs")
 const fsp = require("node:fs/promises")
 const os = require("node:os")
 const path = require("node:path")
+const { resolveInstitutionalCalendarId } = require("../src/config/institutional-calendar")
 
 const DEFAULT_MANIFEST = path.join(os.tmpdir(), "oraculum-calendar-controlled-test", "manifest.json")
 const APPLY_CONFIRMATION = "APPLY_ONE_FICTITIOUS_EVENT"
@@ -278,12 +279,12 @@ function verify(o = {}) { const f = o.manifestPath || DEFAULT_MANIFEST; return l
 function rollback(o = {}) { const f = o.manifestPath || DEFAULT_MANIFEST; return lock(f, () => rollbackUnlocked({ ...o, manifestPath: f })) }
 function verifyRollback(o = {}) { const f = o.manifestPath || DEFAULT_MANIFEST; return lock(f, () => verifyRollbackUnlocked({ ...o, manifestPath: f })) }
 
-async function runCli({ args = process.argv.slice(2), env = process.env, client, clientFactory = createGoogleClient, logger = v => console.log(JSON.stringify(v)), manifestPath = DEFAULT_MANIFEST } = {}) {
+async function runCli({ args = process.argv.slice(2), env = process.env, client, clientFactory = createGoogleClient, logger = v => console.log(JSON.stringify(v)), manifestPath = DEFAULT_MANIFEST, allowInstitutionalDefault = true } = {}) {
   const mode = parseMode(args)
   if (mode === "--dry-run") return dryRun({ manifestPath, logger })
   if (mode === "--apply" && env.CALENDAR_CONTROLLED_TEST_CONFIRM !== APPLY_CONFIRMATION) throw controlledError("APPLY_CONFIRMATION_REQUIRED")
   if (mode === "--rollback" && env.CALENDAR_CONTROLLED_TEST_CONFIRM !== ROLLBACK_CONFIRMATION) throw controlledError("ROLLBACK_CONFIRMATION_REQUIRED")
-  const calendarId = env.ORACULUM_GOOGLE_CALENDAR_ID || env.GOOGLE_CALENDAR_ID
+  const calendarId = resolveInstitutionalCalendarId(env.ORACULUM_GOOGLE_CALENDAR_ID || env.GOOGLE_CALENDAR_ID, { allowDefault: allowInstitutionalDefault })
   const realClient = client || clientFactory({ clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, refreshToken: env.GOOGLE_REFRESH_TOKEN })
   if (mode === "--preflight") return preflight({ client: realClient, calendarId, manifestPath, logger })
   if (mode === "--apply") return applyControlled({ client: realClient, calendarId, manifestPath, confirmation: env.CALENDAR_CONTROLLED_TEST_CONFIRM, logger })

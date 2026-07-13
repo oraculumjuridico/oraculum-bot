@@ -2,6 +2,7 @@ const { google } = require("googleapis")
 const crypto = require("crypto")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
+const { INSTITUTIONAL_CALENDAR_ID: CALENDAR_ID } = require("../config/institutional-calendar")
 const { forbidDirectCalendarUsage } = require("./consultation-guards")
 
 let appendConsultaEvent = async () => ({ appended: false })
@@ -17,7 +18,6 @@ const {
   GOOGLE_REFRESH_TOKEN
 } = process.env
 
-const CALENDAR_ID = "oraculum.juridico@gmail.com"
 const TIMEZONE = "America/Sao_Paulo"
 
 function getCalendar() {

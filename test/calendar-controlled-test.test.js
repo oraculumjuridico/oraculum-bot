@@ -4,6 +4,7 @@ const assert = require("node:assert/strict")
 const fsp = require("node:fs/promises")
 const os = require("node:os")
 const path = require("node:path")
+const { INSTITUTIONAL_CALENDAR_ID, resolveInstitutionalCalendarId } = require("../src/config/institutional-calendar")
 const {
   APPLY_CONFIRMATION, ROLLBACK_CONFIRMATION, TIMEZONE, buildPayload, markerParts,
   writeManifestAtomic, readManifest, restrictedClient, createGoogleClient,
@@ -17,7 +18,7 @@ class FakeCalendar {
   constructor(options = {}) { this.options = options; this.calls = []; this.event = null }
   async request(input) {
     this.calls.push(structuredClone(input))
-    if (input.operation === "calendarGet") return { id: CALENDAR, timeZone: this.options.timezone || TIMEZONE, accessRole: this.options.accessRole || "owner", primary: false, deleted: Boolean(this.options.deleted) }
+    if (input.operation === "calendarGet") return { id: this.options.calendarId || CALENDAR, timeZone: this.options.timezone || TIMEZONE, accessRole: this.options.accessRole || "owner", primary: false, deleted: Boolean(this.options.deleted) }
     if (input.operation === "eventsList") {
       if (this.options.partial) return { items: [], nextPageToken: "more" }
       if (this.options.duplicate && input.privateExtendedProperty) return { items: [{ id: "existing" }] }
@@ -60,6 +61,24 @@ async function main() {
     const env = new Proxy({}, { get() { envRead = true; throw new Error("env forbidden") } })
     const initial = await runCli({ args: [], env, manifestPath: defaultFile, clientFactory: () => { factoryCalled = true }, logger: () => {} })
     assert.equal(initial.status.dryRun, "completed"); assert.equal(initial.eventId, null); assert.equal(envRead, false); assert.equal(factoryCalled, false)
+    assert.equal(resolveInstitutionalCalendarId(), INSTITUTIONAL_CALENDAR_ID)
+    assert.equal(resolveInstitutionalCalendarId("explicit-fixture-calendar"), "explicit-fixture-calendar")
+    assert.throws(() => resolveInstitutionalCalendarId("primary"), e => e.code === "CALENDAR_ID_REQUIRED")
+    assert.throws(() => resolveInstitutionalCalendarId(undefined, { allowDefault: false }), e => e.code === "CALENDAR_ID_REQUIRED")
+
+    const fallbackFile = path.join(dir, "institutional-fallback.json")
+    await dryRun({ manifestPath: fallbackFile, now: new Date("2027-01-01"), uuid: () => UUID })
+    const fallbackClient = new FakeCalendar({ calendarId: INSTITUTIONAL_CALENDAR_ID })
+    const fallbackLogs = []
+    await runCli({ args: ["--preflight"], env: {}, client: fallbackClient, manifestPath: fallbackFile, logger: item => fallbackLogs.push(JSON.stringify(item)) })
+    const fallbackManifest = await readManifest(fallbackFile)
+    assert.notEqual(fallbackManifest.calendarIdHash, null)
+    assert.notEqual(fallbackManifest.calendarIdHash, INSTITUTIONAL_CALENDAR_ID)
+    assert.equal(fallbackLogs.join(" ").includes(INSTITUTIONAL_CALENDAR_ID), false)
+    assert.equal(fallbackClient.calls.every(call => call.calendarId === INSTITUTIONAL_CALENDAR_ID), true)
+    let disabledFactoryCalled = false
+    await assert.rejects(runCli({ args: ["--preflight"], env: {}, allowInstitutionalDefault: false, manifestPath: path.join(dir, "disabled.json"), clientFactory: () => { disabledFactoryCalled = true } }), e => e.code === "CALENDAR_ID_REQUIRED")
+    assert.equal(disabledFactoryCalled, false)
     await assert.rejects(runCli({ args: ["--aply"], manifestPath: path.join(dir, "typo") }), e => e.code === "UNKNOWN_ARGUMENT")
     await assert.rejects(runCli({ args: ["--dry-run", "--verify"], manifestPath: path.join(dir, "multi") }), e => e.code === "MULTIPLE_MODES_NOT_ALLOWED")
     await assert.rejects(dryRun({ manifestPath: defaultFile }), e => e.code === "MANIFEST_ALREADY_EXISTS")
@@ -163,6 +182,12 @@ async function main() {
 
     const atomic = path.join(dir, "atomic", "manifest.json"); await writeManifestAtomic(atomic, { marker: initial.marker }); assert.equal((await fsp.readdir(path.dirname(atomic))).some(n => n.endsWith(".tmp")), false)
     const source = await fsp.readFile(path.join(__dirname, "..", "scripts", "calendar-controlled-test.js"), "utf8")
+    const productionCalendarSource = await fsp.readFile(path.join(__dirname, "..", "src", "domain", "calendar-scheduling.js"), "utf8")
+    const serverSource = await fsp.readFile(path.join(__dirname, "..", "server.js"), "utf8")
+    assert.match(productionCalendarSource, /INSTITUTIONAL_CALENDAR_ID:\s*CALENDAR_ID/)
+    assert.match(serverSource, /INSTITUTIONAL_CALENDAR_ID:\s*CALENDAR_ID/)
+    assert.doesNotMatch(productionCalendarSource, /const\s+CALENDAR_ID\s*=\s*["']/)
+    assert.doesNotMatch(serverSource, /const\s+CALENDAR_ID\s*=\s*["']/)
     assert.doesNotMatch(source, /require\([^\n]*(server|calendar-scheduling|consultation|hubspot|users-state)/i)
     assert.doesNotMatch(source, /events\.patch|batch/i)
     console.log("calendar-controlled-test.test.js: ok")

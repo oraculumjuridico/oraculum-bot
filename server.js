@@ -20,6 +20,7 @@ require("dotenv").config()
 const express    = require("express")
 const axios      = require("axios")
 const { google } = require("googleapis")
+const { INSTITUTIONAL_CALENDAR_ID: CALENDAR_ID } = require("./src/config/institutional-calendar")
 const path       = require("path")
 const fs         = require("fs")
 const crypto     = require("crypto")
@@ -5707,7 +5708,6 @@ async function capturarLeadIncompleto(from, u) {
   }
 }
 
-const CALENDAR_ID = "oraculum.juridico@gmail.com"
 const WHATSAPP_MEDIA_MAX_BYTES = Math.max(1024, Number(process.env.WHATSAPP_MEDIA_MAX_BYTES || 20 * 1024 * 1024))
 
 function getCalendar() {

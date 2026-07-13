@@ -19,6 +19,6 @@ node scripts/calendar-controlled-test.js --verify-rollback
 - `--rollback` exclui somente o evento validado e exige `CALENDAR_CONTROLLED_TEST_CONFIRM=DELETE_ONLY_MANIFEST_EVENT`.
 - `--verify-rollback` confirma por leitura a remoção do mesmo ID.
 
-Os modos reais exigem `ORACULUM_GOOGLE_CALENDAR_ID` ou `GOOGLE_CALENDAR_ID`; `primary` nunca é aceito. O ID é armazenado apenas como hash. A criação e a exclusão usam sempre `sendUpdates: "none"`.
+Os modos reais usam a mesma configuração institucional pura do runtime; `ORACULUM_GOOGLE_CALENDAR_ID` ou `GOOGLE_CALENDAR_ID` podem explicitá-la para a ferramenta. `primary` nunca é aceito e o ID é armazenado apenas como hash. A criação e a exclusão usam sempre `sendUpdates: "none"`.
 
 O manifesto fica no diretório temporário, com escrita atômica e trava exclusiva. A ferramenta não importa servidor, estado, HubSpot ou módulos produtivos de consulta. Agenda compartilhada exige revisão específica. Restauração exige autorização e procedimento separados.
