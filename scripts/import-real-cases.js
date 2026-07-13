@@ -270,7 +270,7 @@ async function apply(results, checkpoint) {
     if (item.error || item.reviewReasons.length || item.contact.status === "duplicate" || item.deal.status === "duplicate") continue
     let contactId = item.contact.id
     if (!contactId) {
-      const properties = { firstname: item.name, ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "PrevidenciÃ¡rio (INSS)" }
+      const properties = { firstname: item.name, ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "Previdenciário (INSS)" }
       contactId = (await hsRequest("post", "/crm/v3/objects/contacts", { properties })).data.id
     }
     let dealId = item.deal.id

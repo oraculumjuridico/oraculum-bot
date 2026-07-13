@@ -46,7 +46,7 @@ const CONTACT_SEARCH_PROPERTIES = [
 function normalizarAreaContatoHubSpot(area) {
   const texto = sanitizarTextoEntrada(area).toLowerCase()
   if (!texto) return ""
-  if (texto.includes("inss") || texto.includes("previd")) return "PrevidenciÃ¡rio (INSS)"
+  if (texto.includes("inss") || texto.includes("previd")) return "Previdenciário (INSS)"
   if (texto.includes("trabalh")) return "Trabalhista"
   return "Outros"
 }

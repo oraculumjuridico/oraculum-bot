@@ -158,6 +158,12 @@ async function executar() {
     }
   )
   assert.equal(warnings.at(-1).invalidEnums.includes("area_juridica"), true)
+  for (const area_juridica of ["Previdenciário (INSS)", "Trabalhista", "Outros"]) {
+    assert.deepEqual(
+      validateHubSpotProperties("contacts", { area_juridica }),
+      { area_juridica }
+    )
+  }
 
   axios.post = async (url, body) => {
     requests.push({ method: "post", url, body })
@@ -258,6 +264,13 @@ async function executar() {
       tipo_de_caso: "Direito trabalhista"
     }
   )
+
+  const propsContatoPrevidenciario = montarPropsContatoHubSpot("5581999990001", {
+    nome: "Pessoa Fictícia",
+    area: "INSS",
+    tipo: "Aposentadoria"
+  })
+  assert.equal(propsContatoPrevidenciario.area_juridica, "Previdenciário (INSS)")
 
   await hsAtualizarContato("contact-1", {
     firstname: "Maria",

@@ -59,7 +59,7 @@ const DEAL_ENUM_VALUES = {
 }
 
 const CONTACT_ENUM_VALUES = {
-  area_juridica: new Set(["PrevidenciÃ¡rio (INSS)", "Trabalhista", "Outros"]),
+  area_juridica: new Set(["Previdenciário (INSS)", "Trabalhista", "Outros"]),
   origem_lead: new Set(["Bot Whatsapp"]),
   tipo_de_caso: new Set([
     "Aposentadoria",
