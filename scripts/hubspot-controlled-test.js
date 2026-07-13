@@ -305,6 +305,9 @@ async function verifyControlledUnlocked({ client, manifestPath = DEFAULT_MANIFES
   const manifest = await readManifest(manifestPath)
   const objects = await fetchControlledObjects(client, manifest)
   validateControlledObjects(manifest, objects)
+  manifest.status.verify = "completed"
+  manifest.updatedAt = new Date().toISOString()
+  await writeManifestAtomic(manifestPath, manifest)
   safeLog(logger, "verify_complete", { mode: "verify", marker: manifest.marker, contactId: manifest.contactId, dealId: manifest.dealId })
   return manifest
 }

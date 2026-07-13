@@ -195,11 +195,25 @@ async function main() {
 
     const verifyFile = path.join(directory, "verify.json")
     await manifestApplied(verifyFile)
-    const verifyBefore = await fsp.readFile(verifyFile, "utf8")
+    assert.equal((await readManifest(verifyFile)).status.verify, "pending")
     const verifyClient = new FakeClient()
-    await runCli({ args: ["--verify"], env: {}, client: verifyClient, manifestPath: verifyFile, logger: () => {} })
-    assert.equal(await fsp.readFile(verifyFile, "utf8"), verifyBefore)
+    const verifyLogs = []
+    await runCli({ args: ["--verify"], env: {}, client: verifyClient, manifestPath: verifyFile, logger: value => verifyLogs.push(value) })
+    const verifiedManifest = await readManifest(verifyFile)
+    assert.equal(verifiedManifest.status.verify, "completed")
+    assert.notEqual(verifiedManifest.updatedAt, verifiedManifest.createdAt)
     assert.equal(verifyClient.calls.some(call => ["post", "patch", "put", "delete"].includes(call.method)), false)
+    assert.equal(verifyLogs.some(log => log.event === "verify_complete"), true)
+
+    const failedVerifyFile = path.join(directory, "verify-failed.json")
+    await manifestApplied(failedVerifyFile)
+    const failedVerifyClient = new FakeClient({ marker: "ORACULUM_TEST_DIVERGENT" })
+    await assert.rejects(
+      runCli({ args: ["--verify"], env: {}, client: failedVerifyClient, manifestPath: failedVerifyFile, logger: () => {} }),
+      error => error.code === "CONTROLLED_OBJECT_VALIDATION_FAILED"
+    )
+    assert.equal((await readManifest(failedVerifyFile)).status.verify, "pending")
+    assert.equal(failedVerifyClient.calls.some(call => ["post", "patch", "put", "delete"].includes(call.method)), false)
 
     let rateAttempts = 0
     let lastHttpConfig

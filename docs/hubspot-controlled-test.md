@@ -12,7 +12,7 @@ node scripts/hubspot-controlled-test.js --rollback
 
 - `--dry-run` é o padrão, funciona localmente, não exige token e não usa rede.
 - `--apply` realiza escrita real e exige `HUBSPOT_CONTROLLED_TEST_CONFIRM=APPLY_ONE_FICTITIOUS_CONTACT_DEAL_ASSOCIATION`, além de autorização humana específica.
-- `--verify` é somente leitura e valida os IDs e o marcador do manifesto.
+- `--verify` é somente leitura no HubSpot, valida os IDs e o marcador e registra `status.verify = completed` no manifesto local após o sucesso.
 - `--rollback` arquiva somente os dois IDs validados do manifesto e exige `HUBSPOT_CONTROLLED_TEST_CONFIRM=ROLLBACK_ONLY_MANIFEST_OBJECTS`, além de autorização humana específica.
 
 O manifesto fica, por padrão, no diretório temporário do sistema em `oraculum-hubspot-controlled-test/manifest.json`. Ele contém apenas marcador técnico, IDs do teste, hashes, timestamps e status. Um caminho alternativo pode ser definido em `HUBSPOT_CONTROLLED_TEST_MANIFEST`.
