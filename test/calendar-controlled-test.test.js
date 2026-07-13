@@ -33,7 +33,22 @@ class FakeCalendar {
     if (input.operation === "eventsGet") {
       if (this.options.failGetAfterInsert && this.event) throw Object.assign(new Error("private"), { code: "GET_AFTER_INSERT_FAILED" })
       if (this.options.notFound || !this.event) throw Object.assign(new Error("private"), { code: this.options.gone ? "GOOGLE_410_FAILED" : "GOOGLE_404_FAILED" })
-      return structuredClone(this.event)
+      const returned = structuredClone(this.event)
+      if (this.options.realisticResponse) {
+        returned.start.dateTime = new Date(returned.start.dateTime).toLocaleString("sv-SE", { timeZone: TIMEZONE }).replace(" ", "T") + "-03:00"
+        returned.end.dateTime = new Date(returned.end.dateTime).toLocaleString("sv-SE", { timeZone: TIMEZONE }).replace(" ", "T") + "-03:00"
+        delete returned.reminders.overrides
+        returned.attendees = []
+        returned.attachments = []
+        returned.recurrence = []
+        returned.organizer = { self: true }
+        returned.creator = { self: true }
+        returned.created = "2027-01-01T00:00:00.000Z"
+        returned.updated = "2027-01-01T00:00:01.000Z"
+        returned.sequence = 0
+        returned.eventType = "default"
+      }
+      return returned
     }
     if (input.operation === "eventsDelete") { this.event = null; this.options.notFound = true; return {} }
     throw new Error(`unexpected ${input.operation}`)
@@ -113,6 +128,26 @@ async function main() {
     assert.equal(insert.sendUpdates, "none"); assert.equal(Object.hasOwn(insert.requestBody, "attendees"), false); assert.equal(Object.hasOwn(insert.requestBody, "conferenceData"), false)
     assert.equal(applied.client.calls.some(c => c.operation === "eventsPatch"), false)
     assert.equal((await readManifest(applied.file)).eventId, "controlled-event-id")
+
+    const realisticClient = new FakeCalendar({ realisticResponse: true })
+    const realistic = await appliedManifest(dir, realisticClient)
+    await verify({ client: realisticClient, calendarId: CALENDAR, manifestPath: realistic.file })
+    assert.equal((await readManifest(realistic.file)).status.verify, "completed")
+
+    const recoveryClient = new FakeCalendar({ realisticResponse: true })
+    const recovery = await appliedManifest(dir, recoveryClient)
+    const recoveryManifest = await readManifest(recovery.file)
+    recoveryManifest.status.apply = "event_created_validation_required"
+    recoveryManifest.status.verify = "pending"
+    recoveryManifest.error = "CONTROLLED_EVENT_VALIDATION_FAILED"
+    await writeManifestAtomic(recovery.file, recoveryManifest)
+    await verify({ client: recoveryClient, calendarId: CALENDAR, manifestPath: recovery.file, now: new Date("2027-01-02T00:00:00.000Z") })
+    const recoveredManifest = await readManifest(recovery.file)
+    assert.equal(recoveredManifest.status.apply, "completed")
+    assert.equal(recoveredManifest.status.verify, "completed")
+    assert.equal(recoveredManifest.error, null)
+    assert.equal(recoveredManifest.timestamps.applyCompletedAt, "2027-01-02T00:00:00.000Z")
+    assert.equal(recoveryClient.calls.filter(call => call.operation === "eventsGet").length >= 2, true)
 
     const failedAfterInsertClient = new FakeCalendar({ failGetAfterInsert: true })
     const failedAfterInsert = await realManifest(dir, failedAfterInsertClient)

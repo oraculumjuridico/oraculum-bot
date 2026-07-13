@@ -123,7 +123,7 @@ function createGoogleClient({ clientId, clientSecret, refreshToken, googleModule
     if (input.operation === "calendarGet") return execute(() => calendar.calendarList.get({ calendarId: input.calendarId, fields: "id,timeZone,accessRole,primary,deleted" }, options))
     if (input.operation === "eventsList") return execute(() => calendar.events.list({ calendarId: input.calendarId, timeMin: input.timeMin, timeMax: input.timeMax, maxResults: input.maxResults, singleEvents: true, ...(input.privateExtendedProperty ? { privateExtendedProperty: input.privateExtendedProperty } : {}), fields: "nextPageToken,items(id,status)" }, options))
     if (input.operation === "eventsInsert") return execute(() => calendar.events.insert({ calendarId: input.calendarId, requestBody: input.requestBody, sendUpdates: input.sendUpdates }, options))
-    if (input.operation === "eventsGet") return execute(() => calendar.events.get({ calendarId: input.calendarId, eventId: input.eventId, fields: "id,status,summary,description,start,end,extendedProperties,reminders,attendees,attachments,conferenceData" }, options))
+    if (input.operation === "eventsGet") return execute(() => calendar.events.get({ calendarId: input.calendarId, eventId: input.eventId, fields: "id,status,summary,description,start,end,extendedProperties,reminders,attendees,attachments,conferenceData,location,recurrence" }, options))
     if (input.operation === "eventsDelete") return execute(() => calendar.events.delete({ calendarId: input.calendarId, eventId: input.eventId, sendUpdates: input.sendUpdates }, options))
     throw controlledError("GOOGLE_OPERATION_UNKNOWN")
   } }
@@ -157,16 +157,30 @@ async function limitedEvents(client, calendarId, manifest, markerOnly = false) {
 
 function validateEvent(manifest, event, { cancelled = false } = {}) {
   const payload = buildPayload(manifest.marker, manifest.timestamps.plannedStartAt, manifest.timestamps.plannedEndAt)
-  const matches = String(event?.id) === String(manifest.eventId) &&
-    event.summary === payload.summary && event.description === payload.description &&
-    event.start?.dateTime === payload.start.dateTime && event.start?.timeZone === TIMEZONE &&
-    event.end?.dateTime === payload.end.dateTime && event.end?.timeZone === TIMEZONE &&
-    event.extendedProperties?.private?.controlledTestMarker === manifest.marker &&
-    !Object.hasOwn(event, "attendees") && !Object.hasOwn(event, "attachments") && !Object.hasOwn(event, "conferenceData") &&
-    event.reminders?.useDefault === false && Array.isArray(event.reminders?.overrides) && event.reminders.overrides.length === 0 &&
-    (cancelled ? event.status === "cancelled" : event.status !== "cancelled") &&
-    sha256(stableJson(payload)) === manifest.payloadHash
-  if (!matches) throw controlledError("CONTROLLED_EVENT_VALIDATION_FAILED")
+  const emptyOrAbsent = value => value == null || (Array.isArray(value) && value.length === 0)
+  const sameInstant = (actual, expected) => Number.isFinite(Date.parse(actual)) && Date.parse(actual) === Date.parse(expected)
+  const validTimezone = value => value == null || value === TIMEZONE
+  const divergences = []
+  if (String(event?.id) !== String(manifest.eventId)) divergences.push("eventId")
+  if (event?.summary !== payload.summary) divergences.push("summary")
+  if (event?.description !== payload.description) divergences.push("description")
+  if (!sameInstant(event?.start?.dateTime, payload.start.dateTime) || !validTimezone(event?.start?.timeZone)) divergences.push("start")
+  if (!sameInstant(event?.end?.dateTime, payload.end.dateTime) || !validTimezone(event?.end?.timeZone)) divergences.push("end")
+  if (Date.parse(event?.end?.dateTime) - Date.parse(event?.start?.dateTime) !== 15 * 60 * 1000) divergences.push("duration")
+  if (event?.extendedProperties?.private?.controlledTestMarker !== manifest.marker) divergences.push("marker")
+  if (!emptyOrAbsent(event?.attendees)) divergences.push("attendees")
+  if (!emptyOrAbsent(event?.attachments)) divergences.push("attachments")
+  if (event?.conferenceData != null) divergences.push("conferenceData")
+  if (event?.location != null && event.location !== "") divergences.push("location")
+  if (!emptyOrAbsent(event?.recurrence)) divergences.push("recurrence")
+  if (event?.reminders?.useDefault !== false || !emptyOrAbsent(event.reminders?.overrides)) divergences.push("reminders")
+  if (cancelled ? event?.status !== "cancelled" : event?.status === "cancelled") divergences.push("status")
+  if (sha256(stableJson(payload)) !== manifest.payloadHash) divergences.push("payloadHash")
+  if (divergences.length) {
+    const failure = controlledError("CONTROLLED_EVENT_VALIDATION_FAILED")
+    failure.fields = [...new Set(divergences)].sort()
+    throw failure
+  }
   return true
 }
 
@@ -235,9 +249,14 @@ async function applyUnlocked({ client, calendarId, manifestPath, confirmation, l
 
 async function verifyUnlocked({ client, calendarId, manifestPath, logger = () => {}, now = new Date() }) {
   const id = validateCalendarId(calendarId); const manifest = await readManifest(manifestPath)
-  if (manifest.status.apply !== "completed" || !manifest.eventId || manifest.calendarIdHash !== sha256(id)) throw controlledError("REAL_APPLY_REQUIRED")
+  const applyNeedsValidation = manifest.status.apply === "event_created_validation_required"
+  if (!["completed", "event_created_validation_required"].includes(manifest.status.apply) || !manifest.eventId || manifest.calendarIdHash !== sha256(id)) throw controlledError("REAL_APPLY_REQUIRED")
   try { validateEvent(manifest, await restrictedClient(client, "--verify").request({ operation: "eventsGet", calendarId: id, eventId: manifest.eventId })) } catch (cause) {
     manifest.error = cause?.code || "VERIFY_FAILED"; manifest.updatedAt = now.toISOString(); await writeManifestAtomic(manifestPath, manifest); throw cause
+  }
+  if (applyNeedsValidation) {
+    manifest.status.apply = "completed"
+    manifest.timestamps.applyCompletedAt = now.toISOString()
   }
   manifest.status.verify = "completed"; manifest.step = "verify_completed"; manifest.error = null; manifest.timestamps.verifyCompletedAt = now.toISOString(); manifest.updatedAt = now.toISOString()
   await writeManifestAtomic(manifestPath, manifest); logger({ event: "verify_complete", mode: "verify", eventValidated: true }); return manifest
@@ -293,6 +312,13 @@ async function runCli({ args = process.argv.slice(2), env = process.env, client,
   return verifyRollback({ client: realClient, calendarId, manifestPath, logger })
 }
 
-if (require.main === module) runCli().catch(cause => { console.error(JSON.stringify({ event: "calendar_controlled_test_failed", code: cause?.code || "CONTROLLED_TEST_FAILED" })); process.exitCode = 1 })
+if (require.main === module) runCli().catch(cause => {
+  console.error(JSON.stringify({
+    event: "calendar_controlled_test_failed",
+    code: cause?.code || "CONTROLLED_TEST_FAILED",
+    ...(Array.isArray(cause?.fields) ? { fields: cause.fields } : {})
+  }))
+  process.exitCode = 1
+})
 
 module.exports = { DEFAULT_MANIFEST, APPLY_CONFIRMATION, ROLLBACK_CONFIRMATION, TIMEZONE, buildPayload, markerParts, plannedWindow, writeManifestAtomic, readManifest, parseMode, restrictedClient, createGoogleClient, dryRun, preflight, applyControlled, verify, rollback, verifyRollback, runCli, sha256 }
