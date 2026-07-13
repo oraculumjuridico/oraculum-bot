@@ -60,7 +60,11 @@ const DEAL_FIELD_MAP = {
   urgencia: "urgencia",
   prioridade: "hs_priority",
   pasta_drive: "pasta_drive",
-  link_pasta_drive: "pasta_drive"
+  link_pasta_drive: "pasta_drive",
+  // Map process-related extracted fields to numero_de_caso (use consolidated canonical if available)
+  numero_processo: "numero_de_caso",
+  numero_de_processo: "numero_de_caso",
+  processo: "numero_de_caso"
 }
 
 function nowISO(options = {}) {
@@ -351,6 +355,42 @@ function planejarSincronizacaoDocumentalHubSpot(input = {}, options = {}) {
     minConfidence,
     assinaturas
   })
+
+  // Integrate consolidation information if provided by the pipeline
+  // Use only consolidatedCase explicitly provided by the producer. Planner must not rerun the full
+  // document pipeline silently; the producer of the registry must attach consolidatedCase when available.
+  const consolidated = registry?.consolidatedCase || null
+
+  if (consolidated) {
+    // A. Block CPF when consolidation indicates multiple valid CPFs
+    if (Array.isArray(consolidated.conflicts) && consolidated.conflicts.includes('multiple_valid_cpfs')) {
+      if (contatoPlano.props && contatoPlano.props.cpf_do_cliente) {
+        contatoPlano.bloqueados.push({
+          campo: 'cpf_do_cliente',
+          origemDocumental: { consolidated: true },
+          confianca: 0,
+          motivo: 'consolidation_conflict'
+        })
+        delete contatoPlano.props.cpf_do_cliente
+      }
+    }
+
+    // B. Map a single consolidated process number to numero_de_caso when available
+    const proc = consolidated.canonicalSuggestions && consolidated.canonicalSuggestions.numero_de_caso
+    if (proc) {
+      const field = 'numero_de_caso'
+      const valorNormalizado = normalizarValorHubSpot(field, proc)
+      if (podeAtualizarCampo({ registro: negocio, field, valorNovo: valorNormalizado, confianca: 1, minConfidence })) {
+        negocioPlano.props = negocioPlano.props || {}
+        if (!negocioPlano.props[field]) {
+          negocioPlano.props[field] = valorNormalizado
+          negocioPlano.auditoria.push({ objeto: 'deals', campo: field, valorAnterior: obterProperties(negocio)[field] || '', valorNovo: valorNormalizado, origemDocumental: { consolidated: true }, confianca: 1 })
+        }
+      } else {
+        negocioPlano.bloqueados.push({ campo: field, origemDocumental: { consolidated: true }, confianca: 1, motivo: 'regra_atualizacao' })
+      }
+    }
+  }
 
   return {
     versao: DOCUMENT_HUBSPOT_SYNC_VERSION,

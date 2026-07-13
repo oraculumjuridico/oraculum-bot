@@ -8,6 +8,7 @@ const path = require("node:path")
 const crypto = require("node:crypto")
 const axios = require("axios")
 const { montarTituloNegocioHubSpot } = require("../src/domain/hubspot-deal-title")
+const { planejarSincronizacaoDocumentalHubSpot } = require("../src/domain/document-hubspot-sync")
 
 const DEFAULT_ROOT = "C:\\Users\\jesai\\Documents\\ARQUIVOS PESSOAIS\\Direito\\INSS"
 const STATE_DIR = path.resolve(process.env.CASE_IMPORT_STATE_DIR || "data/case-import")
@@ -233,6 +234,7 @@ async function analyze(records, online) {
       contact = { status: "checkpoint", id: checkpoint.records[record.importId].contactId }
       deal = { status: "checkpoint", id: checkpoint.records[record.importId].dealId }
     }
+
     results.push({ ...record, contact, deal, error })
   }
   return { results, checkpoint }
@@ -289,6 +291,90 @@ async function apply(results, checkpoint) {
   return checkpoint
 }
 
+async function generateDryRunReport(results) {
+  // Returns an array of masked plan summaries for the dry-run. Does not perform network operations.
+  const mask = v => (v === undefined || v === null || String(v).trim() === '' ? '<AUSENTE>' : '<PRESENTE>')
+  const summaries = []
+  for (const item of results) {
+    const registry = item
+    const plan = planejarSincronizacaoDocumentalHubSpot({ registry })
+    const contato = plan.contato || { props: {}, bloqueados: [] }
+    const negocio = plan.negocio || { props: {}, bloqueados: [] }
+
+    // If no consolidatedCase was provided, signal that analysis was not executed
+    const analysisExecuted = Boolean(registry && registry.consolidatedCase)
+    const analysisState = analysisExecuted ? '<PRESENTE>' : '<NÃO ANALISADO>'
+
+    // Masked fields
+    const cpfState = (() => {
+      if (!analysisExecuted) return '<NÃO ANALISADO>'
+      const blocked = (contato.bloqueados || []).some(b => b.campo === 'cpf_do_cliente')
+      if (blocked) return '<BLOQUEADO>'
+      if (contato.props && contato.props.cpf_do_cliente) return '<PRESENTE>'
+      // fallback to consolidatedCase findings (non-HubSpot canonical) when available
+      const cpfsFound = registry.consolidatedCase?.cpfsEncontrados || registry.consolidatedCase?.cpfs || []
+      if (Array.isArray(cpfsFound) && cpfsFound.length === 1) return '<PRESENTE>'
+      return '<AUSENTE>'
+    })()
+
+    const processState = (() => {
+      if (!analysisExecuted) return '<NÃO ANALISADO>'
+      const blocked = (negocio.bloqueados || []).some(b => b.campo === 'numero_de_caso')
+      if (blocked) return '<BLOQUEADO>'
+      if (negocio.props && negocio.props.numero_de_caso) return '<PRESENTE>'
+      return '<AUSENTE>'
+    })()
+
+    const phoneState = (() => {
+      if (contato.props && contato.props.phone) return '<PRESENTE>'
+      const phonesFound = registry.consolidatedCase?.telefonesEncontrados || registry.consolidatedCase?.phones || []
+      if (Array.isArray(phonesFound) && phonesFound.length === 1) return '<PRESENTE>'
+      return '<AUSENTE>'
+    })()
+    const emailState = (() => {
+      if (contato.props && contato.props.email) return '<PRESENTE>'
+      const emailsFound = registry.consolidatedCase?.emailsEncontrados || registry.consolidatedCase?.emails || []
+      if (Array.isArray(emailsFound) && emailsFound.length === 1) return '<PRESENTE>'
+      return '<AUSENTE>'
+    })()
+
+    const requerimentoInfo = {
+      extractedOrConsolidated: Boolean(registry && registry.consolidatedCase && registry.consolidatedCase.canonicalSuggestions && registry.consolidatedCase.canonicalSuggestions.numero_requerimento) ? 'SIM' : 'NÃO',
+      hubspotProperty: 'INEXISTENTE',
+      envioPlanejado: 'NÃO'
+    }
+
+    const nbInfo = {
+      extractedOrConsolidated: Boolean(registry && registry.consolidatedCase && registry.consolidatedCase.canonicalSuggestions && registry.consolidatedCase.canonicalSuggestions.nb) ? 'SIM' : 'NÃO',
+      hubspotProperty: 'INEXISTENTE',
+      envioPlanejado: 'NÃO'
+    }
+
+    const summary = {
+      importId: registry.importId || '<unknown>',
+      analysisState,
+      inventoryData: {
+        name: mask(registry.name), phone: mask(registry.phone), email: mask(registry.email), officialNumber: mask(registry.officialNumber)
+      },
+      planoHubSpot: {
+        contato: { cpf: cpfState, phone: phoneState, email: emailState },
+        negocio: { numero_de_caso: processState }
+      },
+      camposBloqueados: ((contato.bloqueados || []).concat(negocio.bloqueados || [])).map(b => ({ campo: b.campo, motivo: b.motivo || 'bloqueado' })),
+      camposNaoMapeados: { requerimento: requerimentoInfo, nb: nbInfo }
+    }
+
+    // Print masked report lines
+    console.log('DADOS DO INVENTÁRIO:', `nome=${mask(registry.name)} cpf=${mask(registry.cpf)} phone=${phoneState} email=${emailState} oficialNumero=${mask(registry.officialNumber)}`)
+    console.log('PLANO HUBSPOT DOCUMENTAL:', `cpf=${cpfState} numero_de_caso=${processState}`)
+    console.log('CAMPOS BLOQUEADOS:', summary.camposBloqueados.length ? JSON.stringify(summary.camposBloqueados) : '<NENHUM>')
+    console.log('CAMPOS NÃO MAPEADOS:', JSON.stringify(summary.camposNaoMapeados))
+
+    summaries.push(summary)
+  }
+  return summaries
+}
+
 async function main() {
   if (command === "help") {
     console.log("Uso: node scripts/import-real-cases.js <audit|review|dry-run|apply|resume|report> [--root=...] [--concurrency=2]")
@@ -305,10 +391,18 @@ async function main() {
   const offlineByDefault = command === "audit" || command === "review" || command === "dry-run"
   const online = Boolean(process.env.HUBSPOT_TOKEN) && (!offlineByDefault || allowReadonlyHubSpot)
   const { results, checkpoint } = await analyze(scanned.records, online)
+  if (command === 'dry-run') {
+    // Run planner for dry-run only to present a local non-network view; do not change apply behavior.
+    await generateDryRunReport(results)
+  }
   if (["apply", "resume"].includes(command)) await apply(results, checkpoint)
   const report = summarize(scanned, results, command)
   await atomicWrite(REPORT, report)
   console.log(JSON.stringify({ ...report, cases: undefined }, null, 2))
 }
 
-main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })
+module.exports = { generateDryRunReport }
+
+if (require.main === module) {
+  main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })
+}
