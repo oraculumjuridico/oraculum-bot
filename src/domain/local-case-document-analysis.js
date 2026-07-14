@@ -6,6 +6,22 @@ const crypto = require("node:crypto")
 const sharp = require("sharp")
 const { createWorker, OEM } = require("tesseract.js")
 const { executarPipelineDocumental } = require("./document-pipeline-orchestrator")
+
+// Shared file exclusion rule (must match import-real-cases.js)
+function shouldIgnoreInventoryFile(fileName) {
+  // Ignore Office temporary files (e.g., ~$document.doc, ~$report.xlsx)
+  return path.basename(fileName).startsWith('~$')
+}
+
+// Classify which reasons block HubSpot planning
+function getBlockingReviewReasons(reviewReasons = []) {
+  // Reasons that can be resolved during apply should not block HubSpot planning
+  const resolvableDuringApply = new Set([
+    'negocio_sem_numero_oficial',  // Number is generated in apply
+    'official_number_missing'      // Same as above in analysis context
+  ])
+  return reviewReasons.filter(reason => !resolvableDuringApply.has(reason))
+}
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg", "image/png", "image/webp", "image/tiff", "image/heic", "image/heif", "application/pdf"
 ])
@@ -222,18 +238,43 @@ function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, has
     (conflicts.includes("divergent_names") && item.names.length)
   ).map(item => ({ file: item.file, pageNumber: item.pageNumber, reason: "identity_divergence" }))
   if (quarantined.length) conflicts.push("documents_quarantined")
+  
   const reviewReasons = [...conflicts]
   if (!cpfs.length) reviewReasons.push("cpf_missing")
   if (!names.length) reviewReasons.push("name_missing")
   if (!collect("phones").length && !collect("emails").length) reviewReasons.push("safe_contact_key_missing")
   if (!collect("processNumbers").length) reviewReasons.push("official_number_missing")
-  if (ignored.length) reviewReasons.push("ignored_files_present")
+  
+  // Check if there are problematic ignored files (not just Office temps which are already filtered)
+  const problematicIgnored = ignored.filter(item => 
+    item.reason !== 'case_document_limit' && 
+    !['unsupported_or_invalid_content', 'file_size_limit'].includes(item.reason)
+  )
+  if (problematicIgnored.length) reviewReasons.push("ignored_files_present")
+  
   const confidences = analyzed.map(item => item.confidence).filter(Number.isFinite)
   const birthDates = collect("birthDates")
   const processNumbers = collect("processNumbers")
   const requestNumbers = collect("requestNumbers")
   const benefitNumbers = collect("benefitNumbers")
   const benefitTypes = collect("benefitTypes")
+  
+  // Calculate documentsPending:
+  // null = analysis not conclusive (render failures, pdf_page_limit, etc)
+  // false = analysis complete, no pending documents detected
+  // true = analysis complete, pending documents detected (marked by analyzer)
+  let documentsPending = false
+  const hasAnalysisFailures = ignored.some(item => 
+    ['pdf_render_failed', 'pdf_page_limit', 'extension_content_mismatch'].includes(item.reason)
+  )
+  const hasQuarantinedDocs = quarantined.length > 0
+  if (hasAnalysisFailures || hasQuarantinedDocs || analyzed.length === 0) {
+    documentsPending = null
+  }
+  
+  const blockingReasons = getBlockingReviewReasons(reviewReasons)
+  const safeToPlanHubSpot = blockingReasons.length === 0 && cpfs.length === 1 && names.length >= 1
+  
   return {
     sourceFolder: path.relative(relativeRoot, sourceFolder) || path.basename(sourceFolder), importId,
     fileCount: files.length, analyzedFileCount: unique(analyzed.map(item => item.file)).length,
@@ -244,8 +285,9 @@ function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, has
     tiposBeneficioEncontrados: benefitTypes, datasNascimentoEncontradas: birthDates,
     documentosClassificados: analyzed.map(item => ({ file: item.file, pageNumber: item.pageNumber, tipo: item.classification, confidence: item.confidence })),
     confidence: confidences.length ? Number((confidences.reduce((sum, value) => sum + value, 0) / confidences.length).toFixed(4)) : 0,
-    conflicts, reviewReasons: unique(reviewReasons), safeToPlanHubSpot: conflicts.length === 0 && cpfs.length === 1 && names.length >= 1,
-    canonicalSuggestions: {
+    conflicts, reviewReasons: unique(reviewReasons), blockingReviewReasons: unique(blockingReasons),
+    documentsPending, mappedType: null, plannedStage: null,
+    safeToPlanHubSpot, canonicalSuggestions: {
       date_of_birth: birthDates.length === 1 ? birthDates[0] : null,
       numero_de_caso: processNumbers.length === 1 ? processNumbers[0] : null,
       numero_requerimento: requestNumbers.length === 1 ? requestNumbers[0] : null,
@@ -264,7 +306,7 @@ async function walkFiles(directory) {
     for (const entry of entries) {
       const full = path.join(current, entry.name)
       if (entry.isDirectory()) queue.push(full)
-      else if (entry.isFile()) files.push(full)
+      else if (entry.isFile() && !shouldIgnoreInventoryFile(entry.name)) files.push(full)
     }
   }
   return files.sort()
@@ -547,6 +589,7 @@ async function writeAnalysisReports(stateDir, report, cache) {
 }
 module.exports = {
   ALLOWED_MIME_TYPES, DEFAULT_LIMITS, validCpf, normalizePhone, normalizeEmail, detectMime,
+  shouldIgnoreInventoryFile, getBlockingReviewReasons,
   renderPdfPages, canonicalizePipeline, consolidateCase, analyzeCaseFolder, readCache, normalizeName, namesSignificantlyDiverge, ocrWithTimeout,
   writeAnalysisReports, analysisSummaryCsv, sanitizeCaseAnalysis, sanitizeAnalysisReport, sha256
 }

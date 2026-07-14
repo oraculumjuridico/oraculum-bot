@@ -635,7 +635,7 @@ async function main() {
   console.log(JSON.stringify({ ...report, cases: undefined, dryRunReport: undefined }, null, 2))
 }
 
-module.exports = { generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile, normalizePhoneForValidation, getBlockingReviewReasons }
+module.exports = { inventory, generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile, normalizePhoneForValidation, getBlockingReviewReasons }
 
 if (require.main === module) {
   main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })

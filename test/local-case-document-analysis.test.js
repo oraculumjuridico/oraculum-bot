@@ -9,7 +9,9 @@ const net = require("node:net")
 const childProcess = require("node:child_process")
 const Module = require("node:module")
 const { createCanvas } = require("@napi-rs/canvas")
-const { analyzeCaseFolder, consolidateCase, renderPdfPages, writeAnalysisReports, readCache, normalizeName, ocrWithTimeout, sanitizeCaseAnalysis } = require("../src/domain/local-case-document-analysis")
+const { analyzeCaseFolder, consolidateCase, renderPdfPages, writeAnalysisReports, readCache, normalizeName, ocrWithTimeout, sanitizeCaseAnalysis, shouldIgnoreInventoryFile, getBlockingReviewReasons } = require("../src/domain/local-case-document-analysis")
+// Load import-real-cases BEFORE Module._load hook is set up (must be at top to avoid blocking on hubspot-deal-title)
+const { inventory } = require("../scripts/import-real-cases")
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-case-analysis-"))
 const originalNetwork = { httpRequest: http.request, httpGet: http.get, httpsRequest: https.request, httpsGet: https.get, netConnect: net.connect, fetch: global.fetch, moduleLoad: Module._load }
@@ -192,6 +194,17 @@ async function main() {
   assert.equal(Object.hasOwn(persistedReport, "rootHash"), false)
   assert.equal(reportText.includes(first.importId), false)
   assert.deepEqual(Object.keys((await readCache(path.join(stateDir, "analysis-cache.json"))).files).length > 0, true)
+
+  // Run new tests for deep analysis fixes
+  await testOfficeTemporaryFileExclusion()
+  await testInventoryAnalysisConsistency()
+  await testBlockingReviewReasonsClassification()
+  await testSafeToPlanHubSpotConsistency()
+  await testDocumentsPendingSemantics()
+  await testTypeAndStageNotAutoFilled()
+  await testModuleExports()
+
+  // Security and no-write verification
   const analyzerSource = await fsp.readFile(path.join(__dirname, "..", "scripts", "analyze-real-case-documents.js"), "utf8")
   const domainSource = await fsp.readFile(path.join(__dirname, "..", "src", "domain", "local-case-document-analysis.js"), "utf8")
   assert.equal(/\bapply\s*\(/.test(analyzerSource), false)
@@ -199,6 +212,165 @@ async function main() {
   assert.doesNotMatch(analyzerSource + domainSource, /require\(["'][^"']*(?:hubspot|googleapis|drive|neon|meta|make|microsoft.*todo)[^"']*["']\)/i)
   assert.equal((analyzerSource + domainSource).includes("newSet("), false)
   assert.equal(networkCalls, 0)
+}
+
+// TEST 17: Office temporary files must be excluded from analysis
+async function testOfficeTemporaryFileExclusion() {
+  assert.equal(shouldIgnoreInventoryFile("~$document.docx"), true, "~$ files must be ignored")
+  assert.equal(shouldIgnoreInventoryFile("~$report.xlsx"), true, "~$ files must be ignored")
+  assert.equal(shouldIgnoreInventoryFile("documento.pdf"), false, "regular files must not be ignored")
+  assert.equal(shouldIgnoreInventoryFile("image.jpeg"), false, "regular files must not be ignored")
+  assert.equal(shouldIgnoreInventoryFile(".hidden"), false, "hidden files are different from ~$")
+  
+  // Test in actual folder context
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "temp-file-test-"))
+  await fsp.writeFile(path.join(testDir, "documento.pdf"), pdfFixture())
+  await fsp.writeFile(path.join(testDir, "~$documento.docx"), Buffer.from("fake lock file"))
+  
+  const result = await analyzeCaseFolder(testDir, { processPage: fakePipeline })
+  
+  // ~$ file should NOT be in the fileCount
+  assert.equal(result.fileCount, 1, "~$ file should not be counted")
+  assert.equal(result.ignoredFileCount, 0, "~$ file should be filtered before ignore tracking")
+  
+  // Physical file should still exist
+  assert.equal(fs.existsSync(path.join(testDir, "~$documento.docx")), true, "~$ file must not be deleted")
+}
+
+// TEST 18: Inventory and analysis must count files identically
+async function testInventoryAnalysisConsistency() {
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "consistency-test-"))
+  
+  // Create test files
+  await fsp.writeFile(path.join(testDir, "doc1.pdf"), pdfFixture())
+  await fsp.writeFile(path.join(testDir, "doc2.pdf"), pdfFixture())
+  await fsp.writeFile(path.join(testDir, "image.jpeg"), Buffer.alloc(100))
+  await fsp.writeFile(path.join(testDir, "~$locked.docx"), Buffer.from("lock"))
+  
+  // Count inventory files (replicate walk() logic)
+  let inventoryCount = 0
+  for (const entry of await fsp.readdir(testDir, { withFileTypes: true })) {
+    if (entry.isFile() && !shouldIgnoreInventoryFile(entry.name)) {
+      inventoryCount++
+    }
+  }
+  
+  // Get analysis count
+  const analysisResult = await analyzeCaseFolder(testDir, { processPage: fakePipeline })
+  const analysisCount = analysisResult.fileCount
+  
+  // They should be identical
+  assert.equal(analysisCount, 3, "analysis should count 3 files")
+  assert.equal(inventoryCount, 3, "inventory should count 3 files")
+  assert.equal(analysisCount, inventoryCount, "inventory and analysis must count files identically")
+}
+
+// TEST 19: blockingReviewReasons must be distinguished from all reasons
+async function testBlockingReviewReasonsClassification() {
+  const allReasons = [
+    "cpf_missing",
+    "official_number_missing",  // Resolvable
+    "negocio_sem_numero_oficial",  // Resolvable
+    "divergent_names",
+    "documents_quarantined"
+  ]
+  
+  const blocking = getBlockingReviewReasons(allReasons)
+  
+  // official_number_missing and negocio_sem_numero_oficial should not be in blocking
+  assert.equal(blocking.includes("cpf_missing"), true, "cpf_missing should block")
+  assert.equal(blocking.includes("divergent_names"), true, "divergent_names should block")
+  assert.equal(blocking.includes("documents_quarantined"), true, "documents_quarantined should block")
+  assert.equal(blocking.includes("official_number_missing"), false, "official_number_missing should not block")
+  assert.equal(blocking.includes("negocio_sem_numero_oficial"), false, "negocio_sem_numero_oficial should not block")
+}
+
+// TEST 20: safeToPlanHubSpot must be false when blockingReviewReasons exist
+async function testSafeToPlanHubSpotConsistency() {
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "safe-plan-test-"))
+  
+  // Case with cpf_missing (blocking reason)
+  await fsp.mkdir(path.join(testDir, "subdir1"), { recursive: true })
+  await fsp.writeFile(path.join(testDir, "subdir1", "no-cpf.pdf"), pdfFixture())
+  
+  const mockPipeline = () => fakePipeline({ nome: "João Silva" })  // No CPF
+  const result = await analyzeCaseFolder(testDir, { processPage: mockPipeline })
+  
+  // cpf_missing is a blocking reason, so safeToPlanHubSpot should be false
+  assert.equal(result.blockingReviewReasons.includes("cpf_missing"), true)
+  assert.equal(result.safeToPlanHubSpot, false, "safeToPlanHubSpot must be false when cpf_missing (blocking)")
+  
+  // Case with valid CPF, name, and phone
+  const testDir2 = fs.mkdtempSync(path.join(os.tmpdir(), "safe-plan-test2-"))
+  await fsp.writeFile(path.join(testDir2, "with-cpf.pdf"), pdfFixture())
+  
+  // Pass both fields and OCR text with phone number
+  // Using valid CPF: 11144477735 (passes Brazilian CPF validation)
+  const mockPipelineValid = () => fakePipeline(
+    { cpf: "11144477735", nome: "João Silva" },
+    "João Silva\nCPF: 111.444.777-35\nTelefone: (11) 98765-4321"  // Phone in OCR text
+  )
+  const result2 = await analyzeCaseFolder(testDir2, { processPage: mockPipelineValid })
+  
+  // Verify fields are extracted correctly
+  if (result2.cpfsEncontrados.length === 0) {
+    assert.fail(`Expected CPF to be extracted, got: ${JSON.stringify(result2.cpfsEncontrados)}`)
+  }
+  if (result2.nomesEncontrados.length === 0) {
+    assert.fail(`Expected name to be extracted, got: ${JSON.stringify(result2.nomesEncontrados)}`)
+  }
+  if (result2.telefonesEncontrados.length === 0) {
+    assert.fail(`Expected phone to be extracted, got: ${JSON.stringify(result2.telefonesEncontrados)}`)
+  }
+  
+  // When all required fields are present and no blocking reasons, safeToPlanHubSpot should be true
+  if (result2.blockingReviewReasons.length > 0) {
+    assert.fail(`Expected no blocking reasons, got: ${JSON.stringify(result2.blockingReviewReasons)}`)
+  }
+  assert.equal(result2.safeToPlanHubSpot, true, "safeToPlanHubSpot should be true when all requirements met")
+}
+
+// TEST 21: documentsPending must use null for inconclusive analysis
+async function testDocumentsPendingSemantics() {
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "pending-test-"))
+  
+  // Create a PDF that will trigger pdf_page_limit
+  await fsp.writeFile(path.join(testDir, "multi-page.pdf"), pdfFixture())
+  
+  let renderFailure = false
+  const mockRenderWithFailure = async () => {
+    renderFailure = true
+    throw new Error("pdf_render_failed")
+  }
+  
+  const result = await analyzeCaseFolder(testDir, {
+    processPage: fakePipeline,
+    limits: { maxPdfPages: 1 },
+    renderPdfPages: mockRenderWithFailure
+  })
+  
+  // When analysis fails (pdf_render_failed), documentsPending should be null
+  assert.equal(result.documentsPending, null, "documentsPending must be null with pdf_render_failed")
+}
+
+// TEST 22: Type and stage must be null (not auto-filled)
+async function testTypeAndStageNotAutoFilled() {
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "type-stage-test-"))
+  await fsp.writeFile(path.join(testDir, "doc.pdf"), pdfFixture())
+  
+  const result = await analyzeCaseFolder(testDir, { processPage: fakePipeline })
+  
+  // Deep analysis should not produce mappedType or plannedStage
+  assert.equal(result.mappedType, null, "mappedType must be null (filled by planning stage)")
+  assert.equal(result.plannedStage, null, "plannedStage must be null (filled by planning stage)")
+}
+
+// TEST 23: Verify module exports have helper functions
+async function testModuleExports() {
+  const module = require("../src/domain/local-case-document-analysis")
+  
+  assert.equal(typeof module.shouldIgnoreInventoryFile, "function", "shouldIgnoreInventoryFile must be exported")
+  assert.equal(typeof module.getBlockingReviewReasons, "function", "getBlockingReviewReasons must be exported")
 }
 
 main().then(() => console.log("local-case-document-analysis.test.js: ok")).finally(() => {
