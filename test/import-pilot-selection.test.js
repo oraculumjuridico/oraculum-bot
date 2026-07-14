@@ -271,6 +271,99 @@ function testPhoneSourceTracking() {
   }
 }
 
+// TEST 7: Document count from registry.documents
+function testDocumentCountFromRegistry() {
+  const results = [
+    {
+      importId: "id-14docs",
+      name: "Pilot 1",
+      folder: "folder-1",
+      documents: { count: 14, bytes: 5000000, extensions: {} },
+      contact: { status: "new" },
+      deal: { status: "new" },
+      consolidatedCase: null,
+      reviewReasons: []
+    },
+    {
+      importId: "id-24docs",
+      name: "Pilot 2",
+      folder: "folder-2",
+      documents: { count: 24, bytes: 8000000, extensions: {} },
+      contact: { status: "new" },
+      deal: { status: "new" },
+      consolidatedCase: null,
+      reviewReasons: []
+    },
+    {
+      importId: "id-10docs",
+      name: "Pilot 3",
+      folder: "folder-3",
+      documents: { count: 10, bytes: 3000000, extensions: {} },
+      contact: { status: "new" },
+      deal: { status: "new" },
+      consolidatedCase: null,
+      reviewReasons: []
+    }
+  ]
+
+  const originalPlan = global.planejarSincronizacaoDocumentalHubSpot
+  global.planejarSincronizacaoDocumentalHubSpot = () => ({
+    contato: { props: {}, bloqueados: [] },
+    negocio: { props: {}, bloqueados: [] }
+  })
+
+  try {
+    const canonical = buildCanonicalDryRunReport(results, { records: results })
+    assert.equal(canonical.reports.length, 3, "Must have 3 reports")
+    assert.equal(canonical.reports[0].documentCount, 14, "First must have 14 documents")
+    assert.equal(canonical.reports[1].documentCount, 24, "Second must have 24 documents")
+    assert.equal(canonical.reports[2].documentCount, 10, "Third must have 10 documents")
+
+    console.log("✓ TEST 7 (document count from registry): PASS")
+  } finally {
+    global.planejarSincronizacaoDocumentalHubSpot = originalPlan
+  }
+}
+
+// TEST 8: Document count is correct from registry.documents even when analysisState is NÃO ANALISADO
+function testDocumentCountIndependentOfAnalysisState() {
+  const results = [
+    // Dry-run case: has documents but no consolidatedCase
+    {
+      importId: "id-dry-run-case",
+      name: "DryRunCase",
+      folder: "f1",
+      documents: { count: 14, bytes: 5000000, extensions: {} },
+      contact: { status: "new" },
+      deal: { status: "new" },
+      consolidatedCase: null,  // No consolidatedCase in dry-run
+      reviewReasons: []
+    }
+  ]
+
+  const originalPlan = global.planejarSincronizacaoDocumentalHubSpot
+  global.planejarSincronizacaoDocumentalHubSpot = () => ({
+    contato: { props: {}, bloqueados: [] },
+    negocio: { props: {}, bloqueados: [] }
+  })
+
+  try {
+    const canonical = buildCanonicalDryRunReport(results, { records: results })
+    const report = canonical.reports[0]
+
+    // In dry-run, analysisState is <NÃO ANALISADO> because consolidatedCase doesn't exist
+    // This is correct behavior - dry-run doesn't do deep document analysis
+    assert.equal(report.analysisState, '<NÃO ANALISADO>', "Dry-run must show analysisState = NÃO ANALISADO")
+
+    // But documentCount should still be correct from registry.documents.count
+    assert.equal(report.documentCount, 14, "documentCount must be 14 from registry.documents.count")
+
+    console.log("✓ TEST 8 (document count independent of analysis state): PASS")
+  } finally {
+    global.planejarSincronizacaoDocumentalHubSpot = originalPlan
+  }
+}
+
 // RUN ALL TESTS
 async function runAll() {
   try {
@@ -280,6 +373,8 @@ async function runAll() {
     await testWrongCount()
     testCanonicalReportNumberStatesBehavioral()
     testPhoneSourceTracking()
+    testDocumentCountFromRegistry()
+    testDocumentCountIndependentOfAnalysisState()
     
     console.log("\n✓✓✓ ALL BEHAVIORAL TESTS PASSED ✓✓✓")
   } catch (error) {
@@ -293,4 +388,4 @@ if (require.main === module) {
   runAll()
 }
 
-module.exports = { testOutOfOrderSelection, testMissingImportId, testDuplicateImportIds, testWrongCount, testCanonicalReportNumberStatesBehavioral, testPhoneSourceTracking }
+module.exports = { testOutOfOrderSelection, testMissingImportId, testDuplicateImportIds, testWrongCount, testCanonicalReportNumberStatesBehavioral, testPhoneSourceTracking, testDocumentCountFromRegistry, testDocumentCountIndependentOfAnalysisState }

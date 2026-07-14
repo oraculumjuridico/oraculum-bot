@@ -408,7 +408,9 @@ function buildCanonicalDryRunReport(results, scanned) {
     const contato = plan.contato || { props: {}, bloqueados: [] }
     const negocio = plan.negocio || { props: {}, bloqueados: [] }
 
-    // Analysis state
+    // Analysis state: based on consolidatedCase (deep document analysis completion marker)
+    // In dry-run, consolidatedCase is not created, so this will be <NÃO ANALISADO>
+    // This is correct behavior for dry-run (no deep analysis, just planning)
     const analysisExecuted = Boolean(registry && registry.consolidatedCase)
     const analysisState = analysisExecuted ? '<PRESENTE>' : '<NÃO ANALISADO>'
 
@@ -522,7 +524,7 @@ function buildCanonicalDryRunReport(results, scanned) {
         requerimento: requerimentoInfo,
         nb: nbInfo
       },
-      documentCount: (registry.consolidatedCase?.documents || []).length || 0,
+      documentCount: Number(registry.documents?.count || 0),
       documentsPending: item.reviewReasons?.includes('incomplete_documents') || false
     }
 
