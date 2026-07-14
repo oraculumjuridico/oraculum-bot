@@ -72,6 +72,11 @@ function validCpf(value) {
   return true
 }
 
+function shouldIgnoreInventoryFile(fileName) {
+  // Ignore Office temporary files (e.g., ~$document.doc, ~$report.xlsx)
+  return path.basename(fileName).startsWith('~$')
+}
+
 async function walk(directory) {
   const result = []
   const queue = [directory]
@@ -80,7 +85,11 @@ async function walk(directory) {
     for (const entry of await fsp.readdir(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name)
       if (entry.isDirectory()) queue.push(full)
-      else if (entry.isFile()) result.push(full)
+      else if (entry.isFile()) {
+        if (!shouldIgnoreInventoryFile(entry.name)) {
+          result.push(full)
+        }
+      }
     }
   }
   return result
@@ -525,7 +534,7 @@ function buildCanonicalDryRunReport(results, scanned) {
         nb: nbInfo
       },
       documentCount: Number(registry.documents?.count || 0),
-      documentsPending: item.reviewReasons?.includes('incomplete_documents') || false
+      documentsPending: analysisExecuted ? item.reviewReasons?.includes('incomplete_documents') || false : null
     }
 
     reports.push(report)
