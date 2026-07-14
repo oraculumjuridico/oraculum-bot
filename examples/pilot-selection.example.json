@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "description": "Pilot batch explicit selection — template demonstrating structure",
+  "generatedAt": "2026-07-13T23:58:27.651Z",
+  "purpose": "dry-run",
+  "selection": [
+    {
+      "name": "CLIENTE_EXEMPLO_1",
+      "folder": "CLIENTE_EXEMPLO_1",
+      "importId": "inss-import-id-example-1-xxxxxxxx",
+      "phoneSource": "pilot_manifest",
+      "phone": "5511999990001",
+      "type": "inss_bpc",
+      "expectedDocuments": 10,
+      "notes": "Example client with pending documents"
+    },
+    {
+      "name": "CLIENTE_EXEMPLO_2",
+      "folder": "CLIENTE_EXEMPLO_2",
+      "importId": "inss-import-id-example-2-xxxxxxxx",
+      "phoneSource": "pilot_manifest",
+      "phone": "5511999990002",
+      "type": "inss_incapacidade",
+      "expectedDocuments": 14,
+      "notes": "Example client with complete documents"
+    },
+    {
+      "name": "CLIENTE_EXEMPLO_3",
+      "folder": "CLIENTE_EXEMPLO_3",
+      "importId": "inss-import-id-example-3-xxxxxxxx",
+      "phoneSource": "pilot_manifest",
+      "phone": "5511999990003",
+      "type": "inss_bpc",
+      "expectedDocuments": 24,
+      "notes": "Example client in protocol stage"
+    }
+  ],
+  "validation": {
+    "minimumClients": 3,
+    "maximumClients": 3,
+    "exactlyThree": true,
+    "noDuplicates": true,
+    "ambiguousNamesBlocked": true
+  },
+  "warnings": [
+    "This is an example template only",
+    "Create a .gitignored copy for actual production use",
+    "Do not version personal client data (names, phone numbers, identifiers)"
+  ]
+}

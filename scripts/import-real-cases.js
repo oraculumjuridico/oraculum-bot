@@ -8,7 +8,14 @@ const path = require("node:path")
 const crypto = require("node:crypto")
 const axios = require("axios")
 const { montarTituloNegocioHubSpot } = require("../src/domain/hubspot-deal-title")
-const { planejarSincronizacaoDocumentalHubSpot } = require("../src/domain/document-hubspot-sync")
+let planejarSincronizacaoDocumentalHubSpot
+try {
+  planejarSincronizacaoDocumentalHubSpot = require("../src/domain/document-hubspot-sync").planejarSincronizacaoDocumentalHubSpot
+} catch (e) {
+  // allow tests to inject a global implementation
+  planejarSincronizacaoDocumentalHubSpot = global.planejarSincronizacaoDocumentalHubSpot || function () { return { contato: { props: {}, bloqueados: [] }, negocio: { props: {}, bloqueados: [] } } }
+}
+if (global.planejarSincronizacaoDocumentalHubSpot) planejarSincronizacaoDocumentalHubSpot = global.planejarSincronizacaoDocumentalHubSpot
 
 const DEFAULT_ROOT = "C:\\Users\\jesai\\Documents\\ARQUIVOS PESSOAIS\\Direito\\INSS"
 const STATE_DIR = path.resolve(process.env.CASE_IMPORT_STATE_DIR || "data/case-import")
@@ -343,89 +350,204 @@ async function apply(results, checkpoint) {
   return checkpoint
 }
 
-async function generateDryRunReport(results) {
-  // Returns an array of masked plan summaries for the dry-run. Does not perform network operations.
-  const mask = v => (v === undefined || v === null || String(v).trim() === '' ? '<AUSENTE>' : '<PRESENTE>')
-  const summaries = []
+
+async function applyPilotSelection(scanned, selectionFile) {
+  const selection = await safeJson(selectionFile, null)
+  if (!selection || !selection.selection || !Array.isArray(selection.selection)) {
+    throw new Error('pilot_selection_file_invalid_or_missing')
+  }
+
+  const pilots = selection.selection
+  if (pilots.length !== 3) {
+    throw new Error(`pilot_selection_must_have_exactly_3_entries_found_${pilots.length}`)
+  }
+
+  // Validate uniqueness
+  const importIds = new Set(pilots.map(p => p.importId))
+  if (importIds.size !== 3) {
+    throw new Error('pilot_selection_contains_duplicate_importIds')
+  }
+
+  // Filter records to match selection
+  const selectedImportIds = new Set(pilots.map(p => p.importId))
+  const filteredRecords = scanned.records.filter(r => selectedImportIds.has(r.importId))
+
+  if (filteredRecords.length !== 3) {
+    throw new Error(`pilot_selection_mismatch_found_${filteredRecords.length}_of_3_clients`)
+  }
+
+  // Merge selection metadata into records
+  for (const record of filteredRecords) {
+    const meta = pilots.find(p => p.importId === record.importId)
+    if (meta) {
+      record._pilotMeta = {
+        phoneSource: 'pilot_manifest',
+        phone: meta.phone || null,
+        phoneRaw: meta.phone || null,
+        type: meta.type,
+        expectedDocuments: meta.expectedDocuments,
+        notes: meta.notes
+      }
+    }
+  }
+
+  console.log(`[PILOT SELECTION] Loaded ${filteredRecords.length} clients`)
+  console.log(`[PILOT SELECTION] ImportIds: ${Array.from(importIds).join(', ')}`)
+
+  return { ...scanned, records: filteredRecords }
+}
+
+function buildCanonicalDryRunReport(results, scanned) {
+  const reports = []
+
   for (const item of results) {
     const registry = item
     const plan = planejarSincronizacaoDocumentalHubSpot({ registry })
     const contato = plan.contato || { props: {}, bloqueados: [] }
     const negocio = plan.negocio || { props: {}, bloqueados: [] }
 
-    // If no consolidatedCase was provided, signal that analysis was not executed
+    // Analysis state
     const analysisExecuted = Boolean(registry && registry.consolidatedCase)
     const analysisState = analysisExecuted ? '<PRESENTE>' : '<NÃO ANALISADO>'
 
-    // Masked fields
-    const cpfState = (() => {
-      if (!analysisExecuted) return '<NÃO ANALISADO>'
-      const blocked = (contato.bloqueados || []).some(b => b.campo === 'cpf_do_cliente')
-      if (blocked) return '<BLOQUEADO>'
-      if (contato.props && contato.props.cpf_do_cliente) return '<PRESENTE>'
-      // fallback to consolidatedCase findings (non-HubSpot canonical) when available
-      const cpfsFound = registry.consolidatedCase?.cpfsEncontrados || registry.consolidatedCase?.cpfs || []
-      if (Array.isArray(cpfsFound) && cpfsFound.length === 1) return '<PRESENTE>'
-      return '<AUSENTE>'
-    })()
-
+    // Number of case logic (4 distinct states)
     const processState = (() => {
       if (!analysisExecuted) return '<NÃO ANALISADO>'
       const blocked = (negocio.bloqueados || []).some(b => b.campo === 'numero_de_caso')
       if (blocked) return '<BLOQUEADO>'
       if (negocio.props && negocio.props.numero_de_caso) return '<PRESENTE>'
-      // Dry-run must not propose provisional numbers that could be reserved. Signal generation happens at apply.
       return '<SERÁ GERADO NO APPLY>'
     })()
 
-    const phoneState = (() => {
-      if (contato.props && contato.props.phone) return '<PRESENTE>'
+    // Phone handling with normalization
+    let phoneState = '<AUSENTE>'
+    let phoneNormalized = null
+    let phoneSource = 'not_found'
+
+    if (registry._pilotMeta && registry._pilotMeta.phone) {
+      try {
+        const { normalizarTelefone } = require("../src/domain/phone-name.js")
+        phoneNormalized = normalizarTelefone(registry._pilotMeta.phone)
+      } catch {
+        phoneNormalized = registry._pilotMeta.phone
+      }
+      phoneSource = 'pilot_manifest'
+      phoneState = '<PRESENTE>'
+    } else if (contato.props && contato.props.phone) {
+      phoneNormalized = contato.props.phone
+      phoneSource = 'hubspot'
+      phoneState = '<PRESENTE>'
+    } else {
       const phonesFound = registry.consolidatedCase?.telefonesEncontrados || registry.consolidatedCase?.phones || []
-      if (Array.isArray(phonesFound) && phonesFound.length === 1) return '<PRESENTE>'
-      return '<AUSENTE>'
-    })()
-    const emailState = (() => {
-      if (contato.props && contato.props.email) return '<PRESENTE>'
+      if (Array.isArray(phonesFound) && phonesFound.length === 1) {
+        phoneNormalized = phonesFound[0]
+        phoneSource = 'inventory'
+        phoneState = '<PRESENTE>'
+      }
+    }
+
+    // Email handling
+    let emailState = '<AUSENTE>'
+    if (contato.props && contato.props.email) {
+      emailState = '<PRESENTE>'
+    } else {
       const emailsFound = registry.consolidatedCase?.emailsEncontrados || registry.consolidatedCase?.emails || []
-      if (Array.isArray(emailsFound) && emailsFound.length === 1) return '<PRESENTE>'
-      return '<AUSENTE>'
-    })()
+      if (Array.isArray(emailsFound) && emailsFound.length === 1) {
+        emailState = '<PRESENTE>'
+      }
+    }
 
+    // CPF handling
+    let cpfState = '<AUSENTE>'
+    if (analysisExecuted) {
+      const blocked = (contato.bloqueados || []).some(b => b.campo === 'cpf_do_cliente')
+      if (blocked) {
+        cpfState = '<BLOQUEADO>'
+      } else if (contato.props && contato.props.cpf_do_cliente) {
+        cpfState = '<PRESENTE>'
+      } else {
+        const cpfsFound = registry.consolidatedCase?.cpfsEncontrados || registry.consolidatedCase?.cpfs || []
+        if (Array.isArray(cpfsFound) && cpfsFound.length === 1) {
+          cpfState = '<PRESENTE>'
+        }
+      }
+    } else {
+      cpfState = '<NÃO ANALISADO>'
+    }
+
+    // Other unmapped fields
     const requerimentoInfo = {
-      extractedOrConsolidated: Boolean(registry && registry.consolidatedCase && registry.consolidatedCase.canonicalSuggestions && registry.consolidatedCase.canonicalSuggestions.numero_requerimento) ? 'SIM' : 'NÃO',
-      hubspotProperty: 'INEXISTENTE',
-      envioPlanejado: 'NÃO'
+      found: Boolean(registry?.consolidatedCase?.canonicalSuggestions?.numero_requerimento),
+      hubspotProperty: false,
+      plannedSend: false
     }
-
     const nbInfo = {
-      extractedOrConsolidated: Boolean(registry && registry.consolidatedCase && registry.consolidatedCase.canonicalSuggestions && registry.consolidatedCase.canonicalSuggestions.nb) ? 'SIM' : 'NÃO',
-      hubspotProperty: 'INEXISTENTE',
-      envioPlanejado: 'NÃO'
+      found: Boolean(registry?.consolidatedCase?.canonicalSuggestions?.nb),
+      hubspotProperty: false,
+      plannedSend: false
     }
 
-    const summary = {
+    const allBlocked = ((contato.bloqueados || []).concat(negocio.bloqueados || [])).map(b => ({
+      field: b.campo,
+      reason: b.motivo || 'bloqueado'
+    }))
+
+    const report = {
       importId: registry.importId || '<unknown>',
+      name: registry.name || null,
+      folder: registry.folder || null,
       analysisState,
-      inventoryData: {
-        name: mask(registry.name), phone: mask(registry.phone), email: mask(registry.email), officialNumber: mask(registry.officialNumber)
+      inventory: {
+        cpf: Boolean(registry.cpf),
+        phone: Boolean(registry.phone),
+        email: Boolean(registry.email),
+        officialNumber: registry.officialNumber || null
       },
-      planoHubSpot: {
-        contato: { cpf: cpfState, phone: phoneState, email: emailState },
-        negocio: { numero_de_caso: processState }
+      planning: {
+        cpf: cpfState,
+        phone: {
+          state: phoneState,
+          raw: registry._pilotMeta?.phoneRaw || null,
+          normalized: phoneNormalized,
+          source: phoneSource
+        },
+        email: emailState,
+        caseNumber: processState,
+        officialNumber: negocio.props?.numero_de_caso || null
       },
-      camposBloqueados: ((contato.bloqueados || []).concat(negocio.bloqueados || [])).map(b => ({ campo: b.campo, motivo: b.motivo || 'bloqueado' })),
-      camposNaoMapeados: { requerimento: requerimentoInfo, nb: nbInfo }
+      blocked: allBlocked,
+      unmappedFields: {
+        requerimento: requerimentoInfo,
+        nb: nbInfo
+      },
+      documentCount: (registry.consolidatedCase?.documents || []).length || 0,
+      documentsPending: item.reviewReasons?.includes('incomplete_documents') || false
     }
 
-    // Print masked report lines
-    console.log('DADOS DO INVENTÁRIO:', `nome=${mask(registry.name)} cpf=${mask(registry.cpf)} phone=${phoneState} email=${emailState} oficialNumero=${mask(registry.officialNumber)}`)
-    console.log('PLANO HUBSPOT DOCUMENTAL:', `cpf=${cpfState} numero_de_caso=${processState}`)
-    console.log('CAMPOS BLOQUEADOS:', summary.camposBloqueados.length ? JSON.stringify(summary.camposBloqueados) : '<NENHUM>')
-    console.log('CAMPOS NÃO MAPEADOS:', JSON.stringify(summary.camposNaoMapeados))
-
-    summaries.push(summary)
+    reports.push(report)
   }
-  return summaries
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totalAnalyzed: results.length,
+    reports
+  }
+}
+
+function generateDryRunReport(results, scanned) {
+  const canonical = buildCanonicalDryRunReport(results, scanned)
+  return canonical
+}
+
+// runDryRun: testable, injectable dry-run flow that avoids any reservation/apply side-effects.
+// Accepts optional injected functions to make tests deterministic and avoid global loader hooks.
+async function runDryRun({ scanned, analyzeFn = analyze, buildReportFn = buildCanonicalDryRunReport, writeReportFn = async () => null } = {}) {
+  if (!scanned || !Array.isArray(scanned.records)) throw new Error('invalid_scanned')
+  // analyzeFn mirrors analyze(records, online) contract
+  const { results, checkpoint } = await analyzeFn(scanned.records, false)
+  const canonical = buildReportFn(results, scanned)
+  await writeReportFn(canonical)
+  return { canonical, results, checkpoint }
 }
 
 async function main() {
@@ -440,21 +562,38 @@ async function main() {
     return
   }
   if (!fs.existsSync(root)) throw new Error("pasta_origem_inexistente")
-  const scanned = await inventory()
+
+  let scanned = await inventory()
+
+  // Apply pilot selection if requested (default for dry-run)
+  if (usePilotSelection && fs.existsSync(pilotSelectionFile)) {
+    scanned = await applyPilotSelection(scanned, pilotSelectionFile)
+  }
+
   const offlineByDefault = command === "audit" || command === "review" || command === "dry-run"
   const online = Boolean(process.env.HUBSPOT_TOKEN) && (!offlineByDefault || allowReadonlyHubSpot)
   const { results, checkpoint } = await analyze(scanned.records, online)
+
+  let dryRunReport = null
   if (command === 'dry-run') {
     // Run planner for dry-run only to present a local non-network view; do not change apply behavior.
-    await generateDryRunReport(results)
+    dryRunReport = generateDryRunReport(results, scanned)
   }
+
   if (["apply", "resume"].includes(command)) await apply(results, checkpoint)
+
   const report = summarize(scanned, results, command)
+
+  // Include dry-run canonical report in JSON if available
+  if (dryRunReport) {
+    report.dryRunReport = dryRunReport
+  }
+
   await atomicWrite(REPORT, report)
-  console.log(JSON.stringify({ ...report, cases: undefined }, null, 2))
+  console.log(JSON.stringify({ ...report, cases: undefined, dryRunReport: undefined }, null, 2))
 }
 
-module.exports = { generateDryRunReport }
+module.exports = { generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun }
 
 if (require.main === module) {
   main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })
