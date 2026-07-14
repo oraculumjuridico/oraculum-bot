@@ -264,6 +264,38 @@ function summarize(inventoryResult, results, mode) {
 }
 
 async function apply(results, checkpoint) {
+  // Reservation adapter is gated behind ENABLE_CASE_NUMBER_RESERVATION env var.
+  // Allowed values: 'local' (file-backed test adapter), 'postgres' (requires EXTERNAL_STATE_DATABASE_URL and pool).
+  const mode = String(process.env.CASE_NUMBER_RESERVATION_MODE || 'legacy').trim().toLowerCase()
+  let caseNumberService = null
+  if (mode === 'legacy') {
+    // legacy: no reservation (behaviour preserved)
+    caseNumberService = null
+  } else if (mode === 'local-test') {
+    // local-test allowed only in tests or when explicit override provided
+    if (process.env.NODE_ENV !== 'test' && String(process.env.CASE_NUMBER_ALLOW_LOCAL_TEST || '').toLowerCase() !== 'true') {
+      throw new Error('local-test mode not allowed in this environment')
+    }
+    const { createLocalAdapter, createService } = require('../src/domain/case-number')
+    caseNumberService = createService(createLocalAdapter({ dataDir: process.env.CASE_NUMBER_DATA_DIR || (process.env.DATA_DIR || 'data') }))
+  } else if (mode === 'postgres') {
+    // postgres mode requires existing pool from external-state-repository
+    const { createPostgresAdapter, createService } = require('../src/domain/case-number')
+    const { getPool } = require('../src/infrastructure/external-state-repository')
+    const pool = getPool()
+    if (!pool) throw new Error('postgres pool not initialized — enable external state repository first')
+    // verify migration/table exists
+    try {
+      const check = await pool.query("SELECT 1 FROM case_number_reservations LIMIT 1")
+      // if query runs, table exists
+    } catch (e) {
+      throw new Error('case_number_reservations table missing or inaccessible — migration required')
+    }
+    caseNumberService = createService(createPostgresAdapter({ pool }))
+  } else {
+    throw new Error('unsupported CASE_NUMBER_RESERVATION_MODE')
+  }
+
   if (liveConfirmation !== "I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT") throw new Error("confirmacao_live_ausente")
   if (process.env.IMPORT_AUTOMATIONS_CONFIRMED_DISABLED !== "true") throw new Error("automacoes_nao_confirmadas_como_desativadas")
   if (!process.env.HUBSPOT_TOKEN) throw new Error("hubspot_token_ausente")
@@ -277,15 +309,35 @@ async function apply(results, checkpoint) {
     }
     let dealId = item.deal.id
     if (!dealId) {
+      // Determine numero_de_caso to use. Priority:
+      // 1) existing officialNumber in item
+      // 2) checkpoint stored caseNumber
+      // 3) reserve via caseNumberService (if enabled)
+      let numeroParaEnviar = item.officialNumber || null
+      if (!numeroParaEnviar && checkpoint.records[item.importId] && checkpoint.records[item.importId].caseNumber) {
+        numeroParaEnviar = checkpoint.records[item.importId].caseNumber
+      }
+      if (!numeroParaEnviar && caseNumberService) {
+        // use idempotent key: importId (stable per source folder)
+        const key = item.importId
+        const res = await caseNumberService.reserve({ key, area: item.area })
+        if (!res || !res.reserved) throw new Error('case_number_reservation_failed')
+        numeroParaEnviar = res.numero
+        // persist reservation in checkpoint immediately to ensure idempotence across retries
+        checkpoint.records[item.importId] = checkpoint.records[item.importId] || {}
+        checkpoint.records[item.importId].caseNumber = numeroParaEnviar
+        await atomicWrite(CHECKPOINT, checkpoint)
+      }
+
       const properties = {
-        dealname: montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: item.officialNumber }), pipeline: "default",
-        dealstage: "presentationscheduled", area_juridica: "INSS", numero_de_caso: item.officialNumber,
+        dealname: montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: numeroParaEnviar }), pipeline: "default",
+        dealstage: "presentationscheduled", area_juridica: "INSS", numero_de_caso: numeroParaEnviar,
         origem_atendimento: "importacao_arquivo", description: `Importacao segura ${item.importId}. Acervo: ${item.documents.count} arquivo(s).`
       }
       dealId = (await hsRequest("post", "/crm/v3/objects/deals", { properties })).data.id
     }
     await hsRequest("put", `/crm/v3/objects/deals/${dealId}/associations/contacts/${contactId}/deal_to_contact`, {})
-    checkpoint.records[item.importId] = { status: "applied", contactId, dealId, sourceHash: item.sourceHash, appliedAt: new Date().toISOString() }
+    checkpoint.records[item.importId] = { status: "applied", contactId, dealId, sourceHash: item.sourceHash, appliedAt: new Date().toISOString(), caseNumber: checkpoint.records[item.importId]?.caseNumber || item.officialNumber || null }
     await atomicWrite(CHECKPOINT, checkpoint)
   }
   return checkpoint
@@ -322,7 +374,8 @@ async function generateDryRunReport(results) {
       const blocked = (negocio.bloqueados || []).some(b => b.campo === 'numero_de_caso')
       if (blocked) return '<BLOQUEADO>'
       if (negocio.props && negocio.props.numero_de_caso) return '<PRESENTE>'
-      return '<AUSENTE>'
+      // Dry-run must not propose provisional numbers that could be reserved. Signal generation happens at apply.
+      return '<SERÁ GERADO NO APPLY>'
     })()
 
     const phoneState = (() => {

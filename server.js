@@ -1554,25 +1554,11 @@ async function perguntarTitularNomePreCadastro(from, u, nomeLimpo, contexto = {}
   }
 }
 
+// Backwards-compatible wrapper for case number generation; implementation
+// delegated to src/domain/case-number.js to avoid duplicated logic.
+const { generateCandidate: _generateCandidate } = require("./src/domain/case-number")
 function gerarCaso(area) {
-  const b = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }))
-  const p = (n, l = 2) => String(n).padStart(l, "0")
-  const siglas = {
-    "INSS":        "PRV",
-    "Trabalhista": "CLT",
-    "Família":     "FAM",
-    "Consumidor":  "CDC",
-    "Penal":       "PEN",
-    "Civil":       "CIV",
-    "Imobiliário": "IMO",
-    "Outros":      "OUT",
-    "Revisão":     "OUT",
-    "Revisao":     "OUT",
-  }
-  const prefixo = siglas[area] || "OUT"
-  const num = `${String(b.getFullYear()).slice(2)}${p(b.getMonth()+1)}${p(b.getDate())}`
-  const rand = p(Math.floor(Math.random()*1000), 3)
-  return `${prefixo}.${num}.${rand}`
+  return _generateCandidate(area)
 }
 
 function gerarBriefingCaso(u = {}) {
@@ -5906,8 +5892,54 @@ async function finalizarCadastro(from, u) {
   if (u.numeroCaso) {
     logDebug("? Sessão já possui número de caso, reutilizando existente")
   } else {
-    u.numeroCaso = gerarCaso(u.area)
-    persistirUsersAgora({ propagarErro: true })
+    // Reservation integration is gated by ENABLE_CASE_NUMBER_RESERVATION env var.
+    const mode = String(process.env.CASE_NUMBER_RESERVATION_MODE || 'legacy').trim().toLowerCase()
+    if (mode === 'legacy') {
+      u.numeroCaso = gerarCaso(u.area)
+      persistirUsersAgora({ propagarErro: true })
+    } else if (mode === 'local-test') {
+      if (process.env.NODE_ENV !== 'test' && String(process.env.CASE_NUMBER_ALLOW_LOCAL_TEST || '').toLowerCase() !== 'true') {
+        throw new Error('local-test mode not allowed in this environment')
+      }
+      try {
+        const { createLocalAdapter, createService } = require('./src/domain/case-number')
+        const caseNumberService = createService(createLocalAdapter({ dataDir: process.env.CASE_NUMBER_DATA_DIR || (process.env.DATA_DIR || 'data') }))
+        const key = `interactive:${crypto.createHash('sha256').update(String(from)).digest('hex')}`
+        const res = await caseNumberService.reserve({ key, area: u.area })
+        if (!res || !res.reserved) throw new Error('reservation_failed')
+        u.numeroCaso = res.numero
+        persistirUsersAgora({ propagarErro: true })
+      } catch (e) {
+        logErro('case_number_reservation', 'local_test_reservation_failed', e)
+        throw new Error('local_test_reservation_failed')
+      }
+    } else if (mode === 'postgres') {
+      // postgres mode requires the repo pool from external-state-repository
+      try {
+        const { getPool } = require('./src/infrastructure/external-state-repository')
+        const { createPostgresAdapter, createService } = require('./src/domain/case-number')
+        const pool = getPool()
+        if (!pool) throw new Error('postgres_pool_unavailable')
+        // verify migration/table exists
+        try {
+          await pool.query("SELECT 1 FROM case_number_reservations LIMIT 1")
+        } catch (e) {
+          throw new Error('case_number_reservations_table_missing')
+        }
+        const caseNumberService = createService(createPostgresAdapter({ pool }))
+        const key = `interactive:${crypto.createHash('sha256').update(String(from)).digest('hex')}`
+        const res = await caseNumberService.reserve({ key, area: u.area })
+        if (!res || !res.reserved) throw new Error('reservation_failed')
+        u.numeroCaso = res.numero
+        persistirUsersAgora({ propagarErro: true })
+      } catch (e) {
+        logErro('case_number_reservation', 'reservation_failed_postgres', e)
+        // do NOT fallback to generateCandidate in postgres mode
+        throw e
+      }
+    } else {
+      throw new Error('unsupported CASE_NUMBER_RESERVATION_MODE')
+    }
   }
   const numeroCaso = u.numeroCaso
   u.score       = calcScore(u)

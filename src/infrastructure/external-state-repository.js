@@ -227,6 +227,8 @@ async function closeExternalStateRepository() {
   pool = null
 }
 
+function getPool() { return pool }
+
 module.exports = {
   DEFAULT_FILES,
   configuredFiles,
@@ -235,5 +237,7 @@ module.exports = {
   flushExternalState,
   migrateLocalState,
   externalStateHealth,
-  closeExternalStateRepository
+  closeExternalStateRepository,
+  // expose pool accessor for reuse by other modules (may be null until initialized)
+  getPool
 }
