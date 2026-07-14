@@ -32,6 +32,8 @@ const concurrency = Math.max(1, Math.min(5, Number(option("concurrency") || 2)))
 const liveConfirmation = option("confirm-live-import")
 const allowReadonlyHubSpot = option("allow-readonly-hubspot") === "true"
 const pilotSize = Math.max(0, Math.min(10, Number(option("pilot-size") || 0)))
+const usePilotSelection = String(option("use-pilot-selection") || "").trim().toLowerCase() === "true"
+const pilotSelectionFile = option("pilot-selection-file") || path.join(STATE_DIR, "pilot-selection.json")
 
 const sha = value => crypto.createHash("sha256").update(String(value)).digest("hex")
 const normalizeDigits = value => String(value || "").replace(/\D/g, "")
@@ -593,7 +595,7 @@ async function main() {
   console.log(JSON.stringify({ ...report, cases: undefined, dryRunReport: undefined }, null, 2))
 }
 
-module.exports = { generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun }
+module.exports = { generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile }
 
 if (require.main === module) {
   main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })
