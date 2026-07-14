@@ -190,7 +190,7 @@ function transientTextFields(text) {
   }
   return { phones: unique(phones), emails: unique(emails), requestNumbers: unique(requestNumbers) }
 }
-function canonicalizePipeline(pipeline, file, pageNumber) {
+function canonicalizePipeline(pipeline, file, pageNumber, contentSha256) {
   const raw = pipeline?.extracao?.camposExtraidos || {}
   const fields = Object.fromEntries(Object.entries(raw).map(([key, value]) => [normalizeKey(key), value]))
   const textFields = transientTextFields(pipeline?.ocr?.textoCompleto || "")
@@ -201,7 +201,7 @@ function canonicalizePipeline(pipeline, file, pageNumber) {
   const benefitTypes = unique([fields.beneficio, fields.tipobeneficio].map(normalizeName))
   const birthDates = unique([fields.datanascimento, fields.datadenascimento].map(normalizeDate))
   return {
-    file: path.basename(file), pageNumber,
+    file: path.basename(file), pageNumber, ...(contentSha256 ? { sha256: contentSha256 } : {}),
     classification: pipeline?.classificacao?.tipoDocumento || "Documento desconhecido",
     confidence: Number(pipeline?.classificacao?.confianca || 0),
     names, cpfs, phones: textFields.phones, emails: textFields.emails,
@@ -247,12 +247,16 @@ function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, has
     conflicts.push("divergent_names")
   }
 
-  const baselineQuarantined = analyzed.filter(item => {
+  const identityQuarantined = analyzed.filter(item => {
     return (
       (cpfs.length > 1 && item.cpfs.length && item.cpfs.some(cpf => cpf !== cpfs[0])) ||
       (conflicts.includes("divergent_names") && item.names.length)
     )
   }).map(item => ({ file: item.file, pageNumber: item.pageNumber, sha256: item.sha256, reason: "identity_divergence" }))
+  const technicalQuarantined = ignored
+    .filter(item => item.technicalReviewReason && item.sha256)
+    .map(item => ({ file: item.file, ...(item.pageNumber ? { pageNumber: item.pageNumber } : {}), sha256: item.sha256, reason: item.technicalReviewReason }))
+  const baselineQuarantined = [...identityQuarantined, ...technicalQuarantined]
 
   const approvedDocuments = new Set()
   if (humanReview) {
@@ -378,8 +382,11 @@ async function analyzeCaseFolder(folder, options = {}) {
     const hash = sha256(buffer)
     hashes.push(hash)
     const mimeType = detectMime(buffer)
-    if (!ALLOWED_MIME_TYPES.has(mimeType)) { ignored.push({ file: relativeFile, reason: "unsupported_or_invalid_content" }); continue }
-    if (!extensionMatchesMime(file, mimeType)) { ignored.push({ file: relativeFile, reason: "extension_content_mismatch" }); continue }
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      ignored.push({ file: relativeFile, sha256: hash, reason: "unsupported_or_invalid_content", ...(path.extname(file).toLowerCase() === ".pdf" ? { technicalReviewReason: "pdf_content_mismatch_requires_human_review" } : {}) })
+      continue
+    }
+    if (!extensionMatchesMime(file, mimeType)) { ignored.push({ file: relativeFile, sha256: hash, reason: "extension_content_mismatch", ...(path.extname(file).toLowerCase() === ".pdf" ? { technicalReviewReason: "pdf_content_mismatch_requires_human_review" } : {}) }); continue }
     let pages = [{ buffer, mimeType }]
     let pdfInfo = null
     if (mimeType === "application/pdf") {
@@ -389,9 +396,11 @@ async function analyzeCaseFolder(folder, options = {}) {
       } catch (error) {
         ignored.push({
           file: relativeFile,
+          sha256: hash,
           ...(error.pageNumber ? { pageNumber: error.pageNumber } : {}),
           reason: error.code === "PDF_PAGE_DIMENSION_LIMIT" ? "pdf_page_dimension_limit" : "pdf_render_failed",
-          code: error.code || "PDF_RENDER_ERROR"
+          code: error.code || "PDF_RENDER_ERROR",
+          technicalReviewReason: "pdf_render_failed_requires_human_review"
         })
         continue
       }
@@ -410,7 +419,7 @@ async function analyzeCaseFolder(folder, options = {}) {
           ignored.push({ file: relativeFile, pageNumber: index + 1, reason: "ocr_timeout", code: "OCR_TIMEOUT" })
           continue
         }
-        results.push(canonicalizePipeline(pipeline, relativeFile, index + 1))
+        results.push(canonicalizePipeline(pipeline, relativeFile, index + 1, hash))
       } catch (error) {
         ignored.push({ file: relativeFile, pageNumber: index + 1, reason: error.code === "OCR_TIMEOUT" || error.message === "ocr_timeout" ? "ocr_timeout" : "processing_error", code: error.code || "PROCESSING_ERROR" })
       }

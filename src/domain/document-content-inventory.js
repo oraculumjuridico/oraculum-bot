@@ -39,6 +39,19 @@ function sanitizeAnalysisResult(result = {}) {
   }
 }
 
+function technicalReviewAnalysis(reason, documentType = "Documento desconhecido") {
+  if (!SAFE_REASON_PATTERN.test(String(reason || ""))) throw new Error("technical review reason must be sanitized")
+  return {
+    analysisStatus: "TECHNICAL_FAILURE",
+    extraction: {},
+    classification: {},
+    quarantined: true,
+    quarantineReasons: [reason],
+    documentType,
+    eligibleForHumanReview: true
+  }
+}
+
 function validateInventory(inventory) {
   const errors = []
   const topFields = new Set(["schemaVersion", "caseImportId", "physicalOccurrences", "contents", "counts"])
@@ -117,6 +130,7 @@ async function buildDocumentContentInventory({ caseImportId, occurrences, analyz
       physicalFiles: physicalOccurrences.length,
       uniqueContents: contents.length,
       analyzedContents: contents.filter(item => item.analysisStatus === "ANALYZED").length,
+      technicalFailureContents: contents.filter(item => item.analysisStatus === "TECHNICAL_FAILURE").length,
       duplicateOccurrences: physicalOccurrences.length - contents.length,
       ignoredContents: contents.filter(item => item.analysisStatus === "IGNORED").length,
       quarantinedContents: contents.filter(item => item.quarantined).length
@@ -130,6 +144,7 @@ async function buildDocumentContentInventory({ caseImportId, occurrences, analyz
 module.exports = {
   buildDocumentContentInventory,
   validateInventory,
+  technicalReviewAnalysis,
   contentDocumentIdForHash,
   physicalDocumentIdFor
 }

@@ -63,7 +63,7 @@ async function main() {
   // 1 and 19: fourteen physical occurrences, twelve unique contents and explicit counts.
   assert.equal(inventory.physicalOccurrences.length, 14)
   assert.equal(inventory.contents.length, 12)
-  assert.deepEqual(inventory.counts, { physicalFiles: 14, uniqueContents: 12, analyzedContents: 12, duplicateOccurrences: 2, ignoredContents: 0, quarantinedContents: 2 })
+  assert.deepEqual(inventory.counts, { physicalFiles: 14, uniqueContents: 12, analyzedContents: 12, technicalFailureContents: 0, duplicateOccurrences: 2, ignoredContents: 0, quarantinedContents: 2 })
 
   // 2-3: copies share content while retaining distinct physical identities.
   const duplicatedContent = inventory.contents.find(item => item.occurrenceCount === 2)
