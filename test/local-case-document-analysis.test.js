@@ -13,6 +13,19 @@ const { analyzeCaseFolder, consolidateCase, renderPdfPages, writeAnalysisReports
 // Load import-real-cases BEFORE Module._load hook is set up (must be at top to avoid blocking on hubspot-deal-title)
 const { inventory } = require("../scripts/import-real-cases")
 
+function withReviewIds(review) {
+  return {
+    ...review,
+    reviewSource: review.reviewSource || "HUMAN",
+    documents: (review.documents || []).map(document => ({
+      ...document,
+      ...(/^[a-f0-9]{64}$/i.test(String(document.sha256 || ""))
+        ? { reviewId: `Q-${document.sha256.toLowerCase().slice(0, 16)}` }
+        : {})
+    }))
+  }
+}
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-case-analysis-"))
 const originalNetwork = { httpRequest: http.request, httpGet: http.get, httpsRequest: https.request, httpsGet: https.get, netConnect: net.connect, fetch: global.fetch, moduleLoad: Module._load }
 let networkCalls = 0
@@ -432,6 +445,7 @@ async function testHumanReviewApprovesQuarantinedDocument() {
     schemaVersion: 1,
     caseImportId: "test-case-001",
     status: "HUMAN_REVIEW_COMPLETED",
+    reviewSource: "HUMAN",
     documents: [
       {
         sha256: testHash,
@@ -449,7 +463,7 @@ async function testHumanReviewApprovesQuarantinedDocument() {
     ignored: [],
     hashes: [testHash, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // After approval, the quarantined documents list should be shorter (doc1 not quarantined)
@@ -469,7 +483,7 @@ async function testHumanReviewCaseIdMismatch() {
     schemaVersion: 1,
     caseImportId: "WRONG-CASE-ID",
     status: "HUMAN_REVIEW_COMPLETED",
-    documents: []
+    documents: [{ sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", decision: "APPROVE_AND_KEEP" }]
   }
 
   try {
@@ -481,7 +495,7 @@ async function testHumanReviewCaseIdMismatch() {
       ignored: [],
       hashes: [],
       relativeRoot: testDir,
-      humanReview
+    humanReview: withReviewIds(humanReview)
     })
     assert.fail("Should throw on case ID mismatch")
   } catch (error) {
@@ -508,7 +522,7 @@ async function testHumanReviewInvalidSchema() {
       ignored: [],
       hashes: [],
       relativeRoot: testDir,
-      humanReview: invalidReview
+      humanReview: withReviewIds(invalidReview)
     })
     assert.fail("Should throw on invalid schema")
   } catch (error) {
@@ -535,7 +549,7 @@ async function testHumanReviewWrongHashNotMatched() {
     ]
   }
 
-  const result = consolidateCase({
+  assert.throws(() => consolidateCase({
     sourceFolder: testDir,
     importId: "test-case-002",
     files: ["doc.pdf"],
@@ -543,11 +557,8 @@ async function testHumanReviewWrongHashNotMatched() {
     ignored: [],
     hashes: [correctHash],
     relativeRoot: testDir,
-    humanReview
-  })
-
-  // Decision with wrong hash should not match - doc should still be quarantined (multiple CPFs)
-  assert.ok(result.quarantinedDocuments.length > 0, "Document should still be quarantined (wrong hash in review)")
+    humanReview: withReviewIds(humanReview)
+  }), error => error.code === "INVALID_HUMAN_REVIEW_CONTEXT")
 }
 
 // TEST 28: Human review - partial review (some approved, some not)
@@ -582,7 +593,7 @@ async function testHumanReviewPartialApproval() {
     ignored: [],
     hashes: [hash1, hash2, hash3],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // Only doc3 should be quarantined (not reviewed, still conflicting)
@@ -598,7 +609,7 @@ async function testHumanReviewDoesNotRemoveUnrelatedBlockers() {
   const hash1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
   const mockAnalyzed = [
-    { file: "doc.pdf", pageNumber: 1, sha256: hash1, names: ["Maria Santos"], cpfs: [], classification: "other", confidence: 0.9 } // Missing CPF
+    { file: "doc.pdf", pageNumber: 1, sha256: hash1, names: ["Maria Santos", "Pessoa Ficticia"], cpfs: [], classification: "other", confidence: 0.9 } // Missing CPF
   ]
 
   const humanReview = {
@@ -618,7 +629,7 @@ async function testHumanReviewDoesNotRemoveUnrelatedBlockers() {
     ignored: [],
     hashes: [hash1],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // Even with human approval, cpf_missing should still be present
@@ -644,7 +655,7 @@ async function testHumanReviewPendingDoesNotApply() {
     ]
   }
 
-  const result = consolidateCase({
+  assert.throws(() => consolidateCase({
     sourceFolder: testDir,
     importId: "test-case-005",
     files: ["doc.pdf"],
@@ -652,12 +663,8 @@ async function testHumanReviewPendingDoesNotApply() {
     ignored: [],
     hashes: [hash1],
     relativeRoot: testDir,
-    humanReview
-  })
-
-  // With PENDING status, decisions should not apply - doc should still be quarantined
-  assert.ok(result.quarantinedDocuments.length > 0, "Document should be quarantined (review still pending)")
-  assert.equal(result.humanReviewApplied, false, "humanReviewApplied must be false for PENDING status")
+    humanReview: withReviewIds(humanReview)
+  }), error => error.code === "INVALID_HUMAN_REVIEW_SCHEMA")
 }
 
 // TEST 31: Human review - third party role does not trigger CRM creation (documented)
@@ -666,7 +673,7 @@ async function testHumanReviewThirdPartyRoleDoesNotCreateCRM() {
   const hash1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
   const mockAnalyzed = [
-    { file: "doc.pdf", pageNumber: 1, sha256: hash1, names: ["Maria Santos"], cpfs: ["12345678901"], classification: "other", confidence: 0.9 }
+    { file: "doc.pdf", pageNumber: 1, sha256: hash1, names: ["Maria Santos", "Terceiro Ficticio"], cpfs: ["12345678901"], classification: "other", confidence: 0.9 }
   ]
 
   const humanReview = {
@@ -692,7 +699,7 @@ async function testHumanReviewThirdPartyRoleDoesNotCreateCRM() {
     ignored: [],
     hashes: [hash1],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // Verify that result does not include any CRM creation instructions
@@ -721,7 +728,7 @@ async function testHumanReviewFileImmutabilityCheck() {
     ]
   }
 
-  const result = consolidateCase({
+  assert.throws(() => consolidateCase({
     sourceFolder: testDir,
     importId: "test-case-007",
     files: ["doc.pdf"],
@@ -729,13 +736,8 @@ async function testHumanReviewFileImmutabilityCheck() {
     ignored: [],
     hashes: [changedHash],
     relativeRoot: testDir,
-    humanReview
-  })
-
-  // Decision should not match because hash changed - document is orphaned decision
-  assert.ok(result.humanReviewApplied, "Review status applied")
-  // Document with different hash should not match the decision
-  // (verify by checking that conflict is not resolved)
+    humanReview: withReviewIds(humanReview)
+  }), error => error.code === "INVALID_HUMAN_REVIEW_CONTEXT")
 }
 
 // TEST 33: CRITICAL REGRESSION - Divergent names should be removed when all divergent docs approved
@@ -809,7 +811,7 @@ async function testDivergentNamesResolutionWithHumanReview() {
     ignored: [],
     hashes: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // After approval, quarantine should be removed. Under conservative fallback, divergent_names remains until identity-level attribution exists.
@@ -919,7 +921,7 @@ async function testDivergentNamesRemainWithPartialApproval() {
     ignored: [],
     hashes: ["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // Divergent names should persist because div-2 is still unapproved
@@ -986,7 +988,7 @@ async function testSameDocumentPrimaryAndThirdPreserved() {
     ignored: [],
     hashes: [mockAnalyzed[0].sha256],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   // The primary titular name must remain present in the consolidated names
@@ -1035,7 +1037,7 @@ async function testSameDocumentHasUnapprovedThirdKeepsDivergence() {
     ignored: [],
     hashes: [mockAnalyzed[0].sha256],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   assert.ok(result.humanReviewApplied, "human review should be applied")
@@ -1073,7 +1075,7 @@ async function testOnlySourceDocumentPreservesPrimary() {
     ]
   }
 
-  const result = consolidateCase({
+  assert.throws(() => consolidateCase({
     sourceFolder: testDir,
     importId: "hr-risk-c",
     files: ["doc-only.pdf"],
@@ -1081,12 +1083,8 @@ async function testOnlySourceDocumentPreservesPrimary() {
     ignored: [],
     hashes: [mockAnalyzed[0].sha256],
     relativeRoot: testDir,
-    humanReview
-  })
-
-  assert.ok(result.humanReviewApplied, "human review should be applied")
-  assert.ok(result.nomesEncontrados.includes("Unique Titular"), "Unique Titular must remain in nomesEncontrados")
-  assert.equal(result.safeToPlanHubSpot, false, "safeToPlanHubSpot must remain false unless all blockers cleared")
+    humanReview: withReviewIds(humanReview)
+  }), error => error.code === "INVALID_HUMAN_REVIEW_CONTEXT")
 }
 
 // SCENARIO D: titular also appears in another document — approval must not change behavior incorrectly
@@ -1134,7 +1132,7 @@ async function testPrimaryAlsoInAnotherDocument() {
     ignored: [],
     hashes: [mockAnalyzed[0].sha256, mockAnalyzed[1].sha256],
     relativeRoot: testDir,
-    humanReview
+    humanReview: withReviewIds(humanReview)
   })
 
   assert.ok(result.humanReviewApplied, "human review should be applied")

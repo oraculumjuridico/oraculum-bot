@@ -227,42 +227,12 @@ function namesSignificantlyDiverge(names) {
   return false
 }
 function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, hashes, relativeRoot, humanReview }) {
-  const { validateHumanReviewSchema, findHumanReviewForDocument, HUMAN_REVIEW_DECISION } = require("./human-document-review")
-
-  // Validate human review if provided
-  if (humanReview) {
-    const validation = validateHumanReviewSchema(humanReview)
-    if (!validation.valid) {
-      const error = new Error(`Invalid human review schema: ${validation.errors.join("; ")}`)
-      error.code = "INVALID_HUMAN_REVIEW_SCHEMA"
-      throw error
-    }
-    if (humanReview.caseImportId !== importId) {
-      const error = new Error(`Human review case ID mismatch: expected ${importId}, got ${humanReview.caseImportId}`)
-      error.code = "HUMAN_REVIEW_CASE_MISMATCH"
-      throw error
-    }
-  }
+  const { assertValidHumanReviewContext, reviewIdForSha256, HUMAN_REVIEW_DECISION } = require("./human-document-review")
 
   const collect = key => unique(analyzed.flatMap(item => item[key] || []))
   const cpfs = collect("cpfs")
   const conflicts = []
   if (cpfs.length > 1) conflicts.push("multiple_valid_cpfs")
-
-  // Build set of approved documents and track which documents have legitimate additional identities
-  const approvedDocuments = new Set()
-  const docsWithLegitimateAdditionalIdentities = new Set()
-  if (humanReview && humanReview.status === "HUMAN_REVIEW_COMPLETED") {
-    humanReview.documents
-      .filter(doc => doc.decision === HUMAN_REVIEW_DECISION.APPROVE_AND_KEEP)
-      .forEach(doc => {
-        approvedDocuments.add(doc.sha256)
-        // If this doc has allowedMentionedIdentityRoles, mark it as having legitimate additional identities
-        if (doc.allowedMentionedIdentityRoles && doc.allowedMentionedIdentityRoles.length > 0) {
-          docsWithLegitimateAdditionalIdentities.add(doc.sha256)
-        }
-      })
-  }
 
   // When recalculating names for divergence check, use all extracted names.
   // Conservative fallback: human approval removes quarantine but DOES NOT exclude names from divergence calculation,
@@ -277,16 +247,32 @@ function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, has
     conflicts.push("divergent_names")
   }
 
-  const quarantined = analyzed.filter(item => {
-    // Skip quarantine if this document was approved by human review
-    if (item.sha256 && approvedDocuments.has(item.sha256)) {
-      return false
-    }
+  const baselineQuarantined = analyzed.filter(item => {
     return (
       (cpfs.length > 1 && item.cpfs.length && item.cpfs.some(cpf => cpf !== cpfs[0])) ||
       (conflicts.includes("divergent_names") && item.names.length)
     )
-  }).map(item => ({ file: item.file, pageNumber: item.pageNumber, reason: "identity_divergence" }))
+  }).map(item => ({ file: item.file, pageNumber: item.pageNumber, sha256: item.sha256, reason: "identity_divergence" }))
+
+  const approvedDocuments = new Set()
+  if (humanReview) {
+    const eligibleHashes = new Set(baselineQuarantined.map(item => item.sha256).filter(Boolean).map(value => value.toLowerCase()))
+    const inventoryByHash = new Map()
+    analyzed.forEach(item => {
+      if (!item.sha256 || inventoryByHash.has(item.sha256.toLowerCase())) return
+      inventoryByHash.set(item.sha256.toLowerCase(), {
+        sha256: item.sha256,
+        reviewId: reviewIdForSha256(item.sha256),
+        eligibleForHumanReview: eligibleHashes.has(item.sha256.toLowerCase())
+      })
+    })
+    assertValidHumanReviewContext(humanReview, { caseImportId: importId, documents: [...inventoryByHash.values()] })
+    humanReview.documents
+      .filter(document => document.decision === HUMAN_REVIEW_DECISION.APPROVE_AND_KEEP)
+      .forEach(document => approvedDocuments.add(document.sha256.toLowerCase()))
+  }
+
+  const quarantined = baselineQuarantined.filter(item => !approvedDocuments.has(String(item.sha256 || "").toLowerCase()))
   if (quarantined.length) conflicts.push("documents_quarantined")
 
   // Collect all names (original behavior for field reporting, not for divergence checking)
