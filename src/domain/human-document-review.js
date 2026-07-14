@@ -198,6 +198,78 @@ function buildHumanReviewCandidates(analysis = {}) {
   }
 }
 
+function buildHumanReviewCandidatesFromInventory(inventory = {}) {
+  const { validateInventory } = require("./document-content-inventory")
+  const validation = validateInventory(inventory)
+  if (!validation.valid) {
+    const error = new Error(`invalid document inventory: ${validation.errors.join("; ")}`)
+    error.code = "INVALID_DOCUMENT_INVENTORY"
+    throw error
+  }
+  const occurrenceById = new Map(inventory.physicalOccurrences.map(item => [item.physicalDocumentId, item]))
+  return {
+    schemaVersion: 2,
+    caseImportId: inventory.caseImportId,
+    status: CANDIDATE_STATUS,
+    documents: inventory.contents.filter(content => content.quarantined && content.eligibleForHumanReview).map(content => ({
+      reviewId: reviewIdForSha256(content.sha256),
+      contentDocumentId: content.contentDocumentId,
+      sha256: content.sha256,
+      occurrenceCount: content.occurrenceCount,
+      physicalDocumentIds: [...content.physicalDocumentIds],
+      localReferences: content.physicalDocumentIds.map(id => occurrenceById.get(id).localReference),
+      quarantineReason: content.quarantineReasons[0] || "identity_divergence",
+      documentType: content.documentType,
+      status: CANDIDATE_STATUS
+    })).sort((left, right) => left.reviewId.localeCompare(right.reviewId))
+  }
+}
+
+function validateCandidatePackageAgainstInventory(candidatePackage, inventory) {
+  const errors = []
+  if (candidatePackage?.schemaVersion !== 2) errors.push("candidate schemaVersion must be 2")
+  if (candidatePackage?.caseImportId !== inventory?.caseImportId) errors.push("candidate caseImportId mismatch")
+  if (candidatePackage?.status !== CANDIDATE_STATUS) errors.push("candidate status mismatch")
+  if (!Array.isArray(candidatePackage?.documents)) errors.push("candidate documents must be an array")
+  const contentByHash = new Map((inventory?.contents || []).map(item => [item.sha256, item]))
+  const occurrenceById = new Map((inventory?.physicalOccurrences || []).map(item => [item.physicalDocumentId, item]))
+  if (Array.isArray(candidatePackage?.documents)) candidatePackage.documents.forEach((candidate, index) => {
+    const content = contentByHash.get(candidate.sha256)
+    if (!content) errors.push(`documents[${index}] content does not exist`)
+    else {
+      if (!content.quarantined || !content.eligibleForHumanReview) errors.push(`documents[${index}] content is not eligible`)
+      if (candidate.reviewId !== reviewIdForSha256(content.sha256) || candidate.contentDocumentId !== content.contentDocumentId) errors.push(`documents[${index}] content identity mismatch`)
+      if (candidate.occurrenceCount !== content.occurrenceCount) errors.push(`documents[${index}] occurrenceCount mismatch`)
+      if (JSON.stringify(candidate.physicalDocumentIds) !== JSON.stringify(content.physicalDocumentIds)) errors.push(`documents[${index}] physical occurrence mismatch`)
+      candidate.physicalDocumentIds?.forEach(id => {
+        const occurrence = occurrenceById.get(id)
+        if (!occurrence || occurrence.contentDocumentId !== content.contentDocumentId) errors.push(`documents[${index}] occurrence belongs to different content`)
+      })
+    }
+  })
+  return { valid: errors.length === 0, errors: errors.length ? errors : undefined }
+}
+
+function applyHumanReviewToContentInventory(inventory, humanReview) {
+  const context = {
+    caseImportId: inventory.caseImportId,
+    documents: inventory.contents.map(content => ({
+      reviewId: reviewIdForSha256(content.sha256),
+      sha256: content.sha256,
+      eligibleForHumanReview: content.quarantined && content.eligibleForHumanReview
+    }))
+  }
+  assertValidHumanReviewContext(humanReview, context)
+  const approvedHashes = new Set(humanReview.documents.map(item => item.sha256))
+  const approvedContentIds = new Set(inventory.contents.filter(item => approvedHashes.has(item.sha256)).map(item => item.contentDocumentId))
+  return {
+    ...inventory,
+    physicalOccurrences: inventory.physicalOccurrences.map(item => approvedContentIds.has(item.contentDocumentId) ? { ...item, physicalStatus: "APPROVED_AND_KEPT" } : { ...item }),
+    contents: inventory.contents.map(item => approvedHashes.has(item.sha256) ? { ...item, quarantined: false, eligibleForHumanReview: false } : { ...item }),
+    counts: { ...inventory.counts, quarantinedContents: inventory.contents.filter(item => item.quarantined && !approvedHashes.has(item.sha256)).length }
+  }
+}
+
 function findHumanReviewForDocument(humanReview, documentSha256) {
   return humanReview?.documents?.find(document => String(document.sha256 || "").toLowerCase() === String(documentSha256 || "").toLowerCase()) || null
 }
@@ -230,5 +302,6 @@ module.exports = {
   DOCUMENT_OWNER_ROLE, MENTIONED_IDENTITY_ROLE, RELATIONSHIP_TYPE,
   reviewIdForSha256, validateHumanReviewSchema, validateReviewDocument,
   validateHumanReviewContext, assertValidHumanReviewContext, buildHumanReviewCandidates,
+  buildHumanReviewCandidatesFromInventory, validateCandidatePackageAgainstInventory, applyHumanReviewToContentInventory,
   findHumanReviewForDocument, shouldQuarantineDocumentWithReview, applyHumanReviewToConsolidation
 }
