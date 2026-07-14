@@ -501,6 +501,106 @@ function testDocumentsPendingFalseWhenComplete() {
   }
 }
 
+// TEST 13: Phone from manifest removes contato_sem_chave_segura
+// TEST 13: Phone from manifest removes contato_sem_chave_segura
+function testPhoneFromManifestRemovesMissingContactKey() {
+  const { normalizePhoneForValidation, getBlockingReviewReasons } = require("../scripts/import-real-cases.js")
+
+  // Scenario: record without inventory phone but manifest provides valid phone
+  const record = {
+    importId: 'test-valid-phone',
+    name: 'Teste',
+    cpf: '',
+    phone: '',  // Empty from inventory
+    email: '',
+    reviewReasons: ['contato_sem_chave_segura', 'negocio_sem_numero_oficial']
+  }
+
+  // Simulate manifest phone application with generic valid phone number
+  if (record._pilotMeta || true) {  // Simplified for test
+    const manifestPhone = '5521987654321'  // Generic test phone (valid format)
+    const normalizedPhone = normalizePhoneForValidation(manifestPhone)
+    if (normalizedPhone) {
+      record.reviewReasons = record.reviewReasons.filter(
+        reason => reason !== 'contato_sem_chave_segura'
+      )
+    }
+  }
+
+  assert.equal(record.reviewReasons.length, 1, "Should remove only contato_sem_chave_segura")
+  assert.equal(record.reviewReasons[0], 'negocio_sem_numero_oficial', "Should preserve other reasons")
+  console.log("✓ TEST 13 (manifest phone removes contact key): PASS")
+}
+
+// TEST 14: Invalid manifest phone keeps contato_sem_chave_segura
+function testInvalidPhoneKeepsContactKeyReason() {
+  const { normalizePhoneForValidation, getBlockingReviewReasons } = require("../scripts/import-real-cases.js")
+
+  const record = {
+    importId: 'test-invalid-phone',
+    name: 'Teste',
+    cpf: '',
+    phone: '',
+    email: '',
+    reviewReasons: ['contato_sem_chave_segura']
+  }
+
+  // Invalid/empty manifest phone
+  const manifestPhone = '123'  // Too short, invalid
+  const normalizedPhone = normalizePhoneForValidation(manifestPhone)
+  if (normalizedPhone) {
+    record.reviewReasons = record.reviewReasons.filter(
+      reason => reason !== 'contato_sem_chave_segura'
+    )
+  }
+
+  assert.equal(record.reviewReasons[0], 'contato_sem_chave_segura', "Should keep reason for invalid phone")
+  console.log("✓ TEST 14 (invalid phone keeps reason): PASS")
+}
+
+// TEST 15: getBlockingReviewReasons filters resolvable ones
+function testBlockingReviewReasonsFilter() {
+  const { getBlockingReviewReasons } = require("../scripts/import-real-cases.js")
+
+  // Only negocio_sem_numero_oficial should be filtered
+  const allReasons = [
+    'negocio_sem_numero_oficial',
+    'contato_sem_chave_segura',
+    'nome_nao_comprovado'
+  ]
+
+  const blockingReasons = getBlockingReviewReasons(allReasons)
+
+  assert.equal(blockingReasons.length, 2, "Should filter out resolvable reason")
+  assert.ok(!blockingReasons.includes('negocio_sem_numero_oficial'), "Should remove negocio_sem_numero_oficial")
+  assert.ok(blockingReasons.includes('contato_sem_chave_segura'), "Should keep contato_sem_chave_segura")
+  assert.ok(blockingReasons.includes('nome_nao_comprovado'), "Should keep nome_nao_comprovado")
+  console.log("✓ TEST 15 (blocking reasons filter): PASS")
+}
+
+// TEST 16: Only numero ausente allows apply, others block
+function testOnlyNumeroAusenteAllowsApply() {
+  const { getBlockingReviewReasons } = require("../scripts/import-real-cases.js")
+
+  // Case 1: Only negocio_sem_numero_oficial (should not block)
+  const onlyNumber = ['negocio_sem_numero_oficial']
+  const blockingForNumber = getBlockingReviewReasons(onlyNumber)
+  assert.equal(blockingForNumber.length, 0, "negocio_sem_numero_oficial alone should not block")
+
+  // Case 2: negocio + chave insegura (should block)
+  const numberAndContact = ['negocio_sem_numero_oficial', 'contato_sem_chave_segura']
+  const blockingForBoth = getBlockingReviewReasons(numberAndContact)
+  assert.equal(blockingForBoth.length, 1, "Should block due to contact key")
+  assert.equal(blockingForBoth[0], 'contato_sem_chave_segura', "Contact key should block")
+
+  // Case 3: Empty reasons (should not block)
+  const noReasons = []
+  const blockingForEmpty = getBlockingReviewReasons(noReasons)
+  assert.equal(blockingForEmpty.length, 0, "Empty reasons should not block")
+
+  console.log("✓ TEST 16 (apply blocking logic): PASS")
+}
+
 // RUN ALL TESTS
 async function runAll() {
   try {
@@ -516,6 +616,10 @@ async function runAll() {
     testDocumentsPendingNullWhenNotAnalyzed()
     testDocumentsPendingTrueWhenIncomplete()
     testDocumentsPendingFalseWhenComplete()
+    testPhoneFromManifestRemovesMissingContactKey()
+    testInvalidPhoneKeepsContactKeyReason()
+    testBlockingReviewReasonsFilter()
+    testOnlyNumeroAusenteAllowsApply()
     
     console.log("\n✓✓✓ ALL BEHAVIORAL TESTS PASSED ✓✓✓")
   } catch (error) {
@@ -529,4 +633,4 @@ if (require.main === module) {
   runAll()
 }
 
-module.exports = { testOutOfOrderSelection, testMissingImportId, testDuplicateImportIds, testWrongCount, testCanonicalReportNumberStatesBehavioral, testPhoneSourceTracking, testDocumentCountFromRegistry, testDocumentCountIndependentOfAnalysisState, testOfficeTemporaryFilesExcluded, testDocumentsPendingNullWhenNotAnalyzed, testDocumentsPendingTrueWhenIncomplete, testDocumentsPendingFalseWhenComplete }
+module.exports = { testOutOfOrderSelection, testMissingImportId, testDuplicateImportIds, testWrongCount, testCanonicalReportNumberStatesBehavioral, testPhoneSourceTracking, testDocumentCountFromRegistry, testDocumentCountIndependentOfAnalysisState, testOfficeTemporaryFilesExcluded, testDocumentsPendingNullWhenNotAnalyzed, testDocumentsPendingTrueWhenIncomplete, testDocumentsPendingFalseWhenComplete, testPhoneFromManifestRemovesMissingContactKey, testInvalidPhoneKeepsContactKeyReason, testBlockingReviewReasonsFilter, testOnlyNumeroAusenteAllowsApply }

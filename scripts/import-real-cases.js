@@ -77,6 +77,22 @@ function shouldIgnoreInventoryFile(fileName) {
   return path.basename(fileName).startsWith('~$')
 }
 
+function normalizePhoneForValidation(value) {
+  // Normalize phone to check validity (same logic as domain/phone-name.js)
+  let phone = String(value || '').replace(/\D/g, '')
+  if (phone.startsWith('00')) phone = phone.slice(2)
+  if (!phone.startsWith('55') && (phone.length === 10 || phone.length === 11)) phone = `55${phone}`
+  return /^55\d{10,11}$/.test(phone) ? phone : ''
+}
+
+function getBlockingReviewReasons(reviewReasons = []) {
+  // Reasons that can be resolved during apply should not block execution
+  const resolvableDuringApply = new Set([
+    'negocio_sem_numero_oficial'  // Number is generated in apply
+  ])
+  return reviewReasons.filter(reason => !resolvableDuringApply.has(reason))
+}
+
 async function walk(directory) {
   const result = []
   const queue = [directory]
@@ -319,7 +335,9 @@ async function apply(results, checkpoint) {
   if (!process.env.HUBSPOT_TOKEN) throw new Error("hubspot_token_ausente")
   for (const item of results) {
     if (checkpoint.records[item.importId]?.status === "applied") continue
-    if (item.error || item.reviewReasons.length || item.contact.status === "duplicate" || item.deal.status === "duplicate") continue
+    // Check only blocking review reasons (non-resolvable ones)
+    const blockingReasons = getBlockingReviewReasons(item.reviewReasons)
+    if (item.error || blockingReasons.length || item.contact.status === "duplicate" || item.deal.status === "duplicate") continue
     let contactId = item.contact.id
     if (!contactId) {
       const properties = { firstname: item.name, ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "Previdenciário (INSS)" }
@@ -398,6 +416,17 @@ async function applyPilotSelection(scanned, selectionFile) {
         type: meta.type,
         expectedDocuments: meta.expectedDocuments,
         notes: meta.notes
+      }
+
+      // If manifest provides a valid phone and record was marked as missing safe contact key,
+      // remove that review reason since it's now satisfied
+      if (meta.phone) {
+        const normalizedPhone = normalizePhoneForValidation(meta.phone)
+        if (normalizedPhone) {
+          record.reviewReasons = record.reviewReasons.filter(
+            reason => reason !== 'contato_sem_chave_segura'
+          )
+        }
       }
     }
   }
@@ -606,7 +635,7 @@ async function main() {
   console.log(JSON.stringify({ ...report, cases: undefined, dryRunReport: undefined }, null, 2))
 }
 
-module.exports = { generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile }
+module.exports = { generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile, normalizePhoneForValidation, getBlockingReviewReasons }
 
 if (require.main === module) {
   main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })
