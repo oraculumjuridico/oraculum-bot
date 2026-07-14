@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "caseImportId": "fixture-case-with-spouse-mention",
+  "status": "HUMAN_REVIEW_COMPLETED",
+  "reviewSource": "HUMAN",
+  "reviewedAt": "2026-07-14T14:00:00Z",
+  "documents": [
+    {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "decision": "APPROVE_AND_KEEP",
+      "documentOwnerRole": "ASSISTED_PERSON"
+    },
+    {
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "decision": "APPROVE_AND_KEEP",
+      "documentOwnerRole": "ASSISTED_PERSON",
+      "allowedMentionedIdentityRoles": ["INTERESTED_THIRD_PARTY"],
+      "relationshipType": "spouse_separated"
+    },
+    {
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "decision": "APPROVE_AND_KEEP",
+      "documentOwnerRole": "ASSISTED_PERSON"
+    }
+  ]
+}

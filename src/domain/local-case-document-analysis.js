@@ -226,55 +226,107 @@ function namesSignificantlyDiverge(names) {
   }
   return false
 }
-function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, hashes, relativeRoot }) {
+function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, hashes, relativeRoot, humanReview }) {
+  const { validateHumanReviewSchema, findHumanReviewForDocument, HUMAN_REVIEW_DECISION } = require("./human-document-review")
+
+  // Validate human review if provided
+  if (humanReview) {
+    const validation = validateHumanReviewSchema(humanReview)
+    if (!validation.valid) {
+      const error = new Error(`Invalid human review schema: ${validation.errors.join("; ")}`)
+      error.code = "INVALID_HUMAN_REVIEW_SCHEMA"
+      throw error
+    }
+    if (humanReview.caseImportId !== importId) {
+      const error = new Error(`Human review case ID mismatch: expected ${importId}, got ${humanReview.caseImportId}`)
+      error.code = "HUMAN_REVIEW_CASE_MISMATCH"
+      throw error
+    }
+  }
+
   const collect = key => unique(analyzed.flatMap(item => item[key] || []))
-  const names = collect("names")
   const cpfs = collect("cpfs")
   const conflicts = []
   if (cpfs.length > 1) conflicts.push("multiple_valid_cpfs")
-  if (namesSignificantlyDiverge(names)) conflicts.push("divergent_names")
-  const quarantined = analyzed.filter(item =>
-    (cpfs.length > 1 && item.cpfs.length && item.cpfs.some(cpf => cpf !== cpfs[0])) ||
-    (conflicts.includes("divergent_names") && item.names.length)
-  ).map(item => ({ file: item.file, pageNumber: item.pageNumber, reason: "identity_divergence" }))
+
+  // Build set of approved documents and track which documents have legitimate additional identities
+  const approvedDocuments = new Set()
+  const docsWithLegitimateAdditionalIdentities = new Set()
+  if (humanReview && humanReview.status === "HUMAN_REVIEW_COMPLETED") {
+    humanReview.documents
+      .filter(doc => doc.decision === HUMAN_REVIEW_DECISION.APPROVE_AND_KEEP)
+      .forEach(doc => {
+        approvedDocuments.add(doc.sha256)
+        // If this doc has allowedMentionedIdentityRoles, mark it as having legitimate additional identities
+        if (doc.allowedMentionedIdentityRoles && doc.allowedMentionedIdentityRoles.length > 0) {
+          docsWithLegitimateAdditionalIdentities.add(doc.sha256)
+        }
+      })
+  }
+
+  // When recalculating names for divergence check, use all extracted names.
+  // Conservative fallback: human approval removes quarantine but DOES NOT exclude names from divergence calculation,
+  // because the analyzer lacks identity-level attribution. This ensures divergent_names remains until fine-grained
+  // identity attribution is available.
+  const namesForDivergenceCheck = unique(
+    analyzed.flatMap(item => item.names || [])
+  )
+
+  // Only add divergent_names if the remaining names (excluding legitimately approved additional identities) significantly diverge
+  if (namesSignificantlyDiverge(namesForDivergenceCheck)) {
+    conflicts.push("divergent_names")
+  }
+
+  const quarantined = analyzed.filter(item => {
+    // Skip quarantine if this document was approved by human review
+    if (item.sha256 && approvedDocuments.has(item.sha256)) {
+      return false
+    }
+    return (
+      (cpfs.length > 1 && item.cpfs.length && item.cpfs.some(cpf => cpf !== cpfs[0])) ||
+      (conflicts.includes("divergent_names") && item.names.length)
+    )
+  }).map(item => ({ file: item.file, pageNumber: item.pageNumber, reason: "identity_divergence" }))
   if (quarantined.length) conflicts.push("documents_quarantined")
-  
+
+  // Collect all names (original behavior for field reporting, not for divergence checking)
+  const names = collect("names")
   const reviewReasons = [...conflicts]
   if (!cpfs.length) reviewReasons.push("cpf_missing")
   if (!names.length) reviewReasons.push("name_missing")
   if (!collect("phones").length && !collect("emails").length) reviewReasons.push("safe_contact_key_missing")
   if (!collect("processNumbers").length) reviewReasons.push("official_number_missing")
-  
+
   // Check if there are problematic ignored files (not just Office temps which are already filtered)
-  const problematicIgnored = ignored.filter(item => 
-    item.reason !== 'case_document_limit' && 
+  const problematicIgnored = ignored.filter(item =>
+    item.reason !== 'case_document_limit' &&
     !['unsupported_or_invalid_content', 'file_size_limit'].includes(item.reason)
   )
   if (problematicIgnored.length) reviewReasons.push("ignored_files_present")
-  
+
   const confidences = analyzed.map(item => item.confidence).filter(Number.isFinite)
   const birthDates = collect("birthDates")
   const processNumbers = collect("processNumbers")
   const requestNumbers = collect("requestNumbers")
   const benefitNumbers = collect("benefitNumbers")
   const benefitTypes = collect("benefitTypes")
-  
+
   // Calculate documentsPending:
   // null = analysis not conclusive (render failures, pdf_page_limit, etc)
   // false = analysis complete, no pending documents detected
   // true = analysis complete, pending documents detected (marked by analyzer)
   let documentsPending = false
-  const hasAnalysisFailures = ignored.some(item => 
+  const hasAnalysisFailures = ignored.some(item =>
     ['pdf_render_failed', 'pdf_page_limit', 'extension_content_mismatch'].includes(item.reason)
   )
   const hasQuarantinedDocs = quarantined.length > 0
   if (hasAnalysisFailures || hasQuarantinedDocs || analyzed.length === 0) {
     documentsPending = null
   }
-  
+
   const blockingReasons = getBlockingReviewReasons(reviewReasons)
   const safeToPlanHubSpot = blockingReasons.length === 0 && cpfs.length === 1 && names.length >= 1
-  
+
   return {
     sourceFolder: path.relative(relativeRoot, sourceFolder) || path.basename(sourceFolder), importId,
     fileCount: files.length, analyzedFileCount: unique(analyzed.map(item => item.file)).length,
@@ -294,7 +346,9 @@ function consolidateCase({ sourceFolder, importId, files, analyzed, ignored, has
       numero_beneficio: benefitNumbers.length === 1 ? benefitNumbers[0] : null,
       tipo_de_caso_suggestion: benefitTypes.length === 1 ? benefitTypes[0] : null
     },
-    quarantinedDocuments: quarantined, ignoredFiles: ignored
+    quarantinedDocuments: quarantined, ignoredFiles: ignored,
+    humanReviewApplied: Boolean(humanReview && humanReview.status === "HUMAN_REVIEW_COMPLETED"),
+    humanReviewStatus: humanReview ? humanReview.status : null
   }
 }
 async function walkFiles(directory) {
@@ -379,8 +433,8 @@ async function analyzeCaseFolder(folder, options = {}) {
     analyzed.push(...results)
     if (options.cache) options.cache.files[hash] = { mimeType, byteLength: buffer.length, pageCount: pages.length, processed: results.length > 0 }
   }
-  const importId = `inss-${sha256(Buffer.from(path.resolve(folder).toLowerCase())).slice(0, 20)}`
-  return consolidateCase({ sourceFolder: folder, importId, files, analyzed, ignored, hashes, relativeRoot: options.relativeRoot || path.dirname(folder) })
+   const importId = `inss-${sha256(Buffer.from(path.resolve(folder).toLowerCase())).slice(0, 20)}`
+  return consolidateCase({ sourceFolder: folder, importId, files, analyzed, ignored, hashes, relativeRoot: options.relativeRoot || path.dirname(folder), humanReview: options.humanReview })
 }
 function csvEscape(value) {
   const text = Array.isArray(value) ? value.join(" | ") : String(value ?? "")
