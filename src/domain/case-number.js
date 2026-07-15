@@ -42,8 +42,12 @@ function generateCandidate(area, now = new Date()) {
 }
 
 // Service factory: requires a repository implementing findByKey, findByNumber, reserve, release (optional)
-function createService(repository) {
+// The format has 1,000 suffixes per prefix/day. With random selection, if p is
+// the occupied fraction, premature exhaustion probability is p^maxAttempts.
+// Keep the compatible default, but allow a bounded value for controlled callers.
+function createService(repository, { maxAttempts = 10, generate = generateCandidate } = {}) {
   if (!repository) throw new Error('repository adapter required')
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 1000) throw new Error('invalid maxAttempts')
 
   async function findByKey(key) {
     return repository.findByKey ? repository.findByKey(key) : null
@@ -60,13 +64,16 @@ function createService(repository) {
     if (existing && existing.case_number) return { reserved: true, numero: existing.case_number, reused: true }
 
     // Try to reserve using repository atomically
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const candidate = generateCandidate(area)
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const candidate = generate(area)
       const conflict = await findByNumber(candidate)
       if (conflict) continue
       if (!repository.reserve) throw new Error('repository does not support reserve')
       const res = await repository.reserve({ key, numero: candidate, area })
-      if (res && res.reserved) return { reserved: true, numero: candidate, reused: false }
+      if (res && res.reserved) {
+        if (!res.numero) throw new Error('repository returned reservation without number')
+        return { reserved: true, numero: res.numero, reused: Boolean(res.reused) }
+      }
       // if reservation failed due to conflict, loop
     }
     return { reserved: false, error: 'no_available_candidate' }
@@ -123,11 +130,12 @@ function createLocalAdapter({ dataDir = null } = {}) {
       const state = localRead(dataDir)
       state.reservations = state.reservations || {}
       state.index = state.index || {}
+      if (state.reservations[key]) return { reserved: true, numero: state.reservations[key].numero, reused: true }
       if (state.index[numero]) return { reserved: false, reason: 'conflict' }
       state.reservations[key] = { numero, area, createdAt: new Date().toISOString() }
       state.index[numero] = key
       localWrite(dataDir, state)
-      return { reserved: true }
+      return { reserved: true, numero, reused: false }
     },
     release: async ({ key }) => {
       const state = localRead(dataDir)
@@ -156,12 +164,32 @@ function createPostgresAdapter({ pool }) {
       return res.rowCount ? res.rows[0] : null
     },
     reserve: async ({ key, numero, area }) => {
+      const client = typeof pool.connect === 'function' ? await pool.connect() : pool
       try {
-        const res = await pool.query(`INSERT INTO case_number_reservations(reservation_key, case_number, area, created_at, status) VALUES($1,$2,$3,CURRENT_TIMESTAMP,'reserved') ON CONFLICT (reservation_key) DO UPDATE SET case_number=EXCLUDED.case_number RETURNING reservation_key`, [key, numero, area])
-        return { reserved: true }
+        await client.query('BEGIN')
+        const inserted = await client.query(`
+          INSERT INTO case_number_reservations(reservation_key, case_number, area, created_at, status)
+          VALUES($1,$2,$3,CURRENT_TIMESTAMP,'reserved')
+          ON CONFLICT (reservation_key) DO NOTHING
+          RETURNING reservation_key, case_number, area, created_at
+        `, [key, numero, area])
+        const row = inserted.rowCount
+          ? inserted.rows[0]
+          : (await client.query(
+              'SELECT reservation_key, case_number, area, created_at FROM case_number_reservations WHERE reservation_key=$1',
+              [key]
+            )).rows[0]
+        if (!row) throw new Error('reservation conflict did not resolve to persisted row')
+        await client.query('COMMIT')
+        return { reserved: true, numero: row.case_number, reused: !inserted.rowCount }
       } catch (e) {
-        // conflict on case_number or other unique constraint
-        return { reserved: false, reason: e.message }
+        await client.query('ROLLBACK').catch(() => {})
+        if (e && e.code === '23505' && e.constraint === 'case_number_reservations_case_number_key') {
+          return { reserved: false, reason: 'case_number_conflict' }
+        }
+        throw e
+      } finally {
+        if (client !== pool && typeof client.release === 'function') client.release()
       }
     },
     release: async ({ key }) => {

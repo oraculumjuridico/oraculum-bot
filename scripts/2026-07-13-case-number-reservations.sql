@@ -1,28 +1,14 @@
--- PROPOSED MIGRATION — NOT EXECUTED AUTOMATICALLY
--- This file is a prepared migration proposal and MUST be integrated into the project's migration tooling
--- and applied via proper change management process before activating CASE_NUMBER_RESERVATION_MODE=postgres.
--- Do not apply manually to production without approval and backup.
---
--- Migration: create case_number_reservations
--- Description: reservation table for internal case numbers (idempotent, unique constraints)
+-- Migration id: case-number-reservations-v1
+-- Executed only by: npm run case-number:migrate
+-- The runner owns BEGIN/COMMIT, validates the complete schema and records the
+-- migration in oraculum_state_migrations. This file documents the exact DDL.
 
 CREATE TABLE IF NOT EXISTS case_number_reservations (
   reservation_key TEXT PRIMARY KEY,
   case_number TEXT NOT NULL UNIQUE,
-  area TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'reserved',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  area TEXT NOT NULL CHECK (area = btrim(area) AND char_length(area) BETWEEN 1 AND 80),
+  status TEXT NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT case_number_reservations_number_format
+    CHECK (case_number ~ '^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$')
 );
-
--- Recommended atomic reservation operation (example, use in application code):
---
--- WITH attempt AS (
---   INSERT INTO case_number_reservations(reservation_key, case_number, area, status)
---   VALUES($1, $2, $3, 'reserved')
---   ON CONFLICT (reservation_key) DO NOTHING
---   RETURNING reservation_key
--- )
--- SELECT reservation_key FROM attempt;
-
--- Record migration in oraculum_state_migrations (application side may record this):
--- INSERT INTO oraculum_state_migrations(migration_id, details) VALUES ('case-number-reservations-v1', 'create table case_number_reservations');

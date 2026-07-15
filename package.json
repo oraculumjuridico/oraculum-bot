@@ -38,6 +38,9 @@
     ,"state:migrate:postgres": "node scripts/migrate-state-to-postgres.js"
     ,"state:migrate:postgres:force": "node scripts/migrate-state-to-postgres.js --force"
     ,"state:migrate:postgres:dry": "node scripts/migrate-state-to-postgres.js --dry-run"
+    ,"case-number:migrate": "node scripts/migrate-case-number-reservations.js"
+    ,"case-number:reserve": "node scripts/reserve-case-number.js"
+    ,"case-number:test": "node test/case-number.service.test.js && node test/case-number-postgres-infrastructure.test.js"
   },
   "license": "ISC",
   "type": "commonjs",
