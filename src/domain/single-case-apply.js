@@ -117,7 +117,7 @@ async function executeSingleCaseApplyInternal({ caseImportId, adapters, authoriz
     const currentPlan = deepFreeze(deepClone(await adapters.plans.loadByCaseImportId(caseImportId)))
     validatePlan(currentPlan, caseImportId)
     if (authorizablePlanHash(currentPlan) !== decision.authorizablePlanHash) fail("PREFLIGHT_DECISION_STALE")
-    checkpoint = await adapters.coordination.loadCheckpoint(caseImportId) || newCheckpoint(decision)
+    checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId) || newCheckpoint(decision))
     validateCheckpoint(checkpoint, decision)
     if (checkpoint.status === "completed") {
       checkpoint.status = "running"
