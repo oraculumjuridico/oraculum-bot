@@ -13,8 +13,13 @@ const constraints = [
   { constraint_type: "PRIMARY KEY", columns: ["reservation_key"] },
   { constraint_type: "UNIQUE", columns: ["case_number"] }
 ]
-function schemaPool(cols = columns(), cons = constraints) {
-  return { query: async sql => String(sql).includes("information_schema.columns") ? { rowCount: cols.length, rows: cols } : { rowCount: cons.length, rows: cons } }
+const checks = [
+  { conname: "number-any-name", expression: "(case_number ~ '^[A-Z]{2,4}\\.[0-9]{6}\\.[0-9]{3}$'::text)", columns: ["case_number"] },
+  { conname: "status-any-name", expression: "(status = 'reserved'::text)", columns: ["status"] },
+  { conname: "area-any-name", expression: "((area = btrim(area)) AND (char_length(area) >= 1) AND (char_length(area) <= 80))", columns: ["area"] }
+]
+function schemaPool(cols = columns(), cons = constraints, checkRows = checks) {
+  return { query: async sql => String(sql).includes("information_schema.columns") ? { rowCount: cols.length, rows: cols } : String(sql).includes("information_schema.table_constraints") ? { rowCount: cons.length, rows: cons } : { rowCount: checkRows.length, rows: checkRows } }
 }
 
 function memoryPool() {
@@ -66,6 +71,10 @@ async function schemaTests() {
   assert((await validateCaseNumberReservationSchema(schemaPool(columns({ status: { column_default: null } })))).codes.includes("DEFAULT_MISMATCH"))
   assert((await validateCaseNumberReservationSchema(schemaPool(columns(), constraints.slice(1)))).codes.includes("PRIMARY_KEY_MISMATCH"))
   assert((await validateCaseNumberReservationSchema(schemaPool(columns(), constraints.slice(0, 1)))).codes.includes("UNIQUE_CONSTRAINT_MISSING"))
+  assert((await validateCaseNumberReservationSchema(schemaPool(columns(), constraints, checks.slice(1)))).codes.includes("CASE_NUMBER_FORMAT_CHECK_MISSING"))
+  assert((await validateCaseNumberReservationSchema(schemaPool(columns(), constraints, checks.map(row => row.columns[0] === "case_number" ? { ...row, expression: "case_number <> ''" } : row)))).codes.includes("CASE_NUMBER_FORMAT_CHECK_MISMATCH"))
+  assert((await validateCaseNumberReservationSchema(schemaPool(columns(), constraints, checks.filter(row => row.columns[0] !== "status")))).codes.includes("STATUS_CHECK_MISSING"))
+  assert((await validateCaseNumberReservationSchema(schemaPool(columns(), constraints, checks.filter(row => row.columns[0] !== "area")))).codes.includes("AREA_CHECK_MISSING"))
 }
 
 function migrationPool(incompatible = false) {
@@ -73,6 +82,7 @@ function migrationPool(incompatible = false) {
   const client = { async query(sql) {
     const text = String(sql)
     if (["BEGIN", "COMMIT", "ROLLBACK"].includes(text)) return { rowCount: 0, rows: [] }
+    if (text.includes("FROM pg_constraint")) return { rowCount: 3, rows: checks }
     if (text.includes("to_regclass")) return { rowCount: 1, rows: [{ table_name: "oraculum_state_migrations" }] }
     if (text.startsWith("SELECT migration_id")) return { rowCount: migrated ? 1 : 0, rows: migrated ? [{}] : [] }
     if (text.includes("CREATE TABLE IF NOT EXISTS")) { creates++; return { rowCount: 0, rows: [] } }
@@ -96,7 +106,7 @@ async function commandTests() {
   assert.throws(() => reserveCommand.parseArgs(["--case-import-id", "fake-id", "--area", " INSS"]), /INVALID_AREA/)
   class FakePool {
     constructor() { this.memory = memoryPool() }
-    query(sql, params) { if (String(sql).includes("information_schema.columns")) return Promise.resolve({ rowCount: 5, rows: columns() }); if (String(sql).includes("information_schema.table_constraints")) return Promise.resolve({ rowCount: 2, rows: constraints }); return this.memory.query(sql, params) }
+    query(sql, params) { if (String(sql).includes("information_schema.columns")) return Promise.resolve({ rowCount: 5, rows: columns() }); if (String(sql).includes("information_schema.table_constraints")) return Promise.resolve({ rowCount: 2, rows: constraints }); if (String(sql).includes("FROM pg_constraint")) return Promise.resolve({ rowCount: 3, rows: checks }); return this.memory.query(sql, params) }
     connect() { return this.memory.connect() } async end() {}
   }
   await assert.rejects(() => reserveCommand.main({ argv: ["--case-import-id", "fake-id", "--area", "INSS"], env: {}, PoolClass: FakePool, output() {} }), /POSTGRES_MODE_REQUIRED/)
