@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "caseImportId": "fictional-case-001",
+  "confirmationStatus": "COMPLETED",
+  "confirmationSource": "HUMAN",
+  "primaryIdentity": {
+    "fullName": "Pessoa Fictícia de Teste",
+    "cpf": "52998224725",
+    "belongsToCaseHolder": true,
+    "thirdPartyCreationAuthorized": false
+  },
+  "documentSources": [
+    {
+      "reviewId": "Q-aaaaaaaaaaaaaaaa",
+      "contentDocumentId": "C-aaaaaaaaaaaaaaaaaaaa",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidenceRole": "NAME_AND_CPF"
+    }
+  ]
+}
