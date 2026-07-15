@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "pretest": "node test/case-number.service.test.js && node test/graceful-shutdown.test.js && node test/external-state-repository.test.js && node test/migrate-state-dry-run.test.js && node test/media-download-security.test.js && node test/public-image-delivery.test.js && node test/image-validation.test.js && node test/import-todo-cases.test.js && node test/drive-files-security.test.js && node test/document-registry.test.js && node test/document-grouper.test.js && node test/document-pdf-composer.test.js && node test/document-analysis-integration.test.js && node test/document-consolidation.test.js && node test/document-consolidation-server-static.test.js && node test/client-document-integrity.test.js && node test/client-document-intent-priority.test.js",
+    "pretest": "node test/single-case-apply.test.js && node test/case-number.service.test.js && node test/graceful-shutdown.test.js && node test/external-state-repository.test.js && node test/migrate-state-dry-run.test.js && node test/media-download-security.test.js && node test/public-image-delivery.test.js && node test/image-validation.test.js && node test/import-todo-cases.test.js && node test/drive-files-security.test.js && node test/document-registry.test.js && node test/document-grouper.test.js && node test/document-pdf-composer.test.js && node test/document-analysis-integration.test.js && node test/document-consolidation.test.js && node test/document-consolidation-server-static.test.js && node test/client-document-integrity.test.js && node test/client-document-intent-priority.test.js",
     "test:case-analysis": "node test/local-case-document-analysis.test.js && node test/human-document-review.test.js && node test/document-content-inventory.test.js && node test/pdf-technical-review-fallback.test.js && node test/post-review-blocker-recalculation.test.js && node test/human-primary-identity-confirmation.test.js",
     "smoke": "node smoke.js",
     "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke",
@@ -43,6 +43,8 @@
     ,"case-number:migrate:reconcile": "node scripts/migrate-case-number-reservations.js --reconcile"
     ,"case-number:reserve": "node scripts/reserve-case-number.js"
     ,"case-number:sync-plan": "node scripts/sync-case-number-reservation-to-plan.js"
+    ,"cases:apply-one": "node scripts/apply-single-case.js"
+    ,"test:single-case-apply": "node test/single-case-apply.test.js"
     ,"case-number:test": "node test/case-number.service.test.js && node test/case-number-postgres-infrastructure.test.js && node test/case-number-reservation-reconciliation.test.js && node test/case-number-plan-sync.test.js"
   },
   "license": "ISC",

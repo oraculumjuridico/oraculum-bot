@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "caseImportId": "fixture-case-alpha",
+  "caseFingerprint": "f1c7a2e9b403",
+  "safeToPlanHubSpot": true,
+  "safeToApply": true,
+  "pendingDependencies": ["irrelevant-derived-state"],
+  "dealPlan": { "caseNumber": "PRV.260715.321", "properties": { "numero_de_caso": "PRV.260715.321", "pipeline": "fixture-pipeline", "dealstage": "fixture-stage", "dealname": "Caso ficticio" } },
+  "contactPlan": { "properties": { "firstname": "Pessoa Ficticia", "cpf_do_cliente": "52998224725", "phone": "5511999999999" } },
+  "associationPlan": { "type": "contact_to_deal", "primaryOnly": true },
+  "caseNumberReservationSync": { "source": "OFFICIAL_POSTGRES_RESERVATION", "reservationKeyFingerprint": "0123456789ab" },
+  "drivePlan": { "area": { "logicalId": "AREA-FIXTURE", "name": "Area Ficticia" }, "case": { "logicalId": "CASE-FIXTURE", "name": "Caso Ficticio" } },
+  "deduplication": { "contactKeys": ["cpf", "phone"], "dealKey": "caseNumber", "documentKey": "sha256" },
+  "writeScope": ["HUBSPOT_CONTACT", "HUBSPOT_DEAL", "HUBSPOT_ASSOCIATION", "DRIVE_FOLDERS", "DRIVE_UPLOADS", "CHECKPOINT_WRITE"],
+  "operationalTimestamp": "ignored-by-authorizable-hash",
+  "documentPlan": {
+    "physicalOccurrences": 14,
+    "uniqueContents": 12,
+    "driveEligibleUniqueContents": 11,
+    "ignoredNonDocumentContents": 1,
+    "binaryDuplicateOccurrences": 2,
+    "contents": [
+      { "contentDocumentId": "D01", "sha256": "20aa6e13ee4605a2f14d3ba3ef27315b3f158e90243a04a24826c1daeb85487c", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D02", "sha256": "0fb3e807948591efe817971c4ff4e21b36469ab1d4f6e3fbcc3bab6e47eacaf5", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D03", "sha256": "7a2971dafdb0f33bc1a0c8979d534a2b75cde26b0d654d892621d67e239c9174", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D04", "sha256": "dd6c05129b10f1f296c13ade1493510abab29d0dc31b17edb805ce5f39323174", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D05", "sha256": "91820f7947fed722a469d01fcc9b711faccc27ccfaeea8cd9380151f97304b82", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D06", "sha256": "1899dbc5257e474a5b2ff1f25b0158dc81b70bacb194536dcfe36f5f2a55ae26", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D07", "sha256": "afa6f966d01a7c6229f88fac6ff48e02bcbb8822ffaaca44c36601a6e0d88b71", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D08", "sha256": "23064c0a7119289d17c9ea520ee8d46c24ad7a36bc3b9854b6811094b29fbe8d", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D09", "sha256": "5755d9980abaae77514eeee5dcd693ef08d0d1f6bceba1ce9198698e2a96d747", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D10", "sha256": "b147470b88aef5311ddc2b007195b493843b7456b4964b2603f8fa0674d0e8bf", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "D11", "sha256": "cb30201192470f34c0e3b2bb2ba34a5c3a6bcddf422f6c69bec6ffaef8c3bc1c", "eligible": true, "kind": "document", "caseLinked": true },
+      { "contentDocumentId": "N01", "sha256": "e43e37e952649f16132b71bc8bb29fb629ec290051028e0e1c0b6b73983f80fb", "eligible": false, "kind": "non_document", "caseLinked": true }
+    ],
+    "occurrences": [
+      { "contentDocumentId": "D01", "sha256": "20aa6e13ee4605a2f14d3ba3ef27315b3f158e90243a04a24826c1daeb85487c", "logicalName": "doc-01.pdf" },
+      { "contentDocumentId": "D02", "sha256": "0fb3e807948591efe817971c4ff4e21b36469ab1d4f6e3fbcc3bab6e47eacaf5", "logicalName": "doc-02.pdf" },
+      { "contentDocumentId": "D03", "sha256": "7a2971dafdb0f33bc1a0c8979d534a2b75cde26b0d654d892621d67e239c9174", "logicalName": "doc-03.pdf" },
+      { "contentDocumentId": "D04", "sha256": "dd6c05129b10f1f296c13ade1493510abab29d0dc31b17edb805ce5f39323174", "logicalName": "doc-04.pdf" },
+      { "contentDocumentId": "D05", "sha256": "91820f7947fed722a469d01fcc9b711faccc27ccfaeea8cd9380151f97304b82", "logicalName": "doc-05.pdf" },
+      { "contentDocumentId": "D06", "sha256": "1899dbc5257e474a5b2ff1f25b0158dc81b70bacb194536dcfe36f5f2a55ae26", "logicalName": "doc-06.pdf" },
+      { "contentDocumentId": "D07", "sha256": "afa6f966d01a7c6229f88fac6ff48e02bcbb8822ffaaca44c36601a6e0d88b71", "logicalName": "doc-07.pdf" },
+      { "contentDocumentId": "D08", "sha256": "23064c0a7119289d17c9ea520ee8d46c24ad7a36bc3b9854b6811094b29fbe8d", "logicalName": "doc-08.pdf" },
+      { "contentDocumentId": "D09", "sha256": "5755d9980abaae77514eeee5dcd693ef08d0d1f6bceba1ce9198698e2a96d747", "logicalName": "doc-09.pdf" },
+      { "contentDocumentId": "D10", "sha256": "b147470b88aef5311ddc2b007195b493843b7456b4964b2603f8fa0674d0e8bf", "logicalName": "doc-10.pdf" },
+      { "contentDocumentId": "D11", "sha256": "cb30201192470f34c0e3b2bb2ba34a5c3a6bcddf422f6c69bec6ffaef8c3bc1c", "logicalName": "doc-11.pdf" },
+      { "contentDocumentId": "N01", "sha256": "e43e37e952649f16132b71bc8bb29fb629ec290051028e0e1c0b6b73983f80fb", "logicalName": "note.txt" },
+      { "contentDocumentId": "D03", "sha256": "7a2971dafdb0f33bc1a0c8979d534a2b75cde26b0d654d892621d67e239c9174", "logicalName": "copy-doc-03.pdf" },
+      { "contentDocumentId": "D07", "sha256": "afa6f966d01a7c6229f88fac6ff48e02bcbb8822ffaaca44c36601a6e0d88b71", "logicalName": "copy-doc-07.pdf" }
+    ]
+  }
+}
