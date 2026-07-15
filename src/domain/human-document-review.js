@@ -6,6 +6,7 @@ const CANDIDATE_STATUS = "PENDING_HUMAN_REVIEW"
 const REVIEW_SOURCE = "HUMAN"
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i
 const REVIEW_ID_PATTERN = /^Q-[a-f0-9]{16}$/
+const CONTENT_DOCUMENT_ID_PATTERN = /^C-[a-f0-9]{20}$/
 
 const DOCUMENT_OWNER_ROLE = Object.freeze({
   ASSISTED_PERSON: "ASSISTED_PERSON",
@@ -128,6 +129,11 @@ function validateHumanReviewContext(review, context = {}) {
       }
       const hash = document.sha256.toLowerCase()
       if (inventoryByHash.has(hash)) errors.push(`context.documents[${index}] has duplicate sha256`)
+      if (document.contentDocumentId !== undefined && (
+        typeof document.contentDocumentId !== "string" ||
+        !CONTENT_DOCUMENT_ID_PATTERN.test(document.contentDocumentId) ||
+        document.contentDocumentId !== `C-${hash.slice(0, 20)}`
+      )) errors.push(`context.documents[${index}] has mismatched contentDocumentId`)
       inventoryByHash.set(hash, document)
     })
     if (Array.isArray(review?.documents)) review.documents.forEach((decision, index) => {
@@ -285,16 +291,37 @@ function shouldQuarantineDocumentWithReview(analyzedItem, cpfs, divergentNames, 
 function applyHumanReviewToConsolidation(consolidatedCase, humanReview, context) {
   assertValidHumanReviewContext(humanReview, context)
   const approved = new Set(humanReview.documents.map(document => document.sha256.toLowerCase()))
+  const contextByHash = new Map(context.documents.map(document => [document.sha256.toLowerCase(), document]))
+  const approvedTechnicalFailures = new Set([...approved].filter(hash => {
+    const document = contextByHash.get(hash)
+    return document?.eligibleForHumanReview === true && document.contentDocumentId === `C-${hash.slice(0, 20)}`
+  }))
   const quarantinedDocuments = (consolidatedCase.quarantinedDocuments || []).filter(document => !approved.has(String(document.sha256 || "").toLowerCase()))
   const conflicts = [...(consolidatedCase.conflicts || [])]
   if (!quarantinedDocuments.length) {
     const index = conflicts.indexOf("documents_quarantined")
     if (index >= 0) conflicts.splice(index, 1)
   }
-  const preservedBlocking = (consolidatedCase.blockingReviewReasons || []).filter(reason => reason !== "documents_quarantined")
+  const ignoredFiles = Array.isArray(consolidatedCase.ignoredFiles) ? consolidatedCase.ignoredFiles : []
+  const excludedIgnoredReasons = new Set(["case_document_limit", "unsupported_or_invalid_content", "file_size_limit"])
+  const problematicIgnored = ignoredFiles.filter(item => {
+    if (excludedIgnoredReasons.has(item.reason)) return false
+    const hash = String(item.sha256 || "").toLowerCase()
+    const approvedTechnicalFailure = item.technicalReviewReason && approvedTechnicalFailures.has(hash)
+    return !approvedTechnicalFailure
+  })
+  const preservedBlocking = (consolidatedCase.blockingReviewReasons || []).filter(reason =>
+    reason !== "documents_quarantined" && (reason !== "ignored_files_present" || problematicIgnored.length > 0)
+  )
   if (quarantinedDocuments.length && !preservedBlocking.includes("documents_quarantined")) preservedBlocking.push("documents_quarantined")
+  if (problematicIgnored.length && !preservedBlocking.includes("ignored_files_present")) preservedBlocking.push("ignored_files_present")
+  const reviewReasons = (consolidatedCase.reviewReasons || []).filter(reason =>
+    reason !== "documents_quarantined" && (reason !== "ignored_files_present" || problematicIgnored.length > 0)
+  )
+  if (quarantinedDocuments.length && !reviewReasons.includes("documents_quarantined")) reviewReasons.push("documents_quarantined")
+  if (problematicIgnored.length && !reviewReasons.includes("ignored_files_present")) reviewReasons.push("ignored_files_present")
   const safeToPlanHubSpot = preservedBlocking.length === 0 && consolidatedCase.cpfsEncontrados.length === 1 && consolidatedCase.nomesEncontrados.length >= 1
-  return { ...consolidatedCase, quarantinedDocuments, conflicts, blockingReviewReasons: preservedBlocking, safeToPlanHubSpot, humanReviewApplied: true, humanReviewStatus: humanReview.status }
+  return { ...consolidatedCase, quarantinedDocuments, conflicts, reviewReasons, blockingReviewReasons: preservedBlocking, safeToPlanHubSpot, humanReviewApplied: true, humanReviewStatus: humanReview.status }
 }
 
 module.exports = {
