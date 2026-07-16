@@ -201,26 +201,75 @@ function createSingleCaseCoordinationRepository({ pool, ownerId, now = () => new
   return Object.freeze(repository)
 }
 
+// Helper: normalize pg/driver array results into JS array of strings (strict, fail-closed)
+function parsePgArrayLike(value) {
+  if (Array.isArray(value)) return value
+  if (value == null) return null
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) return parsed
+      return null
+    } catch (e) {
+      return null
+    }
+  }
+  return null
+}
+function ensureStringArray(value, errorCode) {
+  const arr = parsePgArrayLike(value)
+  if (!Array.isArray(arr) || arr.some(x => typeof x !== 'string' || x.length === 0)) throw new Error(errorCode)
+  return [...arr]
+}
+
 async function validateSingleCaseCoordinationSchema(queryable) {
   const codes = new Set()
   for (const [table, expected] of Object.entries(EXPECTED_COLUMNS)) {
     const columns = await queryable.query("SELECT column_name,data_type,udt_name,is_nullable,column_default,ordinal_position FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 ORDER BY ordinal_position", [table])
     if (columns.rows.length !== expected.length) codes.add(`${table}:COLUMN_COUNT_MISMATCH`)
     expected.forEach((item,index)=>{const row=columns.rows[index];if(!row||row.column_name!==item.name||row.data_type!==item.type||row.udt_name!==item.udt||Number(row.ordinal_position)!==index+1)codes.add(`${table}:COLUMN_MISMATCH`);if(!row||(row.is_nullable==="YES")!==item.nullable)codes.add(`${table}:NULLABILITY_MISMATCH`);if(!row||normalizeDefault(row.column_default)!==item.defaultValue)codes.add(`${table}:DEFAULT_MISMATCH`)})
-    const constraints = await queryable.query("SELECT c.conname,c.contype,pg_get_constraintdef(c.oid,true) AS definition,array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE a.attname IS NOT NULL) AS columns FROM pg_constraint c LEFT JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum WHERE c.conrelid=to_regclass($1) GROUP BY c.oid,c.conname,c.contype", [table])
+    const constraints = await queryable.query("SELECT c.conname,c.contype,pg_get_constraintdef(c.oid,true) AS definition,array_to_json(array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE a.attname IS NOT NULL)) AS columns FROM pg_constraint c LEFT JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum WHERE c.conrelid=to_regclass($1) GROUP BY c.oid,c.conname,c.contype", [table])
     const byName = new Map(constraints.rows.map(row=>[row.conname,row]))
-    for (const name of REQUIRED_CHECKS[table]) { const row=byName.get(name);let matches=false;try{matches=canonicalSqlExpression(row?.definition)===canonicalSqlExpression(`CHECK (${CHECK_EXPRESSIONS[name]})`)}catch{}const columnMatch=JSON.stringify([...(row?.columns||[])].sort())===JSON.stringify([...(CHECK_COLUMNS[name]||[])].sort());if(!row||row.contype!=="c"||!matches||!columnMatch)codes.add(`${table}:CHECK_MISMATCH:${name}`) }
+    for (const name of REQUIRED_CHECKS[table]) {
+      const row = byName.get(name)
+      let matches = false
+      try { matches = canonicalSqlExpression(row?.definition) === canonicalSqlExpression(`CHECK (${CHECK_EXPRESSIONS[name]})`) } catch {}
+      let columnsArr
+      try {
+        columnsArr = ensureStringArray(row?.columns, `${table}:CHECK_MISMATCH:${name}`)
+      } catch (e) {
+        codes.add(`${table}:CHECK_MISMATCH:${name}`)
+        continue
+      }
+      const columnMatch = JSON.stringify([...columnsArr].sort()) === JSON.stringify([...(CHECK_COLUMNS[name] || [])].sort())
+      if (!row || row.contype !== "c" || !matches || !columnMatch) codes.add(`${table}:CHECK_MISMATCH:${name}`)
+    }
     const pk = constraints.rows.filter(row => row.contype === "p")
-    if (pk.length !== 1 || JSON.stringify(pk[0].columns)!==JSON.stringify(["case_import_id"])) codes.add(`${table}:PRIMARY_KEY_MISMATCH`)
-    const uniques=constraints.rows.filter(row=>row.contype==="u").map(row=>JSON.stringify(row.columns)).sort()
-    const expectedUniques=table===LEASE_TABLE?[JSON.stringify(["fencing_token"]),JSON.stringify(["lease_id"])].sort():[]
-    if(JSON.stringify(uniques)!==JSON.stringify(expectedUniques))codes.add(`${table}:UNIQUE_MISMATCH`)
+    try {
+      if (pk.length !== 1) { codes.add(`${table}:PRIMARY_KEY_MISMATCH`) }
+      else {
+        const pkColumns = ensureStringArray(pk[0].columns, `${table}:PRIMARY_KEY_MISMATCH`)
+        if (JSON.stringify(pkColumns) !== JSON.stringify(["case_import_id"])) codes.add(`${table}:PRIMARY_KEY_MISMATCH`)
+      }
+    } catch (e) { codes.add(`${table}:PRIMARY_KEY_MISMATCH`) }
+    let uniques
+    try {
+      uniques = constraints.rows.filter(row => row.contype === "u").map(row => JSON.stringify(ensureStringArray(row.columns, `${table}:UNIQUE_MISMATCH`))).sort()
+    } catch (e) {
+      codes.add(`${table}:UNIQUE_MISMATCH`)
+      uniques = []
+    }
+    const expectedUniques = table === LEASE_TABLE ? [JSON.stringify(["fencing_token"]), JSON.stringify(["lease_id"])].sort() : []
+    if (JSON.stringify(uniques) !== JSON.stringify(expectedUniques)) codes.add(`${table}:UNIQUE_MISMATCH`)
     const allowed=new Set([`${table}_pkey`,...(table===LEASE_TABLE?["single_case_lease_id_unique","single_case_lease_token_unique"]:[]),...REQUIRED_CHECKS[table]])
     if(constraints.rows.some(row=>!allowed.has(row.conname)))codes.add(`${table}:UNEXPECTED_CONSTRAINT`)
   }
-  const index=await queryable.query("SELECT i.relname AS index_name,ix.indisunique AS is_unique,am.amname AS method,ix.indnkeyatts AS key_attribute_count,ix.indnatts AS total_attribute_count,ix.indexprs IS NOT NULL AS has_expressions,pg_get_expr(ix.indpred,ix.indrelid,true) AS predicate,array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts AND a.attname IS NOT NULL) AS key_columns FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_am am ON am.oid=i.relam LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=$1 AND i.relname='single_case_lease_expiry_idx' GROUP BY i.relname,ix.indisunique,am.amname,ix.indnkeyatts,ix.indnatts,ix.indexprs,ix.indpred,ix.indrelid",[LEASE_TABLE])
+  const index=await queryable.query("SELECT i.relname AS index_name,ix.indisunique AS is_unique,am.amname AS method,ix.indnkeyatts AS key_attribute_count,ix.indnatts AS total_attribute_count,ix.indexprs IS NOT NULL AS has_expressions,pg_get_expr(ix.indpred,ix.indrelid,true) AS predicate,array_to_json(array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts AND a.attname IS NOT NULL)) AS key_columns FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_am am ON am.oid=i.relam LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=$1 AND i.relname='single_case_lease_expiry_idx' GROUP BY i.relname,ix.indisunique,am.amname,ix.indnkeyatts,ix.indnatts,ix.indexprs,ix.indpred,ix.indrelid",[LEASE_TABLE])
   const idx=index.rowCount===1?index.rows[0]:null;let predicate=false;try{predicate=canonicalSqlExpression(idx?.predicate)===canonicalSqlExpression("released_at IS NULL")}catch{}
-  if(!idx||idx.is_unique!==false||idx.method!=="btree"||Number(idx.key_attribute_count)!==1||Number(idx.total_attribute_count)!==1||idx.has_expressions!==false||JSON.stringify(idx.key_columns)!==JSON.stringify(["expires_at"])||!predicate)codes.add("LEASE_EXPIRY_INDEX_MISMATCH")
+  try {
+    const keyCols = ensureStringArray(idx?.key_columns, 'LEASE_EXPIRY_INDEX_MISMATCH')
+    if(!idx||idx.is_unique!==false||idx.method!=="btree"||Number(idx.key_attribute_count)!==1||Number(idx.total_attribute_count)!==1||idx.has_expressions!==false||JSON.stringify(keyCols)!==JSON.stringify(["expires_at"])||!predicate) codes.add("LEASE_EXPIRY_INDEX_MISMATCH")
+  } catch (e) { codes.add('LEASE_EXPIRY_INDEX_MISMATCH') }
   const sequence = await queryable.query("SELECT n.nspname AS schema_name,c.relname AS sequence_name,c.relkind,format_type(s.seqtypid,NULL) AS data_type,s.seqincrement::text,s.seqmin::text,s.seqmax::text,s.seqstart::text,s.seqcache::text,s.seqcycle,EXISTS(SELECT 1 FROM pg_depend d WHERE d.objid=c.oid AND d.deptype IN ('a','i')) AS is_owned FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_sequence s ON s.seqrelid=c.oid WHERE n.nspname=current_schema() AND c.relname=$1", [FENCING_SEQUENCE])
   const seq=sequence.rowCount===1?sequence.rows[0]:null
   if(!seq)codes.add("FENCING_SEQUENCE_MISSING")
