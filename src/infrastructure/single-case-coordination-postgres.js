@@ -262,7 +262,8 @@ async function validateSingleCaseCoordinationSchema(queryable) {
     const expectedUniques = table === LEASE_TABLE ? [JSON.stringify(["fencing_token"]), JSON.stringify(["lease_id"])].sort() : []
     if (JSON.stringify(uniques) !== JSON.stringify(expectedUniques)) codes.add(`${table}:UNIQUE_MISMATCH`)
     const allowed=new Set([`${table}_pkey`,...(table===LEASE_TABLE?["single_case_lease_id_unique","single_case_lease_token_unique"]:[]),...REQUIRED_CHECKS[table]])
-    if(constraints.rows.some(row=>!allowed.has(row.conname)))codes.add(`${table}:UNEXPECTED_CONSTRAINT`)
+    const unexpectedConstraints = constraints.rows.filter(row => row.contype !== "n")
+    if(unexpectedConstraints.some(row=>!allowed.has(row.conname)))codes.add(`${table}:UNEXPECTED_CONSTRAINT`)
   }
   const index=await queryable.query("SELECT i.relname AS index_name,ix.indisunique AS is_unique,am.amname AS method,ix.indnkeyatts AS key_attribute_count,ix.indnatts AS total_attribute_count,ix.indexprs IS NOT NULL AS has_expressions,pg_get_expr(ix.indpred,ix.indrelid,true) AS predicate,array_to_json(array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts AND a.attname IS NOT NULL)) AS key_columns FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_am am ON am.oid=i.relam LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=$1 AND i.relname='single_case_lease_expiry_idx' GROUP BY i.relname,ix.indisunique,am.amname,ix.indnkeyatts,ix.indnatts,ix.indexprs,ix.indpred,ix.indrelid",[LEASE_TABLE])
   const idx=index.rowCount===1?index.rows[0]:null;let predicate=false;try{predicate=canonicalSqlExpression(idx?.predicate)===canonicalSqlExpression("released_at IS NULL")}catch{}
