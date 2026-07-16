@@ -1,0 +1,10 @@
+"use strict"
+const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs/promises"),os=require("node:os"),path=require("node:path")
+const {createSingleCaseContentLoader}=require("../src/adapters/single-case-content-loader")
+async function root(){return fs.mkdtemp(path.join(os.tmpdir(),"content-loader-"))}
+test("retorna bytes exatos",async()=>{const dir=await root(),bytes=Buffer.from([0,1,2,255]);try{await fs.writeFile(path.join(dir,"a.bin"),bytes);assert.deepEqual(await createSingleCaseContentLoader({root:dir}).loadBytes("a.bin"),bytes)}finally{await fs.rm(dir,{recursive:true,force:true})}})
+test("arquivo ausente com erro sem caminho",async()=>{const dir=await root();try{await assert.rejects(()=>createSingleCaseContentLoader({root:dir}).loadBytes("secret-name.bin"),e=>e.message==="CONTENT_NOT_FOUND"&&!e.message.includes(dir))}finally{await fs.rm(dir,{recursive:true,force:true})}})
+test("arquivo excede limite",async()=>{const dir=await root();try{await fs.writeFile(path.join(dir,"a.bin"),Buffer.alloc(3));await assert.rejects(()=>createSingleCaseContentLoader({root:dir,maxBytes:2}).loadBytes("a.bin"),/CONTENT_TOO_LARGE/)}finally{await fs.rm(dir,{recursive:true,force:true})}})
+test("path traversal",async()=>{const dir=await root();try{await assert.rejects(()=>createSingleCaseContentLoader({root:dir}).loadBytes("../outside.bin"),/CONTENT_PATH_OUTSIDE_ROOT/)}finally{await fs.rm(dir,{recursive:true,force:true})}})
+test("symlink fora da raiz",async()=>{const dir=await root(),outside=await root();try{const realRoot=await fs.realpath(dir),escaped=path.join(await fs.realpath(outside),"x.bin"),io={...fs,realpath:async value=>path.resolve(value)===path.join(realRoot,"link.bin")?escaped:fs.realpath(value)};await assert.rejects(()=>createSingleCaseContentLoader({root:dir,io}).loadBytes("link.bin"),/CONTENT_PATH_OUTSIDE_ROOT/)}finally{await fs.rm(dir,{recursive:true,force:true});await fs.rm(outside,{recursive:true,force:true})}})
+test("raiz ausente",()=>assert.throws(()=>createSingleCaseContentLoader(),/CONTENT_ROOT_MISSING/))
