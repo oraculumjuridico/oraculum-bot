@@ -9,27 +9,21 @@ function makeClock(now = new Date()) { return () => new Date(now).toISOString() 
 
 function makeClient(overrides = {}) {
   // default doubles
-  const calls = { searchCpf:0, searchPhone:0, createContact:0, getContact:0, searchDeal:0, createDeal:0, getDeal:0, assocGet:0, assocCreate:0 }
+  const calls = { searchCpf:0, searchPhone:0, createContact:0, getContact:0, searchDeal:0, createDeal:0, getDeal:0, assocGet:0, assocCreate:0, associationArgs: [] }
   const client = {
-    crm: {
-      contacts: {
-        searchApi: { doSearch: async (opts) => { calls.searchCpf++; return overrides.search || { results: overrides.searchResults || [] } } },
-        basicApi: {
-          create: async (body) => { calls.createContact++; return overrides.createContactResponse || { id: overrides.createContactId || 'contact-1' } },
-          getById: async (id, opts) => { calls.getContact++; return overrides.getContactResponse || { properties: overrides.getContactProperties || {} } }
-        }
-      },
-      deals: {
-        searchApi: { doSearch: async (opts) => { calls.searchDeal++; return overrides.searchDealResponse || { results: overrides.searchDealResults || [] } } },
-        basicApi: {
-          create: async (body) => { calls.createDeal++; return overrides.createDealResponse || { id: overrides.createDealId || 'deal-1' } },
-          getById: async (id, opts) => { calls.getDeal++; return overrides.getDealResponse || { properties: overrides.getDealProperties || {} } }
-        },
-        associationsApi: {
-          getAll: async (dealId, to, opts) => { calls.assocGet++; return overrides.assocGetResponse || { results: overrides.assocGetResults || [] } },
-          create: async (dealId, to, contactId, body) => { calls.assocCreate++; return overrides.assocCreateResponse || { } }
-        }
-      }
+    contacts: {
+      search: async opts => { calls.searchCpf++; return overrides.search || { results: overrides.searchResults || [] } },
+      create: async body => { calls.createContact++; return overrides.createContactResponse || { id: overrides.createContactId || 'contact-1' } },
+      getById: async (id, opts) => { calls.getContact++; return overrides.getContactResponse || { properties: overrides.getContactProperties || {} } }
+    },
+    deals: {
+      search: async opts => { calls.searchDeal++; return overrides.searchDealResponse || { results: overrides.searchDealResults || [] } },
+      create: async body => { calls.createDeal++; return overrides.createDealResponse || { id: overrides.createDealId || 'deal-1' } },
+      getById: async (id, opts) => { calls.getDeal++; return overrides.getDealResponse || { properties: overrides.getDealProperties || {} } }
+    },
+    associations: {
+      findDealContacts: async dealId => { calls.assocGet++; calls.associationArgs.push({ operation: 'find', dealId }); return overrides.assocGetResponse || { results: overrides.assocGetResults || [] } },
+      createDealContact: async args => { calls.assocCreate++; calls.associationArgs.push({ operation: 'create', ...args }); return overrides.assocCreateResponse || {} }
     },
     __calls: calls
   }
@@ -142,7 +136,7 @@ test('contacts.create: valid and missing id', async () => {
 test('contacts.create: timeout is not retried and throws HUBSPOT_TIMEOUT', async () => {
   // simulate long promise
   const client = makeClient({})
-  client.crm.contacts.basicApi.create = () => new Promise(() => {}) // never resolves
+  client.contacts.create = () => new Promise(() => {}) // never resolves
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock(), timeoutMs: 10 })
   const ctx = { caseImportId: 'c1', deadline: new Date(Date.now()+10000).toISOString() }
   await assert.rejects(async () => {
@@ -237,18 +231,18 @@ test('associations: find none, existing, multiple; create and verify; type diver
   assert.deepEqual(res, [])
 
   // existing with type present
-  client = makeClient({ assocGetResults: [{ id: 'c1', type: 'deal_to_contact' }] })
+  client = makeClient({ assocGetResults: [{ toObjectId: 'c1', associationTypes: [{ category: 'HUBSPOT_DEFINED', typeId: 3 }] }] })
   adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
   res = await adapters.associations.find('c1', 'd1')
   assert.deepEqual(res, [{ id: 'c1:d1:deal_to_contact' }])
 
   // multiple associations for same contact with different types
-  client = makeClient({ assocGetResults: [{ id: 'c1', type: 't1' }, { id: 'c1', type: 't2' }] })
+  client = makeClient({ assocGetResults: [{ toObjectId: 'c1', associationTypes: [{ category: 'HUBSPOT_DEFINED', typeId: 3 }] }, { toObjectId: 'c1', associationTypes: [{ category: 'HUBSPOT_DEFINED', typeId: 3 }] }] })
   adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
   res = await adapters.associations.find('c1', 'd1')
   assert.equal(res.length, 2)
-  assert.equal(res[0].id, 'c1:d1:t1')
-  assert.equal(res[1].id, 'c1:d1:t2')
+  assert.equal(res[0].id, 'c1:d1:deal_to_contact')
+  assert.equal(res[1].id, 'c1:d1:deal_to_contact')
 
   // create requires type
   client = makeClient({})
@@ -256,6 +250,8 @@ test('associations: find none, existing, multiple; create and verify; type diver
   const ctx = { caseImportId: 'ci', deadline: new Date(Date.now()+10000).toISOString() }
   const created = await adapters.associations.create({ contactId: 'c1', dealId: 'd1', type: 'deal_to_contact', context: ctx })
   assert.equal(created.id, 'c1:d1:deal_to_contact')
+  assert.deepEqual(client.__calls.associationArgs, [{ operation: 'create', dealId: 'd1', contactId: 'c1', associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 3 }])
+  await assert.rejects(() => adapters.associations.create({ contactId: 'c1', dealId: 'd1', type: 'contact_to_deal', context: ctx }), /ASSOCIATION_PARAMS_INVALID/)
 
   // create rejects missing type
   await assert.rejects(async () => {
@@ -268,7 +264,7 @@ test('associations: find none, existing, multiple; create and verify; type diver
   }, /ASSOCIATION_PARAMS_INVALID/)
 
   // verify with matching type
-  client = makeClient({ assocGetResults: [{ id: 'c1', associationType: 'deal_to_contact' }] })
+  client = makeClient({ assocGetResults: [{ toObjectId: 'c1', associationTypes: [{ category: 'HUBSPOT_DEFINED', typeId: 3 }] }] })
   adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
   const verified = await adapters.associations.verify('c1:d1:deal_to_contact', 'c1', 'd1', 'deal_to_contact')
   assert.equal(verified.verified, true)
@@ -285,7 +281,7 @@ test('associations: find none, existing, multiple; create and verify; type diver
   }, /ASSOCIATION_VERIFY_PARAMS_INVALID/)
 
   // verify fails when type differs
-  client = makeClient({ assocGetResults: [{ id: 'c1', associationType: 'other_type' }] })
+  client = makeClient({ assocGetResults: [{ toObjectId: 'c1', associationTypes: [{ category: 'HUBSPOT_DEFINED', typeId: 4 }] }] })
   adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
   const verified2 = await adapters.associations.verify('c1:d1:deal_to_contact', 'c1', 'd1', 'deal_to_contact')
   assert.equal(verified2.verified, false)
@@ -294,7 +290,7 @@ test('associations: find none, existing, multiple; create and verify; type diver
 
 test('errors with PII are sanitized and not leaked', async () => {
   const client = makeClient({})
-  client.crm.contacts.searchApi.doSearch = async () => { throw new Error('bad payload {"cpf_do_cliente":"12345678900"}') }
+  client.contacts.search = async () => { throw new Error('bad payload {"cpf_do_cliente":"12345678900"}') }
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
   // should not throw original error with PII content; adapter maps to generic
   await assert.rejects(async () => await adapters.contacts.findContactsByCpf('123'), /HUBSPOT_EXTERNAL_ERROR|HUBSPOT_TIMEOUT|HUBSPOT_EXTERNAL_ERROR/)
@@ -313,7 +309,7 @@ test('context and deadline validation', async () => {
 
 test('no calls to Drive or Messages', async () => {
   const client = makeClient({})
-  assert.equal(typeof client.crm.drive, 'undefined')
+  assert.equal(typeof client.drive, 'undefined')
 })
 
 console.log('hubspot-single-case-adapter.test.js: definitions loaded')

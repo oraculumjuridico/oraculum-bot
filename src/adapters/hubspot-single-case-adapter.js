@@ -2,6 +2,7 @@
 
 const { canonicalize, sha256 } = require("../domain/single-case-apply-contracts")
 const { validateHubSpotProperties } = require("../domain/hubspot-contract")
+const { ASSOCIATION } = require("./hubspot-http-client")
 
 const CONTACT_SEARCH_PROPERTIES = [
   "firstname", "email", "phone", "cpf_do_cliente", "date_of_birth",
@@ -39,7 +40,7 @@ function validateContext(context) {
 }
 
 function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, retryPolicy = null, hash = sha256 }) {
-  if (!client || typeof client !== "object" || !client.crm) throw new Error("HUBSPOT_CLIENT_INVALID")
+  if (!client || typeof client !== "object" || !client.contacts || !client.deals || !client.associations) throw new Error("HUBSPOT_CLIENT_INVALID")
   if (typeof clock !== "function") throw new Error("CLOCK_INVALID")
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new Error("TIMEOUT_INVALID")
   if (typeof hash !== "function") throw new Error("HASH_INVALID")
@@ -65,11 +66,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!cpf || typeof cpf !== "string") return []
       try {
         const res = await withTimeout(
-          client.crm.contacts.searchApi.doSearch({
-            filterGroups: [{ filters: [{ propertyName: "cpf_do_cliente", operator: "EQ", value: String(cpf).trim() }] }],
-            properties: CONTACT_SEARCH_PROPERTIES,
-            limit: 2
-          }),
+          client.contacts.search({ propertyName: "cpf_do_cliente", value: String(cpf).trim(), properties: CONTACT_SEARCH_PROPERTIES, limit: 2 }),
           "findContactsByCpf"
         )
         const results = res?.results || []
@@ -95,11 +92,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!phone || typeof phone !== "string") return []
       try {
         const res = await withTimeout(
-          client.crm.contacts.searchApi.doSearch({
-            filterGroups: [{ filters: [{ propertyName: "phone", operator: "EQ", value: String(phone).trim() }] }],
-            properties: CONTACT_SEARCH_PROPERTIES,
-            limit: 2
-          }),
+          client.contacts.search({ propertyName: "phone", value: String(phone).trim(), properties: CONTACT_SEARCH_PROPERTIES, limit: 2 }),
           "findContactsByPhone"
         )
         const results = res?.results || []
@@ -127,7 +120,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!Object.keys(validated).length) throw new Error("NO_VALID_PROPERTIES")
       try {
         const res = await withTimeout(
-          client.crm.contacts.basicApi.create({ properties: validated }),
+          client.contacts.create({ properties: validated }),
           "createContact"
         )
         const id = String(res?.id || "")
@@ -135,7 +128,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
         return { id }
       } catch (e) {
         // If the underlying call timed out, treat as potentially applied (effect unknown)
-        if (/TIMEOUT/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
+        if (/TIMEOUT|HUBSPOT_EXTERNAL_EFFECT_UNKNOWN/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
         throw new Error("HUBSPOT_EXTERNAL_ERROR")
       }
     },
@@ -145,7 +138,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!properties || typeof properties !== "object") throw new Error("PROPERTIES_INVALID")
       try {
         const res = await withTimeout(
-          client.crm.contacts.basicApi.getById(contactId, { properties: CONTACT_SEARCH_PROPERTIES }),
+          client.contacts.getById(contactId, { properties: CONTACT_SEARCH_PROPERTIES }),
           "verifyContact"
         )
         const props = res?.properties || {}
@@ -164,11 +157,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!caseNumber || typeof caseNumber !== "string") return []
       try {
         const res = await withTimeout(
-          client.crm.deals.searchApi.doSearch({
-            filterGroups: [{ filters: [{ propertyName: "numero_de_caso", operator: "EQ", value: String(caseNumber).trim() }] }],
-            properties: DEAL_SEARCH_PROPERTIES,
-            limit: 2
-          }),
+          client.deals.search({ propertyName: "numero_de_caso", value: String(caseNumber).trim(), properties: DEAL_SEARCH_PROPERTIES, limit: 2 }),
           "findByCaseNumber"
         )
         const results = res?.results || []
@@ -196,14 +185,14 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!Object.keys(validated).length) throw new Error("NO_VALID_PROPERTIES")
       try {
         const res = await withTimeout(
-          client.crm.deals.basicApi.create({ properties: validated }),
+          client.deals.create({ properties: validated }),
           "createDeal"
         )
         const id = String(res?.id || "")
         if (!id || !validIdRe.test(id)) throw new Error("INVALID_RESPONSE_ID")
         return { id }
       } catch (e) {
-        if (/TIMEOUT/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
+        if (/TIMEOUT|HUBSPOT_EXTERNAL_EFFECT_UNKNOWN/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
         throw new Error("HUBSPOT_EXTERNAL_ERROR")
       }
     },
@@ -213,7 +202,7 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       if (!properties || typeof properties !== "object") throw new Error("PROPERTIES_INVALID")
       try {
         const res = await withTimeout(
-          client.crm.deals.basicApi.getById(dealId, { properties: DEAL_SEARCH_PROPERTIES }),
+          client.deals.getById(dealId, { properties: DEAL_SEARCH_PROPERTIES }),
           "verifyDeal"
         )
         const props = res?.properties || {}
@@ -232,15 +221,16 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
     find: async (contactId, dealId) => {
       if (!contactId || !dealId) return []
       try {
-        const res = await withTimeout(client.crm.deals.associationsApi.getAll(dealId, "contacts", { limit: 100 }), "findAssociation")
+        const res = await withTimeout(client.associations.findDealContacts(dealId), "findAssociation")
         const results = res?.results || []
         if (!Array.isArray(results)) return []
-        const matches = results.filter(r => String(r.id) === String(contactId))
+        const matches = results.filter(r => String(r.toObjectId || r.id) === String(contactId))
         // Return all associations; executor decides on uniqueness
         return matches.map(r => {
-          const type = r.type || r.associationType
-          if (!type) throw new Error('ASSOCIATION_TYPE_MISSING')
-          return { id: `${contactId}:${dealId}:${type}` }
+          const types = Array.isArray(r.associationTypes) ? r.associationTypes : []
+          const exact = types.find(item => item.category === ASSOCIATION.category && item.typeId === ASSOCIATION.typeId)
+          if (!exact) throw new Error('ASSOCIATION_TYPE_MISSING')
+          return { id: `${contactId}:${dealId}:${ASSOCIATION.typeName}` }
         })
       } catch (e) {
         const se = sanitizeError(e)
@@ -252,32 +242,32 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
 
     create: async ({ contactId, dealId, type, context }) => {
       validateContext(context)
-      if (!contactId || !dealId || !type || typeof type !== "string" || type.length === 0) throw new Error("ASSOCIATION_PARAMS_INVALID")
+      if (!contactId || !dealId || type !== ASSOCIATION.typeName) throw new Error("ASSOCIATION_PARAMS_INVALID")
       try {
         await withTimeout(
-          client.crm.deals.associationsApi.create(dealId, "contacts", contactId, [ { associationCategory: "HUBSPOT_DEFINED", associationType: type } ]),
+          client.associations.createDealContact({ dealId, contactId, associationCategory: ASSOCIATION.category, associationTypeId: ASSOCIATION.typeId }),
           "createAssociation"
         )
         return { id: `${contactId}:${dealId}:${type}` }
       } catch (e) {
-        if (/TIMEOUT/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
+        if (/TIMEOUT|HUBSPOT_EXTERNAL_EFFECT_UNKNOWN/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
         throw new Error("HUBSPOT_EXTERNAL_ERROR")
       }
     },
 
     verify: async (associationId, contactId, dealId, type) => {
-      if (!associationId || !contactId || !dealId || !type || typeof type !== "string" || type.length === 0) throw new Error("ASSOCIATION_VERIFY_PARAMS_INVALID")
+      if (!associationId || !contactId || !dealId || type !== ASSOCIATION.typeName) throw new Error("ASSOCIATION_VERIFY_PARAMS_INVALID")
       try {
-        const res = await withTimeout(client.crm.deals.associationsApi.getAll(dealId, "contacts", { limit: 100 }), "verifyAssociation")
+        const res = await withTimeout(client.associations.findDealContacts(dealId), "verifyAssociation")
         const results = res?.results || []
         if (!Array.isArray(results)) return { verified: false, id: associationId, contactId, dealId, relation: type }
         // Find matching association by contactId
-        const matches = results.filter(r => String(r.id) === String(contactId))
+        const matches = results.filter(r => String(r.toObjectId || r.id) === String(contactId))
         if (matches.length === 0) return { verified: false, id: associationId, contactId, dealId, relation: type }
         // Require exact type match (no fallback)
-        const matchWithType = matches.find(r => (r.type || r.associationType) === type)
+        const matchWithType = matches.find(r => Array.isArray(r.associationTypes) && r.associationTypes.some(item => item.category === ASSOCIATION.category && item.typeId === ASSOCIATION.typeId))
         const verified = Boolean(matchWithType)
-        const actualType = matchWithType ? (matchWithType.type || matchWithType.associationType) : type
+        const actualType = type
         return { verified, id: associationId, contactId, dealId, relation: actualType }
       } catch (e) {
         throw new Error("HUBSPOT_EXTERNAL_ERROR")

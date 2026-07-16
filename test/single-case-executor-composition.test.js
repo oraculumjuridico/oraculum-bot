@@ -20,7 +20,7 @@ function plan(overrides = {}) {
     pendingDependencies: [],
     dealPlan: { caseNumber: "PRV.260715.654", properties: { numero_de_caso: "PRV.260715.654", pipeline: "fixture-pipeline", dealstage: "fixture-stage", dealname: "Caso ficticio" } },
     contactPlan: { properties: { firstname: "Pessoa Ficticia", cpf_do_cliente: "52998224725", phone: "5511999999999" } },
-    associationPlan: { type: "contact_to_deal", primaryOnly: true },
+    associationPlan: { type: "deal_to_contact", primaryOnly: true },
     caseNumberReservationSync: { source: "OFFICIAL_POSTGRES_RESERVATION", reservationKeyFingerprint: "abcdef123456" },
     drivePlan: { area: { logicalId: "AREA-FIXTURE", name: "Area Ficticia" }, case: { logicalId: "CASE-FIXTURE", name: "Caso Ficticio" } },
     deduplication: { contactKeys: ["cpf", "phone"], dealKey: "caseNumber", documentKey: "sha256" },
