@@ -1,0 +1,6 @@
+"use strict";const test=require("node:test"),assert=require("node:assert/strict");const{createSingleCaseReservationRepository}=require("../src/adapters/single-case-reservation-repository")
+const key="case-import:pilot-case-2";function repo(rows){const calls=[],pool={query:async(sql,args)=>{calls.push({sql,args});return{rows}}};return{calls,value:createSingleCaseReservationRepository({pool})}}
+test("query parametrizada única e read-only",async()=>{const h=repo([]);assert.equal(await h.value.findByKey(key),null);assert.equal(h.calls.length,1);assert.deepEqual(h.calls[0].args,[key]);assert.match(h.calls[0].sql,/^SELECT /);assert.doesNotMatch(h.calls[0].sql,/INSERT|UPDATE|DELETE|nextval|BEGIN/i)})
+test("um registro",async()=>{const row={reservation_key:key,case_number:"PRV.260714.707",status:"reserved"};assert.deepEqual(await repo([row]).value.findByKey(key),row)})
+test("múltiplos bloqueados",async()=>assert.rejects(()=>repo([{},{}]).value.findByKey(key),/RESERVATION_AMBIGUOUS/))
+test("erro sanitizado",async()=>{const value=createSingleCaseReservationRepository({pool:{query:async()=>{throw new Error("connection secret")}}});await assert.rejects(()=>value.findByKey(key),e=>e.message==="RESERVATION_QUERY_FAILED")})
