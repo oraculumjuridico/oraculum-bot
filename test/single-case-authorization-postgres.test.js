@@ -148,3 +148,45 @@ test("índice com ordem divergente rejeita e faz rollback", async () => assertMi
 test("índice com INCLUDE adicional rejeita e faz rollback", async () => assertMigrationRejected({indexMutate:row=>({...row,total_attribute_count:6})}))
 test("índice com expressão rejeita e faz rollback", async () => assertMigrationRejected({indexMutate:row=>({...row,has_expressions:true})}))
 test("índice estrutural integral correto é aceito", async () => assert.equal((await validateSingleCaseAuthorizationSchema(schemaHarness())).ok,true))
+
+// Regression and strict-format tests for the normalizer (only JS arrays or JSON-string arrays are accepted)
+test("constraint columns provided as JSON string array are accepted", async () => {
+  const db = schemaHarness({
+    constraintMutate: rows => rows.map(row => ({ ...row, columns: JSON.stringify(Array.isArray(row.columns) ? row.columns : []) }))
+  })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, true)
+})
+
+test("index key_columns provided as JSON string array are accepted", async () => {
+  const db = schemaHarness({
+    indexMutate: row => ({ ...row, key_columns: JSON.stringify(row.key_columns), key_attribute_count: row.key_attribute_count, total_attribute_count: row.total_attribute_count })
+  })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, true)
+})
+
+test("object (non-array) returned for constraint columns is rejected", async () => {
+  const db = schemaHarness({
+    constraintMutate: rows => rows.map(row => ({ ...row, columns: JSON.stringify({ not: "an array" }) }))
+  })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, false)
+})
+
+test("arbitrary string returned for index key_columns is rejected", async () => {
+  const db = schemaHarness({ indexMutate: row => ({ ...row, key_columns: "not-a-json-array", key_attribute_count: row.key_attribute_count, total_attribute_count: row.total_attribute_count }) })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, false)
+})
+
+test("array containing non-string element is rejected", async () => {
+  const db = schemaHarness({ constraintMutate: rows => rows.map(row => ({ ...row, columns: [1, ...row.columns.slice(1)] })) })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, false)
+})
+
+test("array containing empty string element is rejected", async () => {
+  const db = schemaHarness({ constraintMutate: rows => rows.map(row => ({ ...row, columns: ["", ...row.columns.slice(1)] })) })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, false)
+})
+
+test("null for required columns is rejected", async () => {
+  const db = schemaHarness({ constraintMutate: rows => rows.map(row => ({ ...row, columns: null })) })
+  assert.equal((await validateSingleCaseAuthorizationSchema(db)).ok, false)
+})

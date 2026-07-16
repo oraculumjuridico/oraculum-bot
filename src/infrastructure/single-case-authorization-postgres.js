@@ -137,6 +137,32 @@ function canonicalSqlExpression(value) { return JSON.stringify(parseSqlExpressio
 function normalizeSql(value) { return String(value || "").toLowerCase().replace(/::(?:text|jsonb|boolean|timestamp with time zone)/g, "").replace(/[()\s"]/g, "") }
 function normalizeDefault(value) { const normalized = normalizeSql(value); if (["false","'false'"].includes(normalized)) return "false"; if (["now","now()","current_timestamp"].includes(normalized)) return "current_timestamp"; if (["'{}'","{}"].includes(normalized)) return "'{}'"; return normalized || null }
 
+// Helper: normalize PostgreSQL/pg driver results into a JS array of strings (strict, fail-closed)
+function parsePgArrayLike(value) {
+  // Accept a JS array directly (no coercion)
+  if (Array.isArray(value)) return value
+  if (value == null) return null
+  // Accept a JSON string that decodes to an array
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) return parsed
+      return null
+    } catch (e) {
+      return null
+    }
+  }
+  // All other types (objects, numbers, booleans) are rejected explicitly
+  return null
+}
+
+function ensureStringArray(value, errorCode) {
+  const arr = parsePgArrayLike(value)
+  if (!Array.isArray(arr) || arr.some(x => typeof x !== 'string' || x.length === 0)) throw new Error(errorCode)
+  // Return a shallow copy to avoid accidental mutation upstream
+  return [...arr]
+}
+
 function validateExpectedQuery(expected) {
   if (!expected || typeof expected !== "object" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(expected.caseImportId || "") || !/^[a-f0-9]{12}$/.test(expected.caseFingerprint || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(expected.caseNumber || "") || !/^[a-f0-9]{64}$/.test(expected.authorizablePlanHash || "") || expected.schemaVersion !== AUTHORIZATION_SCHEMA_VERSION) throw new Error("AUTHORIZATION_QUERY_INVALID")
   if (JSON.stringify(Object.keys(expected.requiredScopes || {}).sort()) !== JSON.stringify([...TYPES].sort())) throw new Error("AUTHORIZATION_QUERY_INVALID")
@@ -181,23 +207,44 @@ async function validateSingleCaseAuthorizationSchema(queryable) {
     if (Number(actual.ordinal_position) !== expected.position) codes.add("COLUMN_ORDER_MISMATCH")
   }
   if (columns.size !== EXPECTED_COLUMNS.length) codes.add("UNEXPECTED_COLUMN")
-  const constraintsResult = await queryable.query("SELECT c.conname,c.contype,pg_get_constraintdef(c.oid,true) AS definition,array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE a.attname IS NOT NULL) AS columns FROM pg_constraint c LEFT JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum WHERE c.conrelid=to_regclass($1) GROUP BY c.oid,c.conname,c.contype", [TABLE_NAME])
+  const constraintsResult = await queryable.query("SELECT c.conname,c.contype,pg_get_constraintdef(c.oid,true) AS definition,array_to_json(array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE a.attname IS NOT NULL)) AS columns FROM pg_constraint c LEFT JOIN LATERAL unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum WHERE c.conrelid=to_regclass($1) GROUP BY c.oid,c.conname,c.contype", [TABLE_NAME])
   const constraints = new Map(constraintsResult.rows.map(row => [row.conname, row]))
   const pk = [...constraints.values()].filter(row => row.contype === "p")
-  if (pk.length !== 1 || JSON.stringify(pk[0].columns) !== JSON.stringify(["authorization_id"])) codes.add("PRIMARY_KEY_MISMATCH")
+  try {
+    if (pk.length !== 1) {
+      codes.add("PRIMARY_KEY_MISMATCH")
+    } else {
+      const pkColumns = ensureStringArray(pk[0].columns, "PRIMARY_KEY_MISMATCH")
+      if (JSON.stringify(pkColumns) !== JSON.stringify(["authorization_id"])) codes.add("PRIMARY_KEY_MISMATCH")
+    }
+  } catch (e) {
+    codes.add("PRIMARY_KEY_MISMATCH")
+  }
   if (constraints.has("single_case_auth_binding_type_unique") || [...constraints.values()].some(row => row.contype === "u")) codes.add("LIFETIME_UNIQUE_PRESENT")
   for (const [name, expectedExpression] of Object.entries(CHECK_SQL)) {
     const row = constraints.get(name)
-    const columns = [...(row?.columns || [])].sort()
+    let columnsArr
+    try {
+      columnsArr = ensureStringArray(row?.columns, "CHECK_CONSTRAINT_MISMATCH")
+    } catch (e) {
+      codes.add("CHECK_CONSTRAINT_MISMATCH")
+      continue
+    }
+    const columns = [...columnsArr].sort()
     let expressionMatches = false
     try { expressionMatches = canonicalSqlExpression(row?.definition) === canonicalSqlExpression(expectedExpression) } catch {}
     if (!row || row.contype !== "c" || !expressionMatches || JSON.stringify(columns) !== JSON.stringify([...CHECK_COLUMNS[name]].sort())) codes.add("CHECK_CONSTRAINT_MISMATCH")
   }
-  const indexes = await queryable.query("SELECT i.relname AS index_name,ix.indisunique AS is_unique,am.amname AS method,t.relname AS table_name,ix.indnkeyatts AS key_attribute_count,ix.indnatts AS total_attribute_count,ix.indexprs IS NOT NULL AS has_expressions,pg_get_expr(ix.indpred,ix.indrelid,true) AS predicate,array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts AND a.attname IS NOT NULL) AS key_columns FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_am am ON am.oid=i.relam LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=$1 AND i.relname=$2 GROUP BY i.relname,ix.indisunique,am.amname,t.relname,ix.indnkeyatts,ix.indnatts,ix.indexprs,ix.indpred,ix.indrelid", [TABLE_NAME, ACTIVE_INDEX])
+  const indexes = await queryable.query("SELECT i.relname AS index_name,ix.indisunique AS is_unique,am.amname AS method,t.relname AS table_name,ix.indnkeyatts AS key_attribute_count,ix.indnatts AS total_attribute_count,ix.indexprs IS NOT NULL AS has_expressions,pg_get_expr(ix.indpred,ix.indrelid,true) AS predicate,array_to_json(array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts AND a.attname IS NOT NULL)) AS key_columns FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_am am ON am.oid=i.relam LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY k(attnum,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=$1 AND i.relname=$2 GROUP BY i.relname,ix.indisunique,am.amname,t.relname,ix.indnkeyatts,ix.indnatts,ix.indexprs,ix.indpred,ix.indrelid", [TABLE_NAME, ACTIVE_INDEX])
   const active = indexes.rowCount === 1 ? indexes.rows[0] : null
   let predicateMatches = false
   try { predicateMatches = canonicalSqlExpression(active?.predicate) === canonicalSqlExpression(ACTIVE_INDEX_PREDICATE) } catch {}
-  if (!active || active.is_unique !== true || active.method !== "btree" || active.table_name !== TABLE_NAME || Number(active.key_attribute_count) !== ACTIVE_INDEX_COLUMNS.length || Number(active.total_attribute_count) !== ACTIVE_INDEX_COLUMNS.length || active.has_expressions !== false || JSON.stringify(active.key_columns) !== JSON.stringify(ACTIVE_INDEX_COLUMNS) || !predicateMatches) codes.add("ACTIVE_UNIQUE_INDEX_MISMATCH")
+  try {
+    const activeKeyColumns = ensureStringArray(active?.key_columns, "ACTIVE_UNIQUE_INDEX_MISMATCH")
+    if (!active || active.is_unique !== true || active.method !== "btree" || active.table_name !== TABLE_NAME || Number(active.key_attribute_count) !== ACTIVE_INDEX_COLUMNS.length || Number(active.total_attribute_count) !== ACTIVE_INDEX_COLUMNS.length || active.has_expressions !== false || JSON.stringify(activeKeyColumns) !== JSON.stringify(ACTIVE_INDEX_COLUMNS) || !predicateMatches) codes.add("ACTIVE_UNIQUE_INDEX_MISMATCH")
+  } catch (e) {
+    codes.add("ACTIVE_UNIQUE_INDEX_MISMATCH")
+  }
   return { ok: codes.size === 0, codes: [...codes].sort() }
 }
 
