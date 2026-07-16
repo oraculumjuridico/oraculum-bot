@@ -62,6 +62,19 @@ test("duplicidades físicas preservam ocorrências sem aumentar uploads", () => 
   assert.equal(result.manifest.length, 11)
 })
 
+test("usa contagens declaradas do caso sem herdar as contagens de outro piloto", () => {
+  const input = fixture()
+  input.identityConfirmed.reviewedInventory.contents.splice(5)
+  input.identityConfirmed.reviewedInventory.physicalOccurrences = input.identityConfirmed.reviewedInventory.physicalOccurrences.filter(item => input.identityConfirmed.reviewedInventory.contents.some(content => content.contentDocumentId === item.contentDocumentId))
+  input.contentFiles = Object.fromEntries(input.identityConfirmed.reviewedInventory.physicalOccurrences.map(item => [item.physicalDocumentId, input.contentFiles[item.physicalDocumentId]]))
+  input.basePlan.documentPlan = { physicalOccurrences: 6, uniqueContents: 5, ignoredNonDocumentContents: 1, binaryDuplicateOccurrences: 1 }
+  const result = generateSingleCaseApplyPlan(input)
+  assert.equal(result.plan.documentPlan.contents.length, 5)
+  assert.equal(result.plan.documentPlan.occurrences.length, 6)
+  assert.equal(result.plan.documentPlan.driveEligibleUniqueContents, 4)
+  assert.equal(result.manifest.length, 4)
+})
+
 test("falha fechado para hash ausente", () => { const input = fixture(); delete input.identityConfirmed.reviewedInventory.contents[0].sha256; assert.throws(() => generateSingleCaseApplyPlan(input), /CONTENT_HASH_MISSING/) })
 test("falha fechado para hash duplicado", () => { const input = fixture(); input.identityConfirmed.reviewedInventory.contents[1].sha256 = input.identityConfirmed.reviewedInventory.contents[0].sha256; assert.throws(() => generateSingleCaseApplyPlan(input), /CONTENT_HASH_DUPLICATED/) })
 test("falha fechado para colisão de ID", () => { const input = fixture(); input.identityConfirmed.reviewedInventory.contents[1].contentDocumentId = input.identityConfirmed.reviewedInventory.contents[0].contentDocumentId; assert.throws(() => generateSingleCaseApplyPlan(input), /CONTENT_ID_COLLISION/) })

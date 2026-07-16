@@ -24,8 +24,11 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
 
   const inventory = identityConfirmed.reviewedInventory
   if (!Array.isArray(inventory.contents) || !Array.isArray(inventory.physicalOccurrences) || !contentFiles || typeof contentFiles !== "object") fail("CONTENT_INVENTORY_INVALID")
-  if (inventory.contents.length !== 12) fail("CONTENT_INVENTORY_INVALID")
-  if (inventory.physicalOccurrences.length !== 14) fail("OCCURRENCE_COUNT_MISMATCH")
+  const declared = basePlan?.documentPlan
+  if (!declared || !Number.isInteger(declared.uniqueContents) || declared.uniqueContents < 1 || !Number.isInteger(declared.physicalOccurrences) || declared.physicalOccurrences < 1 || !Number.isInteger(declared.ignoredNonDocumentContents) || declared.ignoredNonDocumentContents < 0 || !Number.isInteger(declared.binaryDuplicateOccurrences) || declared.binaryDuplicateOccurrences < 0) fail("CONTENT_COUNT_DECLARATION_INVALID")
+  if (inventory.contents.length !== declared.uniqueContents) fail("CONTENT_INVENTORY_INVALID")
+  if (inventory.physicalOccurrences.length !== declared.physicalOccurrences) fail("OCCURRENCE_COUNT_MISMATCH")
+  if (inventory.physicalOccurrences.length - inventory.contents.length !== declared.binaryDuplicateOccurrences) fail("DUPLICATE_OCCURRENCE_COUNT_MISMATCH")
 
   const ids = new Set(), hashes = new Set(), contents = []
   for (const source of inventory.contents) {
@@ -39,7 +42,8 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
     contents.push({ contentDocumentId, sha256: source.sha256, eligible, kind: eligible ? "document" : "non_document", caseLinked: true })
   }
   contents.sort((a, b) => a.sha256.localeCompare(b.sha256))
-  if (contents.filter(item => item.eligible).length !== 11) fail("ELIGIBLE_CONTENT_COUNT_MISMATCH")
+  const eligibleContentCount = contents.filter(item => item.eligible).length
+  if (contents.length - eligibleContentCount !== declared.ignoredNonDocumentContents || eligibleContentCount < 1) fail("ELIGIBLE_CONTENT_COUNT_MISMATCH")
 
   const occurrenceSources = [...inventory.physicalOccurrences].sort((a, b) => String(a.physicalDocumentId).localeCompare(String(b.physicalDocumentId)))
   const ordinals = new Map(), occurrences = [], candidates = new Map()
@@ -56,14 +60,14 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
     list.push({ contentDocumentId: content.contentDocumentId, reference: content.contentDocumentId, relativePath: file.relativePath.replace(/\\/g, "/"), sha256: content.sha256, size: file.size })
     candidates.set(content.contentDocumentId, list)
   }
-  if (occurrences.length !== 14) fail("OCCURRENCE_COUNT_MISMATCH")
+  if (occurrences.length !== declared.physicalOccurrences) fail("OCCURRENCE_COUNT_MISMATCH")
 
   const manifest = contents.filter(item => item.eligible).map(item => {
     const choices = (candidates.get(item.contentDocumentId) || []).sort((a, b) => a.relativePath.localeCompare(b.relativePath))
     if (!choices.length || choices.some(choice => choice.sha256 !== choices[0].sha256 || choice.size !== choices[0].size)) fail("CONTENT_INVENTORY_INVALID")
     return choices[0]
   }).sort((a, b) => a.contentDocumentId.localeCompare(b.contentDocumentId))
-  if (manifest.length !== 11) fail("ELIGIBLE_CONTENT_COUNT_MISMATCH")
+  if (manifest.length !== eligibleContentCount) fail("ELIGIBLE_CONTENT_COUNT_MISMATCH")
 
   const area = { logicalId: `area:${hash(driveRules?.areaName || "").slice(0, 20)}`, name: driveRules?.areaName }
   const caseDestination = { logicalId: `case:${fingerprint}`, name: driveRules?.caseName }
@@ -79,8 +83,8 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
   plan.associationPlan ||= { type: "deal_to_contact", primaryOnly: true }
   plan.deduplication ||= { contactKeys: ["cpf", "phone"], dealKey: "caseNumber", documentKey: "sha256" }
   plan.writeScope ||= ["HUBSPOT_CONTACT", "HUBSPOT_DEAL", "HUBSPOT_ASSOCIATION", "DRIVE_FOLDERS", "DRIVE_UPLOADS", "CHECKPOINT_WRITE"]
-  plan.documentPlan = { ...plan.documentPlan, driveEligibleUniqueContents: 11, contents, occurrences }
-  plan.simulation = { ...(plan.simulation || {}), driveUniqueContents: 11 }
+  plan.documentPlan = { ...plan.documentPlan, driveEligibleUniqueContents: eligibleContentCount, contents, occurrences }
+  plan.simulation = { ...(plan.simulation || {}), driveUniqueContents: eligibleContentCount }
   return { plan, manifest }
 }
 
