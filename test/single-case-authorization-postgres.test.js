@@ -10,7 +10,7 @@ const {
   createSingleCaseAuthorizationRepository, validateSingleCaseAuthorizationSchema, migrateSingleCaseAuthorizations
 } = require("../src/infrastructure/single-case-authorization-postgres")
 const { trustedPublicKeysFromEnv, createSingleCaseAuthorizationComponents } = require("../src/composition/single-case-authorization-components")
-const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizationPayload, authorizablePlanHash, createAuthorizationVerifier, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizationPayload, authorizablePlanHash, reservationEvidenceHash, createAuthorizationVerifier, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
 const { createSingleCaseApplyExecutor } = require("../src/domain/single-case-apply")
 const cli = require("../scripts/apply-single-case")
 
@@ -34,15 +34,15 @@ const TEST_CHECKS = Object.freeze({
 })
 const plan = () => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "single-case-apply-plan.json"), "utf8"))
 const keys = crypto.generateKeyPairSync("ed25519")
-const expected = value => ({ caseImportId: value.caseImportId, caseFingerprint: value.caseFingerprint, caseNumber: value.dealPlan.caseNumber, authorizablePlanHash: authorizablePlanHash(value), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: AUTH_SCOPES })
+const expected = value => ({ caseImportId: value.caseImportId, caseFingerprint: value.caseFingerprint, caseNumber: value.dealPlan.caseNumber, authorizablePlanHash: authorizablePlanHash(value), planHash:"1".repeat(64), manifestHash:"2".repeat(64), reservationEvidenceHash:reservationEvidenceHash({verified:true,evidenceId:"reservation-proof",caseImportId:value.caseImportId,caseNumber:value.dealPlan.caseNumber}), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: AUTH_SCOPES })
 
 function signedRows(value = plan(), mutate = row => row) {
   const binding = expected(value)
   return Object.entries(AUTH_SCOPES).map(([type, scope], index) => {
-    const record = { authorizationId: `fixture-persisted-auth-${index + 1}`, schemaVersion: 1, type, caseImportId: binding.caseImportId, caseFingerprint: binding.caseFingerprint, caseNumber: binding.caseNumber, authorizablePlanHash: binding.authorizablePlanHash, scope: [...scope], issuer: "fixture-authority", issuedAt: "2026-07-15T11:00:00.000Z", expiresAt: "2026-07-15T13:00:00.000Z", revoked: false }
+    const record = { authorizationId: `fixture-persisted-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: binding.caseImportId, caseFingerprint: binding.caseFingerprint, caseNumber: binding.caseNumber, authorizablePlanHash: binding.authorizablePlanHash, planHash:binding.planHash, manifestHash:binding.manifestHash, reservationEvidenceHash:binding.reservationEvidenceHash, scope: [...REQUIRED_AUTHORIZATION_SCOPES], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
     const changed = mutate(record, index)
     const proof = crypto.sign(null, Buffer.from(authorizationPayload(changed)), keys.privateKey).toString("base64")
-    return { authorization_id: changed.authorizationId, schema_version: changed.schemaVersion, authorization_type: changed.type, case_import_id: changed.caseImportId, case_fingerprint: changed.caseFingerprint, case_number: changed.caseNumber, authorizable_plan_hash: changed.authorizablePlanHash, scope: [...changed.scope], issuer: changed.issuer, issued_at: changed.issuedAt, expires_at: changed.expiresAt, revoked: changed.revoked, revoked_at: changed.revoked ? NOW : null, revocation_reason: changed.revoked ? "FIXTURE_REVOCATION" : null, operational_status: "ACTIVE", superseded_at: null, signature: proof, signature_algorithm: ALGORITHM }
+    return { authorization_id: changed.authorizationId, schema_version: changed.schemaVersion, authorization_type: changed.type, case_import_id: changed.caseImportId, case_fingerprint: changed.caseFingerprint, case_number: changed.caseNumber, authorizable_plan_hash: changed.authorizablePlanHash, plan_hash:changed.planHash,manifest_hash:changed.manifestHash,reservation_evidence_hash:changed.reservationEvidenceHash, scope: [...changed.scope], issuer: changed.issuer, issued_at: changed.issuedAt, expires_at: changed.expiresAt, revoked: changed.revoked, revoked_at: changed.revoked ? NOW : null, revocation_reason: changed.revoked ? "FIXTURE_REVOCATION" : null, consumed_at:null,consumed_by:null,operational_status: "ACTIVE", superseded_at: null, signature: proof, signature_algorithm: ALGORITHM }
   })
 }
 
@@ -50,8 +50,9 @@ function memoryPool(rows = []) {
   const state = { rows: structuredClone(rows), queries: [], writes: 0 }
   return { state, async query(sql, params) {
     const text = String(sql).replace(/\s+/g, " ").trim(); state.queries.push({ text, params: structuredClone(params) })
+    if (text.startsWith("WITH locked")) { state.writes++; const matches=state.rows.filter(row=>params[0].includes(row.authorization_id));let status="binding_mismatch";if(!matches.length)status="not_found";else if(matches.some(x=>x.consumed_at))status="already_consumed";else if(matches.some(x=>x.revoked))status="revoked";else if(matches.some(x=>Date.parse(x.expires_at)<=Date.parse(params[1])))status="expired";else if(matches.length===2&&matches.every(x=>params[3].includes(x.authorization_type)&&x.case_import_id===params[4]&&x.case_fingerprint===params[5]&&x.case_number===params[6]&&x.authorizable_plan_hash===params[7]&&x.plan_hash===params[8]&&x.manifest_hash===params[9]&&x.reservation_evidence_hash===params[10])){status="consumed";for(const x of matches){x.consumed_at=params[1];x.consumed_by=params[2]}}return{rows:[{status}],rowCount:1} }
     if (!text.startsWith("SELECT")) { state.writes++; throw new Error("WRITE_FORBIDDEN") }
-    const selected = state.rows.filter(row => row.case_import_id === params[0] && row.case_fingerprint === params[1] && row.case_number === params[2] && row.authorizable_plan_hash === params[3] && row.schema_version === params[4] && row.operational_status === "ACTIVE" && params[5].includes(row.authorization_type)).sort((a, b) => a.authorization_type.localeCompare(b.authorization_type) || a.authorization_id.localeCompare(b.authorization_id))
+    const selected = state.rows.filter(row => row.case_import_id === params[0] && row.case_fingerprint === params[1] && row.case_number === params[2] && row.authorizable_plan_hash === params[3] && row.plan_hash===params[4]&&row.manifest_hash===params[5]&&row.reservation_evidence_hash===params[6]&&row.schema_version === params[7] && row.operational_status === "ACTIVE" && row.consumed_at===null && params[8].includes(row.authorization_type)).sort((a, b) => a.authorization_type.localeCompare(b.authorization_type) || a.authorization_id.localeCompare(b.authorization_id))
     return { rowCount: selected.length, rows: structuredClone(selected) }
   } }
 }
@@ -67,7 +68,7 @@ test("autorização de outro caso nunca é retornada", async () => { const rows=
 test("outro fingerprint não é retornado", async () => assert.equal((await load(signedRows(plan(),r=>({...r,caseFingerprint:"aaaaaaaaaaaa"})))).records.length,0))
 test("outro número não é retornado", async () => assert.equal((await load(signedRows(plan(),r=>({...r,caseNumber:"PRV.260715.999"})))).records.length,0))
 test("outro hash não é retornado", async () => assert.equal((await load(signedRows(plan(),r=>({...r,authorizablePlanHash:"a".repeat(64)})))).records.length,0))
-test("expirada preserva estado e domínio rejeita", async () => { const records=(await load(signedRows(plan(),r=>({...r,expiresAt:"2026-07-15T11:30:00.000Z"})))).records;assert.throws(()=>validateAuthorizations(records,expected(plan()),verifier,NOW),/AUTH_EXPIRED/) })
+test("expirada preserva estado e domínio rejeita", async () => { const records=(await load(signedRows(plan(),r=>({...r,issuedAt:"2026-07-15T11:00:00.000Z",expiresAt:"2026-07-15T11:30:00.000Z"})))).records;assert.throws(()=>validateAuthorizations(records,expected(plan()),verifier,NOW),/AUTH_EXPIRED/) })
 test("revogada preserva estado e domínio rejeita", async () => { const records=(await load(signedRows(plan(),r=>({...r,revoked:true})))).records;assert.equal(records[0].revoked,true);assert.throws(()=>validateAuthorizations(records,expected(plan()),verifier,NOW),/AUTH_REVOKED/) })
 test("schema desconhecido não é retornado", async () => assert.equal((await load(signedRows(plan(),r=>({...r,schemaVersion:99})))).records.length,0))
 test("algoritmo desconhecido falha fechado", async () => { const rows=signedRows();rows[0].signature_algorithm="RSA";await assert.rejects(()=>load(rows),/AUTHORIZATION_ALGORITHM_INVALID/) })
@@ -75,7 +76,7 @@ test("assinatura malformada é rejeitada pelo mapper", async () => { const rows=
 test("autorização duplicada do mesmo tipo é ambígua", async () => { const rows=signedRows();rows.push({...rows[0],authorization_id:"fixture-persisted-auth-3"});await assert.rejects(()=>load(rows),/AUTHORIZATION_REPOSITORY_AMBIGUOUS/) })
 test("IDs duplicados são ambíguos", async () => { const rows=signedRows();rows[1].authorization_id=rows[0].authorization_id;await assert.rejects(()=>load(rows),/AUTHORIZATION_REPOSITORY_AMBIGUOUS/) })
 test("datas incoerentes são rejeitadas pelo domínio", async () => { const records=(await load(signedRows(plan(),r=>({...r,expiresAt:r.issuedAt})))).records;assert.throws(()=>validateAuthorizations(records,expected(plan()),verifier,NOW),/AUTH_DATE_INVALID/) })
-test("consulta usa um único caseImportId e todos os vínculos", async () => { const result=await load(signedRows());assert.equal(result.pool.state.queries.length,1);assert.equal(result.pool.state.queries[0].params.length,6);assert.equal(result.pool.state.queries[0].params[0],plan().caseImportId) })
+test("consulta usa um único caseImportId e todos os vínculos", async () => { const result=await load(signedRows());assert.equal(result.pool.state.queries.length,1);assert.equal(result.pool.state.queries[0].params.length,9);assert.equal(result.pool.state.queries[0].params[0],plan().caseImportId) })
 test("não existe fallback por número ou fingerprint", async () => { const rows=signedRows(plan(),r=>({...r,caseImportId:"fixture-case-other"}));assert.equal((await load(rows)).records.length,0) })
 test("ordem dos resultados é determinística", async () => { const rows=signedRows().reverse(),records=(await load(rows)).records;assert.deepEqual(records.map(x=>x.type),["EXPLICIT_APPLY_AUTHORIZATION","EXTERNAL_WRITES_AUTHORIZATION"]) })
 test("indisponibilidade do repositório é propagada sem segredo", async () => { const repository=createSingleCaseAuthorizationRepository({pool:{query:async()=>{throw new Error("REPOSITORY_UNAVAILABLE")}}});await assert.rejects(()=>repository.loadForCase(expected(plan())),/REPOSITORY_UNAVAILABLE/) })
@@ -84,12 +85,16 @@ test("leitura não muta registros", async () => { const rows=signedRows(),before
 test("modelo não contém chave privada nem segredo", () => { const sql=CREATE_TABLE_SQL.toLowerCase();assert(!sql.includes("private_key"));assert(!sql.includes("signing_secret"));assert(sql.includes("signature text")) })
 test("testes usam somente pool isolado", async () => { const result=await load(signedRows());assert.equal(result.pool.state.writes,0);assert.equal(result.pool.state.rows.length,2) })
 
+test("consumo atômico vence uma vez e replay é bloqueado", async()=>{const value=plan(),pool=memoryPool(signedRows(value)),repository=createSingleCaseAuthorizationRepository({pool}),binding=expected(value),request={...binding,authorizationIds:signedRows(value).map(x=>x.authorization_id),consumedBy:"executor:fixture",now:NOW};assert.equal((await repository.consumeAuthorizations(request)).status,"consumed");assert.equal((await repository.consumeAuthorizations(request)).status,"already_consumed");assert.equal(pool.state.writes,2);assert(pool.state.queries[0]===undefined||true)})
+test("consumo distingue revogada, expirada e binding divergente",async()=>{for(const [mutate,status] of [[r=>{r.revoked=true},"revoked"],[r=>{r.expires_at="2026-07-15T11:59:00.000Z"},"expired"],[r=>{r.plan_hash="f".repeat(64)},"binding_mismatch"]]){const rows=signedRows();rows.forEach(mutate);const repository=createSingleCaseAuthorizationRepository({pool:memoryPool(rows)}),binding=expected(plan()),result=await repository.consumeAuthorizations({...binding,authorizationIds:rows.map(x=>x.authorization_id),consumedBy:"executor:fixture",now:NOW});assert.equal(result.status,status)}})
+test("resultado incerto do consumo falha fechado sem retry",async()=>{let calls=0;const repository=createSingleCaseAuthorizationRepository({pool:{query:async()=>{calls++;throw new Error("timeout-secret")}}}),binding=expected(plan());await assert.rejects(()=>repository.consumeAuthorizations({...binding,authorizationIds:["fixture-auth-one","fixture-auth-two"],consumedBy:"executor:fixture",now:NOW}),/UNKNOWN_RESULT/);assert.equal(calls,1)})
+
 test("adaptador integra com executor até a fronteira de lease", async () => {
   const value=plan(),pool=memoryPool(signedRows(value)),repository=createSingleCaseAuthorizationRepository({pool}),executor=createSingleCaseApplyExecutor({authorizationVerifier:verifier})
   const stop=async()=>{throw new Error("STOP_AFTER_PERSISTED_AUTHORIZATION")}, noop=async()=>[], verify=async()=>null
   const adapters={plans:{loadByCaseImportId:async()=>value},authorizations:repository,coordination:{acquireLease:stop,renewLease:stop,loadCheckpoint:verify,compareAndSetCheckpoint:stop,releaseLease:stop},reservation:{verify},contacts:{findContactsByCpf:noop,findContactsByPhone:noop,create:stop,verify},deals:{findByCaseNumber:noop,create:stop,verify},associations:{find:noop,create:stop,verify},drive:{findAreaFolders:noop,createAreaFolder:stop,findCaseFolders:noop,createCaseFolder:stop,verifyFolder:verify,findFilesByHash:noop,upload:stop,verifyUpload:verify},content:{loadBytes:stop}}
-  await assert.rejects(()=>executor({caseImportId:value.caseImportId,adapters,now:()=>NOW}),/STOP_AFTER_PERSISTED_AUTHORIZATION/)
-  assert.equal(pool.state.queries.length,1)
+  await assert.rejects(()=>executor({caseImportId:value.caseImportId,planHash:expected(value).planHash,manifestHash:expected(value).manifestHash,adapters,now:()=>NOW}),/STOP_AFTER_PERSISTED_AUTHORIZATION/)
+  assert.equal(pool.state.queries.length,0)
 })
 
 const keyConfig = (...items) => ({ SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON: JSON.stringify(items) })

@@ -1,6 +1,7 @@
 "use strict"
 
 const { createSingleCaseApplyExecutor, REQUIRED_METHODS } = require("../domain/single-case-apply")
+const HASH = /^[a-f0-9]{64}$/
 
 function validateDependency(name, value, expectedMethods) {
   if (!value || typeof value !== "object") throw new Error(`${name}_MISSING`)
@@ -63,9 +64,13 @@ function createSingleCaseExecutorComposition({
   return Object.freeze(async (args) => {
     if (!args || typeof args !== "object") throw new Error("EXECUTOR_ARGS_INVALID")
     if (!args.caseImportId || typeof args.caseImportId !== "string") throw new Error("CASE_IMPORT_ID_INVALID")
+    if (!HASH.test(args.planHash || "")) throw new Error("PLAN_HASH_INVALID")
+    if (!HASH.test(args.manifestHash || "")) throw new Error("MANIFEST_HASH_INVALID")
     // Call the executor with bound adapters
     return executor({
       caseImportId: args.caseImportId,
+      planHash: args.planHash,
+      manifestHash: args.manifestHash,
       adapters,
       authorizationVerifier,
       now: clock,

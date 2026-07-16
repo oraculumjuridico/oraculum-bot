@@ -4,10 +4,11 @@ const test = require("node:test")
 const assert = require("node:assert/strict")
 const { createSingleCaseExecutorComposition } = require("../src/composition/single-case-executor-composition")
 const { REQUIRED_METHODS } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, authorizablePlanHash, canonicalize, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256 } = require("../src/domain/single-case-apply-contracts")
 
 const NOW = "2026-07-15T12:00:00.000Z"
 const BYTES = Buffer.from("fixture-composition-content")
+const PLAN_HASH = "3".repeat(64), MANIFEST_HASH = "4".repeat(64)
 const clone = value => structuredClone(value)
 
 function plan(overrides = {}) {
@@ -38,16 +39,19 @@ function authorizations(value) {
   const hash = authorizablePlanHash(value)
   return Object.entries(AUTH_SCOPES).map(([type, scope], index) => ({
     authorizationId: `fixture-composition-auth-${index + 1}`,
-    schemaVersion: 1,
+    schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     type,
     caseImportId: value.caseImportId,
     caseFingerprint: value.caseFingerprint,
     caseNumber: value.dealPlan.caseNumber,
     authorizablePlanHash: hash,
-    scope: [...scope],
+    planHash: PLAN_HASH,
+    manifestHash: MANIFEST_HASH,
+    reservationEvidenceHash: reservationEvidenceHash({ verified: true, caseImportId: value.caseImportId, caseNumber: value.dealPlan.caseNumber, evidenceId: "fixture-reservation-proof" }),
+    scope: [...REQUIRED_AUTHORIZATION_SCOPES],
     issuer: "fixture-authority",
-    issuedAt: "2026-07-15T11:00:00.000Z",
-    expiresAt: "2026-07-15T13:00:00.000Z",
+    issuedAt: "2026-07-15T11:45:00.000Z",
+    expiresAt: "2026-07-15T12:15:00.000Z",
     revoked: false,
     proof: "fixture-proof"
   }))
@@ -67,7 +71,8 @@ function system(options = {}) {
   }
   const count = name => { state.calls[name] = (state.calls[name] || 0) + 1 }
   const contextValid = context => {
-    if (context.caseImportId !== value.caseImportId || context.leaseId !== state.lease?.leaseId || context.fencingToken !== state.lease?.fencingToken || context.checkpointVersion !== state.version) throw new Error("FENCING_REJECTED")
+    const expectedVersion = context.idempotencyKey === `${value.caseImportId}:reservation-preflight` ? 0 : state.version
+    if (context.caseImportId !== value.caseImportId || context.leaseId !== state.lease?.leaseId || context.fencingToken !== state.lease?.fencingToken || context.checkpointVersion !== expectedVersion) throw new Error("FENCING_REJECTED")
   }
   const contacts = {
     findContactsByCpf: async cpf => options.multipleContacts ? [{ id: "contact-a" }, { id: "contact-b" }] : options.cpfContact ? [{ id: options.cpfContact }] : state.contacts.filter(item => item.properties.cpf_do_cliente === cpf).map(item => ({ id: item.id })),
@@ -97,7 +102,7 @@ function system(options = {}) {
   }
   const dependencies = {
     plans: { loadByCaseImportId: async id => { count(`plans.load:${id}`); return clone(options.wrongCase ? { ...value, caseImportId: "fixture-other-case" } : value) } },
-    authorizations: { loadForCase: async () => clone(records) },
+    authorizations: { loadForCase: async () => clone(records), consumeAuthorizations: async () => ({ status: options.consumeStatus || "consumed" }) },
     coordination: {
       acquireLease: async ({ caseImportId }) => { state.lease = { caseImportId, leaseId: "lease-fixture", fencingToken: 1, version: 1, expiresAt: "2026-07-15T12:01:00.000Z" }; return clone(state.lease) },
       renewLease: async () => { if (options.rejectFencing) throw new Error("FENCING_TOKEN_STALE"); return clone(state.lease) },
@@ -116,9 +121,9 @@ function system(options = {}) {
 }
 
 const compose = item => createSingleCaseExecutorComposition(item.dependencies)
-const execute = item => compose(item)({ caseImportId: item.value.caseImportId })
+const execute = item => compose(item)({ caseImportId: item.value.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH })
 
-test("factory válida retorna função e conclui pelo executor real", async () => { const item = system(); const executor = compose(item); assert.equal(typeof executor, "function"); assert.equal((await executor({ caseImportId: item.value.caseImportId })).completed, true) })
+test("factory válida retorna função e conclui pelo executor real", async () => { const item = system(); const executor = compose(item); assert.equal(typeof executor, "function"); assert.equal((await executor({ caseImportId: item.value.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH })).completed, true) })
 
 for (const [dependency, methods] of Object.entries(REQUIRED_METHODS)) {
   test(`bloqueia dependência ausente: ${dependency}`, () => { const item = system(); if (["contacts", "deals", "associations"].includes(dependency)) delete item.dependencies.hubspot[dependency]; else delete item.dependencies[dependency]; assert.throws(() => compose(item), new RegExp(`${dependency === "contacts" || dependency === "deals" || dependency === "associations" ? `hubspot.${dependency}` : dependency}_MISSING`)) })
@@ -128,7 +133,7 @@ for (const [dependency, methods] of Object.entries(REQUIRED_METHODS)) {
 test("bloqueia agrupador HubSpot ausente", () => { const item = system(); delete item.dependencies.hubspot; assert.throws(() => compose(item), /HUBSPOT_ADAPTERS_MISSING/) })
 test("bloqueia clock inválido", () => { const item = system(); item.dependencies.clock = null; assert.throws(() => compose(item), /CLOCK_INVALID/) })
 test("bloqueia verificador ausente", () => { const item = system(); delete item.dependencies.authorizationVerifier; assert.throws(() => compose(item), /AUTHORIZATION_VERIFIER_MISSING/) })
-test("bloqueia argumentos operacionais inválidos", async () => { const executor = compose(system()); await assert.rejects(() => executor(), /EXECUTOR_ARGS_INVALID/); await assert.rejects(() => executor({}), /CASE_IMPORT_ID_INVALID/) })
+test("bloqueia argumentos operacionais inválidos", async () => { const executor = compose(system()); await assert.rejects(() => executor(), /EXECUTOR_ARGS_INVALID/); await assert.rejects(() => executor({}), /CASE_IMPORT_ID_INVALID/); await assert.rejects(() => executor({caseImportId:"fixture-composition-case"}), /PLAN_HASH_INVALID/); await assert.rejects(() => executor({caseImportId:"fixture-composition-case",planHash:PLAN_HASH}), /MANIFEST_HASH_INVALID/) })
 test("CLI real permanece desconectada", async () => { const cli = require("../scripts/apply-single-case"); await assert.rejects(() => cli.main({ argv: ["--case-import-id", "fixture-composition-case"] }), /REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED/) })
 
 test("reutiliza contato, negócio e associação existentes", async () => { const value = plan(); const item = system({ contact: { id: "contact-existing", properties: clone(value.contactPlan.properties), caseImportId: value.caseImportId }, deal: { id: "deal-existing", properties: clone(value.dealPlan.properties) }, association: { id: "association-existing", contactId: "contact-existing", dealId: "deal-existing", type: value.associationPlan.type } }); await execute(item); assert.equal(item.state.calls["contacts.create"], undefined); assert.equal(item.state.calls["deals.create"], undefined); assert.equal(item.state.calls["associations.create"], undefined) })
@@ -136,8 +141,8 @@ test("cria exatamente um contato, negócio e associação quando ausentes", asyn
 test("múltiplos contatos bloqueiam antes de negócio e Drive", async () => { const item = system({ multipleContacts: true }); await assert.rejects(() => execute(item), /CONTACT_CPF_AMBIGUOUS/); assert.equal(item.state.calls["deals.find"], undefined); assert.equal(item.state.calls["drive.findAreaFolders"], undefined) })
 test("CPF e telefone divergentes bloqueiam", async () => { const item = system({ cpfContact: "contact-a", phoneContact: "contact-b" }); await assert.rejects(() => execute(item), /CONTACT_IDENTITY_CONFLICT/) })
 test("múltiplos negócios bloqueiam antes de associação e Drive", async () => { const item = system({ multipleDeals: true }); await assert.rejects(() => execute(item), /DEAL_AMBIGUOUS/); assert.equal(item.state.calls["associations.find"], undefined); assert.equal(item.state.calls["drive.findAreaFolders"], undefined) })
-test("autorização ausente bloqueia antes de lease e efeitos", async () => { const item = system({ records: [] }); await assert.rejects(() => execute(item), /AUTH_AMBIGUOUS/); assert.equal(item.state.lease, null); assert.deepEqual(item.state.calls, { [`plans.load:${item.value.caseImportId}`]: 1 }) })
-test("autorização expirada bloqueia antes de lease e efeitos", async () => { const item = system({ verifier: { verify: () => ({ valid: false, reason: "AUTH_EXPIRED" }) } }); await assert.rejects(() => execute(item), /AUTH_EXPIRED/); assert.equal(item.state.lease, null) })
+test("autorização ausente bloqueia depois da lease e antes de efeitos", async () => { const item = system({ records: [] }); await assert.rejects(() => execute(item), /AUTH_AMBIGUOUS/); assert.equal(item.state.calls["contacts.create"], undefined) })
+test("autorização expirada bloqueia depois da lease e antes de efeitos", async () => { const item = system({ verifier: { verify: () => ({ valid: false, reason: "AUTH_EXPIRED" }) } }); await assert.rejects(() => execute(item), /AUTH_EXPIRED/); assert.equal(item.state.calls["contacts.create"], undefined) })
 test("plano não sincronizado falha fechado", async () => { const value = plan(); value.caseNumberReservationSync.source = "PENDING_RESERVATION"; const item = system({ plan: value, records: [] }); await assert.rejects(() => execute(item), /PLAN_NOT_SYNCHRONIZED/) })
 test("retomada de checkpoint concluído reverifica sem duplicar efeitos", async () => { const item = system(); await execute(item); const first = clone(item.state.calls); await execute(item); assert.equal(item.state.calls["contacts.create"], first["contacts.create"]); assert.equal(item.state.calls["deals.create"], first["deals.create"]); assert.equal(item.state.calls["drive.upload"], first["drive.upload"]) })
 test("fencing rejeitado interrompe antes do primeiro efeito externo", async () => { const item = system({ rejectFencing: true }); await assert.rejects(() => execute(item), /FENCING_TOKEN_STALE/); assert.equal(item.state.calls["contacts.create"], undefined) })

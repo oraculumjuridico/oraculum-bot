@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto")
 const { createAuthorizationVerifier } = require("../domain/single-case-apply-contracts")
+const { createSingleCaseAuthorizationSigner } = require("../domain/single-case-authorization-signer")
 const { createSingleCaseAuthorizationRepository } = require("../infrastructure/single-case-authorization-postgres")
 
 const PUBLIC_PEM = /^-----BEGIN PUBLIC KEY-----\r?\n[\s\S]+\r?\n-----END PUBLIC KEY-----\r?\n?$/
@@ -29,7 +30,7 @@ function trustedPublicKeysFromEnv(env = {}) {
 
 function createSingleCaseAuthorizationComponents({ pool, env }) {
   const trustedIssuers = trustedPublicKeysFromEnv(env)
-  return Object.freeze({ authorizationRepository: createSingleCaseAuthorizationRepository({ pool }), authorizationVerifier: createAuthorizationVerifier({ trustedIssuers }) })
+  return Object.freeze({ authorizationRepository: createSingleCaseAuthorizationRepository({ pool }), authorizationVerifier: createAuthorizationVerifier({ trustedIssuers }), createAuthorizationSigner: dependencies => createSingleCaseAuthorizationSigner(dependencies) })
 }
 
 module.exports = { PUBLIC_PEM, PRIVATE_PEM, ITEM_KEYS, trustedPublicKeysFromEnv, createSingleCaseAuthorizationComponents }

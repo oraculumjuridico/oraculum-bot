@@ -3,12 +3,16 @@
 const crypto = require("node:crypto")
 
 const AUTHORIZABLE_SCHEMA_VERSION = 1
-const AUTHORIZATION_SCHEMA_VERSION = 1
+const AUTHORIZATION_SCHEMA_VERSION = 2
 const CHECKPOINT_SCHEMA_VERSION = 2
+const MAX_AUTHORIZATION_TTL_MS = 30 * 60 * 1000
+const AUTHORIZATION_CLOCK_SKEW_MS = 30000
 const AUTH_SCOPES = Object.freeze({
   EXPLICIT_APPLY_AUTHORIZATION: Object.freeze(["APPLY_SINGLE_CASE"]),
   EXTERNAL_WRITES_AUTHORIZATION: Object.freeze(["HUBSPOT_CONTACT", "HUBSPOT_DEAL", "HUBSPOT_ASSOCIATION", "DRIVE_FOLDERS", "DRIVE_UPLOADS", "CHECKPOINT_WRITE"])
 })
+const REQUIRED_AUTHORIZATION_SCOPES = Object.freeze([...new Set(Object.values(AUTH_SCOPES).flat())].sort())
+const HASH = /^[a-f0-9]{64}$/
 
 function canonicalize(value, path = "$") {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value)
@@ -76,26 +80,51 @@ function authorizableProjection(plan) {
 }
 
 const authorizablePlanHash = plan => sha256(canonicalize(authorizableProjection(plan)))
+const exactScope = scope => Array.isArray(scope) && scope.length === REQUIRED_AUTHORIZATION_SCOPES.length && new Set(scope).size === scope.length && canonicalize([...scope].sort()) === canonicalize(REQUIRED_AUTHORIZATION_SCOPES)
+function reservationEvidenceProjection(value) {
+  if (!value || value.verified !== true || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.evidenceId || "") || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.caseImportId || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(value.caseNumber || "")) throw new Error("RESERVATION_EVIDENCE_INVALID")
+  return { reservationId: value.evidenceId, caseImportId: value.caseImportId, caseNumber: value.caseNumber, verified: true }
+}
+const reservationEvidenceHash = value => sha256(canonicalize(reservationEvidenceProjection(value)))
 const authorizationPayload = record => canonicalize({
   authorizationId: record.authorizationId, schemaVersion: record.schemaVersion, type: record.type,
   caseImportId: record.caseImportId, caseFingerprint: record.caseFingerprint, caseNumber: record.caseNumber,
-  authorizablePlanHash: record.authorizablePlanHash, scope: record.scope, issuer: record.issuer,
+  authorizablePlanHash: record.authorizablePlanHash, planHash: record.planHash, manifestHash: record.manifestHash,
+  reservationEvidenceHash: record.reservationEvidenceHash, scope: [...record.scope].sort(), issuer: record.issuer,
   issuedAt: record.issuedAt, expiresAt: record.expiresAt, revoked: record.revoked
 })
 
-function createAuthorizationVerifier({ trustedIssuers, clockSkewMs = 30000 }) {
+function validateAuthorizationShape(record) {
+  if (!record || Object.getPrototypeOf(record) !== Object.prototype || record.schemaVersion !== AUTHORIZATION_SCHEMA_VERSION) return "AUTH_SCHEMA_INVALID"
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(record.authorizationId || "")) return "AUTH_ID_INVALID"
+  if (!Object.hasOwn(AUTH_SCOPES, record.type)) return "AUTH_TYPE_INVALID"
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(record.caseImportId || "") || !/^[a-f0-9]{12}$/.test(record.caseFingerprint || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(record.caseNumber || "")) return "AUTH_BINDING_INVALID"
+  if (![record.authorizablePlanHash, record.planHash, record.manifestHash, record.reservationEvidenceHash].every(value => HASH.test(value || ""))) return "AUTH_HASH_INVALID"
+  if (!exactScope(record.scope)) return "AUTH_SCOPE_INVALID"
+  if (typeof record.issuer !== "string" || !/^[A-Za-z0-9._:-]{3,80}$/.test(record.issuer)) return "AUTH_ISSUER_INVALID"
+  if (record.revoked !== false) return "AUTH_REVOKED"
+  return null
+}
+
+function validateAuthorizationDates(record, now, clockSkewMs = AUTHORIZATION_CLOCK_SKEW_MS) {
+  const issued = Date.parse(record.issuedAt), expires = Date.parse(record.expiresAt), current = Date.parse(now)
+  if (![issued, expires, current].every(Number.isFinite) || expires <= issued) return "AUTH_DATE_INVALID"
+  if (expires - issued > MAX_AUTHORIZATION_TTL_MS) return "AUTH_TTL_EXCEEDED"
+  if (issued > current + clockSkewMs) return "AUTH_ISSUED_IN_FUTURE"
+  if (expires <= current) return "AUTH_EXPIRED"
+  return null
+}
+
+function createAuthorizationVerifier({ trustedIssuers, clockSkewMs = AUTHORIZATION_CLOCK_SKEW_MS }) {
   const issuers = new Map(Object.entries(trustedIssuers || {}))
   return Object.freeze({
     verify(record, { now }) {
-      if (!record || Object.getPrototypeOf(record) !== Object.prototype || record.schemaVersion !== AUTHORIZATION_SCHEMA_VERSION) return { valid: false, reason: "AUTH_SCHEMA_INVALID" }
-      if (!/^[A-Za-z0-9._:-]{8,128}$/.test(record.authorizationId || "")) return { valid: false, reason: "AUTH_ID_INVALID" }
+      const shapeError = validateAuthorizationShape(record)
+      if (shapeError) return { valid: false, reason: shapeError }
       const key = issuers.get(record.issuer)
       if (!key) return { valid: false, reason: "AUTH_ISSUER_UNKNOWN" }
-      const issued = Date.parse(record.issuedAt), expires = Date.parse(record.expiresAt), current = new Date(now).getTime()
-      if (![issued, expires, current].every(Number.isFinite) || expires <= issued) return { valid: false, reason: "AUTH_DATE_INVALID" }
-      if (issued > current + clockSkewMs) return { valid: false, reason: "AUTH_ISSUED_IN_FUTURE" }
-      if (expires <= current) return { valid: false, reason: "AUTH_EXPIRED" }
-      if (record.revoked !== false) return { valid: false, reason: "AUTH_REVOKED" }
+      const dateError = validateAuthorizationDates(record, now, clockSkewMs)
+      if (dateError) return { valid: false, reason: dateError }
       let signatureValid = false
       try { signatureValid = crypto.verify(null, Buffer.from(authorizationPayload(record)), key, Buffer.from(record.proof || "", "base64")) } catch {}
       return signatureValid ? { valid: true } : { valid: false, reason: "AUTH_PROOF_INVALID" }
@@ -115,11 +144,11 @@ function validateAuthorizations(records, expected, verifier, now) {
     ids.add(record.authorizationId)
     const proof = verifier.verify(record, { now })
     if (!proof.valid) throw new Error(proof.reason)
-    if (record.caseImportId !== expected.caseImportId || record.caseFingerprint !== expected.caseFingerprint || record.caseNumber !== expected.caseNumber || record.authorizablePlanHash !== expected.authorizablePlanHash) throw new Error("AUTH_BINDING_INVALID")
-    if (!Array.isArray(record.scope) || AUTH_SCOPES[type].some(scope => !record.scope.includes(scope))) throw new Error("AUTH_SCOPE_INVALID")
-    validated.push({ authorizationId: record.authorizationId, type, scope: [...record.scope] })
+    if (record.caseImportId !== expected.caseImportId || record.caseFingerprint !== expected.caseFingerprint || record.caseNumber !== expected.caseNumber || record.authorizablePlanHash !== expected.authorizablePlanHash || record.planHash !== expected.planHash || record.manifestHash !== expected.manifestHash || record.reservationEvidenceHash !== expected.reservationEvidenceHash) throw new Error("AUTH_BINDING_INVALID")
+    if (!exactScope(record.scope)) throw new Error("AUTH_SCOPE_INVALID")
+    validated.push({ authorizationId: record.authorizationId, type, scope: [...record.scope], expiresAt: record.expiresAt })
   }
   return validated
 }
 
-module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, AUTH_SCOPES, canonicalize, sha256, deepClone, deepFreeze, groupDocuments, authorizableProjection, authorizablePlanHash, authorizationPayload, createAuthorizationVerifier, validateAuthorizations }
+module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, canonicalize, sha256, deepClone, deepFreeze, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }

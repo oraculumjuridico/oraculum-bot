@@ -54,7 +54,7 @@ for (const [name, change, pattern] of [
 ]) test(name, () => { const f = fixture(change); assert.throws(() => createSingleCaseRealComposition(f.value), pattern); assert.deepEqual(f.calls, []) })
 
 test("verifier ausente falha fechado", () => {
-  const f = fixture({ componentFactories: { authorization: () => ({ authorizationRepository: port(["loadForCase"]) }) } })
+  const f = fixture({ componentFactories: { authorization: () => ({ authorizationRepository: port(["loadForCase", "consumeAuthorizations"]) }) } })
   assert.throws(() => createSingleCaseRealComposition(f.value), /AUTHORIZATION_VERIFIER_MISSING/)
   assert.deepEqual(f.calls, [])
 })

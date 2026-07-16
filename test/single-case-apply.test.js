@@ -6,10 +6,11 @@ const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
 const { createSingleCaseApplyExecutor, validateAdapters, validateCheckpoint, newCheckpoint, makeDecision } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, reservationEvidenceHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
 const cli = require("../scripts/apply-single-case")
 
 const NOW = "2026-07-15T12:00:00.000Z"
+const PLAN_HASH = "1".repeat(64), MANIFEST_HASH = "2".repeat(64)
 const fixture = () => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "single-case-apply-plan.json"), "utf8"))
 const keys = crypto.generateKeyPairSync("ed25519")
 const verifier = createAuthorizationVerifier({ trustedIssuers: { "fixture-authority": keys.publicKey } })
@@ -23,7 +24,8 @@ function signAuthorization(record) {
 function authorizationRecords(plan, mutate = record => record) {
   const hash = authorizablePlanHash(plan)
   return Object.entries(AUTH_SCOPES).map(([type, scope], index) => {
-    const base = { authorizationId: `fixture-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, scope: [...scope], issuer: "fixture-authority", issuedAt: "2026-07-15T11:00:00.000Z", expiresAt: "2026-07-15T13:00:00.000Z", revoked: false }
+    const evidence = { verified: true, caseImportId: plan.caseImportId, caseNumber: plan.dealPlan.caseNumber, evidenceId: "reservation-proof" }
+    const base = { authorizationId: `fixture-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, reservationEvidenceHash: reservationEvidenceHash(evidence), scope: [...REQUIRED_AUTHORIZATION_SCOPES], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
     return signAuthorization(mutate(base, index))
   })
 }
@@ -36,7 +38,8 @@ function fakeSystem(plan = fixture(), options = {}) {
   const id = (prefix, length) => `${prefix}-${String(length + 1).padStart(3, "0")}`
   const maybeTimeout = name => { if (options.timeout === name) throw new Error("SIMULATED_TIMEOUT") }
   const validateContext = context => {
-    if (!context || !Object.isFrozen(context) || !Object.isFrozen(context.authorizationIds) || context.caseImportId !== plan.caseImportId || context.leaseId !== state.lease?.leaseId || context.fencingToken !== state.lease?.fencingToken || context.checkpointVersion !== state.checkpointVersion || context.caseNumber !== plan.dealPlan.caseNumber || !Array.isArray(context.authorizationIds) || canonicalize([...context.authorizationIds].sort()) !== canonicalize(expectedAuthorizationIds) || Date.parse(context.deadline) <= Date.parse(NOW) || context.authorizablePlanHash !== authorizablePlanHash(plan) || typeof context.idempotencyKey !== "string" || !context.idempotencyKey.startsWith(`${plan.caseImportId}:`)) throw new Error("FENCING_REJECTED")
+    const preflight = context?.idempotencyKey === `${plan.caseImportId}:reservation-preflight`
+    if (!context || !Object.isFrozen(context) || !Object.isFrozen(context.authorizationIds) || context.caseImportId !== plan.caseImportId || context.leaseId !== state.lease?.leaseId || context.fencingToken !== state.lease?.fencingToken || context.checkpointVersion !== (preflight ? 0 : state.checkpointVersion) || context.caseNumber !== plan.dealPlan.caseNumber || !Array.isArray(context.authorizationIds) || (!preflight && canonicalize([...context.authorizationIds].sort()) !== canonicalize(expectedAuthorizationIds)) || (preflight && context.authorizationIds.length !== 0) || Date.parse(context.deadline) <= Date.parse(NOW) || context.authorizablePlanHash !== authorizablePlanHash(plan) || typeof context.idempotencyKey !== "string" || !context.idempotencyKey.startsWith(`${plan.caseImportId}:`)) throw new Error("FENCING_REJECTED")
   }
   const coordination = {
     acquireLease: async ({ caseImportId, owner, now }) => {
@@ -61,7 +64,7 @@ function fakeSystem(plan = fixture(), options = {}) {
   }
   const adapters = {
     plans: { loadByCaseImportId: async caseImportId => { count(`plan:${caseImportId}`); return options.wrongPlan ? { ...clone(plan), caseImportId: "fixture-other" } : clone(plan) } },
-    authorizations: { loadForCase: async query => { count("auth.load"); if (options.nullAuth) return null; if (options.invalidateAfterAuthLoads && counts["auth.load"] >= options.invalidateAfterAuthLoads) return clone(options.invalidRecords); return clone(options.currentRecords || records) } },
+    authorizations: { loadForCase: async query => { count("auth.load"); if (options.nullAuth) return null; return clone(options.currentRecords || records) }, consumeAuthorizations: async () => { count("auth.consume"); return { status: options.consumeStatus || "consumed" } } },
     coordination,
     reservation: { verify: async (caseImportId, caseNumber, context) => { validateContext(context); if (options.reservationGate) await options.reservationGate; return { verified: true, caseImportId, caseNumber, evidenceId: "reservation-proof" } } },
     contacts: {
@@ -95,7 +98,7 @@ function fakeSystem(plan = fixture(), options = {}) {
   return { adapters, state, log, counts, options }
 }
 
-const run = system => executor({ caseImportId: fixture().caseImportId, adapters: system.adapters, now: () => NOW })
+const run = system => executor({ caseImportId: fixture().caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, adapters: system.adapters, now: () => NOW })
 const storedFileEntry = (system, hash) => [...system.state.files.entries()].find(([, item]) => item.sha256 === hash)
 const effectContext = (plan, system, lease, overrides = {}) => Object.freeze({
   caseImportId: plan.caseImportId,
@@ -116,8 +119,8 @@ test("objeto fabricado sem prova é recusado", async () => { const p = fixture()
 test("assinatura adulterada é recusada", async () => { const p = fixture(); const records = authorizationRecords(p); records[0].caseNumber = "PRV.260715.999"; await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_PROOF_INVALID/) })
 test("emissor desconhecido é recusado", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, issuer: "unknown" })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_ISSUER_UNKNOWN/) })
 test("data impossível é recusada", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, issuedAt: "not-a-date" })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_DATE_INVALID/) })
-test("data futura é recusada", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, issuedAt: "2026-07-16T12:00:00.000Z", expiresAt: "2026-07-16T13:00:00.000Z" })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_ISSUED_IN_FUTURE/) })
-test("autorização expirada é recusada", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, expiresAt: "2026-07-15T11:30:00.000Z" })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_EXPIRED/) })
+test("data futura é recusada", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, issuedAt: "2026-07-16T12:00:00.000Z", expiresAt: "2026-07-16T12:30:00.000Z" })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_ISSUED_IN_FUTURE/) })
+test("autorização expirada é recusada", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, issuedAt: "2026-07-15T11:00:00.000Z", expiresAt: "2026-07-15T11:30:00.000Z" })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_EXPIRED/) })
 test("autorização revogada é recusada", async () => { const p = fixture(); const records = authorizationRecords(p, r => ({ ...r, revoked: true })); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_REVOKED/) })
 test("escopo ausente é recusado", async () => { const p = fixture(); const records = authorizationRecords(p, (r, i) => i ? { ...r, scope: [] } : r); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_SCOPE_INVALID/) })
 test("autorização duplicada é recusada", async () => { const p = fixture(); const records = authorizationRecords(p); records.push(clone(records[0])); await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_AMBIGUOUS/) })
@@ -165,10 +168,10 @@ test("contato apenas por CPF é verificado e reutilizado", async () => { const s
 test("payload malicioso não altera contato esperado", async () => { const s=fakeSystem(fixture(),{mutatePayload:true});await run(s);assert.equal(s.state.contacts[0].properties.phone,fixture().contactPlan.properties.phone) })
 test("payload agregado de upload resiste a mutação maliciosa", async () => { const s=fakeSystem(fixture(),{mutateUploadPayload:true});const result=await run(s);for(const document of groupDocuments(fixture()).filter(item=>item.eligible&&item.kind==="document")){const upload=result.checkpoint.uploads[document.sha256],item=[...s.state.files.values()].find(value=>value.id===upload.fileId);assert.equal(item.parentId,result.checkpoint.resources.caseFolderId);assert.equal(item.sha256,document.sha256);assert.equal(item.contentDocumentId,document.contentDocumentId)}assert.equal(result.completed,true) })
 test("ID vazio de contato bloqueia", async () => await assert.rejects(()=>run(fakeSystem(fixture(),{emptyContactId:true})),/CONTACT_RESPONSE_INVALID/))
-test("autorização expirada após lease bloqueia antes de efeito", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,expiresAt:"2026-07-15T11:30:00.000Z"}));const s=fakeSystem(p,{afterLease:o=>{o.currentRecords=invalid}});await assert.rejects(()=>run(s),/AUTH_EXPIRED/);assert.equal(s.counts["contact.create"],undefined) })
+test("autorização expirada após lease bloqueia antes de efeito", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,issuedAt:"2026-07-15T11:00:00.000Z",expiresAt:"2026-07-15T11:30:00.000Z"}));const s=fakeSystem(p,{afterLease:o=>{o.currentRecords=invalid}});await assert.rejects(()=>run(s),/AUTH_EXPIRED/);assert.equal(s.counts["contact.create"],undefined) })
 test("autorização revogada após lease bloqueia antes de efeito", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,revoked:true}));const s=fakeSystem(p,{afterLease:o=>{o.currentRecords=invalid}});await assert.rejects(()=>run(s),/AUTH_REVOKED/);assert.equal(s.counts["contact.create"],undefined) })
 test("autorização substituída após lease bloqueia", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,caseImportId:"other-case"}));const s=fakeSystem(p,{afterLease:o=>{o.currentRecords=invalid}});await assert.rejects(()=>run(s),/AUTH_BINDING_INVALID/) })
-test("autorização invalidada durante uploads impede uploads seguintes", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,revoked:true}));const s=fakeSystem(p,{invalidateAfterAuthLoads:20,invalidRecords:invalid});await assert.rejects(()=>run(s),/AUTH_REVOKED/);assert(s.state.files.size<11) })
+test("autorização consumida não é relida durante uploads", async () => { const s=fakeSystem();await run(s);assert.equal(s.counts["auth.load"],1);assert.equal(s.counts["auth.consume"],1);assert.equal(s.state.files.size,11) })
 test("lease malformado com ID é liberado", async () => { const s=fakeSystem(fixture(),{malformedLease:{caseImportId:fixture().caseImportId,leaseId:"lease-bad",fencingToken:"bad",version:1,expiresAt:NOW}});await assert.rejects(()=>run(s),/LEASE_ACQUIRE_FAILED/);assert.equal(s.counts["lease.release"],1) })
 test("falha de liberação após sucesso gera warning sanitizado", async () => { const s=fakeSystem(fixture(),{releaseFail:true});const result=await run(s);assert.deepEqual(result.operationalWarnings,["LEASE_RELEASE_FAILED"]) })
 test("erro principal é preservado quando liberação também falha", async () => { const s=fakeSystem(fixture(),{releaseFail:true,multiDeals:true});await assert.rejects(()=>run(s),/DEAL_AMBIGUOUS/);assert.equal(s.state.checkpoint.steps.deal.errorCode,"ADAPTER_AMBIGUOUS_RESULT") })
