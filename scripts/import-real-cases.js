@@ -410,12 +410,27 @@ async function applyPilotSelection(scanned, selectionFile) {
     const meta = pilots.find(p => p.importId === record.importId)
     if (meta) {
       record._pilotMeta = {
+        nameSource: 'pilot_manifest',
+        name: meta.name || null,
         phoneSource: 'pilot_manifest',
         phone: meta.phone || null,
         phoneRaw: meta.phone || null,
         type: meta.type,
         expectedDocuments: meta.expectedDocuments,
         notes: meta.notes
+      }
+
+      // Ensure reviewReasons is an array before filtering
+      if (!Array.isArray(record.reviewReasons)) {
+        record.reviewReasons = []
+      }
+
+      // If manifest provides a valid name, record must not be marked as nome_nao_comprovado
+      // The manifest name takes precedence (rule: manifesto piloto define o cliente principal)
+      if (meta.name) {
+        record.reviewReasons = record.reviewReasons.filter(
+          reason => reason !== 'nome_nao_comprovado'
+        )
       }
 
       // If manifest provides a valid phone and record was marked as missing safe contact key,
