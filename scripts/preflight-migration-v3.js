@@ -124,7 +124,7 @@ async function preflightMigrationV3() {
       console.log("")
     }
 
-    // 5. Verificar caso específico
+    // 5. Verificar caso de referência (sanitizado)
     const specificCase = await client.query(`
       SELECT
         COUNT(*) AS total,
@@ -138,7 +138,7 @@ async function preflightMigrationV3() {
         AND case_number = 'PRV.260714.707'
     `)
 
-    console.log(`Caso específico (inss-e3dfb0f332b117d60bf2 / PRV.260714.707):`)
+    console.log(`Caso de referência (identificadores sanitizados):`)
     console.log(`  Total: ${specificCase.rows[0].total}`)
     console.log(`  EXPLICIT: ${specificCase.rows[0].explicit_count}`)
     console.log(`  EXTERNAL: ${specificCase.rows[0].external_count}`)
@@ -174,17 +174,34 @@ async function preflightMigrationV3() {
     if (client) {
       try { await client.query("ROLLBACK") } catch {}
     }
-    console.error("\n✗ Erro durante preflight:")
-    console.error(error.message)
+    console.log("\n✗ Erro durante preflight")
+    console.log("ERRO_TIPO: DATABASE_CONNECTION_OR_QUERY_ERROR")
+
+    // Normalizar error.code: apenas códigos PostgreSQL válidos ou UNKNOWN
+    let sanitizedCode = "UNKNOWN"
+    if (error.code && typeof error.code === "string" && /^[A-Z0-9]{5}$/.test(error.code)) {
+      sanitizedCode = error.code
+    }
+    console.log("ERRO_CODIGO: " + sanitizedCode)
+
     console.log("\nCONCLUSÃO: BLOCKED_DATABASE_ERROR")
     process.exit(1)
-  } finally {
+  } finally{
     if (client) client.release()
     await pool.end()
   }
 }
 
 preflightMigrationV3().catch(error => {
-  console.error("Erro fatal:", error)
+  console.log("\n✗ Erro fatal não capturado")
+  console.log("ERRO_TIPO: UNHANDLED_ERROR")
+
+  // Normalizar error.code: apenas códigos PostgreSQL válidos ou UNKNOWN
+  let sanitizedCode = "UNKNOWN"
+  if (error.code && typeof error.code === "string" && /^[A-Z0-9]{5}$/.test(error.code)) {
+    sanitizedCode = error.code
+  }
+  console.log("ERRO_CODIGO: " + sanitizedCode)
+
   process.exit(1)
 })
