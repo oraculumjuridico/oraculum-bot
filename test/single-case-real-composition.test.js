@@ -83,8 +83,8 @@ test("cliente HubSpot recebe fetchImpl injetado e associação canônica", () =>
   assert.equal(result.configurationSummary.associationTypeId, 3)
 })
 
-test("CLI real continua bloqueada", async () => {
-  await assert.rejects(() => applyCli.main({ argv: ["--case-import-id", "case-fixture-1"] }), /REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED/)
+test("CLI real falha fechado sem configuraÃ§Ã£o", async () => {
+  await assert.rejects(() => applyCli.main({ argv: ["--case-import-id", "case-fixture-1"], env: {} }), /POSTGRES_MODE_REQUIRED/)
 })
 
 test("resumo é sanitizado sem segredo", () => {

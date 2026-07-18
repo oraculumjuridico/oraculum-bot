@@ -215,4 +215,4 @@ for (const step of ["contact", "deal", "association", "area_folder", "case_folde
 test("CLI distingue argumento ausente", () => assert.throws(() => cli.parseArgs([]), /CASE_IMPORT_ID_MISSING/))
 test("CLI distingue argumento inválido", () => assert.throws(() => cli.parseArgs(["--case-import-id", "!"]), /CASE_IMPORT_ID_INVALID/))
 test("CLI distingue argumentos excedentes", () => assert.throws(() => cli.parseArgs(["--case-import-id", fixture().caseImportId, "extra"]), /CLI_ARGUMENTS_EXCESS/))
-test("CLI mantém executor real desabilitado", async () => await assert.rejects(() => cli.main({ argv: ["--case-import-id", fixture().caseImportId] }), /REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED/))
+test("CLI real falha fechado quando configuração está ausente", async () => await assert.rejects(() => cli.main({ argv: ["--case-import-id", fixture().caseImportId], env: {} }), /POSTGRES_MODE_REQUIRED/))
