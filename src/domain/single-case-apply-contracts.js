@@ -80,7 +80,11 @@ function authorizableProjection(plan) {
 }
 
 const authorizablePlanHash = plan => sha256(canonicalize(authorizableProjection(plan)))
-const exactScope = scope => Array.isArray(scope) && scope.length === REQUIRED_AUTHORIZATION_SCOPES.length && new Set(scope).size === scope.length && canonicalize([...scope].sort()) === canonicalize(REQUIRED_AUTHORIZATION_SCOPES)
+const exactScope = (scope, type) => {
+  if (!type || !Object.hasOwn(AUTH_SCOPES, type)) return false
+  const expected = AUTH_SCOPES[type]
+  return Array.isArray(scope) && scope.length === expected.length && new Set(scope).size === scope.length && canonicalize([...scope].sort()) === canonicalize([...expected].sort())
+}
 function reservationEvidenceProjection(value) {
   if (!value || value.verified !== true || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.evidenceId || "") || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.caseImportId || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(value.caseNumber || "")) throw new Error("RESERVATION_EVIDENCE_INVALID")
   return { reservationId: value.evidenceId, caseImportId: value.caseImportId, caseNumber: value.caseNumber, verified: true }
@@ -100,7 +104,7 @@ function validateAuthorizationShape(record) {
   if (!Object.hasOwn(AUTH_SCOPES, record.type)) return "AUTH_TYPE_INVALID"
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(record.caseImportId || "") || !/^[a-f0-9]{12}$/.test(record.caseFingerprint || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(record.caseNumber || "")) return "AUTH_BINDING_INVALID"
   if (![record.authorizablePlanHash, record.planHash, record.manifestHash, record.reservationEvidenceHash].every(value => HASH.test(value || ""))) return "AUTH_HASH_INVALID"
-  if (!exactScope(record.scope)) return "AUTH_SCOPE_INVALID"
+  if (!exactScope(record.scope, record.type)) return "AUTH_SCOPE_INVALID"
   if (typeof record.issuer !== "string" || !/^[A-Za-z0-9._:-]{3,80}$/.test(record.issuer)) return "AUTH_ISSUER_INVALID"
   if (record.revoked !== false) return "AUTH_REVOKED"
   return null
@@ -145,7 +149,7 @@ function validateAuthorizations(records, expected, verifier, now) {
     const proof = verifier.verify(record, { now })
     if (!proof.valid) throw new Error(proof.reason)
     if (record.caseImportId !== expected.caseImportId || record.caseFingerprint !== expected.caseFingerprint || record.caseNumber !== expected.caseNumber || record.authorizablePlanHash !== expected.authorizablePlanHash || record.planHash !== expected.planHash || record.manifestHash !== expected.manifestHash || record.reservationEvidenceHash !== expected.reservationEvidenceHash) throw new Error("AUTH_BINDING_INVALID")
-    if (!exactScope(record.scope)) throw new Error("AUTH_SCOPE_INVALID")
+    if (!exactScope(record.scope, record.type)) throw new Error("AUTH_SCOPE_INVALID")
     validated.push({ authorizationId: record.authorizationId, type, scope: [...record.scope], expiresAt: record.expiresAt })
   }
   return validated

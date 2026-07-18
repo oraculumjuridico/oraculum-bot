@@ -4,7 +4,7 @@ const test = require("node:test")
 const assert = require("node:assert/strict")
 const { createSingleCaseExecutorComposition } = require("../src/composition/single-case-executor-composition")
 const { REQUIRED_METHODS } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256 } = require("../src/domain/single-case-apply-contracts")
 
 const NOW = "2026-07-15T12:00:00.000Z"
 const BYTES = Buffer.from("fixture-composition-content")
@@ -48,7 +48,7 @@ function authorizations(value) {
     planHash: PLAN_HASH,
     manifestHash: MANIFEST_HASH,
     reservationEvidenceHash: reservationEvidenceHash({ verified: true, caseImportId: value.caseImportId, caseNumber: value.dealPlan.caseNumber, evidenceId: "fixture-reservation-proof" }),
-    scope: [...REQUIRED_AUTHORIZATION_SCOPES],
+    scope: [...scope],
     issuer: "fixture-authority",
     issuedAt: "2026-07-15T11:45:00.000Z",
     expiresAt: "2026-07-15T12:15:00.000Z",

@@ -6,7 +6,7 @@ const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
 const { createSingleCaseApplyExecutor, validateAdapters, validateCheckpoint, newCheckpoint, makeDecision } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, reservationEvidenceHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, reservationEvidenceHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
 const cli = require("../scripts/apply-single-case")
 
 const NOW = "2026-07-15T12:00:00.000Z"
@@ -25,7 +25,7 @@ function authorizationRecords(plan, mutate = record => record) {
   const hash = authorizablePlanHash(plan)
   return Object.entries(AUTH_SCOPES).map(([type, scope], index) => {
     const evidence = { verified: true, caseImportId: plan.caseImportId, caseNumber: plan.dealPlan.caseNumber, evidenceId: "reservation-proof" }
-    const base = { authorizationId: `fixture-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, reservationEvidenceHash: reservationEvidenceHash(evidence), scope: [...REQUIRED_AUTHORIZATION_SCOPES], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
+    const base = { authorizationId: `fixture-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, reservationEvidenceHash: reservationEvidenceHash(evidence), scope: [...scope], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
     return signAuthorization(mutate(base, index))
   })
 }

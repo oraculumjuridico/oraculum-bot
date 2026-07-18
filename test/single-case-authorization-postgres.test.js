@@ -10,7 +10,7 @@ const {
   createSingleCaseAuthorizationRepository, validateSingleCaseAuthorizationSchema, migrateSingleCaseAuthorizations
 } = require("../src/infrastructure/single-case-authorization-postgres")
 const { trustedPublicKeysFromEnv, createSingleCaseAuthorizationComponents } = require("../src/composition/single-case-authorization-components")
-const { AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizationPayload, authorizablePlanHash, reservationEvidenceHash, createAuthorizationVerifier, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizationPayload, authorizablePlanHash, reservationEvidenceHash, createAuthorizationVerifier, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
 const { createSingleCaseApplyExecutor } = require("../src/domain/single-case-apply")
 const cli = require("../scripts/apply-single-case")
 
@@ -39,7 +39,7 @@ const expected = value => ({ caseImportId: value.caseImportId, caseFingerprint: 
 function signedRows(value = plan(), mutate = row => row) {
   const binding = expected(value)
   return Object.entries(AUTH_SCOPES).map(([type, scope], index) => {
-    const record = { authorizationId: `fixture-persisted-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: binding.caseImportId, caseFingerprint: binding.caseFingerprint, caseNumber: binding.caseNumber, authorizablePlanHash: binding.authorizablePlanHash, planHash:binding.planHash, manifestHash:binding.manifestHash, reservationEvidenceHash:binding.reservationEvidenceHash, scope: [...REQUIRED_AUTHORIZATION_SCOPES], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
+    const record = { authorizationId: `fixture-persisted-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: binding.caseImportId, caseFingerprint: binding.caseFingerprint, caseNumber: binding.caseNumber, authorizablePlanHash: binding.authorizablePlanHash, planHash:binding.planHash, manifestHash:binding.manifestHash, reservationEvidenceHash:binding.reservationEvidenceHash, scope: [...scope], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
     const changed = mutate(record, index)
     const proof = crypto.sign(null, Buffer.from(authorizationPayload(changed)), keys.privateKey).toString("base64")
     return { authorization_id: changed.authorizationId, schema_version: changed.schemaVersion, authorization_type: changed.type, case_import_id: changed.caseImportId, case_fingerprint: changed.caseFingerprint, case_number: changed.caseNumber, authorizable_plan_hash: changed.authorizablePlanHash, plan_hash:changed.planHash,manifest_hash:changed.manifestHash,reservation_evidence_hash:changed.reservationEvidenceHash, scope: [...changed.scope], issuer: changed.issuer, issued_at: changed.issuedAt, expires_at: changed.expiresAt, revoked: changed.revoked, revoked_at: changed.revoked ? NOW : null, revocation_reason: changed.revoked ? "FIXTURE_REVOCATION" : null, consumed_at:null,consumed_by:null,operational_status: "ACTIVE", superseded_at: null, signature: proof, signature_algorithm: ALGORITHM }

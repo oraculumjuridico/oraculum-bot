@@ -9,3 +9,4 @@ audios/atendentes/*.ogg
 graphify-out/
 *.log
 scripts/local/
+.aider*

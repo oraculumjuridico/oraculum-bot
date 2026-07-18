@@ -44,6 +44,7 @@
     ,"case-number:reserve": "node scripts/reserve-case-number.js"
     ,"case-number:sync-plan": "node scripts/sync-case-number-reservation-to-plan.js"
     ,"cases:apply-one": "node scripts/apply-single-case.js"
+    ,"cases:authorize": "node scripts/emit-single-case-authorization.js"
     ,"test:single-case-apply": "node test/single-case-apply.test.js"
     ,"test:single-case-authorizations": "node test/single-case-authorization-postgres.test.js"
     ,"test:single-case-coordination": "node test/single-case-coordination-postgres.test.js"

@@ -3,12 +3,12 @@
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const crypto = require("node:crypto")
-const { AUTHORIZATION_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, REQUIRED_AUTHORIZATION_SCOPES, authorizationPayload, createAuthorizationVerifier, reservationEvidenceHash, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
+const { AUTHORIZATION_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTH_SCOPES, authorizationPayload, createAuthorizationVerifier, reservationEvidenceHash, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
 const { createSingleCaseAuthorizationSigner } = require("../src/domain/single-case-authorization-signer")
 
 const NOW = "2026-07-15T12:00:00.000Z", keys = crypto.generateKeyPairSync("ed25519"), issuer = "fixture-v2-authority"
 const HASHES = { authorizablePlanHash: "a".repeat(64), planHash: "b".repeat(64), manifestHash: "c".repeat(64), reservationEvidenceHash: "d".repeat(64) }
-const base = (type = "EXPLICIT_APPLY_AUTHORIZATION") => ({ authorizationId: `fixture-v2-${type.toLowerCase()}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: "fixture-v2-case", caseFingerprint: "abcdef123456", caseNumber: "PRV.260715.707", ...HASHES, scope: [...REQUIRED_AUTHORIZATION_SCOPES], issuer, issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false })
+const base = (type = "EXPLICIT_APPLY_AUTHORIZATION") => ({ authorizationId: `fixture-v2-${type.toLowerCase()}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: "fixture-v2-case", caseFingerprint: "abcdef123456", caseNumber: "PRV.260715.707", ...HASHES, scope: [...AUTH_SCOPES[type]], issuer, issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false })
 const signer = () => createSingleCaseAuthorizationSigner({ privateKey: keys.privateKey, clock: () => NOW })
 const verifier = createAuthorizationVerifier({ trustedIssuers: { [issuer]: keys.publicKey } })
 const expected = { caseImportId: "fixture-v2-case", caseFingerprint: "abcdef123456", caseNumber: "PRV.260715.707", ...HASHES }
@@ -16,8 +16,11 @@ const expected = { caseImportId: "fixture-v2-case", caseFingerprint: "abcdef1234
 test("signer Ed25519 e verifier aceitam v2 válido", () => { const record=signer().sign(base());assert.equal(record.algorithm,"Ed25519");assert.equal(verifier.verify(record,{now:NOW}).valid,true) })
 test("canonicalização da assinatura é determinística", () => { const a=base(),b={...a,scope:[...a.scope].reverse()};assert.equal(signer().sign(a).proof,signer().sign(b).proof) })
 test("chave ausente ou inválida é sanitizada", () => { assert.throws(()=>createSingleCaseAuthorizationSigner({clock:()=>NOW}),/PRIVATE_KEY_MISSING/);let error;try{createSingleCaseAuthorizationSigner({privateKey:"segredo-privado",clock:()=>NOW})}catch(e){error=e}assert.match(error.message,/PRIVATE_KEY_INVALID/);assert.equal(error.message.includes("segredo-privado"),false) })
-for(const [name,scope] of [["ausente",REQUIRED_AUTHORIZATION_SCOPES.slice(1)],["adicional",[...REQUIRED_AUTHORIZATION_SCOPES,"EXTRA"]],["duplicado",[...REQUIRED_AUTHORIZATION_SCOPES,REQUIRED_AUTHORIZATION_SCOPES[0]]]]) test(`escopo ${name} é rejeitado`,()=>assert.throws(()=>signer().sign({...base(),scope}),/AUTH_SCOPE_INVALID/))
-test("diferença de caixa é rejeitada",()=>assert.throws(()=>signer().sign({...base(),scope:REQUIRED_AUTHORIZATION_SCOPES.map((x,i)=>i?x:x.toLowerCase())}),/AUTH_SCOPE_INVALID/))
+for(const type of Object.keys(AUTH_SCOPES)) {
+  const typeScope = AUTH_SCOPES[type]
+  for(const [name,scope] of [["ausente",typeScope.slice(1)],["adicional",[...typeScope,"EXTRA"]],["duplicado",[...typeScope,typeScope[0]]]]) test(`${type}: escopo ${name} é rejeitado`,()=>assert.throws(()=>signer().sign({...base(type),scope}),/AUTH_SCOPE_INVALID/))
+  test(`${type}: diferença de caixa é rejeitada`,()=>assert.throws(()=>signer().sign({...base(type),scope:typeScope.map((x,i)=>i?x:x.toLowerCase())}),/AUTH_SCOPE_INVALID/))
+}
 test("TTL excessivo é rejeitado",()=>assert.throws(()=>signer().sign({...base(),expiresAt:new Date(Date.parse(base().issuedAt)+MAX_AUTHORIZATION_TTL_MS+1).toISOString()}),/AUTH_TTL_EXCEEDED/))
 test("expirada é rejeitada",()=>assert.throws(()=>signer().sign({...base(),issuedAt:"2026-07-15T11:00:00.000Z",expiresAt:"2026-07-15T11:30:00.000Z"}),/AUTH_EXPIRED/))
 test("schema v1 é rejeitado",()=>assert.throws(()=>signer().sign({...base(),schemaVersion:1}),/AUTH_SCHEMA_INVALID/))
