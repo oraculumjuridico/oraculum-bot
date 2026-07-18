@@ -183,7 +183,22 @@ function mapRow(row) {
 
 function createSingleCaseAuthorizationRepository({ pool }) {
   if (!pool || typeof pool.query !== "function") throw new Error("AUTHORIZATION_POOL_REQUIRED")
-  return Object.freeze({ async loadForCase(expected) {
+  return Object.freeze({ async auditStateForCase(expected, now) {
+    validateExpectedQuery(expected)
+    if (!Number.isFinite(Date.parse(now || ""))) throw new Error("AUTHORIZATION_AUDIT_TIME_INVALID")
+    const result = await pool.query(`SELECT authorization_id,schema_version,authorization_type,case_import_id,case_fingerprint,case_number,authorizable_plan_hash,plan_hash,manifest_hash,reservation_evidence_hash,scope,issuer,issued_at,expires_at,revoked,revoked_at,revocation_reason,consumed_at,consumed_by,signature,signature_algorithm,operational_status FROM ${TABLE_NAME} WHERE case_import_id=$1 AND authorization_type = ANY($2::text[]) AND operational_status='ACTIVE' ORDER BY authorization_type,authorization_id`, [expected.caseImportId, [...TYPES].sort()])
+    if (!result || !Array.isArray(result.rows)) throw new Error("AUTHORIZATION_REPOSITORY_RESPONSE_INVALID")
+    const records = result.rows.map(mapRow)
+    if (records.length === 0) return Object.freeze({ state: "PAIR_ABSENT", records: Object.freeze([]) })
+    const typeCounts = new Map(TYPES.map(type => [type, records.filter(row => row.type === type).length]))
+    const bindingMatches = record => record.caseFingerprint === expected.caseFingerprint && record.caseNumber === expected.caseNumber && record.authorizablePlanHash === expected.authorizablePlanHash && record.planHash === expected.planHash && record.manifestHash === expected.manifestHash && record.reservationEvidenceHash === expected.reservationEvidenceHash && record.schemaVersion === expected.schemaVersion
+    let state = "PAIR_ACTIVE"
+    if (records.length !== TYPES.length || [...typeCounts.values()].some(count => count !== 1) || records.some(record => !bindingMatches(record))) state = "PAIR_DIVERGENT"
+    else if (records.some(record => record.consumedAt !== null)) state = "PAIR_CONSUMED"
+    else if (records.some(record => record.revoked === true)) state = "PAIR_REVOKED"
+    else if (records.some(record => Date.parse(record.expiresAt) <= Date.parse(now))) state = "PAIR_EXPIRED"
+    return Object.freeze({ state, records: Object.freeze(records) })
+  }, async loadForCase(expected) {
     validateExpectedQuery(expected)
     const result = await pool.query(`SELECT authorization_id,schema_version,authorization_type,case_import_id,case_fingerprint,case_number,authorizable_plan_hash,plan_hash,manifest_hash,reservation_evidence_hash,scope,issuer,issued_at,expires_at,revoked,revoked_at,revocation_reason,consumed_at,consumed_by,signature,signature_algorithm,operational_status FROM ${TABLE_NAME} WHERE case_import_id=$1 AND case_fingerprint=$2 AND case_number=$3 AND authorizable_plan_hash=$4 AND plan_hash=$5 AND manifest_hash=$6 AND reservation_evidence_hash=$7 AND schema_version=$8 AND operational_status='ACTIVE' AND consumed_at IS NULL AND authorization_type = ANY($9::text[]) ORDER BY authorization_type,authorization_id`, [expected.caseImportId, expected.caseFingerprint, expected.caseNumber, expected.authorizablePlanHash, expected.planHash, expected.manifestHash, expected.reservationEvidenceHash, expected.schemaVersion, [...TYPES].sort()])
     if (!result || !Array.isArray(result.rows)) throw new Error("AUTHORIZATION_REPOSITORY_RESPONSE_INVALID")

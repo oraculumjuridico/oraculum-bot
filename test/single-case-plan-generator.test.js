@@ -4,10 +4,11 @@ const test = require("node:test")
 const assert = require("node:assert/strict")
 const crypto = require("node:crypto")
 const { generateSingleCaseApplyPlan } = require("../src/domain/single-case-plan-generator")
+const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 const digest = value => crypto.createHash("sha256").update(value).digest("hex")
 const CASE_ID = "case-pilot-sanitized"
-const FINGERPRINT = digest(CASE_ID).slice(0, 12)
+const FINGERPRINT = caseFingerprintFor(CASE_ID)
 const CASE_NUMBER = "PRV.260714.707"
 
 function fixture() {

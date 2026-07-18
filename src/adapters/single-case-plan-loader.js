@@ -2,13 +2,12 @@
 
 const fs = require("node:fs/promises")
 const path = require("node:path")
-const crypto = require("node:crypto")
+const { caseFingerprintFor } = require("../domain/single-case-target")
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 const CASE_NUMBER = /^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/
 const FINGERPRINT = /^[a-f0-9]{12}$/
 const fail = code => { throw new Error(code) }
-const fingerprint = value => crypto.createHash("sha256").update(value).digest("hex").slice(0, 12)
 
 function createSingleCasePlanLoader({ root, expectedFingerprint, expectedCaseNumber, io = fs } = {}) {
   if (typeof root !== "string" || !root.trim()) fail("PLAN_ROOT_MISSING")
@@ -30,7 +29,7 @@ function createSingleCasePlanLoader({ root, expectedFingerprint, expectedCaseNum
     }
     if (matches.length === 0) fail("PLAN_NOT_FOUND")
     if (matches.length !== 1) fail("PLAN_AMBIGUOUS")
-    const plan = matches[0], actualFingerprint = fingerprint(caseImportId), caseNumber = plan.dealPlan?.caseNumber
+    const plan = matches[0], actualFingerprint = caseFingerprintFor(caseImportId), caseNumber = plan.dealPlan?.caseNumber
     if (expectedFingerprint !== undefined && actualFingerprint !== expectedFingerprint) fail("PLAN_FINGERPRINT_MISMATCH")
     if (expectedCaseNumber !== undefined && caseNumber !== expectedCaseNumber) fail("PLAN_CASE_NUMBER_MISMATCH")
     if (!CASE_NUMBER.test(caseNumber || "")) fail("PLAN_CASE_NUMBER_INVALID")

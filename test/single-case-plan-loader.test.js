@@ -1,7 +1,8 @@
 "use strict"
-const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs/promises"),os=require("node:os"),path=require("node:path"),crypto=require("node:crypto")
+const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs/promises"),os=require("node:os"),path=require("node:path")
 const {createSingleCasePlanLoader}=require("../src/adapters/single-case-plan-loader")
-const ID="pilot-case-2",NUMBER="PRV.260714.707",FP=crypto.createHash("sha256").update(ID).digest("hex").slice(0,12)
+const {caseFingerprintFor}=require("../src/domain/single-case-target")
+const ID="pilot-case-2",NUMBER="PRV.260714.707",FP=caseFingerprintFor(ID)
 const plan=()=>({caseImportId:ID,safeToApply:false,dealPlan:{caseNumber:NUMBER}})
 async function root(){return fs.mkdtemp(path.join(os.tmpdir(),"plan-loader-"))}
 async function write(dir,name,value){await fs.writeFile(path.join(dir,name),typeof value==="string"?value:JSON.stringify(value))}

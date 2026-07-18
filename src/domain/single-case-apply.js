@@ -1,6 +1,7 @@
 "use strict"
 
 const { validateFormat } = require("./case-number")
+const { validateCaseFingerprint } = require("./single-case-target")
 const {
   AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, AUTH_SCOPES, canonicalize, sha256, deepClone, deepFreeze,
   groupDocuments, authorizablePlanHash, reservationEvidenceHash, validateAuthorizations
@@ -42,7 +43,7 @@ function validateAdapters(adapters, verifier) {
 
 function validatePlan(plan, caseImportId) {
   if (!plan || plan.caseImportId !== caseImportId) fail("CASE_ISOLATION_FAILED")
-  if (!/^[a-f0-9]{12}$/.test(plan.caseFingerprint || "")) fail("CASE_FINGERPRINT_INVALID")
+  try { validateCaseFingerprint(caseImportId, plan.caseFingerprint) } catch { fail("CASE_FINGERPRINT_INVALID") }
   if (!validateFormat(plan.dealPlan?.caseNumber) || plan.dealPlan?.properties?.numero_de_caso !== plan.dealPlan.caseNumber || plan.caseNumberReservationSync?.source !== "OFFICIAL_POSTGRES_RESERVATION") fail("PLAN_NOT_SYNCHRONIZED")
   if (!plan.contactPlan?.properties?.cpf_do_cliente || !plan.contactPlan?.properties?.phone) fail("CONTACT_IDENTITY_MISSING")
   const documents = groupDocuments(plan)

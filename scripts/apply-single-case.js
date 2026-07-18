@@ -13,9 +13,11 @@ const { createSingleCasePlanLoader } = require("../src/adapters/single-case-plan
 const { createSingleCaseContentLoader } = require("../src/adapters/single-case-content-loader")
 const { createSingleCaseContentResolver } = require("../src/adapters/single-case-content-resolver")
 const { createSingleCaseReservationRepository } = require("../src/adapters/single-case-reservation-repository")
+const { createSingleCaseReservationAdapter } = require("../src/adapters/single-case-reservation-adapter")
 const { trustedPublicKeysFromEnv, createSingleCaseAuthorizationComponents } = require("../src/composition/single-case-authorization-components")
 const { createHubSpotHttpClient } = require("../src/adapters/hubspot-http-client")
 const { createHubSpotSingleCaseAdapters } = require("../src/adapters/hubspot-single-case-adapter")
+const { validateP1PlanContract, resolveP1Target } = require("../src/domain/single-case-target")
 
 const REQUIRED_ENV = Object.freeze([
   "EXTERNAL_STATE_DATABASE_URL",
@@ -26,6 +28,7 @@ const REQUIRED_ENV = Object.freeze([
   "GOOGLE_DRIVE_ROOT_FOLDER_ID",
   "SINGLE_CASE_CONTENT_ROOT",
   "SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON",
+  "SINGLE_CASE_P1_CASE_IMPORT_ID",
 ])
 const DRIVE_ROOT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 
@@ -57,24 +60,38 @@ async function readAndValidateRuntimeConfig(env) {
     connectionString: env.EXTERNAL_STATE_DATABASE_URL,
     contentRoot,
     driveRootFolderId: env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+    p1CaseImportId: env.SINGLE_CASE_P1_CASE_IMPORT_ID,
   })
 }
 
 const sha256 = bytes => crypto.createHash("sha256").update(bytes).digest("hex")
+function validateP1Target(caseImportId, config) {
+  if (!config || !DRIVE_ROOT_ID.test(config.p1CaseImportId || "")) throw new Error("P1_TARGET_CONFIGURATION_INVALID")
+  if (caseImportId !== config.p1CaseImportId) throw new Error("P1_TARGET_REQUIRED")
+  return true
+}
+
+function validateP1Plan(plan, caseImportId) {
+  try { return validateP1PlanContract(plan, caseImportId) } catch (error) {
+    if (error.message === "CASE_FINGERPRINT_DIVERGENT") throw new Error("P1_FINGERPRINT_BINDING_INVALID")
+    throw error
+  }
+}
 
 async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
   const runtimeConfig = config || await readAndValidateRuntimeConfig(env)
   env = runtimeConfig.env
+  validateP1Target(caseImportId, runtimeConfig)
   const plansRoot = path.resolve(env.SINGLE_CASE_PLANS_ROOT || path.join(process.cwd(), "data", "case-import", "plans"))
   const manifestsRoot = path.resolve(env.SINGLE_CASE_MANIFESTS_ROOT || path.join(process.cwd(), "data", "case-import", "content-manifests"))
-  const planPath = path.join(plansRoot, `${caseImportId}.json`)
   const manifestPath = path.join(manifestsRoot, `${caseImportId}.json`)
-  let planBytes, manifestBytes, entries
+  let target, manifestBytes, entries
   try {
-    [planBytes, manifestBytes] = await Promise.all([fs.readFile(planPath), fs.readFile(manifestPath)])
+    [target, manifestBytes] = await Promise.all([resolveP1Target({ plansRoot, caseImportId }), fs.readFile(manifestPath)])
     entries = JSON.parse(manifestBytes)
   } catch { throw new Error("RUNTIME_ARTIFACTS_UNAVAILABLE") }
   if (!Array.isArray(entries) || entries.length === 0) throw new Error("RUNTIME_MANIFEST_INVALID")
+  const planBinding = target.binding
 
   const pool = new Pool({ connectionString: runtimeConfig.connectionString, max: 2, connectionTimeoutMillis: 10000, ssl: { rejectUnauthorized: false } })
   try {
@@ -84,7 +101,7 @@ async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
     const hubspot = createHubSpotSingleCaseAdapters({ client: hubspotClient, clock })
     const resolver = createSingleCaseContentResolver({ root: runtimeConfig.contentRoot, entries })
     const contentLoader = createSingleCaseContentLoader({ root: runtimeConfig.contentRoot, resolveReference: resolver.resolveReference })
-    const planLoader = createSingleCasePlanLoader({ root: plansRoot })
+    const planLoader = createSingleCasePlanLoader({ root: plansRoot, expectedFingerprint: planBinding.caseFingerprint, expectedCaseNumber: planBinding.caseNumber })
     const driveClient = createGoogleDriveSingleCaseClient({
       clientId: env.GOOGLE_DRIVE_CLIENT_ID,
       clientSecret: env.GOOGLE_DRIVE_CLIENT_SECRET,
@@ -92,7 +109,8 @@ async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
       googleModule: google,
     })
     const drive = createDriveSingleCaseAdapter({ client: driveClient, rootFolderId: runtimeConfig.driveRootFolderId })
-    const reservation = createSingleCaseReservationRepository({ pool })
+    const reservationRepository = createSingleCaseReservationRepository({ pool })
+    const reservation = createSingleCaseReservationAdapter({ repository: reservationRepository, expectedCaseNumber: planBinding.caseNumber })
     const composition = createSingleCaseRealComposition({
       env,
       fetchImpl: globalThis.fetch,
@@ -109,7 +127,7 @@ async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
       },
     })
     return Object.freeze({
-      execute: () => composition.executor({ caseImportId, planHash: sha256(planBytes), manifestHash: sha256(manifestBytes) }),
+      execute: () => composition.executor({ caseImportId, planHash: sha256(target.planBytes), manifestHash: sha256(manifestBytes) }),
       close: () => pool.end(),
     })
   } catch (error) {
@@ -128,6 +146,7 @@ function parseArgs(argv) {
 async function main({ argv = process.argv.slice(2), env = process.env, executor, runtimeFactory = createRuntimeExecutor } = {}) {
   const args = parseArgs(argv)
   const config = await readAndValidateRuntimeConfig(env)
+  validateP1Target(args.caseImportId, config)
   if (typeof executor === "function") return executor({ caseImportId: args.caseImportId })
   if (typeof runtimeFactory !== "function") throw new Error("REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED")
   const runtime = await runtimeFactory({ env, config, caseImportId: args.caseImportId })
@@ -139,4 +158,4 @@ async function runCli() {
   return main({ argv: process.argv.slice(2), env: process.env })
 }
 if (require.main === module) runCli().catch(error => { const allowed = new Set(["CASE_IMPORT_ID_MISSING", "CASE_IMPORT_ID_INVALID", "CLI_ARGUMENTS_EXCESS", "REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED", "POSTGRES_MODE_REQUIRED", "DRIVE_ROOT_INVALID", "AUTHORIZATION_PUBLIC_KEYS_MISSING", "AUTHORIZATION_PUBLIC_KEYS_INVALID", "AUTHORIZATION_PUBLIC_KEYS_DUPLICATE", "CONTENT_ROOT_UNAVAILABLE", "CONTENT_ROOT_NOT_DIRECTORY", ...REQUIRED_ENV.map(name => `${name}_MISSING`)]); console.error(JSON.stringify({ ok: false, error: allowed.has(error.message) ? error.message : "EXECUTOR_FAILED_CLOSED" })); process.exitCode = 1 })
-module.exports = { REQUIRED_ENV, validateRuntimeEnvironment, readAndValidateRuntimeConfig, createRuntimeExecutor, parseArgs, main, runCli }
+module.exports = { REQUIRED_ENV, validateRuntimeEnvironment, readAndValidateRuntimeConfig, validateP1Target, validateP1Plan, createRuntimeExecutor, parseArgs, main, runCli }

@@ -6,13 +6,14 @@ const crypto = require("node:crypto")
 
 const { parseArgs, loadKeys, validatePlan, buildRecord, main } = require("../scripts/emit-single-case-authorization")
 const { AUTHORIZATION_SCHEMA_VERSION, AUTH_SCOPES, authorizablePlanHash, reservationEvidenceHash, sha256, canonicalize } = require("../src/domain/single-case-apply-contracts")
+const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 // ─── constants ───────────────────────────────────────────────────────────────
 const HASH_RE = /^[a-f0-9]{64}$/
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 const CASE_ID = "inss-fixture-case-0001"
-const CASE_FP = "abcdef123456"
+const CASE_FP = caseFingerprintFor(CASE_ID)
 const CASE_NUM = "PRV.260715.321"
 const ISSUER = "fixture-issuer"
 
@@ -374,6 +375,18 @@ test("main: connection string ausente falha POSTGRES_CONNECTION_REQUIRED", async
     }),
     /POSTGRES_CONNECTION_REQUIRED/
   )
+})
+
+test("TEST_DATABASE_URL_FALLBACK_REJECTED", async () => {
+  const keys = makeKeys()
+  const env = makeEnv(keys, { EXTERNAL_STATE_DATABASE_URL: "", DATABASE_URL: "postgresql://forbidden.invalid/test" })
+  await assert.rejects(() => main({ argv: ["--case-import-id", CASE_ID], env, PoolClass: () => makePool(), output: () => {}, _testArtifacts: { plan: makePlan(), planBytes: Buffer.from("{}"), manifest: makeManifest(), manifestBytes: Buffer.from("[]") } }), /POSTGRES_CONNECTION_REQUIRED/)
+})
+
+test("TEST_EXTERNAL_STATE_DATABASE_URL_REQUIRED", async () => {
+  const keys = makeKeys()
+  const env = makeEnv(keys, { EXTERNAL_STATE_DATABASE_URL: "" })
+  await assert.rejects(() => main({ argv: ["--case-import-id", CASE_ID], env, PoolClass: () => makePool(), output: () => {}, _testArtifacts: { plan: makePlan(), planBytes: Buffer.from("{}"), manifest: makeManifest(), manifestBytes: Buffer.from("[]") } }), /POSTGRES_CONNECTION_REQUIRED/)
 })
 
 test("main: plano com ID divergente falha PLAN_CASE_IMPORT_ID_MISMATCH", async () => {

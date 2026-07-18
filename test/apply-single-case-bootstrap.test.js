@@ -7,6 +7,8 @@ const os = require("node:os")
 const path = require("node:path")
 const { spawnSync } = require("node:child_process")
 const command = require("../scripts/apply-single-case")
+const { createSingleCaseReservationAdapter } = require("../src/adapters/single-case-reservation-adapter")
+const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-apply-bootstrap-"))
 const contentRoot = path.join(sandbox, "content")
@@ -24,6 +26,7 @@ const completeEnv = overrides => ({
   GOOGLE_DRIVE_ROOT_FOLDER_ID: "fictional-root",
   SINGLE_CASE_CONTENT_ROOT: contentRoot,
   SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON: trustedKeys,
+  SINGLE_CASE_P1_CASE_IMPORT_ID: "fictional-case",
   ...overrides,
 })
 
@@ -91,6 +94,51 @@ async function testNoExternalActionsOnConfigurationFailure() {
   assert.equal(actions, 0)
 }
 
+async function testP2AndP3Rejected() {
+  for (const caseImportId of ["fictional-p2", "fictional-p3"]) {
+    let actions = 0
+    await assert.rejects(() => command.main({ argv: ["--case-import-id", caseImportId], env: completeEnv(), executor: async () => { actions++ } }), /P1_TARGET_REQUIRED/)
+    assert.equal(actions, 0)
+  }
+}
+
+async function testOnlyValidP1Accepted() {
+  let calls = 0
+  await command.main({ argv: ["--case-import-id", "fictional-case"], env: completeEnv(), executor: async () => { calls++; return { ok: true } } })
+  assert.equal(calls, 1)
+}
+
+function validP1Plan(overrides = {}) {
+  const caseImportId = "fictional-case"
+  return {
+    caseImportId,
+    caseFingerprint: caseFingerprintFor(caseImportId),
+    safeToApply: false,
+    dealPlan: { caseNumber: "PRV.260718.707", properties: { numero_de_caso: "PRV.260718.707" } },
+    caseNumberReservationSync: { source: "OFFICIAL_POSTGRES_RESERVATION", status: "SYNCHRONIZED" },
+    ...overrides,
+  }
+}
+
+function testFingerprintDivergenceRejected() {
+  assert.throws(() => command.validateP1Plan(validP1Plan({ caseFingerprint: "000000000000" }), "fictional-case"), /P1_FINGERPRINT_BINDING_INVALID/)
+}
+
+function testCaseBindingDivergenceRejected() {
+  assert.throws(() => command.validateP1Plan(validP1Plan({ caseImportId: "fictional-p2" }), "fictional-case"), /P1_CASE_BINDING_INVALID/)
+}
+
+function testPlanBindingDivergenceRejected() {
+  assert.throws(() => command.validateP1Plan(validP1Plan({ caseNumberReservationSync: { source: "LOCAL", status: "PENDING" } }), "fictional-case"), /P1_PLAN_BINDING_INVALID/)
+}
+
+async function testReservationVerifyAvailable() {
+  const caseImportId = "fictional-case", caseNumber = "PRV.260718.707"
+  const adapter = createSingleCaseReservationAdapter({ repository: { findByKey: async () => ({ reservation_key: `case-import:${caseImportId}`, case_number: caseNumber, status: "reserved" }) }, expectedCaseNumber: caseNumber })
+  assert.equal(typeof adapter.verify, "function")
+  assert.deepEqual(await adapter.verify(caseImportId, caseNumber), { verified: true, caseImportId, caseNumber, evidenceId: `case-import:${caseImportId}` })
+}
+
 function testDotenvBeforeConfiguration() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-apply-cli-"))
   try {
@@ -126,6 +174,12 @@ const tests = [
   testNoResourceCreatedBeforeFullValidation,
   testRealCompositionCreatedAfterValidation,
   testNoExternalActionsOnConfigurationFailure,
+  testP2AndP3Rejected,
+  testOnlyValidP1Accepted,
+  testFingerprintDivergenceRejected,
+  testCaseBindingDivergenceRejected,
+  testPlanBindingDivergenceRejected,
+  testReservationVerifyAvailable,
   testDotenvBeforeConfiguration,
 ]
 

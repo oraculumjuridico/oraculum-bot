@@ -17,7 +17,7 @@ function createSingleCaseReservationAdapter({ repository, expectedCaseNumber } =
     if (record.reservation_key !== `case-import:${caseImportId}`) fail("RESERVATION_CASE_MISMATCH")
     if (record.case_number !== caseNumber) fail("RESERVATION_CASE_NUMBER_MISMATCH")
     if (record.status !== "reserved") fail("RESERVATION_STATUS_INVALID")
-    return Object.freeze({ verified: true, caseImportId, caseNumber, evidenceId: `reservation:${caseImportId}` })
+    return Object.freeze({ verified: true, caseImportId, caseNumber, evidenceId: `case-import:${caseImportId}` })
   } })
 }
 

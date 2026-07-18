@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "caseImportId": "fixture-case-alpha",
-  "caseFingerprint": "f1c7a2e9b403",
+  "caseFingerprint": "e4571f89145d",
   "safeToPlanHubSpot": true,
   "safeToApply": true,
   "pendingDependencies": ["irrelevant-derived-state"],

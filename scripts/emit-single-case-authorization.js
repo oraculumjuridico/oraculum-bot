@@ -21,6 +21,7 @@ const { trustedPublicKeysFromEnv } = require("../src/composition/single-case-aut
 const { TABLE_NAME, ALGORITHM } = require("../src/infrastructure/single-case-authorization-postgres")
 const { validateCaseNumberReservationSchema } = require("../src/infrastructure/case-number-reservations-postgres")
 const { emitAuthorizationPair } = require("../src/domain/single-case-authorization-emitter")
+const { validateCaseFingerprint } = require("../src/domain/single-case-target")
 
 // ─── constants ───────────────────────────────────────────────────────────────
 const CASE_IMPORT_STATE_DIR = path.join(process.cwd(), "data", "case-import")
@@ -99,7 +100,7 @@ async function loadArtifacts(caseImportId) {
 function validatePlan(plan, caseImportId) {
   if (!plan || typeof plan !== "object") fail("PLAN_INVALID")
   if (plan.caseImportId !== caseImportId) fail("PLAN_CASE_IMPORT_ID_MISMATCH")
-  if (!plan.caseFingerprint || !/^[a-f0-9]{12}$/.test(plan.caseFingerprint)) fail("PLAN_FINGERPRINT_MISSING")
+  try { validateCaseFingerprint(caseImportId, plan.caseFingerprint) } catch { fail("PLAN_FINGERPRINT_MISSING") }
   if (!plan.dealPlan?.caseNumber || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(plan.dealPlan.caseNumber)) fail("PLAN_CASE_NUMBER_MISSING")
   if (plan.status !== "PLANNED_NOT_EXECUTED") fail("PLAN_STATUS_INVALID")
   if (plan.externalActionsExecuted === true) fail("PLAN_EXTERNAL_ACTIONS_ALREADY_EXECUTED")
@@ -174,7 +175,7 @@ async function main({
   _testArtifacts = null,
 } = {}) {
   if (String(env.CASE_NUMBER_RESERVATION_MODE || "").toLowerCase() !== "postgres") fail("POSTGRES_MODE_REQUIRED")
-  const connectionString = env.EXTERNAL_STATE_DATABASE_URL || env.DATABASE_URL
+  const connectionString = env.EXTERNAL_STATE_DATABASE_URL
   if (!connectionString) fail("POSTGRES_CONNECTION_REQUIRED")
 
   const args = parseArgs(argv)

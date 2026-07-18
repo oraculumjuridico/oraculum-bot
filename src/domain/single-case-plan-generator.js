@@ -3,6 +3,7 @@
 const crypto = require("node:crypto")
 const path = require("node:path")
 const { validateFormat } = require("./case-number")
+const { caseFingerprintFor } = require("./single-case-target")
 
 const HASH = /^[a-f0-9]{64}$/
 const CONTENT_ID = /^C-[a-f0-9]{20}$/
@@ -19,7 +20,7 @@ function validDestination(value) {
 function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, caseImportId, fingerprint, driveRules, contentFiles } = {}) {
   if (!identityConfirmed || identityConfirmed.schemaVersion !== 1 || identityConfirmed.identityConfirmationApplied !== true || identityConfirmed.safeToPlanHubSpot !== true || !identityConfirmed.reviewedInventory) fail("IDENTITY_CONFIRMED_INVALID")
   if (typeof caseImportId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(caseImportId) || identityConfirmed.caseImportId !== caseImportId || basePlan?.caseImportId !== caseImportId) fail("CASE_IMPORT_ID_INVALID")
-  if (!FINGERPRINT.test(fingerprint || "") || hash(caseImportId).slice(0, 12) !== fingerprint) fail("FINGERPRINT_INVALID")
+  if (!FINGERPRINT.test(fingerprint || "") || caseFingerprintFor(caseImportId) !== fingerprint) fail("FINGERPRINT_INVALID")
   if (!validateFormat(caseNumber) || basePlan?.dealPlan?.caseNumber !== caseNumber || basePlan?.dealPlan?.properties?.numero_de_caso !== caseNumber) fail("CASE_NUMBER_INVALID")
 
   const inventory = identityConfirmed.reviewedInventory

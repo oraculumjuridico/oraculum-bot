@@ -5,6 +5,7 @@ const assert = require("node:assert/strict")
 const { createSingleCaseExecutorComposition } = require("../src/composition/single-case-executor-composition")
 const { REQUIRED_METHODS } = require("../src/domain/single-case-apply")
 const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 const NOW = "2026-07-15T12:00:00.000Z"
 const BYTES = Buffer.from("fixture-composition-content")
@@ -15,7 +16,7 @@ function plan(overrides = {}) {
   const value = {
     schemaVersion: 1,
     caseImportId: "fixture-composition-case",
-    caseFingerprint: "123456789abc",
+    caseFingerprint: caseFingerprintFor("fixture-composition-case"),
     safeToPlanHubSpot: true,
     safeToApply: true,
     pendingDependencies: [],

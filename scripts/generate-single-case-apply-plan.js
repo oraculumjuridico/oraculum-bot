@@ -5,6 +5,7 @@ const fs = require("node:fs/promises")
 const path = require("node:path")
 const crypto = require("node:crypto")
 const { generateSingleCaseApplyPlan } = require("../src/domain/single-case-plan-generator")
+const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 const sha256 = value => crypto.createHash("sha256").update(value).digest("hex")
 const fail = code => { throw new Error(code) }
@@ -81,7 +82,7 @@ async function main({ argv = process.argv.slice(2), output = console.log } = {})
   try { basePlan = JSON.parse(baseBytes) } catch { fail("BASE_PLAN_INVALID") }
   const caseImportId = basePlan.caseImportId
   const caseNumber = basePlan.dealPlan?.caseNumber
-  const fingerprint = sha256(caseImportId).slice(0, 12)
+  const fingerprint = caseFingerprintFor(caseImportId)
   const contentFiles = await buildContentFiles(identityConfirmed, args["content-root"])
   const driveRules = {
     areaName: areaNameFor(basePlan.dealPlan?.properties?.area_juridica),
@@ -126,7 +127,7 @@ async function main({ argv = process.argv.slice(2), output = console.log } = {})
     const postgresMode = String(process.env.CASE_NUMBER_RESERVATION_MODE || "").toLowerCase()
     if (postgresMode !== "postgres") fail("POSTGRES_MODE_REQUIRED")
 
-    const connectionString = process.env.EXTERNAL_STATE_DATABASE_URL || process.env.DATABASE_URL
+    const connectionString = process.env.EXTERNAL_STATE_DATABASE_URL
     if (!connectionString) fail("POSTGRES_CONNECTION_REQUIRED")
 
     const { Pool } = require("pg")
