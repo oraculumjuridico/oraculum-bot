@@ -1,6 +1,7 @@
 "use strict"
 
 const crypto = require("node:crypto")
+const { normalizePersonName } = require("./name-normalization")
 
 const AUTHORIZABLE_SCHEMA_VERSION = 1
 const AUTHORIZATION_SCHEMA_VERSION = 2
@@ -37,6 +38,37 @@ function canonicalize(value, path = "$") {
 const sha256 = value => crypto.createHash("sha256").update(value).digest("hex")
 const deepClone = value => JSON.parse(canonicalize(value))
 function deepFreeze(value) { if (value && typeof value === "object" && !Object.isFrozen(value)) { Object.freeze(value); for (const child of Object.values(value)) deepFreeze(child) } return value }
+
+function contactVerificationProjection(expectedProperties, observedProperties = expectedProperties) {
+  if (!expectedProperties || Object.getPrototypeOf(expectedProperties) !== Object.prototype || !observedProperties || Object.getPrototypeOf(observedProperties) !== Object.prototype) throw new Error("CONTACT_PROPERTIES_INVALID")
+  const keys = Object.keys(expectedProperties).sort()
+  if (!keys.length || keys.some(key => !key || expectedProperties[key] === undefined)) throw new Error("CONTACT_PROPERTIES_INVALID")
+
+  // Apply canonical normalization to name fields before projection
+  const normalizedExpected = { ...expectedProperties }
+  const normalizedObserved = { ...observedProperties }
+
+  if (normalizedExpected.firstname) {
+    normalizedExpected.firstname = normalizePersonName(normalizedExpected.firstname)
+  }
+  if (normalizedObserved.firstname) {
+    normalizedObserved.firstname = normalizePersonName(normalizedObserved.firstname)
+  }
+
+  return Object.fromEntries(keys.map(key => [key, Object.hasOwn(normalizedObserved, key) && normalizedObserved[key] !== undefined ? normalizedObserved[key] : null]))
+}
+
+const contactVerificationHash = (expectedProperties, observedProperties = expectedProperties, hash = sha256) => {
+  if (typeof hash !== "function") throw new Error("HASH_INVALID")
+  return hash(canonicalize(contactVerificationProjection(expectedProperties, observedProperties)))
+}
+
+function validateContactVerificationEvidence(value, { contactId, caseImportId, properties, invalidCode = "CONTACT_VERIFY_INVALID" } = {}) {
+  if (!value || value.verified !== true || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.id || "")) throw new Error(invalidCode)
+  if (value.id !== contactId || value.caseImportId !== caseImportId || value.cpf !== properties?.cpf_do_cliente || value.phone !== properties?.phone || value.fieldsHash !== contactVerificationHash(properties)) throw new Error("CONTACT_FIELDS_DIVERGENCE")
+  // firstname is optional in evidence - adapter may include it for presentation checks
+  return deepClone(value)
+}
 
 function groupDocuments(plan) {
   const contents = plan?.documentPlan?.contents
@@ -155,4 +187,4 @@ function validateAuthorizations(records, expected, verifier, now) {
   return validated
 }
 
-module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, canonicalize, sha256, deepClone, deepFreeze, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }
+module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, canonicalize, sha256, deepClone, deepFreeze, contactVerificationProjection, contactVerificationHash, validateContactVerificationEvidence, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }

@@ -2,9 +2,10 @@
 
 const { validateFormat } = require("./case-number")
 const { validateCaseFingerprint } = require("./single-case-target")
+const { normalizePersonName } = require("./name-normalization")
 const {
   AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, AUTH_SCOPES, canonicalize, sha256, deepClone, deepFreeze,
-  groupDocuments, authorizablePlanHash, reservationEvidenceHash, validateAuthorizations
+  groupDocuments, authorizablePlanHash, reservationEvidenceHash, validateAuthorizations, validateContactVerificationEvidence
 } = require("./single-case-apply-contracts")
 
 const STEP_DEFINITIONS = Object.freeze({
@@ -27,7 +28,7 @@ const oneOrNone = (value, code) => { if (!Array.isArray(value) || value.some(ite
 const evidence = (value, code) => { if (!value || value.verified !== true || !validId(value.id)) fail(code); return deepClone(value) }
 const exactKeys = (value, allowed, code) => { if (!value || typeof value !== "object" || Object.keys(value).some(key => !allowed.includes(key))) fail(code) }
 const sanitizedErrorCode = error => /timeout/i.test(error?.message || "") ? "ADAPTER_TIMEOUT" : /fencing/i.test(error?.message || "") ? "FENCING_REJECTED" : /lease.*expir/i.test(error?.message || "") ? "LEASE_EXPIRED" : /CAS|version/i.test(error?.message || "") ? "CAS_CONFLICT" : /ambiguous|duplicate|multiple/i.test(error?.message || "") ? "ADAPTER_AMBIGUOUS_RESULT" : /AUTH.*EXPIRED/.test(error?.message || "") ? "AUTHORIZATION_EXPIRED" : /AUTH.*REVOKED/.test(error?.message || "") ? "AUTHORIZATION_REVOKED" : /VERIFY|DIVERGENCE|INVALID/.test(error?.message || "") ? "VERIFICATION_FAILED" : "EXTERNAL_EFFECT_UNKNOWN"
-const verifyContactEvidence = (value, id, properties, code = "CONTACT_VERIFY_INVALID") => { const verified = evidence(value, code); if (verified.id !== id || verified.cpf !== properties.cpf_do_cliente || verified.phone !== properties.phone || verified.fieldsHash !== sha256(canonicalize(properties)) || verified.caseImportId == null) fail("CONTACT_FIELDS_DIVERGENCE"); return verified }
+const verifyContactEvidence = (value, id, caseImportId, properties, invalidCode = "CONTACT_VERIFY_INVALID") => validateContactVerificationEvidence(value, { contactId: id, caseImportId, properties, invalidCode })
 const verifyDealEvidence = (value, id, properties, code = "DEAL_VERIFY_INVALID") => { const verified = evidence(value, code); if (verified.id !== id || verified.caseNumber !== properties.numero_de_caso || verified.pipeline !== properties.pipeline || verified.stage !== properties.dealstage || verified.fieldsHash !== sha256(canonicalize(properties))) fail("DEAL_FIELDS_DIVERGENCE"); return verified }
 const verifyAssociationEvidence = (value, id, contactId, dealId, type, code = "ASSOCIATION_VERIFY_INVALID") => { const verified = evidence(value, code); if (verified.id !== id || verified.contactId !== contactId || verified.dealId !== dealId || verified.relation !== type) fail("ASSOCIATION_DIVERGENCE"); return verified }
 const verifyFolderEvidence = (value, id, destination, parentId, code) => { const verified = evidence(value, code); if (verified.id !== id || verified.logicalId !== destination.logicalId || verified.name !== destination.name || verified.parentId !== parentId || verified.trashed !== false) fail("FOLDER_DIVERGENCE"); return verified }
@@ -158,13 +159,20 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
     const reservation = await run("reservation", async () => verifiedReservation)
     const contact = await run("contact", async () => {
       const properties = deepClone(plan.contactPlan.properties)
+
+      // Normalize person name before sending to HubSpot
+      if (properties.firstname) {
+        properties.firstname = normalizePersonName(properties.firstname)
+      }
+
       const byCpf = oneOrNone(await adapters.contacts.findContactsByCpf(properties.cpf_do_cliente), "CONTACT_CPF_AMBIGUOUS")
       const byPhone = oneOrNone(await adapters.contacts.findContactsByPhone(properties.phone), "CONTACT_PHONE_AMBIGUOUS")
       if (byCpf && byPhone && byCpf.id !== byPhone.id) fail("CONTACT_IDENTITY_CONFLICT")
       let selected = byCpf || byPhone
       if (!selected) selected = await adapters.contacts.create({ properties: deepFreeze(deepClone(properties)), context: await operationContext("contact") })
       if (!validId(selected?.id)) fail("CONTACT_RESPONSE_INVALID")
-      const verified = verifyContactEvidence(await adapters.contacts.verify(selected.id, deepFreeze(deepClone(plan.contactPlan.properties))), selected.id, plan.contactPlan.properties)
+      const verifyContext = await operationContext("contact-verify")
+      const verified = verifyContactEvidence(await adapters.contacts.verify(selected.id, deepFreeze(deepClone(plan.contactPlan.properties)), verifyContext), selected.id, plan.caseImportId, plan.contactPlan.properties)
       checkpoint.resources.contactId = selected.id
       return { id: selected.id, evidence: verified }
     })
@@ -228,7 +236,8 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       return { count: Object.keys(checkpoint.uploads).length }
     })
     await run("final_verify", async () => {
-      verifyContactEvidence(await adapters.contacts.verify(contact.id, deepClone(plan.contactPlan.properties)), contact.id, plan.contactPlan.properties, "FINAL_CONTACT_INVALID")
+      const verifyContext = await operationContext("final-contact-verify")
+      verifyContactEvidence(await adapters.contacts.verify(contact.id, deepClone(plan.contactPlan.properties), verifyContext), contact.id, plan.caseImportId, plan.contactPlan.properties, "FINAL_CONTACT_INVALID")
       verifyDealEvidence(await adapters.deals.verify(deal.id, deepClone(plan.dealPlan.properties)), deal.id, plan.dealPlan.properties, "FINAL_DEAL_INVALID")
       verifyAssociationEvidence(await adapters.associations.verify(association.id, contact.id, deal.id, plan.associationPlan.type), association.id, contact.id, deal.id, plan.associationPlan.type, "FINAL_ASSOCIATION_INVALID")
       verifyFolderEvidence(await adapters.drive.verifyFolder(area.id), area.id, plan.drivePlan.area, "root", "FINAL_AREA_INVALID")

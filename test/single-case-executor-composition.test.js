@@ -4,7 +4,7 @@ const test = require("node:test")
 const assert = require("node:assert/strict")
 const { createSingleCaseExecutorComposition } = require("../src/composition/single-case-executor-composition")
 const { REQUIRED_METHODS } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256, contactVerificationHash } = require("../src/domain/single-case-apply-contracts")
 const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 const NOW = "2026-07-15T12:00:00.000Z"
@@ -68,7 +68,7 @@ function system(options = {}) {
     contacts: options.contact ? [clone(options.contact)] : [],
     deals: options.deal ? [clone(options.deal)] : [],
     associations: options.association ? [clone(options.association)] : [],
-    areas: [], folders: [], files: new Map(), calls: {}
+    areas: [], folders: [], files: new Map(), calls: {}, contactVerifyContexts: []
   }
   const count = name => { state.calls[name] = (state.calls[name] || 0) + 1 }
   const contextValid = context => {
@@ -79,7 +79,7 @@ function system(options = {}) {
     findContactsByCpf: async cpf => options.multipleContacts ? [{ id: "contact-a" }, { id: "contact-b" }] : options.cpfContact ? [{ id: options.cpfContact }] : state.contacts.filter(item => item.properties.cpf_do_cliente === cpf).map(item => ({ id: item.id })),
     findContactsByPhone: async phone => options.multiplePhones ? [{ id: "contact-a" }, { id: "contact-b" }] : options.phoneContact ? [{ id: options.phoneContact }] : state.contacts.filter(item => item.properties.phone === phone).map(item => ({ id: item.id })),
     create: async ({ properties, context }) => { contextValid(context); count("contacts.create"); if (options.contactUnknown) throw new Error("HUBSPOT_EXTERNAL_EFFECT_UNKNOWN"); const item = { id: "contact-created", properties: clone(properties), caseImportId: value.caseImportId }; state.contacts.push(item); return { id: item.id } },
-    verify: async id => { const item = state.contacts.find(entry => entry.id === id); return item && { verified: true, id, cpf: item.properties.cpf_do_cliente, phone: item.properties.phone, fieldsHash: sha256(canonicalize(item.properties)), caseImportId: item.caseImportId } }
+    verify: async (id, properties, context) => { state.contactVerifyContexts.push(clone(context)); const item = state.contacts.find(entry => entry.id === id); return item && { verified: true, id, cpf: item.properties.cpf_do_cliente, phone: item.properties.phone, fieldsHash: contactVerificationHash(properties, item.properties), caseImportId: context?.caseImportId } }
   }
   const deals = {
     findByCaseNumber: async number => { count("deals.find"); return options.multipleDeals ? [{ id: "deal-a" }, { id: "deal-b" }] : state.deals.filter(item => item.properties.numero_de_caso === number).map(item => ({ id: item.id })) },
@@ -165,4 +165,12 @@ test("efeito externo desconhecido é persistido e jamais repetido", async () => 
   }
   assert.deepEqual(evidence, { contactsCreate: 1, error: "HUBSPOT_EXTERNAL_EFFECT_UNKNOWN", checkpoint: "EXTERNAL_EFFECT_UNKNOWN", deals: 0, associations: 0, drive: 0 })
   assert.equal(item.state.checkpoint.steps.contact.status, "failed")
+})
+
+test("contact verification receives canonical case context", async () => {
+  const item = system()
+  await execute(item)
+  assert.equal(item.state.contactVerifyContexts.length, 2)
+  assert.equal(item.state.contactVerifyContexts.every(context => context.caseImportId === item.value.caseImportId), true)
+  assert.equal(item.state.contactVerifyContexts.every(context => context.leaseId && context.idempotencyKey), true)
 })

@@ -1,6 +1,6 @@
 "use strict"
 
-const { canonicalize, sha256 } = require("../domain/single-case-apply-contracts")
+const { canonicalize, sha256, contactVerificationHash } = require("../domain/single-case-apply-contracts")
 const { validateHubSpotProperties } = require("../domain/hubspot-contract")
 const { ASSOCIATION } = require("./hubspot-http-client")
 
@@ -144,8 +144,9 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
         const props = res?.properties || {}
         const cpf = String(props.cpf_do_cliente || "").trim()
         const phone = String(props.phone || "").trim()
-        const fieldsHash = hash(canonicalize(props))
-        return { verified: true, id: contactId, cpf, phone, fieldsHash, caseImportId: context?.caseImportId || null }
+        const firstname = String(props.firstname || "").trim()
+        const fieldsHash = contactVerificationHash(properties, props, hash)
+        return { verified: true, id: contactId, cpf, phone, firstname, fieldsHash, caseImportId: context?.caseImportId || null }
       } catch (e) {
         throw new Error("HUBSPOT_EXTERNAL_ERROR")
       }
