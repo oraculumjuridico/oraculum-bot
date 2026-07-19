@@ -263,12 +263,108 @@ function createRebindAuditMetadata(request) {
   })
 }
 
+// Prova de retomada pós-rebind
+
+function validateResumeProofRequest(request) {
+  if (!request || typeof request !== "object") fail("REBIND_RESUME_REQUEST_INVALID")
+
+  // Validar caseImportId
+  if (!CASE_IMPORT_ID_PATTERN.test(request.caseImportId)) fail("REBIND_RESUME_CASE_IMPORT_ID_INVALID")
+
+  // Validar checkpoint estruturalmente
+  if (!request.checkpoint || typeof request.checkpoint !== "object") fail("REBIND_RESUME_CHECKPOINT_INVALID")
+  if (!Number.isInteger(request.checkpoint.version) || request.checkpoint.version < 1) fail("REBIND_RESUME_CHECKPOINT_VERSION_INVALID")
+
+  // Validar authorizationIds do checkpoint
+  if (!Array.isArray(request.checkpoint.authorizationIds)) fail("REBIND_RESUME_CHECKPOINT_AUTHORIZATION_IDS_NOT_ARRAY")
+  validateAuthorizationIds(request.checkpoint.authorizationIds, "REBIND_RESUME_CHECKPOINT_AUTHORIZATION_IDS")
+
+  // Validar expectedBindings
+  if (!request.expectedBindings || typeof request.expectedBindings !== "object") fail("REBIND_RESUME_EXPECTED_BINDINGS_INVALID")
+  if (!CASE_IMPORT_ID_PATTERN.test(request.expectedBindings.caseImportId)) fail("REBIND_RESUME_EXPECTED_BINDINGS_CASE_IMPORT_ID_INVALID")
+  if (request.expectedBindings.caseImportId !== request.caseImportId) fail("REBIND_RESUME_EXPECTED_BINDINGS_CASE_IMPORT_ID_MISMATCH")
+  if (!CASE_FINGERPRINT_PATTERN.test(request.expectedBindings.caseFingerprint)) fail("REBIND_RESUME_EXPECTED_BINDINGS_CASE_FINGERPRINT_INVALID")
+  if (!CASE_NUMBER_PATTERN.test(request.expectedBindings.caseNumber)) fail("REBIND_RESUME_EXPECTED_BINDINGS_CASE_NUMBER_INVALID")
+  if (!HASH_PATTERN.test(request.expectedBindings.authorizablePlanHash)) fail("REBIND_RESUME_EXPECTED_BINDINGS_AUTHORIZABLE_PLAN_HASH_INVALID")
+  if (!HASH_PATTERN.test(request.expectedBindings.planHash)) fail("REBIND_RESUME_EXPECTED_BINDINGS_PLAN_HASH_INVALID")
+  if (!HASH_PATTERN.test(request.expectedBindings.manifestHash)) fail("REBIND_RESUME_EXPECTED_BINDINGS_MANIFEST_HASH_INVALID")
+  if (!HASH_PATTERN.test(request.expectedBindings.reservationEvidenceHash)) fail("REBIND_RESUME_EXPECTED_BINDINGS_RESERVATION_EVIDENCE_HASH_INVALID")
+  if (!Number.isInteger(request.expectedBindings.schemaVersion) || request.expectedBindings.schemaVersion < 1) fail("REBIND_RESUME_EXPECTED_BINDINGS_SCHEMA_VERSION_INVALID")
+
+  // Validar now
+  if (typeof request.now !== "string") fail("REBIND_RESUME_NOW_INVALID")
+  const nowDate = new Date(request.now)
+  if (!Number.isFinite(nowDate.getTime())) fail("REBIND_RESUME_NOW_INVALID")
+
+  return true
+}
+
+function validateResumeProof(proof) {
+  if (!proof || typeof proof !== "object") fail("REBIND_RESUME_PROOF_INVALID")
+
+  if (proof.status !== "VALID_REBIND_RESUME") fail("REBIND_RESUME_PROOF_STATUS_INVALID")
+
+  if (!HASH_PATTERN.test(proof.rebindId)) fail("REBIND_RESUME_PROOF_REBIND_ID_INVALID")
+  if (!CASE_IMPORT_ID_PATTERN.test(proof.caseImportId)) fail("REBIND_RESUME_PROOF_CASE_IMPORT_ID_INVALID")
+
+  if (!Number.isInteger(proof.sourceCheckpointVersion) || proof.sourceCheckpointVersion < 1) fail("REBIND_RESUME_PROOF_SOURCE_VERSION_INVALID")
+  if (!Number.isInteger(proof.reboundCheckpointVersion) || proof.reboundCheckpointVersion < 1) fail("REBIND_RESUME_PROOF_REBOUND_VERSION_INVALID")
+  if (proof.reboundCheckpointVersion !== proof.sourceCheckpointVersion + 1) fail("REBIND_RESUME_PROOF_VERSION_SEQUENCE_INVALID")
+
+  if (proof.authorizationCount !== 2) fail("REBIND_RESUME_PROOF_AUTHORIZATION_COUNT_INVALID")
+  if (!HASH_PATTERN.test(proof.currentAuthorizationSetHash)) fail("REBIND_RESUME_PROOF_CURRENT_HASH_INVALID")
+
+  if (typeof proof.committedAt !== "string") fail("REBIND_RESUME_PROOF_COMMITTED_AT_INVALID")
+  const committedDate = new Date(proof.committedAt)
+  if (!Number.isFinite(committedDate.getTime())) fail("REBIND_RESUME_PROOF_COMMITTED_AT_INVALID")
+
+  if (!Array.isArray(proof.authorizationRecords)) fail("REBIND_RESUME_PROOF_AUTHORIZATION_RECORDS_NOT_ARRAY")
+  if (proof.authorizationRecords.length !== 2) fail("REBIND_RESUME_PROOF_AUTHORIZATION_RECORDS_COUNT_INVALID")
+
+  // Validar que records estão congelados
+  if (!Object.isFrozen(proof.authorizationRecords)) fail("REBIND_RESUME_PROOF_AUTHORIZATION_RECORDS_NOT_FROZEN")
+  for (const record of proof.authorizationRecords) {
+    if (!Object.isFrozen(record)) fail("REBIND_RESUME_PROOF_AUTHORIZATION_RECORD_NOT_FROZEN")
+  }
+
+  return deepFreeze(proof)
+}
+
+function sanitizeResumeProofResponse(proof) {
+  if (!proof || typeof proof !== "object") fail("REBIND_RESUME_PROOF_INVALID")
+
+  const sanitized = {
+    status: proof.status,
+    rebindId: proof.rebindId,
+    caseImportId: proof.caseImportId,
+    sourceCheckpointVersion: proof.sourceCheckpointVersion,
+    reboundCheckpointVersion: proof.reboundCheckpointVersion,
+    authorizationCount: proof.authorizationCount,
+    currentAuthorizationSetHash: proof.currentAuthorizationSetHash,
+    committedAt: proof.committedAt
+  }
+
+  // Garantir que campos internos não vazam
+  if (proof.authorizationIds !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_AUTHORIZATION_IDS")
+  if (proof.authorizationRecords !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_AUTHORIZATION_RECORDS")
+  if (proof.consumedBy !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_CONSUMED_BY")
+  if (proof.consumedAt !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_CONSUMED_AT")
+  if (proof.leaseId !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_LEASE_ID")
+  if (proof.fencingToken !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_FENCING_TOKEN")
+  if (proof.ownerId !== undefined) fail("REBIND_RESUME_RESPONSE_CONTAINS_OWNER_ID")
+
+  return deepFreeze(sanitized)
+}
+
 module.exports = {
   REBIND_SCHEMA_VERSION,
   ALLOWED_REBIND_REASONS,
   AUTHORIZATION_ID_PATTERN,
   REQUESTED_BY_PATTERN,
   HASH_PATTERN,
+  CASE_IMPORT_ID_PATTERN,
+  CASE_FINGERPRINT_PATTERN,
+  CASE_NUMBER_PATTERN,
   normalizeAuthorizationSet,
   computeAuthorizationSetHash,
   validateReason,
@@ -280,5 +376,8 @@ module.exports = {
   validateRebindRequest,
   createRebindRequest,
   sanitizeRebindResponse,
-  createRebindAuditMetadata
+  createRebindAuditMetadata,
+  validateResumeProofRequest,
+  validateResumeProof,
+  sanitizeResumeProofResponse
 }

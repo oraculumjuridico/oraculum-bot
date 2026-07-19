@@ -1,0 +1,607 @@
+"use strict"
+
+const test = require("node:test")
+const assert = require("node:assert/strict")
+const { createSingleCaseRebindResumeVerifier } = require("../src/infrastructure/single-case-rebind-resume-postgres")
+const { computeAuthorizationSetHash } = require("../src/domain/single-case-rebind-contracts")
+
+const NOW = "2026-07-19T12:00:00.000Z"
+const CASE_IMPORT_ID = "resume-case-001"
+const CASE_FINGERPRINT = "abc123def456"
+const CASE_NUMBER = "INSS.260719.001"
+const AUTHORIZABLE_PLAN_HASH = "a".repeat(64)
+const PLAN_HASH = "1".repeat(64)
+const MANIFEST_HASH = "2".repeat(64)
+const RESERVATION_EVIDENCE_HASH = "3".repeat(64)
+
+const AUTH_1 = "resume-auth-explicit-001"
+const AUTH_2 = "resume-auth-external-001"
+const REBIND_ID = "b".repeat(64)
+
+function mockPool(state = {}) {
+  const defaults = {
+    queries: [],
+    checkpoints: new Map(),
+    audits: new Map(),
+    authorizations: new Map()
+  }
+
+  const poolState = { ...defaults, ...state }
+
+  return {
+    state: poolState,
+    async query(sql, params) {
+      const text = String(sql).replace(/\s+/g, " ").trim()
+      poolState.queries.push({ text, params: params ? [...params] : [] })
+
+      // SELECT checkpoint
+      if (text.includes("FROM single_case_apply_checkpoints")) {
+        const checkpoint = poolState.checkpoints.get(params[0])
+        if (!checkpoint) return { rows: [], rowCount: 0 }
+        return { rows: [checkpoint], rowCount: 1 }
+      }
+
+      // SELECT audit
+      if (text.includes("FROM single_case_apply_rebind_audit")) {
+        const audits = Array.from(poolState.audits.values()).filter(a =>
+          a.case_import_id === params[0] &&
+          Number(a.rebound_checkpoint_version) === params[1] &&
+          a.current_authorization_set_hash === params[2]
+        )
+        return { rows: audits, rowCount: audits.length }
+      }
+
+      // SELECT authorizations
+      if (text.includes("FROM single_case_apply_authorizations")) {
+        const authIds = params[0]
+        const rows = authIds.map(id => poolState.authorizations.get(id)).filter(Boolean)
+        return { rows, rowCount: rows.length }
+      }
+
+      return { rows: [], rowCount: 0 }
+    }
+  }
+}
+
+function createCheckpoint(overrides = {}) {
+  return {
+    case_import_id: CASE_IMPORT_ID,
+    checkpoint_version: 2,
+    authorization_ids: [AUTH_1, AUTH_2],
+    checkpoint_payload: JSON.stringify({
+      version: 2,
+      authorizationIds: [AUTH_1, AUTH_2],
+      caseImportId: CASE_IMPORT_ID
+    }),
+    ...overrides
+  }
+}
+
+function createAudit(overrides = {}) {
+  return {
+    rebind_id: REBIND_ID,
+    case_import_id: CASE_IMPORT_ID,
+    source_checkpoint_version: 1,
+    rebound_checkpoint_version: 2,
+    authorization_count: 2,
+    current_authorization_set_hash: computeAuthorizationSetHash([AUTH_1, AUTH_2]),
+    committed_at: NOW,
+    ...overrides
+  }
+}
+
+function createAuthorization(id, type, overrides = {}) {
+  return {
+    authorization_id: id,
+    authorization_type: type,
+    case_import_id: CASE_IMPORT_ID,
+    case_fingerprint: CASE_FINGERPRINT,
+    case_number: CASE_NUMBER,
+    authorizable_plan_hash: AUTHORIZABLE_PLAN_HASH,
+    plan_hash: PLAN_HASH,
+    manifest_hash: MANIFEST_HASH,
+    reservation_evidence_hash: RESERVATION_EVIDENCE_HASH,
+    schema_version: 2,
+    revoked: false,
+    consumed_at: NOW,
+    consumed_by: `rebind:${REBIND_ID}`,
+    expires_at: "2026-07-19T13:00:00.000Z",
+    operational_status: "ACTIVE",
+    ...overrides
+  }
+}
+
+function createRequest() {
+  return {
+    caseImportId: CASE_IMPORT_ID,
+    checkpoint: {
+      version: 2,
+      authorizationIds: [AUTH_1, AUTH_2]
+    },
+    expectedBindings: {
+      caseImportId: CASE_IMPORT_ID,
+      caseFingerprint: CASE_FINGERPRINT,
+      caseNumber: CASE_NUMBER,
+      authorizablePlanHash: AUTHORIZABLE_PLAN_HASH,
+      planHash: PLAN_HASH,
+      manifestHash: MANIFEST_HASH,
+      reservationEvidenceHash: RESERVATION_EVIDENCE_HASH,
+      schemaVersion: 2
+    },
+    now: NOW
+  }
+}
+
+test("prova válida retorna status VALID_REBIND_RESUME", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  const proof = await verifier.verifyResumeProof(createRequest())
+
+  assert.equal(proof.status, "VALID_REBIND_RESUME")
+  assert.equal(proof.rebindId, REBIND_ID)
+  assert.equal(proof.caseImportId, CASE_IMPORT_ID)
+  assert.equal(proof.sourceCheckpointVersion, 1)
+  assert.equal(proof.reboundCheckpointVersion, 2)
+  assert.equal(proof.authorizationCount, 2)
+  assert.ok(proof.currentAuthorizationSetHash)
+  assert.equal(proof.committedAt, NOW)
+  assert.equal(proof.authorizationRecords.length, 2)
+  assert.ok(Object.isFrozen(proof))
+  assert.ok(Object.isFrozen(proof.authorizationRecords))
+})
+
+test("nenhuma escrita SQL executada", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await verifier.verifyResumeProof(createRequest())
+
+  // Verificar que nenhuma query de escrita foi executada
+  for (const query of pool.state.queries) {
+    assert(!query.text.includes("INSERT"), "Não deve conter INSERT")
+    assert(!query.text.includes("UPDATE"), "Não deve conter UPDATE")
+    assert(!query.text.includes("DELETE"), "Não deve conter DELETE")
+    assert(!query.text.includes("FOR UPDATE"), "Não deve conter FOR UPDATE")
+  }
+})
+
+test("checkpoint ausente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map(),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CHECKPOINT_NOT_FOUND/
+  )
+})
+
+test("versão divergente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ checkpoint_version: 3 })]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CHECKPOINT_DIVERGENT/
+  )
+})
+
+test("IDs divergentes entre linha e payload falha", async () => {
+  const wrongPayload = {
+    version: 2,
+    authorizationIds: ["wrong-id-1", "wrong-id-2"],
+    caseImportId: CASE_IMPORT_ID
+  }
+
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({
+      checkpoint_payload: JSON.stringify(wrongPayload)
+    })]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CHECKPOINT_DIVERGENT/
+  )
+})
+
+test("hash divergente falha na auditoria", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map(),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUDIT_NOT_FOUND/
+  )
+})
+
+test("auditoria ausente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map(),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUDIT_NOT_FOUND/
+  )
+})
+
+test("auditoria duplicada falha", async () => {
+  const audit1 = createAudit()
+  const audit2 = createAudit({ rebind_id: "s".repeat(64) })
+
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, audit1], ["s".repeat(64), audit2]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUDIT_AMBIGUOUS/
+  )
+})
+
+test("versão rebound divergente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit({ rebound_checkpoint_version: 999 })]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUDIT_NOT_FOUND/
+  )
+})
+
+test("authorization_count diferente de 2 falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit({ authorization_count: 3 })]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUDIT_DIVERGENT/
+  )
+})
+
+test("autorização ausente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUTHORIZATIONS_AMBIGUOUS/
+  )
+})
+
+test("ID extra falha", async () => {
+  const AUTH_3 = "resume-auth-extra-001"
+
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")],
+      [AUTH_3, createAuthorization(AUTH_3, "EXPLICIT_APPLY_AUTHORIZATION")]
+    ])
+  })
+
+  const originalQuery = pool.query.bind(pool)
+
+  pool.query = async (sql, params) => {
+    const result = await originalQuery(sql, params)
+
+    if (String(sql).includes("FROM single_case_apply_authorizations")) {
+      const extra = pool.state.authorizations.get(AUTH_3)
+      return {
+        rows: [...result.rows, extra],
+        rowCount: result.rowCount + 1
+      }
+    }
+
+    return result
+  }
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUTHORIZATIONS_AMBIGUOUS/
+  )
+})
+
+test("tipos duplicados falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXPLICIT_APPLY_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_AUTHORIZATION_TYPES_INVALID/
+  )
+})
+
+test("binding divergente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        case_fingerprint: "wrong-fingerprint"
+      })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_BINDINGS_MISMATCH/
+  )
+})
+
+test("autorização revogada falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { revoked: true })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMPTION_MISMATCH/
+  )
+})
+
+test("operational_status não ativo falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        operational_status: "INACTIVE"
+      })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMPTION_MISMATCH/
+  )
+})
+
+test("uma autorização não consumida falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: null })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMPTION_MISMATCH/
+  )
+})
+
+test("consumed_at divergente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: "2026-07-19T11:00:00.000Z"
+      })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMPTION_MISMATCH/
+  )
+})
+
+test("consumed_by divergente falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_by: `rebind:${REBIND_ID}`
+      })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_by: "rebind:different-id"
+      })]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMPTION_MISMATCH/
+  )
+})
+
+test("consumed_by sem prefixo rebind falha", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_by: "executor:some-lease"
+      })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_by: "executor:some-lease"
+      })]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMED_BY_INVALID/
+  )
+})
+
+test("consumed_by com rebindId divergente falha", async () => {
+  const wrongRebindId = "f".repeat(64)
+
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_by: `rebind:${wrongRebindId}`
+      })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_by: `rebind:${wrongRebindId}`
+      })]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /REBIND_RESUME_CONSUMED_BY_INVALID/
+  )
+})
+
+test("prova interna possui objetos e arrays congelados", async () => {
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  const proof = await verifier.verifyResumeProof(createRequest())
+
+  assert.ok(Object.isFrozen(proof))
+  assert.ok(Object.isFrozen(proof.authorizationRecords))
+  assert.ok(Object.isFrozen(proof.authorizationRecords[0]))
+  assert.ok(Object.isFrozen(proof.authorizationRecords[1]))
+})
+
+test("indisponibilidade PostgreSQL e sanitizada", async () => {
+  const pool = {
+    async query() {
+      const error = new Error("Connection refused with secret details")
+      error.code = "ECONNREFUSED"
+      throw error
+    }
+  }
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await assert.rejects(
+    () => verifier.verifyResumeProof(createRequest()),
+    /POSTGRES_UNAVAILABLE/
+  )
+})
+
+test("verificacao nao modifica os inputs", async () => {
+  const request = createRequest()
+  const originalRequest = structuredClone(request)
+
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const verifier = createSingleCaseRebindResumeVerifier({ pool })
+  await verifier.verifyResumeProof(request)
+
+  assert.deepEqual(request, originalRequest)
+})

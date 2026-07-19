@@ -829,3 +829,134 @@ describe("single-case-rebind-contracts", () => {
     })
   })
 })
+
+describe("Teste 46: validateResumeProofRequest válida", () => {
+  it("deve validar requisição de prova de retomada", () => {
+    const { validateResumeProofRequest } = require("../src/domain/single-case-rebind-contracts")
+
+    const request = {
+      caseImportId: "case-import-synthetic-001",
+      checkpoint: {
+        version: 2,
+        authorizationIds: newAuthIds
+      },
+      expectedBindings: {
+        caseImportId: "case-import-synthetic-001",
+        caseFingerprint: "abc123def456",
+        caseNumber: "INSS.123456.001",
+        authorizablePlanHash: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        planHash: "b1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        manifestHash: "c1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        reservationEvidenceHash: "d1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        schemaVersion: 2
+      },
+      now: "2026-07-19T12:00:00.000Z"
+    }
+
+    assert.doesNotThrow(() => validateResumeProofRequest(request))
+  })
+})
+
+describe("Teste 47: sanitizeResumeProofResponse não contém IDs ou records", () => {
+  it("deve rejeitar prova que contém authorizationIds", () => {
+    const { sanitizeResumeProofResponse } = require("../src/domain/single-case-rebind-contracts")
+
+    const proof = {
+      status: "VALID_REBIND_RESUME",
+      rebindId: "a".repeat(64),
+      caseImportId: "case-import-synthetic-001",
+      sourceCheckpointVersion: 1,
+      reboundCheckpointVersion: 2,
+      authorizationCount: 2,
+      currentAuthorizationSetHash: "b".repeat(64),
+      committedAt: "2026-07-19T12:00:00.000Z",
+      authorizationIds: ["id1", "id2"]
+    }
+
+    assert.throws(
+      () => sanitizeResumeProofResponse(proof),
+      /REBIND_RESUME_RESPONSE_CONTAINS_AUTHORIZATION_IDS/
+    )
+  })
+
+  it("deve rejeitar prova que contém authorizationRecords", () => {
+    const { sanitizeResumeProofResponse } = require("../src/domain/single-case-rebind-contracts")
+
+    const proof = {
+      status: "VALID_REBIND_RESUME",
+      rebindId: "a".repeat(64),
+      caseImportId: "case-import-synthetic-001",
+      sourceCheckpointVersion: 1,
+      reboundCheckpointVersion: 2,
+      authorizationCount: 2,
+      currentAuthorizationSetHash: "b".repeat(64),
+      committedAt: "2026-07-19T12:00:00.000Z",
+      authorizationRecords: []
+    }
+
+    assert.throws(
+      () => sanitizeResumeProofResponse(proof),
+      /REBIND_RESUME_RESPONSE_CONTAINS_AUTHORIZATION_RECORDS/
+    )
+  })
+})
+
+describe("Teste 48: prova congelada profundamente", () => {
+  it("deve congelar prova e records", () => {
+    const { validateResumeProof } = require("../src/domain/single-case-rebind-contracts")
+
+    const authorizationRecords = Object.freeze([
+      Object.freeze({ authorizationId: "auth-resume-001" }),
+      Object.freeze({ authorizationId: "auth-resume-002" })
+    ])
+
+    const proof = {
+      status: "VALID_REBIND_RESUME",
+      rebindId: "a".repeat(64),
+      caseImportId: "case-import-synthetic-001",
+      sourceCheckpointVersion: 1,
+      reboundCheckpointVersion: 2,
+      authorizationCount: 2,
+      currentAuthorizationSetHash: "b".repeat(64),
+      committedAt: "2026-07-19T12:00:00.000Z",
+      authorizationRecords
+    }
+
+    const validated = validateResumeProof(proof)
+
+    assert.ok(Object.isFrozen(validated))
+    assert.ok(Object.isFrozen(validated.authorizationRecords))
+    assert.ok(Object.isFrozen(validated.authorizationRecords[0]))
+    assert.ok(Object.isFrozen(validated.authorizationRecords[1]))
+  })
+})
+
+describe("Teste 49: caseImportId dos bindings deve coincidir com a requisição", () => {
+  it("deve rejeitar expectedBindings de outro caso", () => {
+    const { validateResumeProofRequest } = require("../src/domain/single-case-rebind-contracts")
+
+    const request = {
+      caseImportId: "case-import-synthetic-001",
+      checkpoint: {
+        version: 2,
+        authorizationIds: newAuthIds
+      },
+      expectedBindings: {
+        caseImportId: "case-import-synthetic-002",
+        caseFingerprint: "abc123def456",
+        caseNumber: "INSS.123456.001",
+        authorizablePlanHash: "a".repeat(64),
+        planHash: "b".repeat(64),
+        manifestHash: "c".repeat(64),
+        reservationEvidenceHash: "d".repeat(64),
+        schemaVersion: 2
+      },
+      now: "2026-07-19T12:00:00.000Z"
+    }
+
+    assert.throws(
+      () => validateResumeProofRequest(request),
+      /REBIND_RESUME_EXPECTED_BINDINGS_CASE_IMPORT_ID_MISMATCH/
+    )
+  })
+})
