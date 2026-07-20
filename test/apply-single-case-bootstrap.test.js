@@ -59,6 +59,46 @@ async function testMissingHubspotEnvBlocks() { await blocks(completeEnv({ HUBSPO
 async function testMissingDriveClientIdBlocks() { await blocks(completeEnv({ GOOGLE_DRIVE_CLIENT_ID: "" }), "GOOGLE_DRIVE_CLIENT_ID_MISSING") }
 async function testMissingDriveClientSecretBlocks() { await blocks(completeEnv({ GOOGLE_DRIVE_CLIENT_SECRET: "" }), "GOOGLE_DRIVE_CLIENT_SECRET_MISSING") }
 async function testMissingDriveRefreshTokenBlocks() { await blocks(completeEnv({ GOOGLE_DRIVE_REFRESH_TOKEN: "" }), "GOOGLE_DRIVE_REFRESH_TOKEN_MISSING") }
+async function testLegacyGoogleCredentialsAccepted() {
+  const env = completeEnv({
+    GOOGLE_DRIVE_CLIENT_ID: undefined,
+    GOOGLE_DRIVE_CLIENT_SECRET: undefined,
+    GOOGLE_DRIVE_REFRESH_TOKEN: undefined,
+    GOOGLE_CLIENT_ID: "legacy-client",
+    GOOGLE_CLIENT_SECRET: "legacy-secret",
+    GOOGLE_REFRESH_TOKEN: "legacy-refresh",
+  })
+  const config = await command.readAndValidateRuntimeConfig(env)
+  assert.equal(config.env.GOOGLE_DRIVE_CLIENT_ID, "legacy-client")
+  assert.equal(config.env.GOOGLE_DRIVE_CLIENT_SECRET, "legacy-secret")
+  assert.equal(config.env.GOOGLE_DRIVE_REFRESH_TOKEN, "legacy-refresh")
+}
+async function testDriveGoogleCredentialsAccepted() {
+  const config = await command.readAndValidateRuntimeConfig(completeEnv())
+  assert.equal(config.env.GOOGLE_DRIVE_CLIENT_ID, "fictional-client")
+  assert.equal(config.env.GOOGLE_DRIVE_CLIENT_SECRET, "fictional-secret")
+  assert.equal(config.env.GOOGLE_DRIVE_REFRESH_TOKEN, "fictional-refresh")
+}
+async function testDriveGoogleCredentialsTakePrecedence() {
+  const config = await command.readAndValidateRuntimeConfig(completeEnv({
+    GOOGLE_CLIENT_ID: "legacy-client",
+    GOOGLE_CLIENT_SECRET: "legacy-secret",
+    GOOGLE_REFRESH_TOKEN: "legacy-refresh",
+  }))
+  assert.equal(config.env.GOOGLE_DRIVE_CLIENT_ID, "fictional-client")
+  assert.equal(config.env.GOOGLE_DRIVE_CLIENT_SECRET, "fictional-secret")
+  assert.equal(config.env.GOOGLE_DRIVE_REFRESH_TOKEN, "fictional-refresh")
+}
+async function testNoGoogleCredentialsBlocks() {
+  await blocks(completeEnv({
+    GOOGLE_DRIVE_CLIENT_ID: undefined,
+    GOOGLE_DRIVE_CLIENT_SECRET: undefined,
+    GOOGLE_DRIVE_REFRESH_TOKEN: undefined,
+    GOOGLE_CLIENT_ID: undefined,
+    GOOGLE_CLIENT_SECRET: undefined,
+    GOOGLE_REFRESH_TOKEN: undefined,
+  }), "GOOGLE_DRIVE_CLIENT_ID_MISSING")
+}
 async function testMissingDriveRootBlocks() { await blocks(completeEnv({ GOOGLE_DRIVE_ROOT_FOLDER_ID: "" }), "GOOGLE_DRIVE_ROOT_FOLDER_ID_MISSING") }
 async function testInvalidDriveRootBlocks() { await blocks(completeEnv({ GOOGLE_DRIVE_ROOT_FOLDER_ID: "invalid root" }), "DRIVE_ROOT_INVALID") }
 async function testMissingPublicKeysBlocks() { await blocks(completeEnv({ SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON: "" }), "SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON_MISSING") }
@@ -181,6 +221,10 @@ const tests = [
   testMissingDriveClientIdBlocks,
   testMissingDriveClientSecretBlocks,
   testMissingDriveRefreshTokenBlocks,
+  testLegacyGoogleCredentialsAccepted,
+  testDriveGoogleCredentialsAccepted,
+  testDriveGoogleCredentialsTakePrecedence,
+  testNoGoogleCredentialsBlocks,
   testMissingDriveRootBlocks,
   testInvalidDriveRootBlocks,
   testMissingPublicKeysBlocks,

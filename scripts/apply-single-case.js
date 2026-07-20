@@ -32,6 +32,15 @@ const REQUIRED_ENV = Object.freeze([
 ])
 const DRIVE_ROOT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 
+function withGoogleDriveCredentialFallbacks(env = process.env) {
+  return {
+    ...env,
+    GOOGLE_DRIVE_CLIENT_ID: env.GOOGLE_DRIVE_CLIENT_ID || env.GOOGLE_CLIENT_ID,
+    GOOGLE_DRIVE_CLIENT_SECRET: env.GOOGLE_DRIVE_CLIENT_SECRET || env.GOOGLE_CLIENT_SECRET,
+    GOOGLE_DRIVE_REFRESH_TOKEN: env.GOOGLE_DRIVE_REFRESH_TOKEN || env.GOOGLE_REFRESH_TOKEN,
+  }
+}
+
 function validateRuntimeEnvironment(env = process.env) {
   if (String(env.CASE_NUMBER_RESERVATION_MODE || "").trim().toLowerCase() !== "postgres") throw new Error("POSTGRES_MODE_REQUIRED")
   for (const name of REQUIRED_ENV) if (typeof env[name] !== "string" || !env[name].trim()) throw new Error(`${name}_MISSING`)
@@ -39,6 +48,7 @@ function validateRuntimeEnvironment(env = process.env) {
 }
 
 async function readAndValidateRuntimeConfig(env) {
+  env = withGoogleDriveCredentialFallbacks(env)
   validateRuntimeEnvironment(env)
   if (!DRIVE_ROOT_ID.test(env.GOOGLE_DRIVE_ROOT_FOLDER_ID)) throw new Error("DRIVE_ROOT_INVALID")
   trustedPublicKeysFromEnv(env)
@@ -163,4 +173,4 @@ async function runCli() {
   return main({ argv: process.argv.slice(2), env: process.env })
 }
 if (require.main === module) runCli().catch(error => { const allowed = new Set(["CASE_IMPORT_ID_MISSING", "CASE_IMPORT_ID_INVALID", "CLI_ARGUMENTS_EXCESS", "REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED", "POSTGRES_MODE_REQUIRED", "DRIVE_ROOT_INVALID", "AUTHORIZATION_PUBLIC_KEYS_MISSING", "AUTHORIZATION_PUBLIC_KEYS_INVALID", "AUTHORIZATION_PUBLIC_KEYS_DUPLICATE", "CONTENT_ROOT_UNAVAILABLE", "CONTENT_ROOT_NOT_DIRECTORY", ...REQUIRED_ENV.map(name => `${name}_MISSING`)]); console.error(JSON.stringify({ ok: false, error: allowed.has(error.message) ? error.message : "EXECUTOR_FAILED_CLOSED" })); process.exitCode = 1 })
-module.exports = { REQUIRED_ENV, validateRuntimeEnvironment, readAndValidateRuntimeConfig, validateP1Target, validateP1Plan, createRuntimeExecutor, parseArgs, main, runCli }
+module.exports = { REQUIRED_ENV, withGoogleDriveCredentialFallbacks, validateRuntimeEnvironment, readAndValidateRuntimeConfig, validateP1Target, validateP1Plan, createRuntimeExecutor, parseArgs, main, runCli }
