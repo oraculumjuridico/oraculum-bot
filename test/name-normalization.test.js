@@ -48,6 +48,8 @@ test("normalizes all-uppercase name to title case", () => {
 
 test("preserves already correctly capitalized names", () => {
   assert.equal(normalizePersonName("João da Silva"), "João da Silva")
+  assert.equal(normalizePersonName("maria josé santos"), "Maria José Santos")
+  assert.equal(normalizePersonName("mArIa jOsÉ sAnToS"), "Maria José Santos")
   assert.equal(normalizePersonName("Maria José Santos"), "Maria José Santos")
   assert.equal(normalizePersonName("Ana Paula"), "Ana Paula")
 })
@@ -79,21 +81,21 @@ test("handles accented characters", () => {
 })
 
 test("handles hyphens", () => {
-  assert.equal(normalizePersonName("MARIA-JOSÉ"), "Maria-josé")
-  assert.equal(normalizePersonName("JEAN-PAUL"), "Jean-paul")
+  assert.equal(normalizePersonName("MARIA-JOSÉ"), "Maria-José")
+  assert.equal(normalizePersonName("JEAN-PAUL"), "Jean-Paul")
 })
 
 test("handles apostrophes", () => {
-  assert.equal(normalizePersonName("O'BRIEN"), "O'brien")
-  assert.equal(normalizePersonName("D'ANGELO"), "D'angelo")
+  assert.equal(normalizePersonName("O'BRIEN"), "O'Brien")
+  assert.equal(normalizePersonName("D'ANGELO"), "D'Angelo")
 })
 
-test("normalizePersonName does NOT preserve legal acronyms", () => {
-  // Person names should NOT check for legal acronyms like INSS, CPF, etc.
-  // These are handled by normalizeTextWithAcronyms
-  assert.equal(normalizePersonName("JOÃO DO INSS"), "João do Inss")
-  assert.equal(normalizePersonName("MARIA CPF SILVA"), "Maria Cpf Silva")
-  assert.equal(normalizePersonName("JOSÉ RG SANTOS"), "José Rg Santos")
+test("preserves recognized acronyms in person-name fields", () => {
+  assert.equal(normalizePersonName("JOÃO DO INSS"), "João do INSS")
+  assert.equal(normalizePersonName("maria cpf silva"), "Maria CPF Silva")
+  assert.equal(normalizePersonName("josé rg santos"), "José RG Santos")
+  assert.equal(normalizePersonName("ana cnh oab cnpj mei ltda eireli"), "Ana CNH OAB CNPJ MEI LTDA EIRELI")
+  assert.equal(normalizePersonName("marina cpf/cnpj da silva"), "Marina CPF/CNPJ da Silva")
 })
 
 test("does not treat short words as acronyms", () => {

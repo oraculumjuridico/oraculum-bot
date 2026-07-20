@@ -5,7 +5,7 @@
  * containing recognized acronyms in legal/social security context.
  *
  * RULES:
- * 1. Convert all-uppercase names to title case
+ * 1. Convert person names to title case regardless of their original casing
  * 2. Lowercase prepositions when not at start: da, de, do, das, dos, e
  * 3. Preserve recognized acronyms in uppercase
  * 4. Preserve already correctly capitalized names
@@ -19,6 +19,12 @@ const RECOGNIZED_ACRONYMS = Object.freeze(new Set([
   "INSS",
   "CPF",
   "RG",
+  "CNH",
+  "OAB",
+  "CNPJ",
+  "MEI",
+  "LTDA",
+  "EIRELI",
   "BPC",
   "LOAS",
   "CRAS",
@@ -59,13 +65,17 @@ function capitalize(word) {
 }
 
 /**
- * Normalizes a single word for person names (does NOT check for acronyms)
+ * Normalizes a single word for person names and recognized acronyms.
  */
 function normalizePersonNameWord(word, isFirstWord) {
   if (!word || typeof word !== "string") return word
 
   const trimmed = word.trim()
   if (!trimmed) return trimmed
+
+  if (isRecognizedAcronym(trimmed.toUpperCase())) {
+    return trimmed.toUpperCase()
+  }
 
   // Check if it's a preposition (lowercase unless first word)
   const lower = trimmed.toLowerCase()
@@ -75,6 +85,17 @@ function normalizePersonNameWord(word, isFirstWord) {
 
   // Capitalize normally
   return capitalize(trimmed)
+}
+
+function normalizePersonNameToken(token, isFirstWord) {
+  const parts = token.split(/([/'-])/)
+  let wordIndex = 0
+  return parts.map(part => {
+    if (/^[/'-]$/.test(part)) return part
+    const normalized = normalizePersonNameWord(part, isFirstWord && wordIndex === 0)
+    wordIndex += 1
+    return normalized
+  }).join("")
 }
 
 /**
@@ -110,7 +131,7 @@ function normalizeTextWord(word, isFirstWord) {
  * @example
  * normalizePersonName("MARINA ANDRADE DA SILVA") // "Marina Andrade da Silva"
  * normalizePersonName("João da Silva") // "João da Silva"
- * normalizePersonName("MARIA DO INSS") // "Maria do Inss"
+ * normalizePersonName("maria do inss") // "Maria do INSS"
  * normalizePersonName("José  Carlos") // "José Carlos"
  */
 function normalizePersonName(name) {
@@ -124,16 +145,8 @@ function normalizePersonName(name) {
   // Normalize whitespace: collapse multiple spaces to single space
   const normalized = trimmed.replace(/\s+/g, " ")
 
-  // If not all uppercase, return as-is (assume already correctly formatted)
-  // This preserves names like "João", "O'Brien", "Mary-Jane"
-  if (!isAllUppercase(normalized)) {
-    return normalized
-  }
-
-  // Split into words and normalize each
-  const words = normalized.split(/(\s+)/)
-    .filter(part => part.trim().length > 0)
-    .map((word, index) => normalizePersonNameWord(word, index === 0))
+  const words = normalized.split(" ")
+    .map((word, index) => normalizePersonNameToken(word, index === 0))
 
   return words.join(" ")
 }

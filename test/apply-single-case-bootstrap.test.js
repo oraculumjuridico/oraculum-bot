@@ -104,8 +104,26 @@ async function testP2AndP3Rejected() {
 
 async function testOnlyValidP1Accepted() {
   let calls = 0
-  await command.main({ argv: ["--case-import-id", "fictional-case"], env: completeEnv(), executor: async () => { calls++; return { ok: true } } })
+  let received
+  await command.main({ argv: ["--case-import-id", "fictional-case"], env: completeEnv(), executor: async args => { calls++; received = args; return { ok: true } } })
   assert.equal(calls, 1)
+  assert.deepEqual(received, { caseImportId: "fictional-case" })
+}
+
+function testResumeModeParsed() {
+  assert.deepEqual(command.parseArgs(["--case-import-id", "fictional-case", "--resume-mode", "REBIND"]), { caseImportId: "fictional-case", resumeMode: "REBIND" })
+  assert.throws(() => command.parseArgs(["--case-import-id", "fictional-case", "--resume-mode", "invalid"]), /RESUME_MODE_INVALID/)
+}
+
+async function testResumeModeForwarded() {
+  let executorArgs, factoryArgs
+  await command.main({ argv: ["--case-import-id", "fictional-case", "--resume-mode", "REBIND"], env: completeEnv(), executor: async args => { executorArgs = args; return { ok: true } } })
+  await command.main({ argv: ["--case-import-id", "fictional-case", "--resume-mode", "REBIND"], env: completeEnv(), executor: undefined, runtimeFactory: async args => {
+    factoryArgs = args
+    return { execute: async () => ({ ok: true }), close: async () => {} }
+  } })
+  assert.deepEqual(executorArgs, { caseImportId: "fictional-case", resumeMode: "REBIND" })
+  assert.equal(factoryArgs.resumeMode, "REBIND")
 }
 
 function validP1Plan(overrides = {}) {
@@ -176,6 +194,8 @@ const tests = [
   testNoExternalActionsOnConfigurationFailure,
   testP2AndP3Rejected,
   testOnlyValidP1Accepted,
+  testResumeModeParsed,
+  testResumeModeForwarded,
   testFingerprintDivergenceRejected,
   testCaseBindingDivergenceRejected,
   testPlanBindingDivergenceRejected,

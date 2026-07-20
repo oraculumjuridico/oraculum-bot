@@ -6,6 +6,7 @@ const { REQUIRED_METHODS } = require("../domain/single-case-apply")
 const { createSingleCaseAuthorizationComponents } = require("./single-case-authorization-components")
 const { createSingleCaseCoordinationComponents } = require("./single-case-coordination-components")
 const { createSingleCaseExecutorComposition } = require("./single-case-executor-composition")
+const { createSingleCaseRebindResumeVerifier } = require("../infrastructure/single-case-rebind-resume-postgres")
 
 const DEFAULT_OWNER_ID = "single-case-real-composition"
 const DEFAULT_TIMEOUT_MS = 30000
@@ -48,6 +49,7 @@ function createSingleCaseRealComposition({
   const factories = {
     authorization: componentFactories.authorization || createSingleCaseAuthorizationComponents,
     coordination: componentFactories.coordination || createSingleCaseCoordinationComponents,
+    rebindResumeVerifier: componentFactories.rebindResumeVerifier || createSingleCaseRebindResumeVerifier,
     hubspotClient: componentFactories.hubspotClient || createHubSpotHttpClient,
     hubspotAdapters: componentFactories.hubspotAdapters || createHubSpotSingleCaseAdapters,
     executor: componentFactories.executor || createSingleCaseExecutorComposition
@@ -61,8 +63,13 @@ function createSingleCaseRealComposition({
   const authorization = factories.authorization({ pool, env })
   requiredPort("AUTHORIZATIONS", authorization?.authorizationRepository, REQUIRED_METHODS.authorizations)
   if (!authorization?.authorizationVerifier || typeof authorization.authorizationVerifier.verify !== "function") throw new Error("AUTHORIZATION_VERIFIER_MISSING")
+
+  const rebindResumeVerifier = factories.rebindResumeVerifier({ pool })
+  if (!rebindResumeVerifier || typeof rebindResumeVerifier.verifyResumeProof !== "function") throw new Error("REBIND_RESUME_VERIFIER_INVALID")
+
   const coordinationComponents = factories.coordination({ pool, clock, ownerId, leaseDurationMs })
   requiredPort("COORDINATION", coordinationComponents?.coordination, REQUIRED_METHODS.coordination)
+
   const hubspotClient = factories.hubspotClient({ token: env.HUBSPOT_TOKEN, fetch: fetchImpl, clock, timeoutMs })
   const hubspot = factories.hubspotAdapters({ client: hubspotClient, clock, timeoutMs })
 
@@ -75,7 +82,8 @@ function createSingleCaseRealComposition({
     drive,
     content: contentLoader,
     clock,
-    authorizationVerifier: authorization.authorizationVerifier
+    authorizationVerifier: authorization.authorizationVerifier,
+    rebindResumeVerifier
   })
   if (typeof executor !== "function") throw new Error("EXECUTOR_INVALID")
 
@@ -88,6 +96,7 @@ function createSingleCaseRealComposition({
     drive,
     content: contentLoader
   })
+
   const configurationSummary = Object.freeze({
     mode: "REAL_COMPONENTS_CONSTRUCTED_EXECUTION_BLOCKED",
     hubspotTransport: "INJECTED_FETCH",
@@ -96,6 +105,8 @@ function createSingleCaseRealComposition({
     planLoader: "INJECTED_PORT",
     contentLoader: "INJECTED_PORT",
     authorizationVerifier: "ED25519_TRUSTED_ISSUERS",
+    rebindResumeVerifier: "POSTGRES_REBIND_AUDIT_PROOF",
+    rebindResumeVerifierCreated: true,
     associationDirection: "deals_to_contacts",
     associationTypeName: ASSOCIATION.typeName,
     associationCategory: ASSOCIATION.category,

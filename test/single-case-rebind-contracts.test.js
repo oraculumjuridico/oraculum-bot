@@ -92,6 +92,20 @@ describe("single-case-rebind-contracts", () => {
     })
   })
 
+  describe("legacy checkpoint compatibility", () => {
+    it("accepts only the historical verification failure", () => {
+      const request = { caseImportId: validCheckpoint.caseImportId, sourceCheckpointVersion: validCheckpoint.version, oldAuthorizationIds: validAuthIds }
+      const legacyCheckpoint = { ...validCheckpoint, steps: { ...validCheckpoint.steps, contact: { status: "failed", errorCode: "VERIFICATION_FAILED" } } }
+      assert.doesNotThrow(() => validateCheckpointEligibility(legacyCheckpoint, request))
+    })
+
+    it("rejects unrelated contact failures", () => {
+      const request = { caseImportId: validCheckpoint.caseImportId, sourceCheckpointVersion: validCheckpoint.version, oldAuthorizationIds: validAuthIds }
+      const invalidCheckpoint = { ...validCheckpoint, steps: { ...validCheckpoint.steps, contact: { status: "failed", errorCode: "EXTERNAL_EFFECT_UNKNOWN" } } }
+      assert.throws(() => validateCheckpointEligibility(invalidCheckpoint, request), /CHECKPOINT_CONTACT_ERROR_CODE_WRONG/)
+    })
+  })
+
   describe("Teste 2: IDs em ordem diferente produzem mesmo set hash", () => {
     it("deve gerar o mesmo hash para IDs em ordens diferentes", () => {
       const hash1 = computeAuthorizationSetHash(validAuthIds)

@@ -78,7 +78,7 @@ function validateP1Plan(plan, caseImportId) {
   }
 }
 
-async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
+async function createRuntimeExecutor({ env, config, caseImportId, resumeMode } = {}) {
   const runtimeConfig = config || await readAndValidateRuntimeConfig(env)
   env = runtimeConfig.env
   validateP1Target(caseImportId, runtimeConfig)
@@ -127,7 +127,7 @@ async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
       },
     })
     return Object.freeze({
-      execute: () => composition.executor({ caseImportId, planHash: sha256(target.planBytes), manifestHash: sha256(manifestBytes) }),
+      execute: () => composition.executor({ caseImportId, planHash: sha256(target.planBytes), manifestHash: sha256(manifestBytes), ...(resumeMode === undefined ? {} : { resumeMode }) }),
       close: () => pool.end(),
     })
   } catch (error) {
@@ -138,18 +138,23 @@ async function createRuntimeExecutor({ env, config, caseImportId } = {}) {
 
 function parseArgs(argv) {
   if (!argv.includes("--case-import-id")) throw new Error("CASE_IMPORT_ID_MISSING")
-  if (argv.length > 2) throw new Error("CLI_ARGUMENTS_EXCESS")
+  if (argv.length !== 2 && argv.length !== 4) throw new Error("CLI_ARGUMENTS_EXCESS")
   const value = argv[argv.indexOf("--case-import-id") + 1]
   if (!value || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value)) throw new Error("CASE_IMPORT_ID_INVALID")
-  return { caseImportId: value }
+  if (argv.length === 2) return { caseImportId: value }
+  if (!argv.includes("--resume-mode")) throw new Error("CLI_ARGUMENTS_EXCESS")
+  const resumeMode = argv[argv.indexOf("--resume-mode") + 1]
+  if (resumeMode !== "REBIND") throw new Error("RESUME_MODE_INVALID")
+  return { caseImportId: value, resumeMode }
 }
 async function main({ argv = process.argv.slice(2), env = process.env, executor, runtimeFactory = createRuntimeExecutor } = {}) {
   const args = parseArgs(argv)
   const config = await readAndValidateRuntimeConfig(env)
   validateP1Target(args.caseImportId, config)
-  if (typeof executor === "function") return executor({ caseImportId: args.caseImportId })
+  const executionArgs = { caseImportId: args.caseImportId, ...(args.resumeMode === undefined ? {} : { resumeMode: args.resumeMode }) }
+  if (typeof executor === "function") return executor(executionArgs)
   if (typeof runtimeFactory !== "function") throw new Error("REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED")
-  const runtime = await runtimeFactory({ env, config, caseImportId: args.caseImportId })
+  const runtime = await runtimeFactory({ env, config, ...executionArgs })
   if (!runtime || typeof runtime.execute !== "function" || typeof runtime.close !== "function") throw new Error("REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED")
   try { return await runtime.execute() } finally { await runtime.close() }
 }

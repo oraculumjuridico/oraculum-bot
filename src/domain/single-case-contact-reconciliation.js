@@ -1,7 +1,7 @@
 "use strict"
 
 const { normalizePersonName } = require("./name-normalization")
-const { deepClone, deepFreeze, validateContactVerificationEvidence } = require("./single-case-apply-contracts")
+const { canonicalize, sha256, deepClone, deepFreeze, validateContactVerificationEvidence } = require("./single-case-apply-contracts")
 
 const DECISIONS = Object.freeze({ ELIGIBLE: "RECONCILIATION_ELIGIBLE", BLOCKED: "RECONCILIATION_BLOCKED", INDETERMINATE: "RECONCILIATION_INDETERMINATE" })
 const validId = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value)
@@ -49,6 +49,16 @@ function authorizationResumePlan(checkpoint, futureAuthorizationIds) {
   return deepFreeze({ directRetryAllowed: equal, checkpointRebindRequired: !equal, operation: equal ? "NO_REBIND_REQUIRED" : "ATOMIC_CHECKPOINT_AUTHORIZATION_REBIND_REQUIRED" })
 }
 
+function reconciliationEvidenceHash({ decision, reason, contactEvidence, namePresentation, resume }) {
+  return sha256(canonicalize({
+    decision,
+    reason,
+    contactEvidenceHash: sha256(canonicalize(contactEvidence)),
+    namePresentationHash: sha256(canonicalize(namePresentation)),
+    resumeHash: sha256(canonicalize(resume))
+  }))
+}
+
 async function reconcileSingleCaseContactCheckpoint({ caseImportId, plan, checkpoint, authorizationState, contacts, futureAuthorizationIds } = {}) {
   try {
     if (!validId(caseImportId) || !plan || plan.caseImportId !== caseImportId || !plan.contactPlan?.properties) throw new Error("RECONCILIATION_CASE_BINDING_INVALID")
@@ -84,20 +94,24 @@ async function reconcileSingleCaseContactCheckpoint({ caseImportId, plan, checkp
       caseImportId: evidence.caseImportId
     }
 
-    const resume = authorizationResumePlan(checkpoint, futureAuthorizationIds)
-    return deepFreeze({
+    const resume = { ...authorizationResumePlan(checkpoint, futureAuthorizationIds), ambiguity: "NONE" }
+    const namePresentation = { ...nameCheck, materialDivergence: false }
+    const result = {
       decision: DECISIONS.ELIGIBLE,
       reason: "CONTACT_READ_ONLY_VERIFIED",
       contactEvidence: sanitizedEvidence,
-      namePresentation: nameCheck,
+      namePresentation,
       resume,
+      evidenceHash: null,
       checkpointWriteRequired: true,
       writesExecuted: false
-    })
+    }
+    result.evidenceHash = reconciliationEvidenceHash(result)
+    return deepFreeze(result)
   } catch (error) {
     if (/CONTACT_FIELDS_DIVERGENCE|RECONCILIATION_.*(?:INVALID|STATE)/.test(error?.message || "")) return deepFreeze({ decision: DECISIONS.BLOCKED, reason: error.message, writesExecuted: false })
     return deepFreeze({ decision: DECISIONS.INDETERMINATE, reason: "RECONCILIATION_READ_FAILED", writesExecuted: false })
   }
 }
 
-module.exports = { DECISIONS, checkNamePresentation, authorizationResumePlan, reconcileSingleCaseContactCheckpoint }
+module.exports = { DECISIONS, checkNamePresentation, authorizationResumePlan, reconciliationEvidenceHash, reconcileSingleCaseContactCheckpoint }

@@ -27,12 +27,27 @@ const validId = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:
 const oneOrNone = (value, code) => { if (!Array.isArray(value) || value.some(item => !validId(item?.id)) || value.length > 1) fail(code); return value[0] || null }
 const evidence = (value, code) => { if (!value || value.verified !== true || !validId(value.id)) fail(code); return deepClone(value) }
 const exactKeys = (value, allowed, code) => { if (!value || typeof value !== "object" || Object.keys(value).some(key => !allowed.includes(key))) fail(code) }
-const sanitizedErrorCode = error => /timeout/i.test(error?.message || "") ? "ADAPTER_TIMEOUT" : /fencing/i.test(error?.message || "") ? "FENCING_REJECTED" : /lease.*expir/i.test(error?.message || "") ? "LEASE_EXPIRED" : /CAS|version/i.test(error?.message || "") ? "CAS_CONFLICT" : /ambiguous|duplicate|multiple/i.test(error?.message || "") ? "ADAPTER_AMBIGUOUS_RESULT" : /AUTH.*EXPIRED/.test(error?.message || "") ? "AUTHORIZATION_EXPIRED" : /AUTH.*REVOKED/.test(error?.message || "") ? "AUTHORIZATION_REVOKED" : /VERIFY|DIVERGENCE|INVALID/.test(error?.message || "") ? "VERIFICATION_FAILED" : "EXTERNAL_EFFECT_UNKNOWN"
+const isPlainObject = value => value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+const LEGITIMATE_REBIND_CODES = new Set(["REBIND_RESUME_CHECKPOINT_REQUIRED", "REBIND_RESUME_CHECKPOINT_INVALID", "REBIND_RESUME_PROOF_INVALID", "REBIND_RESUME_PROOF_RECORDS_INVALID", "REBIND_RESUME_PROOF_RECORDS_MISMATCH", "REBIND_RESUME_VERIFIER_MISSING", "REBIND_RESUME_VERIFIER_INVALID", "RESUME_MODE_INVALID"])
+const sanitizedErrorCode = error => {
+  const msg = error?.message || ""
+  if (LEGITIMATE_REBIND_CODES.has(msg)) return msg
+  if (msg.includes("REBIND_RESUME_")) return "EXTERNAL_EFFECT_UNKNOWN"
+  return /timeout/i.test(msg) ? "ADAPTER_TIMEOUT" : /fencing/i.test(msg) ? "FENCING_REJECTED" : /lease.*expir/i.test(msg) ? "LEASE_EXPIRED" : /CAS|version/i.test(msg) ? "CAS_CONFLICT" : /ambiguous|duplicate|multiple/i.test(msg) ? "ADAPTER_AMBIGUOUS_RESULT" : /AUTH.*EXPIRED/.test(msg) ? "AUTHORIZATION_EXPIRED" : /AUTH.*REVOKED/.test(msg) ? "AUTHORIZATION_REVOKED" : /VERIFY|DIVERGENCE|INVALID/.test(msg) ? "VERIFICATION_FAILED" : "EXTERNAL_EFFECT_UNKNOWN"
+}
 const verifyContactEvidence = (value, id, caseImportId, properties, invalidCode = "CONTACT_VERIFY_INVALID") => validateContactVerificationEvidence(value, { contactId: id, caseImportId, properties, invalidCode })
 const verifyDealEvidence = (value, id, properties, code = "DEAL_VERIFY_INVALID") => { const verified = evidence(value, code); if (verified.id !== id || verified.caseNumber !== properties.numero_de_caso || verified.pipeline !== properties.pipeline || verified.stage !== properties.dealstage || verified.fieldsHash !== sha256(canonicalize(properties))) fail("DEAL_FIELDS_DIVERGENCE"); return verified }
 const verifyAssociationEvidence = (value, id, contactId, dealId, type, code = "ASSOCIATION_VERIFY_INVALID") => { const verified = evidence(value, code); if (verified.id !== id || verified.contactId !== contactId || verified.dealId !== dealId || verified.relation !== type) fail("ASSOCIATION_DIVERGENCE"); return verified }
 const verifyFolderEvidence = (value, id, destination, parentId, code) => { const verified = evidence(value, code); if (verified.id !== id || verified.logicalId !== destination.logicalId || verified.name !== destination.name || verified.parentId !== parentId || verified.trashed !== false) fail("FOLDER_DIVERGENCE"); return verified }
 const verifyUploadEvidence = (value, id, document, parentId, size, code = "UPLOAD_VERIFY_INVALID") => { if (!value || value.verified !== true || value.id !== id || value.sha256 !== document.sha256 || value.contentDocumentId !== document.contentDocumentId || value.parentId !== parentId || value.size !== size || !Number.isInteger(value.size)) fail(code); return deepClone(value) }
+
+function prepareCheckpointForExecution(checkpoint) {
+  if (checkpoint.status === "completed") {
+    checkpoint.status = "running"
+    checkpoint.steps.final_verify = { status: "failed", errorCode: "REVERIFY_REQUIRED" }
+    checkpoint.finalProof = null
+  }
+}
 
 function validateAdapters(adapters, verifier) {
   if (!verifier || typeof verifier.verify !== "function") fail("AUTHORIZATION_VERIFIER_MISSING")
@@ -101,10 +116,15 @@ function transition(step, next) {
   step.status = next
 }
 
-async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifestHash, adapters, authorizationVerifier, now = () => new Date().toISOString(), owner = "fixture-executor" }) {
+async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifestHash, adapters, authorizationVerifier, resumeMode, rebindResumeVerifier, now = () => new Date().toISOString(), owner = "fixture-executor" }) {
   if (!validId(caseImportId)) fail("INVALID_CASE_IMPORT_ID")
   if (!/^[a-f0-9]{64}$/.test(planHash || "")) fail("PLAN_HASH_INVALID")
   if (!/^[a-f0-9]{64}$/.test(manifestHash || "")) fail("MANIFEST_HASH_INVALID")
+  // Validate resumeMode
+  if (resumeMode !== undefined && resumeMode !== "REBIND") fail("RESUME_MODE_INVALID")
+  if (resumeMode === "REBIND" && (!rebindResumeVerifier || typeof rebindResumeVerifier.verifyResumeProof !== "function")) {
+    fail("REBIND_RESUME_VERIFIER_MISSING")
+  }
   validateAdapters(adapters, authorizationVerifier)
   const original = await adapters.plans.loadByCaseImportId(caseImportId)
   const plan = deepFreeze(deepClone(original))
@@ -120,19 +140,89 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
     const reservationContext = deepFreeze({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, checkpointVersion: 0, authorizablePlanHash: hash, caseNumber: plan.dealPlan.caseNumber, authorizationIds: [], idempotencyKey: `${caseImportId}:reservation-preflight`, deadline: lease.expiresAt })
     verifiedReservation = await adapters.reservation.verify(caseImportId, plan.dealPlan.caseNumber, reservationContext)
     if (!verifiedReservation || verifiedReservation.verified !== true || verifiedReservation.caseImportId !== caseImportId || verifiedReservation.caseNumber !== plan.dealPlan.caseNumber) fail("RESERVATION_INVALID")
-    const authQuery = deepFreeze({ caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash, manifestHash, reservationEvidenceHash: reservationEvidenceHash(verifiedReservation), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: AUTH_SCOPES })
-    const records = await adapters.authorizations.loadForCase(authQuery)
-    const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
-    decision = makeDecision(plan, hash, validated, now())
-    checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId) || newCheckpoint(decision))
-    validateCheckpoint(checkpoint, decision)
-    if (checkpoint.status === "completed") {
-      checkpoint.status = "running"
-      checkpoint.steps.final_verify = { status: "failed", errorCode: "REVERIFY_REQUIRED" }
-      checkpoint.finalProof = null
+    // Branch: REBIND resume mode vs normal mode
+    if (resumeMode === "REBIND") {
+      // REBIND RESUME PATH: Records obtained from verifyResumeProof, already consumed by atomic rebind
+      checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId))
+      if (!checkpoint) fail("REBIND_RESUME_CHECKPOINT_REQUIRED")
+
+      // Minimal fail-closed validation before using checkpoint
+      if (!isPlainObject(checkpoint)) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+      if (checkpoint.caseImportId !== caseImportId) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+      if (!Number.isInteger(checkpoint.version) || checkpoint.version < 0) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+      if (!Array.isArray(checkpoint.authorizationIds)) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+      if (checkpoint.authorizationIds.length !== 2) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+      for (const id of checkpoint.authorizationIds) {
+        if (!validId(id)) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+      }
+      if (new Set(checkpoint.authorizationIds).size !== checkpoint.authorizationIds.length) fail("REBIND_RESUME_CHECKPOINT_INVALID")
+
+      const resumeProofRequest = deepFreeze({
+        caseImportId,
+        checkpoint: deepFreeze({
+          version: checkpoint.version,
+          authorizationIds: [...checkpoint.authorizationIds]
+        }),
+        expectedBindings: deepFreeze({
+          caseImportId,
+          caseFingerprint: plan.caseFingerprint,
+          caseNumber: plan.dealPlan.caseNumber,
+          authorizablePlanHash: hash,
+          planHash,
+          manifestHash,
+          reservationEvidenceHash: reservationEvidenceHash(verifiedReservation),
+          schemaVersion: AUTHORIZATION_SCHEMA_VERSION
+        }),
+        now: now()
+      })
+
+      const resumeProof = await rebindResumeVerifier.verifyResumeProof(resumeProofRequest)
+
+      // Fail-closed validation of proof response
+      if (!isPlainObject(resumeProof)) fail("REBIND_RESUME_PROOF_INVALID")
+      if (!Object.hasOwn(resumeProof, "status")) fail("REBIND_RESUME_PROOF_INVALID")
+      if (resumeProof.status !== "VALID_REBIND_RESUME") fail("REBIND_RESUME_PROOF_INVALID")
+      if (!Object.hasOwn(resumeProof, "authorizationRecords")) fail("REBIND_RESUME_PROOF_INVALID")
+      const records = resumeProof.authorizationRecords
+      if (!Array.isArray(records) || records.length !== 2) fail("REBIND_RESUME_PROOF_INVALID")
+
+      const authQuery = deepFreeze({
+        caseImportId,
+        caseFingerprint: plan.caseFingerprint,
+        caseNumber: plan.dealPlan.caseNumber,
+        authorizablePlanHash: hash,
+        planHash,
+        manifestHash,
+        reservationEvidenceHash: reservationEvidenceHash(verifiedReservation),
+        schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+        requiredScopes: AUTH_SCOPES
+      })
+
+      const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
+
+      const validatedIds = validated.map(r => r.authorizationId).sort()
+      const checkpointIds = [...checkpoint.authorizationIds].sort()
+      if (JSON.stringify(validatedIds) !== JSON.stringify(checkpointIds)) {
+        fail("REBIND_RESUME_PROOF_RECORDS_MISMATCH")
+      }
+
+      decision = makeDecision(plan, hash, validated, now())
+
+      validateCheckpoint(checkpoint, decision)
+
+      prepareCheckpointForExecution(checkpoint)
+    } else {
+      // NORMAL PATH: Original flow with loadForCase + consumeAuthorizations
+      const authQuery = deepFreeze({ caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash, manifestHash, reservationEvidenceHash: reservationEvidenceHash(verifiedReservation), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: AUTH_SCOPES })
+      const records = await adapters.authorizations.loadForCase(authQuery)
+      const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
+      decision = makeDecision(plan, hash, validated, now())
+      checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId) || newCheckpoint(decision))
+      validateCheckpoint(checkpoint, decision)
+      prepareCheckpointForExecution(checkpoint)
+      const consumed = await adapters.authorizations.consumeAuthorizations({ ...authQuery, authorizationIds: decision.authorizationIds, consumedBy: `executor:${lease.leaseId}`, now: now() })
+      if (consumed?.status !== "consumed") fail(`AUTHORIZATION_CONSUME_${String(consumed?.status || "unknown_result").toUpperCase()}`)
     }
-    const consumed = await adapters.authorizations.consumeAuthorizations({ ...authQuery, authorizationIds: decision.authorizationIds, consumedBy: `executor:${lease.leaseId}`, now: now() })
-    if (consumed?.status !== "consumed") fail(`AUTHORIZATION_CONSUME_${String(consumed?.status || "unknown_result").toUpperCase()}`)
     const save = async () => {
       const renewed = await adapters.coordination.renewLease({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, now: now() })
       if (!renewed || renewed.leaseId !== lease.leaseId || renewed.fencingToken !== lease.fencingToken || Date.parse(renewed.expiresAt) <= Date.parse(now())) fail("LEASE_RENEW_FAILED")
@@ -155,16 +245,13 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       try { const result = await action(); if (!result || typeof result !== "object") fail("STEP_RESULT_INVALID"); item.result = deepClone(result); transition(item, "completed"); await save(); return item.result }
       catch (error) { if (item.status === "running") { transition(item, "failed"); item.errorCode = sanitizedErrorCode(error); checkpoint.status = "failed"; await save().catch(() => {}) } throw error }
     }
-
     const reservation = await run("reservation", async () => verifiedReservation)
     const contact = await run("contact", async () => {
       const properties = deepClone(plan.contactPlan.properties)
-
       // Normalize person name before sending to HubSpot
       if (properties.firstname) {
         properties.firstname = normalizePersonName(properties.firstname)
       }
-
       const byCpf = oneOrNone(await adapters.contacts.findContactsByCpf(properties.cpf_do_cliente), "CONTACT_CPF_AMBIGUOUS")
       const byPhone = oneOrNone(await adapters.contacts.findContactsByPhone(properties.phone), "CONTACT_PHONE_AMBIGUOUS")
       if (byCpf && byPhone && byCpf.id !== byPhone.id) fail("CONTACT_IDENTITY_CONFLICT")
@@ -260,9 +347,14 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
   return outcome
 }
 
-function createSingleCaseApplyExecutor({ authorizationVerifier }) {
+function createSingleCaseApplyExecutor({ authorizationVerifier, rebindResumeVerifier }) {
   if (!authorizationVerifier || typeof authorizationVerifier.verify !== "function") fail("AUTHORIZATION_VERIFIER_MISSING")
-  return Object.freeze(async args => executeSingleCaseApplyInternal({ ...args, authorizationVerifier }))
+  // rebindResumeVerifier is optional in the factory, but required when resumeMode="REBIND"
+  // Validation happens at runtime in executeSingleCaseApplyInternal
+  if (rebindResumeVerifier !== undefined && (rebindResumeVerifier === null || typeof rebindResumeVerifier.verifyResumeProof !== "function")) {
+    fail("REBIND_RESUME_VERIFIER_INVALID")
+  }
+  return Object.freeze(async args => executeSingleCaseApplyInternal({ ...args, authorizationVerifier, rebindResumeVerifier }))
 }
 
-module.exports = { STEP_DEFINITIONS, STATES, TRANSITIONS, REQUIRED_METHODS, validateAdapters, validatePlan, makeDecision, newCheckpoint, validateCheckpoint, createSingleCaseApplyExecutor }
+module.exports = { STEP_DEFINITIONS, STATES, TRANSITIONS, REQUIRED_METHODS, validateAdapters, validatePlan, makeDecision, newCheckpoint, validateCheckpoint, createSingleCaseApplyExecutor, sanitizedErrorCode }

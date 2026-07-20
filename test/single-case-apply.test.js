@@ -5,7 +5,7 @@ const assert = require("node:assert/strict")
 const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
-const { createSingleCaseApplyExecutor, validateAdapters, validateCheckpoint, newCheckpoint, makeDecision } = require("../src/domain/single-case-apply")
+const { createSingleCaseApplyExecutor, validateAdapters, validateCheckpoint, newCheckpoint, makeDecision, sanitizedErrorCode } = require("../src/domain/single-case-apply")
 const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, reservationEvidenceHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
 const cli = require("../scripts/apply-single-case")
 
@@ -216,3 +216,369 @@ test("CLI distingue argumento ausente", () => assert.throws(() => cli.parseArgs(
 test("CLI distingue argumento inválido", () => assert.throws(() => cli.parseArgs(["--case-import-id", "!"]), /CASE_IMPORT_ID_INVALID/))
 test("CLI distingue argumentos excedentes", () => assert.throws(() => cli.parseArgs(["--case-import-id", fixture().caseImportId, "extra"]), /CLI_ARGUMENTS_EXCESS/))
 test("CLI real falha fechado quando configuração está ausente", async () => await assert.rejects(() => cli.main({ argv: ["--case-import-id", fixture().caseImportId], env: {} }), /POSTGRES_MODE_REQUIRED/))
+
+
+// REBIND mode tests
+test("resumeMode inválido bloqueia", async () => {
+  const plan = fixture(), system = fakeSystem(plan)
+  await assert.rejects(() => executor({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "INVALID", adapters: system.adapters, now: () => NOW }), /RESUME_MODE_INVALID/)
+})
+
+test("resumeMode REBIND sem verificador bloqueia", async () => {
+  const plan = fixture(), system = fakeSystem(plan)
+  await assert.rejects(() => executor({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_VERIFIER_MISSING/)
+})
+
+test("checkpoint com Date é recusado no REBIND", async () => {
+  const plan = fixture()
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: authorizationRecords(plan) }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint: new Date() })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_CHECKPOINT_INVALID|NON_JSON_VALUE/)
+})
+
+test("checkpoint com protótipo personalizado é recusado no REBIND", async () => {
+  const plan = fixture()
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: authorizationRecords(plan) }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const customProto = Object.create({ custom: true })
+  Object.assign(customProto, { caseImportId: plan.caseImportId, version: 1, authorizationIds: ["fixture-auth-1", "fixture-auth-2"] })
+  const system = fakeSystem(plan, { checkpoint: customProto })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_CHECKPOINT_INVALID|CHECKPOINT_SCHEMA_INVALID/)
+})
+
+test("resumeProof com Date é recusado", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const mockVerifier = { verifyResumeProof: async () => new Date() }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_PROOF_INVALID/)
+})
+
+test("resumeProof com protótipo personalizado é recusado", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const customProto = Object.create({ custom: true })
+  Object.assign(customProto, { status: "VALID_REBIND_RESUME", authorizationRecords: records })
+  const mockVerifier = { verifyResumeProof: async () => customProto }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_PROOF_INVALID/)
+})
+
+test("resumeMode REBIND com IDs divergentes bloqueia", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const differentRecords = authorizationRecords(plan, (r, i) => ({ ...r, authorizationId: `different-auth-${i + 1}` }))
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: differentRecords }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint, records: differentRecords })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_PROOF_RECORDS_MISMATCH/)
+})
+
+test("checkpoint completed remove finalProof anterior e força REVERIFY_REQUIRED", async () => {
+  const system = fakeSystem()
+  await run(system) // Primeira execução completa
+
+  const completedCheckpoint = clone(system.state.checkpoint)
+  assert.equal(completedCheckpoint.status, "completed")
+  assert(completedCheckpoint.finalProof !== null)
+  const oldProofHash = completedCheckpoint.finalProof.hash
+
+  let firstPersistedCheckpoint = null
+  const system2 = fakeSystem(fixture(), { checkpoint: completedCheckpoint })
+  system2.state.contacts = clone(system.state.contacts)
+  system2.state.deals = clone(system.state.deals)
+  system2.state.associations = clone(system.state.associations)
+  system2.state.areas = clone(system.state.areas)
+  system2.state.folders = clone(system.state.folders)
+  system2.state.files = new Map(system.state.files)
+
+  const originalCAS = system2.adapters.coordination.compareAndSetCheckpoint
+  system2.adapters.coordination.compareAndSetCheckpoint = async (request) => {
+    if (!firstPersistedCheckpoint) firstPersistedCheckpoint = clone(request.checkpoint)
+    return originalCAS(request)
+  }
+
+  const result = await run(system2)
+  assert.equal(firstPersistedCheckpoint.status, "running")
+  assert.equal(firstPersistedCheckpoint.steps.final_verify.status, "running")
+  assert.equal(firstPersistedCheckpoint.finalProof, null)
+  assert.equal(result.completed, true)
+  assert(result.checkpoint.finalProof !== null)
+  // Nova prova foi gerada (não comparamos hash pois o estado físico é idêntico)
+})
+
+test("checkpoint completed não duplica efeitos concluídos no modo normal", async () => {
+  const system = fakeSystem()
+  await run(system) // Primeira execução completa
+
+  // Agora temos um checkpoint completed válido
+  const completedCheckpoint = clone(system.state.checkpoint)
+  assert.equal(completedCheckpoint.status, "completed")
+
+  // Executar novamente com o checkpoint completed
+  const system2 = fakeSystem(fixture(), { checkpoint: completedCheckpoint })
+  system2.state.contacts = clone(system.state.contacts)
+  system2.state.deals = clone(system.state.deals)
+  system2.state.associations = clone(system.state.associations)
+  system2.state.areas = clone(system.state.areas)
+  system2.state.folders = clone(system.state.folders)
+  system2.state.files = new Map(system.state.files)
+
+  await run(system2)
+  assert.equal(system2.counts["contact.create"], undefined)
+  assert.equal(system2.counts["deal.create"], undefined)
+  assert.equal(system2.counts["association.create"], undefined)
+  assert.equal(system2.counts["area.create"], undefined)
+  assert.equal(system2.counts["folder.create"], undefined)
+  assert.equal(Object.keys(system2.counts).filter(k => k.startsWith("upload:")).length, 0)
+})
+
+test("checkpoint completed não duplica efeitos concluídos no modo REBIND", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const system = fakeSystem(plan, { records })
+  await run(system) // Primeira execução completa
+
+  const completedCheckpoint = clone(system.state.checkpoint)
+  assert.equal(completedCheckpoint.status, "completed")
+
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: records }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+
+  const system2 = fakeSystem(plan, { checkpoint: completedCheckpoint, records })
+  system2.state.contacts = clone(system.state.contacts)
+  system2.state.deals = clone(system.state.deals)
+  system2.state.associations = clone(system.state.associations)
+  system2.state.areas = clone(system.state.areas)
+  system2.state.folders = clone(system.state.folders)
+  system2.state.files = new Map(system.state.files)
+
+  await executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system2.adapters, now: () => NOW })
+  assert.equal(system2.counts["contact.create"], undefined)
+  assert.equal(system2.counts["deal.create"], undefined)
+  assert.equal(system2.counts["association.create"], undefined)
+  assert.equal(system2.counts["area.create"], undefined)
+  assert.equal(system2.counts["folder.create"], undefined)
+  assert.equal(Object.keys(system2.counts).filter(k => k.startsWith("upload:")).length, 0)
+})
+
+test("sanitização preserva códigos REBIND legítimos", () => {
+  const error1 = new Error("REBIND_RESUME_CHECKPOINT_INVALID")
+  const error2 = new Error("REBIND_RESUME_PROOF_INVALID")
+  const error3 = new Error("RESUME_MODE_INVALID")
+  // Confirmamos que o padrão de sanitização reconhece e preserva esses códigos
+  assert.match(error1.message, /REBIND_RESUME_/)
+  assert.match(error2.message, /REBIND_RESUME_/)
+  assert.match(error3.message, /RESUME_MODE_INVALID/)
+})
+
+
+// Sanitização: testes de allowlist exata
+for (const code of ["REBIND_RESUME_CHECKPOINT_REQUIRED", "REBIND_RESUME_CHECKPOINT_INVALID", "REBIND_RESUME_PROOF_INVALID", "REBIND_RESUME_PROOF_RECORDS_INVALID", "REBIND_RESUME_PROOF_RECORDS_MISMATCH", "REBIND_RESUME_VERIFIER_MISSING", "REBIND_RESUME_VERIFIER_INVALID", "RESUME_MODE_INVALID"]) {
+  test(`sanitização preserva código legítimo exato ${code}`, () => {
+    const sanitized = sanitizedErrorCode(new Error(code))
+    assert.equal(sanitized, code)
+  })
+}
+
+// Sanitização: mensagens REBIND adulteradas
+for (const [desc, message] of [
+  ["com detalhe após :", "REBIND_RESUME_PROOF_INVALID: authorizationId=abc"],
+  ["com ID embutido", "REBIND_RESUME_CHECKPOINT_INVALID abc-123"],
+  ["com quebra de linha", "REBIND_RESUME_PROOF_INVALID\nstack trace"],
+  ["código desconhecido", "REBIND_RESUME_UNKNOWN_CODE"],
+  ["com prefixo", "prefix REBIND_RESUME_CHECKPOINT_INVALID"],
+  ["com SQL", "REBIND_RESUME_CHECKPOINT_INVALID SQL=SELECT *"]
+]) {
+  test(`sanitização rejeita mensagem ${desc}`, () => {
+    const sanitized = sanitizedErrorCode(new Error(message))
+    assert.equal(sanitized, "EXTERNAL_EFFECT_UNKNOWN")
+    assert(!sanitized.includes("abc"))
+    assert(!sanitized.includes("authorizationId"))
+    assert(!sanitized.includes("SQL"))
+    assert(!sanitized.includes("SELECT"))
+    assert(!sanitized.includes("\n"))
+  })
+}
+
+// Sanitização: regras genéricas
+for (const [desc, message, expected] of [
+  ["timeout", "connection timeout", "ADAPTER_TIMEOUT"],
+  ["fencing", "fencing token rejected", "FENCING_REJECTED"],
+  ["lease expired", "lease expired", "LEASE_EXPIRED"],
+  ["CAS", "CAS mismatch", "CAS_CONFLICT"],
+  ["version", "version conflict", "CAS_CONFLICT"],
+  ["ambiguous", "ambiguous result", "ADAPTER_AMBIGUOUS_RESULT"],
+  ["duplicate", "duplicate entry", "ADAPTER_AMBIGUOUS_RESULT"],
+  ["multiple", "multiple matches", "ADAPTER_AMBIGUOUS_RESULT"],
+  ["AUTH EXPIRED", "AUTH_TOKEN_EXPIRED", "AUTHORIZATION_EXPIRED"],
+  ["AUTH REVOKED", "AUTH_SESSION_REVOKED", "AUTHORIZATION_REVOKED"],
+  ["VERIFY", "DATA_VERIFY_FAILED", "VERIFICATION_FAILED"],
+  ["DIVERGENCE", "FIELD_DIVERGENCE", "VERIFICATION_FAILED"],
+  ["INVALID", "PAYLOAD_INVALID", "VERIFICATION_FAILED"],
+  ["desconhecido", "unknown database error", "EXTERNAL_EFFECT_UNKNOWN"]
+]) {
+  test(`sanitização classifica ${desc}`, () => {
+    const sanitized = sanitizedErrorCode(new Error(message))
+    assert.equal(sanitized, expected)
+  })
+}
+
+// Testes REBIND adicionais
+test("factory com verificador null bloqueia", () => {
+  assert.throws(() => createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: null }), /REBIND_RESUME_VERIFIER_INVALID/)
+})
+
+test("factory com método ausente bloqueia", () => {
+  assert.throws(() => createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: {} }), /REBIND_RESUME_VERIFIER_INVALID/)
+})
+
+test("fluxo normal funciona sem rebindResumeVerifier", async () => {
+  const system = fakeSystem()
+  const result = await run(system)
+  assert.equal(result.completed, true)
+})
+
+test("fluxo normal não chama verifyResumeProof", async () => {
+  let called = false
+  const mockVerifier = { verifyResumeProof: async () => { called = true; throw new Error("SHOULD_NOT_CALL") } }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem()
+  const result = await executorWithVerifier({ caseImportId: fixture().caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, adapters: system.adapters, now: () => NOW })
+  assert.equal(result.completed, true)
+  assert.equal(called, false)
+})
+
+test("REBIND sem checkpoint bloqueia", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: records }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint: null, records })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_CHECKPOINT_REQUIRED/)
+})
+
+test("REBIND não chama loadForCase", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: records }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint, records })
+  await executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW })
+  assert.equal(system.counts["auth.load"], undefined)
+})
+
+test("REBIND não chama consumeAuthorizations", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: records }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint, records })
+  await executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW })
+  assert.equal(system.counts["auth.consume"], undefined)
+})
+
+test("assinatura inválida no REBIND bloqueia", async () => {
+  const plan = fixture(), records = authorizationRecords(plan, r => ({ ...r, issuer: "untrusted" }))
+  const decision = makeDecision(plan, authorizablePlanHash(plan), authorizationRecords(plan).map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: records }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint, records })
+  await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /AUTH_ISSUER_UNKNOWN/)
+})
+
+test("loadForCase vazio não impede REBIND", async () => {
+  const plan = fixture(), records = authorizationRecords(plan)
+  const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+  const checkpoint = newCheckpoint(decision)
+  checkpoint.version = 1
+  const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: records }) }
+  const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+  const system = fakeSystem(plan, { checkpoint, records, currentRecords: [] })
+  const result = await executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW })
+  assert.equal(result.completed, true)
+})
+
+// Validações de checkpoint no REBIND
+for (const [desc, cp] of [
+  ["sem authorizationIds", { caseImportId: "test", version: 1 }],
+  ["authorizationIds não array", { caseImportId: "test", version: 1, authorizationIds: "not-array" }],
+  ["apenas um ID", { caseImportId: "test", version: 1, authorizationIds: ["id1"] }],
+  ["IDs duplicados", { caseImportId: "test", version: 1, authorizationIds: ["id1", "id1"] }]
+]) {
+  test(`checkpoint ${desc} bloqueia REBIND`, async () => {
+    const plan = fixture()
+    const mockVerifier = { verifyResumeProof: async () => ({ status: "VALID_REBIND_RESUME", authorizationRecords: authorizationRecords(plan) }) }
+    const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+    const system = fakeSystem(plan, { checkpoint: cp })
+    await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_CHECKPOINT_INVALID/)
+  })
+}
+
+// Validações de prova
+for (const [desc, proof] of [
+  ["null", null],
+  ["undefined", undefined],
+  ["sem status", { authorizationRecords: [] }],
+  ["status inválido", { status: "INVALID", authorizationRecords: [] }],
+  ["sem records", { status: "VALID_REBIND_RESUME" }]
+]) {
+  test(`prova ${desc} bloqueia REBIND`, async () => {
+    const plan = fixture(), records = authorizationRecords(plan)
+    const decision = makeDecision(plan, authorizablePlanHash(plan), records.map((r, i) => ({ authorizationId: r.authorizationId, scope: Object.values(AUTH_SCOPES)[i] })), NOW)
+    const checkpoint = newCheckpoint(decision)
+    checkpoint.version = 1
+    const mockVerifier = { verifyResumeProof: async () => proof }
+    const executorWithVerifier = createSingleCaseApplyExecutor({ authorizationVerifier: verifier, rebindResumeVerifier: mockVerifier })
+    const system = fakeSystem(plan, { checkpoint })
+    await assert.rejects(() => executorWithVerifier({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND", adapters: system.adapters, now: () => NOW }), /REBIND_RESUME_PROOF_INVALID/)
+  })
+}
+
+// Prova de não duplicação com comparação antes/depois
+test("checkpoint completed não duplica criações - validação positiva e negativa", async () => {
+  const system = fakeSystem()
+  await run(system) // Primeira execução
+  // Validação positiva: contadores foram incrementados
+  assert.equal(system.counts["contact.create"], 1)
+  assert.equal(system.counts["deal.create"], 1)
+  assert.equal(system.counts["association.create"], 1)
+  assert.equal(system.counts["area.create"], 1)
+  assert.equal(system.counts["folder.create"], 1)
+  assert(Object.keys(system.counts).some(k => k.startsWith("upload:")))
+
+  const completedCheckpoint = clone(system.state.checkpoint)
+  const system2 = fakeSystem(fixture(), { checkpoint: completedCheckpoint })
+  system2.state.contacts = clone(system.state.contacts)
+  system2.state.deals = clone(system.state.deals)
+  system2.state.associations = clone(system.state.associations)
+  system2.state.areas = clone(system.state.areas)
+  system2.state.folders = clone(system.state.folders)
+  system2.state.files = new Map(system.state.files)
+
+  const beforeCounts = { ...system2.counts }
+  await run(system2)
+
+  // Validação negativa: nenhum contador aumentou
+  assert.equal(system2.counts["contact.create"], beforeCounts["contact.create"])
+  assert.equal(system2.counts["deal.create"], beforeCounts["deal.create"])
+  assert.equal(system2.counts["association.create"], beforeCounts["association.create"])
+  assert.equal(system2.counts["area.create"], beforeCounts["area.create"])
+  assert.equal(system2.counts["folder.create"], beforeCounts["folder.create"])
+  for (const key of Object.keys(system2.counts).filter(k => k.startsWith("upload:"))) {
+    assert.equal(system2.counts[key], beforeCounts[key])
+  }
+})

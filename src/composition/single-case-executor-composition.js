@@ -19,7 +19,8 @@ function createSingleCaseExecutorComposition({
   drive,
   content,
   clock,
-  authorizationVerifier
+  authorizationVerifier,
+  rebindResumeVerifier
 }) {
   // Validate all mandatory dependencies (fail-closed)
   if (typeof clock !== "function") throw new Error("CLOCK_INVALID")
@@ -27,6 +28,13 @@ function createSingleCaseExecutorComposition({
   // authorizationVerifier is mandatory; no fallback
   if (!authorizationVerifier || typeof authorizationVerifier !== "object" || typeof authorizationVerifier.verify !== "function") {
     throw new Error("AUTHORIZATION_VERIFIER_MISSING")
+  }
+
+  // rebindResumeVerifier is optional; validated when resumeMode="REBIND"
+  if (rebindResumeVerifier !== undefined) {
+    if (rebindResumeVerifier === null || typeof rebindResumeVerifier.verifyResumeProof !== "function") {
+      throw new Error("REBIND_RESUME_VERIFIER_INVALID")
+    }
   }
 
   validateDependency("plans", plans, REQUIRED_METHODS.plans)
@@ -58,7 +66,7 @@ function createSingleCaseExecutorComposition({
   })
 
   // Create and return the executor
-  const executor = createSingleCaseApplyExecutor({ authorizationVerifier })
+  const executor = createSingleCaseApplyExecutor({ authorizationVerifier, rebindResumeVerifier })
 
   // Return a callable that binds adapters and dependencies
   return Object.freeze(async (args) => {
@@ -66,11 +74,16 @@ function createSingleCaseExecutorComposition({
     if (!args.caseImportId || typeof args.caseImportId !== "string") throw new Error("CASE_IMPORT_ID_INVALID")
     if (!HASH.test(args.planHash || "")) throw new Error("PLAN_HASH_INVALID")
     if (!HASH.test(args.manifestHash || "")) throw new Error("MANIFEST_HASH_INVALID")
+    // resumeMode is optional
+    if (args.resumeMode !== undefined && args.resumeMode !== "REBIND") {
+      throw new Error("RESUME_MODE_INVALID")
+    }
     // Call the executor with bound adapters
     return executor({
       caseImportId: args.caseImportId,
       planHash: args.planHash,
       manifestHash: args.manifestHash,
+      resumeMode: args.resumeMode,
       adapters,
       authorizationVerifier,
       now: clock,

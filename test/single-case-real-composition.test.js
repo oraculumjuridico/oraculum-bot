@@ -92,3 +92,25 @@ test("resumo é sanitizado sem segredo", () => {
   const text = JSON.stringify(createSingleCaseRealComposition(f.value).configurationSummary)
   assert.doesNotMatch(text, /fixture-secret|BEGIN PUBLIC KEY|HUBSPOT_TOKEN|cpf|phone|password/i)
 })
+
+test("factory real cria verificador rebind sem consulta adicional", () => {
+  const f = fixture()
+  const result = createSingleCaseRealComposition(f.value)
+  assert.equal(typeof result.executor, "function")
+  assert.deepEqual(f.calls, [])
+})
+
+test("configurationSummary não expõe authorization records internos", () => {
+  const f = fixture()
+  const result = createSingleCaseRealComposition(f.value)
+  const text = JSON.stringify(result.configurationSummary)
+  assert.doesNotMatch(text, /authorizationRecord|authorizationId|"proof"|"signature"/i)
+})
+
+test("factory cria rebindResumeVerifier usando pool", () => {
+  const f = fixture()
+  const result = createSingleCaseRealComposition(f.value)
+  // Verify that rebindResumeVerifier was created in configurationSummary
+  assert.equal(result.configurationSummary.rebindResumeVerifierCreated, true)
+  assert.deepEqual(f.calls, [])
+})

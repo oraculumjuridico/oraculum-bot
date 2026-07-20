@@ -174,3 +174,56 @@ test("contact verification receives canonical case context", async () => {
   assert.equal(item.state.contactVerifyContexts.every(context => context.caseImportId === item.value.caseImportId), true)
   assert.equal(item.state.contactVerifyContexts.every(context => context.leaseId && context.idempotencyKey), true)
 })
+
+test("caminho normal funciona sem rebindResumeVerifier", async () => {
+  const item = system()
+  const executor = compose(item)
+  const outcome = await executor({ caseImportId: item.value.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH })
+  assert.equal(outcome.completed, true)
+})
+
+test("rebindResumeVerifier null explícito bloqueia composição", () => {
+  const item = system()
+  item.dependencies.rebindResumeVerifier = null
+  assert.throws(() => compose(item), /REBIND_RESUME_VERIFIER_INVALID/)
+})
+
+test("rebindResumeVerifier sem método verifyResumeProof bloqueia composição", () => {
+  const item = system()
+  item.dependencies.rebindResumeVerifier = {}
+  assert.throws(() => compose(item), /REBIND_RESUME_VERIFIER_INVALID/)
+})
+
+test("resumeMode REBIND com verificador ausente bloqueia", async () => {
+  const item = system()
+  const executor = compose(item)
+  await assert.rejects(
+    () => executor({ caseImportId: item.value.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, resumeMode: "REBIND" }),
+    /REBIND_RESUME_VERIFIER_MISSING/
+  )
+})
+
+test("resumeMode REBIND é encaminhado e verificador é fechado pela factory", () => {
+  const item = system()
+  let verifyResumeProofAccessed = false
+
+  // Mock rebindResumeVerifier com getter para detectar acesso
+  const rebindResumeVerifier = {
+    get verifyResumeProof() {
+      verifyResumeProofAccessed = true
+      return async () => ({
+        status: "VALID_REBIND_RESUME",
+        rebindId: "test-123",
+        authorizationRecords: authorizations(item.value)
+      })
+    }
+  }
+  item.dependencies.rebindResumeVerifier = rebindResumeVerifier
+
+  // Factory com verificador presente não deve bloquear
+  const executor = createSingleCaseExecutorComposition(item.dependencies)
+  assert.equal(typeof executor, "function")
+
+  // Confirma que verifyResumeProof foi acessado durante validação da factory
+  assert.equal(verifyResumeProofAccessed, true)
+})

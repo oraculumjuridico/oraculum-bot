@@ -4,6 +4,7 @@ const test = require("node:test")
 const assert = require("node:assert/strict")
 const { canonicalize, sha256, contactVerificationProjection, contactVerificationHash, validateContactVerificationEvidence } = require("../src/domain/single-case-apply-contracts")
 const { DECISIONS, authorizationResumePlan, reconcileSingleCaseContactCheckpoint } = require("../src/domain/single-case-contact-reconciliation")
+const { validateReconciliationEvidence } = require("../src/domain/single-case-rebind-contracts")
 
 const CASE_ID = "fixture-contact-reconciliation"
 const PROPERTIES = Object.freeze({ firstname: "Synthetic Person", cpf_do_cliente: "00000000000", phone: "5500000000000", area_juridica: "Synthetic Area" })
@@ -19,6 +20,13 @@ test("missing context fails closed", () => assert.throws(() => validateContactVe
 test("divergent caseImportId fails closed", () => assert.throws(() => validateContactVerificationEvidence(evidence({ caseImportId: "fixture-other-case" }), { contactId: "fixture-contact-id", caseImportId: CASE_ID, properties: PROPERTIES }), /CONTACT_FIELDS_DIVERGENCE/))
 test("divergent real field fails closed", () => assert.throws(() => validateContactVerificationEvidence(evidence({ phone: "5500000000001" }), { contactId: "fixture-contact-id", caseImportId: CASE_ID, properties: PROPERTIES }), /CONTACT_FIELDS_DIVERGENCE/))
 test("one exact contact is reconciliation eligible without writes", async () => { const result = await reconcileSingleCaseContactCheckpoint({ caseImportId: CASE_ID, plan: plan(), checkpoint: checkpoint(), authorizationState: "PAIR_CONSUMED", contacts: contacts() }); assert.equal(result.decision, DECISIONS.ELIGIBLE); assert.equal(result.writesExecuted, false); assert.equal(result.resume.directRetryAllowed, false) })
+test("reconciliation rebuilds evidence accepted by the rebind contract", async () => {
+  const result = await reconcileSingleCaseContactCheckpoint({ caseImportId: CASE_ID, plan: plan(), checkpoint: checkpoint(), authorizationState: "PAIR_CONSUMED", contacts: contacts() })
+  assert.equal(result.namePresentation.materialDivergence, false)
+  assert.equal(result.resume.ambiguity, "NONE")
+  assert.match(result.evidenceHash, /^[a-f0-9]{64}$/)
+  assert.doesNotThrow(() => validateReconciliationEvidence(result, { caseImportId: CASE_ID }))
+})
 test("multiple contacts block reconciliation", async () => { const result = await reconcileSingleCaseContactCheckpoint({ caseImportId: CASE_ID, plan: plan(), checkpoint: checkpoint(), authorizationState: "PAIR_CONSUMED", contacts: contacts({ findContactsByPhone: async () => [{ id: "fixture-second-contact" }] }) }); assert.equal(result.decision, DECISIONS.BLOCKED); assert.equal(result.reason, "CONTACT_AMBIGUOUS") })
 test("consumed checkpoint with existing contact evidence is rejected", async () => { const result = await reconcileSingleCaseContactCheckpoint({ caseImportId: CASE_ID, plan: plan(), checkpoint: checkpoint({ steps: { reservation: { status: "completed" }, contact: { status: "failed", result: evidence() } } }), authorizationState: "PAIR_CONSUMED", contacts: contacts() }); assert.equal(result.decision, DECISIONS.BLOCKED) })
 test("new authorization binding requires explicit atomic checkpoint rebind", () => { const result = authorizationResumePlan(checkpoint(), ["fixture-new-auth-1", "fixture-new-auth-2"]); assert.equal(result.directRetryAllowed, false); assert.equal(result.checkpointRebindRequired, true); assert.equal(result.operation, "ATOMIC_CHECKPOINT_AUTHORIZATION_REBIND_REQUIRED") })
@@ -233,9 +241,10 @@ test("reconciliation namePresentation excludes actual name values", async () => 
   assert.equal(typeof result.namePresentation.presentationMatch, 'boolean')
   assert.equal(typeof result.namePresentation.normalizationRequired, 'boolean')
   assert.equal(typeof result.namePresentation.updateRequired, 'boolean')
+  assert.equal(typeof result.namePresentation.materialDivergence, 'boolean')
 
-  // Should have exactly 4 fields
-  assert.equal(Object.keys(result.namePresentation).length, 4)
+  // Should have exactly 5 fields
+  assert.equal(Object.keys(result.namePresentation).length, 5)
 
   // Should NOT contain any name strings
   const asString = JSON.stringify(result.namePresentation)

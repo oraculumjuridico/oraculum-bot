@@ -10,6 +10,7 @@ const HASH_PATTERN = /^[a-f0-9]{64}$/
 const CASE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 const CASE_FINGERPRINT_PATTERN = /^[a-f0-9]{12}$/
 const CASE_NUMBER_PATTERN = /^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/
+const REBIND_ELIGIBLE_CONTACT_FAILURE_CODES = new Set(["CONTACT_FIELDS_DIVERGENCE", "VERIFICATION_FAILED"])
 
 function fail(code) {
   throw new Error(code)
@@ -98,7 +99,7 @@ function validateCheckpointEligibility(checkpoint, request) {
 
   if (!reservation || reservation.status !== "completed") fail("CHECKPOINT_RESERVATION_NOT_COMPLETED")
   if (!contact || contact.status !== "failed") fail("CHECKPOINT_CONTACT_NOT_FAILED")
-  if (contact.errorCode !== "CONTACT_FIELDS_DIVERGENCE") fail("CHECKPOINT_CONTACT_ERROR_CODE_WRONG")
+  if (!REBIND_ELIGIBLE_CONTACT_FAILURE_CODES.has(contact.errorCode)) fail("CHECKPOINT_CONTACT_ERROR_CODE_WRONG")
   if (contact.result !== undefined) fail("CHECKPOINT_CONTACT_RESULT_PRESENT")
 
   if (!deal || deal.status !== "pending") fail("CHECKPOINT_DEAL_NOT_PENDING")
@@ -365,6 +366,7 @@ module.exports = {
   CASE_IMPORT_ID_PATTERN,
   CASE_FINGERPRINT_PATTERN,
   CASE_NUMBER_PATTERN,
+  REBIND_ELIGIBLE_CONTACT_FAILURE_CODES,
   normalizeAuthorizationSet,
   computeAuthorizationSetHash,
   validateReason,

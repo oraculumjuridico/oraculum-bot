@@ -8,6 +8,7 @@ const path = require("node:path")
 const crypto = require("node:crypto")
 const axios = require("axios")
 const { montarTituloNegocioHubSpot } = require("../src/domain/hubspot-deal-title")
+const { normalizePersonName } = require("../src/domain/name-normalization")
 let planejarSincronizacaoDocumentalHubSpot
 try {
   planejarSincronizacaoDocumentalHubSpot = require("../src/domain/document-hubspot-sync").planejarSincronizacaoDocumentalHubSpot
@@ -340,7 +341,7 @@ async function apply(results, checkpoint) {
     if (item.error || blockingReasons.length || item.contact.status === "duplicate" || item.deal.status === "duplicate") continue
     let contactId = item.contact.id
     if (!contactId) {
-      const properties = { firstname: item.name, ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "Previdenciário (INSS)" }
+      const properties = { firstname: normalizePersonName(item.name), ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "Previdenciário (INSS)" }
       contactId = (await hsRequest("post", "/crm/v3/objects/contacts", { properties })).data.id
     }
     let dealId = item.deal.id
