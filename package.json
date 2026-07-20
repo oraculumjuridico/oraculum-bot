@@ -41,6 +41,8 @@
     ,"case-number:migrate": "node scripts/migrate-case-number-reservations.js"
     ,"case-number:migrate:verify": "node scripts/migrate-case-number-reservations.js --verify"
     ,"case-number:migrate:reconcile": "node scripts/migrate-case-number-reservations.js --reconcile"
+    ,"single-case:rebind-audit:migrate": "node scripts/migrate-single-case-rebind-audit.js"
+    ,"single-case:rebind-audit:migrate:verify": "node scripts/migrate-single-case-rebind-audit.js --verify"
     ,"case-number:reserve": "node scripts/reserve-case-number.js"
     ,"case-number:sync-plan": "node scripts/sync-case-number-reservation-to-plan.js"
     ,"cases:apply-one": "node scripts/apply-single-case.js"
