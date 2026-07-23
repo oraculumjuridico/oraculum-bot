@@ -133,6 +133,28 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       }
     },
 
+    update: async (contactId, payload) => {
+      if (!contactId || typeof contactId !== "string") throw new Error("CONTACT_ID_INVALID")
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("PAYLOAD_INVALID")
+      const properties = payload.properties
+      if (!properties || typeof properties !== "object" || Array.isArray(properties)) throw new Error("PROPERTIES_INVALID")
+      const keys = Object.keys(properties)
+      if (keys.length !== 1) throw new Error("PROPERTIES_COUNT_MUST_BE_ONE")
+      if (!Object.hasOwn(properties, "firstname")) throw new Error("PROPERTY_NOT_ALLOWED")
+      const firstname = String(properties.firstname || "").trim()
+      if (!firstname) throw new Error("FIRSTNAME_EMPTY")
+      try {
+        await withTimeout(
+          client.contacts.update(contactId, { properties: { firstname } }),
+          "updateContact"
+        )
+        return { updated: true }
+      } catch (e) {
+        if (/TIMEOUT|HUBSPOT_EXTERNAL_EFFECT_UNKNOWN/.test(String(e.message || ''))) throw new Error('HUBSPOT_EXTERNAL_EFFECT_UNKNOWN')
+        throw new Error("HUBSPOT_EXTERNAL_ERROR")
+      }
+    },
+
     verify: async (contactId, properties, context = {}) => {
       if (!contactId || typeof contactId !== "string") throw new Error("CONTACT_ID_INVALID")
       if (!properties || typeof properties !== "object") throw new Error("PROPERTIES_INVALID")

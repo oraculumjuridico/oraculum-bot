@@ -57,6 +57,11 @@ function createHubSpotHttpClient({ token, fetch: fetchImpl, clock, timeoutMs = 3
     getById: (id, { properties }) => request({ method: "GET", path: `/crm/v3/objects/${objectType}/${encodeURIComponent(id)}?properties=${encodeURIComponent(properties.join(","))}` })
   })
 
+  const contacts = Object.freeze({
+    ...objectPort("contacts"),
+    update: (id, { properties }) => request({ method: "PATCH", path: `/crm/v3/objects/contacts/${encodeURIComponent(id)}`, body: { properties }, write: true })
+  })
+
   const associations = Object.freeze({
     findDealContacts: dealId => request({ method: "GET", path: `/crm/v4/objects/deals/${encodeURIComponent(dealId)}/associations/contacts?limit=100` }),
     createDealContact: ({ dealId, contactId, associationCategory, associationTypeId }) => {
@@ -70,7 +75,7 @@ function createHubSpotHttpClient({ token, fetch: fetchImpl, clock, timeoutMs = 3
     }
   })
 
-  return Object.freeze({ contacts: objectPort("contacts"), deals: objectPort("deals"), associations })
+  return Object.freeze({ contacts, deals: objectPort("deals"), associations })
 }
 
 module.exports = { ASSOCIATION, createHubSpotHttpClient }
