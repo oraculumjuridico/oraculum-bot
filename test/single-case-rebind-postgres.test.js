@@ -8,7 +8,9 @@ const {
   CHECK_SQL,
   CHECK_COLUMNS,
   CREATE_TABLE_SQL,
+  EXPECTED_INDEXES,
   EXPECTED_COLUMNS,
+  parseConsumedBy,
   createSingleCaseRebindPostgresRepository,
   validateSingleCaseRebindAuditSchema,
   migrateSingleCaseRebindAudit
@@ -32,6 +34,7 @@ const NEW_AUTH_2 = "new-auth-external-001"
 const LEASE_ID = "lease-fixture-001"
 const FENCING_TOKEN = 100
 const OWNER_ID = "fixture-worker-001"
+const HISTORICAL_CONSUMED_BY_FIXTURE = require("./fixtures/historical-consumed-by.json")
 
 function fixture() {
   const reconciliationEvidence = {
@@ -193,11 +196,11 @@ function mockPool(state = {}) {
 
           // UPDATE checkpoint - now uses EXISTS for lease validation
           if (text.includes("UPDATE single_case_apply_checkpoints")) {
-            const caseImportId = params[5]
-            const expectedVersion = params[6]
-            const expectedLeaseId = params[7]
-            const expectedFencingToken = params[8]
-            const ownerId = params[9]
+            const caseImportId = params[6]
+            const expectedVersion = params[7]
+            const expectedLeaseId = params[8]
+            const expectedFencingToken = params[9]
+            const ownerId = params[10]
 
             const checkpoint = poolState.checkpoints.get(caseImportId)
             if (!checkpoint) return { rows: [], rowCount: 0 }
@@ -216,20 +219,18 @@ function mockPool(state = {}) {
             if (Date.parse(lease.expires_at) <= Date.parse(NOW)) return { rows: [], rowCount: 0 }
 
             checkpoint.checkpoint_version = params[0]
-            checkpoint.authorization_ids = JSON.parse(params[1])
-            checkpoint.checkpoint_payload = JSON.parse(params[2])
-            checkpoint.checkpoint_payload.version = params[0]
-            checkpoint.checkpoint_payload.authorizationIds = JSON.parse(params[1])
-            checkpoint.fencing_token = params[3]
-            checkpoint.lease_id = params[4]
+            checkpoint.authorizable_plan_hash = params[1]
+            checkpoint.authorization_ids = JSON.parse(params[2])
+            checkpoint.checkpoint_payload = JSON.parse(params[3])
+            checkpoint.fencing_token = params[4]
+            checkpoint.lease_id = params[5]
             checkpoint.updated_at = NOW
 
             return { rows: [{ checkpoint_version: params[0] }], rowCount: 1 }
           }
 
           // INSERT audit - now uses INSERT ... SELECT with EXISTS (13 params)
-          if ((text.includes("INSERT INTO") && text.includes(TABLE_NAME)) ||
-              (text.includes("SELECT") && params && params.length === 13)) {
+          if ((text.includes("INSERT INTO") && text.includes(TABLE_NAME))) {
             const rebind_id = params[0]
             const caseImportId = params[1]
             const lease_id = params[11]
@@ -298,6 +299,9 @@ function createCheckpoint(overrides = {}) {
     caseFingerprint: CASE_FINGERPRINT,
     caseNumber: CASE_NUMBER,
     authorizablePlanHash: AUTHORIZABLE_PLAN_HASH,
+    planHash: PLAN_HASH,
+    manifestHash: MANIFEST_HASH,
+    reservationEvidenceHash: RESERVATION_EVIDENCE_HASH,
     authorizationIds: [OLD_AUTH_1, OLD_AUTH_2],
     status: "failed",
     version: 5,
@@ -424,6 +428,22 @@ test("migration idempotente com registry", async () => {
 
             return { rows: constraints, rowCount: constraints.length }
           }
+          if (text.includes("FROM pg_index")) {
+            const rows = EXPECTED_INDEXES.map(index => ({
+              index_name: index.name,
+              schema_name: "public",
+              table_name: TABLE_NAME,
+              is_unique: index.unique,
+              method: "btree",
+              key_attribute_count: index.keys.length,
+              total_attribute_count: index.keys.length,
+              has_expressions: false,
+              has_predicate: false,
+              key_columns: [...index.keys],
+              key_descending: [...index.descending]
+            }))
+            return { rows, rowCount: rows.length }
+          }
           return { rows: [], rowCount: 0 }
         },
         async release() {}
@@ -469,6 +489,50 @@ test("happy path: primeiro rebind com sucesso", async () => {
 })
 
 // Par antigo tests
+test("parser consumed_by aceita somente formatos canônico e legado comprovado", () => {
+  assert.deepEqual(parseConsumedBy(`executor:${LEASE_ID}`), { kind: "executor", operationId: LEASE_ID, normalizedValue: `executor:${LEASE_ID}`, formatVersion: "executor-v1" })
+  assert.deepEqual(parseConsumedBy(HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy), {
+    kind: HISTORICAL_CONSUMED_BY_FIXTURE.kind,
+    operationId: HISTORICAL_CONSUMED_BY_FIXTURE.operationId,
+    normalizedValue: HISTORICAL_CONSUMED_BY_FIXTURE.normalizedValue,
+    formatVersion: HISTORICAL_CONSUMED_BY_FIXTURE.formatVersion
+  })
+  for (const invalid of [null, "", "executor:", "executor:bad id", "rebind", "rebind:abc", `rebind:${"g".repeat(64)}`, `other:${"a".repeat(64)}`]) assert.equal(parseConsumedBy(invalid), null)
+})
+
+test("fixture histórico é aceito quando audit prova caso, checkpoint, conjunto e lease", async () => {
+  const request = fixture(), legacyId = HISTORICAL_CONSUMED_BY_FIXTURE.operationId
+  const legacyAudit = { rebind_id: legacyId, case_import_id: CASE_IMPORT_ID, source_checkpoint_version: 4, rebound_checkpoint_version: 5, current_authorization_set_hash: request.oldAuthorizationSetHash, lease_id: LEASE_ID }
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease()]]), checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]), audits: new Map([[legacyId, legacyAudit]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")], [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const result = await createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW }).executeRebind(request)
+  assert.equal(result.status, "rebound")
+  assert.equal(pool.state.committed, true)
+})
+
+test("legado sem prova completa é rejeitado sem consumo, checkpoint ou audit novo", async () => {
+  const request = fixture()
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease()]]), checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")], [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  await assert.rejects(() => createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW }).executeRebind(request), /REBIND_OLD_LEGACY_CONSUMPTION_PROOF_INVALID/)
+  assert.equal(pool.state.authorizations.get(NEW_AUTH_1).consumed_at, null)
+  assert.equal(pool.state.checkpoints.get(CASE_IMPORT_ID).checkpoint_version, 5)
+  assert.equal(pool.state.audits.size, 0)
+  assert.equal(pool.state.rolledBack, true)
+})
+
 test("par antigo nÃ£o consumido falha", async () => {
   const request = fixture()
   const pool = mockPool({
@@ -994,7 +1058,403 @@ test("rollback em erro nÃ£o persiste auditoria", async () => {
 
   assert.equal(pool.state.committed, false)
   assert.equal(pool.state.rolledBack, true)
-  assert.equal(pool.state.audits.size, 0)
+})
+
+// ========== NOVOS TESTES PARA PLAN_HASH_CHANGE ==========
+
+const NEW_AUTHORIZABLE_PLAN_HASH = "b".repeat(64)
+const NEW_PLAN_HASH = "c".repeat(64)
+const NEW_MANIFEST_HASH = "d".repeat(64)
+
+function createPlanRebindRequest(overrides = {}) {
+  const reconciliationEvidence = {
+    decision: "RECONCILIATION_ELIGIBLE",
+    reason: "CONTACT_READ_ONLY_VERIFIED",
+    contactEvidence: { caseImportId: CASE_IMPORT_ID },
+    namePresentation: { semanticMatch: true, materialDivergence: false },
+    resume: { checkpointRebindRequired: true, ambiguity: "NONE" },
+    evidenceHash: "e".repeat(64)
+  }
+
+  return createRebindRequest({
+    caseImportId: CASE_IMPORT_ID,
+    sourceCheckpointVersion: 5,
+    oldAuthorizationIds: [OLD_AUTH_1, OLD_AUTH_2],
+    newAuthorizationIds: [NEW_AUTH_1, NEW_AUTH_2],
+    reconciliationEvidence,
+    reason: "PLAN_REGENERATED_AFTER_SAFE_CORRECTION",
+    requestedBy: "rebind-coordinator",
+    newAuthorizablePlanHash: NEW_AUTHORIZABLE_PLAN_HASH,
+    newPlanHash: NEW_PLAN_HASH,
+    newManifestHash: NEW_MANIFEST_HASH,
+    ...overrides
+  })
+}
+
+function createCheckpointForPlanRebind(overrides = {}) {
+  const payload = {
+    schemaVersion: 2,
+    caseImportId: CASE_IMPORT_ID,
+    caseFingerprint: CASE_FINGERPRINT,
+    caseNumber: CASE_NUMBER,
+    authorizablePlanHash: AUTHORIZABLE_PLAN_HASH,
+    planHash: PLAN_HASH,
+    manifestHash: MANIFEST_HASH,
+    reservationEvidenceHash: RESERVATION_EVIDENCE_HASH,
+    authorizationIds: [OLD_AUTH_1, OLD_AUTH_2],
+    status: "failed",
+    version: 5,
+    steps: {
+      reservation: { status: "completed", result: { verified: true, caseImportId: CASE_IMPORT_ID, caseNumber: CASE_NUMBER, evidenceId: "ev-1" } },
+      contact: { status: "failed", errorCode: "VERIFICATION_FAILED" },
+      deal: { status: "pending" },
+      association: { status: "pending" },
+      area_folder: { status: "pending" },
+      case_folder: { status: "pending" },
+      uploads: { status: "pending" },
+      final_verify: { status: "pending" }
+    },
+    resources: { contactId: null, dealId: null, associationId: null, areaFolderId: null, caseFolderId: null },
+    uploads: {},
+    finalProof: null
+  }
+
+  return {
+    case_import_id: CASE_IMPORT_ID,
+    schema_version: 2,
+    checkpoint_version: 5,
+    case_fingerprint: CASE_FINGERPRINT,
+    case_number: CASE_NUMBER,
+    authorizable_plan_hash: AUTHORIZABLE_PLAN_HASH,
+    plan_hash: PLAN_HASH,
+    manifest_hash: MANIFEST_HASH,
+    reservation_evidence_hash: RESERVATION_EVIDENCE_HASH,
+    authorization_ids: [OLD_AUTH_1, OLD_AUTH_2],
+    global_status: "failed",
+    checkpoint_payload: payload,
+    fencing_token: FENCING_TOKEN,
+    lease_id: LEASE_ID,
+    ...overrides
+  }
+}
+
+function mockPoolForPlanRebind(state = {}) {
+  const poolState = {
+    queries: [],
+    leases: new Map([[CASE_IMPORT_ID, { lease_id: LEASE_ID, fencing_token: FENCING_TOKEN, owner_id: OWNER_ID, expires_at: "2099-01-01T00:00:00.000Z", released_at: null }]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpointForPlanRebind()]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { authorizable_plan_hash: NEW_AUTHORIZABLE_PLAN_HASH, plan_hash: NEW_PLAN_HASH, manifest_hash: NEW_MANIFEST_HASH })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { authorizable_plan_hash: NEW_AUTHORIZABLE_PLAN_HASH, plan_hash: NEW_PLAN_HASH, manifest_hash: NEW_MANIFEST_HASH })]
+    ]),
+    audits: new Map(),
+    committed: false,
+    rolledBack: false,
+    ...state
+  }
+
+  return {
+    state: poolState,
+    async connect() {
+      const client = {
+        async query(sql, params) {
+          const text = String(sql).replace(/\s+/g, " ").trim()
+          poolState.queries.push({ text, params: params ? [...params] : [] })
+
+          if (text === "BEGIN") return { rows: [], rowCount: 0 }
+          if (text === "COMMIT") { poolState.committed = true; return { rows: [], rowCount: 0 } }
+          if (text === "ROLLBACK") { poolState.rolledBack = true; return { rows: [], rowCount: 0 } }
+          if (text.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 0 }
+
+          if (text.includes("FROM single_case_apply_leases") && text.includes("FOR UPDATE")) {
+            const lease = poolState.leases.get(params[0])
+            if (!lease) return { rows: [], rowCount: 0 }
+            return { rows: [{ ...lease, is_current: true }], rowCount: 1 }
+          }
+
+          if (text.includes("FROM single_case_apply_checkpoints") && text.includes("FOR UPDATE")) {
+            const cp = poolState.checkpoints.get(params[0])
+            if (!cp) return { rows: [], rowCount: 0 }
+            return { rows: [cp], rowCount: 1 }
+          }
+
+          if (text.includes("FROM single_case_apply_authorizations") && text.includes("FOR UPDATE")) {
+            const ids = params[0]
+            const rows = ids.map(id => poolState.authorizations.get(id)).filter(Boolean)
+            return { rows, rowCount: rows.length }
+          }
+
+          if (text.includes("UPDATE single_case_apply_authorizations") && text.includes("consumed_at")) {
+            const consumedBy = params[0]
+            const authIds = params[1]
+            let updated = 0
+            const resultRows = []
+            for (const id of authIds) {
+              const auth = poolState.authorizations.get(id)
+              if (auth &&
+                  auth.operational_status === 'ACTIVE' &&
+                  !auth.consumed_at &&
+                  !auth.revoked &&
+                  Date.parse(auth.expires_at) > Date.parse(NOW)) {
+                auth.consumed_at = NOW
+                auth.consumed_by = consumedBy
+                resultRows.push({ authorization_id: id, consumed_at: NOW, consumed_by: consumedBy })
+                updated++
+              }
+            }
+            return { rows: resultRows, rowCount: updated }
+          }
+
+          if (text.includes("UPDATE single_case_apply_checkpoints")) {
+            const cp = poolState.checkpoints.get(params[6])
+            if (!cp) return { rows: [], rowCount: 0 }
+
+            // Validate CAS conditions
+            if (Number(cp.checkpoint_version) !== params[7]) return { rows: [], rowCount: 0 }
+            if (cp.lease_id !== params[8]) return { rows: [], rowCount: 0 }
+            if (Number(cp.fencing_token) !== params[9]) return { rows: [], rowCount: 0 }
+
+            // Validate EXISTS condition (new lease vigente)
+            const newLease = poolState.leases.get(cp.case_import_id)
+            if (!newLease) return { rows: [], rowCount: 0 }
+            if (newLease.owner_id !== params[10]) return { rows: [], rowCount: 0 }
+            if (newLease.released_at) return { rows: [], rowCount: 0 }
+            if (Date.parse(newLease.expires_at) <= Date.parse(NOW)) return { rows: [], rowCount: 0 }
+
+            cp.checkpoint_version = params[0]
+            cp.authorizable_plan_hash = params[1]
+            cp.authorization_ids = JSON.parse(params[2])
+            cp.checkpoint_payload = JSON.parse(params[3])
+            cp.checkpoint_payload.version = params[0]
+            cp.checkpoint_payload.authorizationIds = JSON.parse(params[2])
+            cp.fencing_token = params[4]
+            cp.lease_id = params[5]
+            cp.updated_at = NOW
+            poolState.checkpoints.set(params[6], cp)
+
+            return { rows: [{ checkpoint_version: params[0] }], rowCount: 1 }
+          }
+
+          if (text.includes("information_schema.columns")) {
+            return { rowCount: 0, rows: [] }
+          }
+
+          if (text.includes("pg_constraint")) {
+            return { rowCount: 0, rows: [] }
+          }
+
+          if (text.includes("FROM pg_index")) {
+            return { rowCount: 0, rows: [] }
+          }
+
+          // Revalidação de lease (diagnoseLeaseMutationFailure)
+          if (text.includes("expires_at > CURRENT_TIMESTAMP AS is_current")) {
+            const lease = poolState.leases.get(params[0])
+            if (!lease) return { rows: [], rowCount: 0 }
+            const is_current = Date.parse(lease.expires_at) > Date.parse(NOW)
+            return {
+              rows: [{
+                owner_id: lease.owner_id,
+                fencing_token: lease.fencing_token,
+                released_at: lease.released_at,
+                expires_at: lease.expires_at,
+                is_current
+              }],
+              rowCount: 1
+            }
+          }
+
+          // SELECT audit
+          if (text.includes("FROM single_case_apply_rebind_audit") && text.includes("WHERE rebind_id")) {
+            const audit = poolState.audits.get(params[0])
+            if (!audit) return { rows: [], rowCount: 0 }
+            return { rows: [audit], rowCount: 1 }
+          }
+
+          // INSERT audit
+          if ((text.includes("INSERT INTO") && text.includes(TABLE_NAME))) {
+            const caseImportId = params[1]
+            const leaseId = params[11]
+            const fencingToken = params[10]
+            const ownerId = params[12]
+
+            const lease = poolState.leases.get(caseImportId)
+            if (!lease) return { rows: [], rowCount: 0 }
+            if (lease.owner_id !== ownerId) return { rows: [], rowCount: 0 }
+            if (lease.released_at) return { rows: [], rowCount: 0 }
+            if (Date.parse(lease.expires_at) <= Date.parse(NOW)) return { rows: [], rowCount: 0 }
+            if (lease.lease_id !== leaseId) return { rows: [], rowCount: 0 }
+            if (Number(lease.fencing_token) !== fencingToken) return { rows: [], rowCount: 0 }
+
+            const audit = {
+              rebind_id: params[0],
+              case_import_id: params[1],
+              source_checkpoint_version: params[2],
+              rebound_checkpoint_version: params[3],
+              authorization_count: params[4],
+              previous_authorization_set_hash: params[5],
+              current_authorization_set_hash: params[6],
+              reconciliation_evidence_hash: params[7],
+              reason: params[8],
+              requested_by: params[9],
+              fencing_token: params[10],
+              lease_id: params[11],
+              committed_at: NOW
+            }
+            poolState.audits.set(audit.rebind_id, audit)
+            return { rows: [{ rebind_id: audit.rebind_id }], rowCount: 1 }
+          }
+
+          return { rows: [], rowCount: 0 }
+        },
+        async release() {}
+      }
+      return client
+    },
+    async query() { return { rows: [], rowCount: 0 } },
+    async end() {}
+  }
+}
+
+test("novo motivo PLAN_REGENERATED_AFTER_SAFE_CORRECTION exige todos os novos hashes", () => {
+  const req = createPlanRebindRequest()
+  assert.equal(req.reason, "PLAN_REGENERATED_AFTER_SAFE_CORRECTION")
+  assert.equal(req.newAuthorizablePlanHash, NEW_AUTHORIZABLE_PLAN_HASH)
+  assert.equal(req.newPlanHash, NEW_PLAN_HASH)
+  assert.equal(req.newManifestHash, NEW_MANIFEST_HASH)
+})
+
+test("hashes parciais bloqueiam", () => {
+  assert.throws(() => createPlanRebindRequest({ newAuthorizablePlanHash: NEW_AUTHORIZABLE_PLAN_HASH, newPlanHash: undefined, newManifestHash: undefined }), /REBIND_NEW_PLAN_HASH_INVALID/)
+  assert.throws(() => createPlanRebindRequest({ newPlanHash: NEW_PLAN_HASH, newAuthorizablePlanHash: undefined, newManifestHash: undefined }), /REBIND_NEW_AUTHORIZABLE_PLAN_HASH_INVALID/)
+  assert.throws(() => createPlanRebindRequest({ newManifestHash: NEW_MANIFEST_HASH, newAuthorizablePlanHash: undefined, newPlanHash: undefined }), /REBIND_NEW_AUTHORIZABLE_PLAN_HASH_INVALID/)
+})
+
+test("novos authorizationIds incompletos bloqueiam para motivo de regeneração", () => {
+  assert.throws(() => createPlanRebindRequest({ newAuthorizationIds: [NEW_AUTH_1] }), /REBIND_NEW_AUTHORIZATION_IDS_WRONG_COUNT/)
+})
+
+test("authorizationIds duplicados no novo par bloqueiam", () => {
+  assert.throws(() => createPlanRebindRequest({ newAuthorizationIds: [NEW_AUTH_1, NEW_AUTH_1] }), /REBIND_NEW_AUTHORIZATION_IDS_DUPLICATE/)
+})
+
+test("rebind com novos hashes atualiza authorizable_plan_hash e payload", async () => {
+  const pool = mockPoolForPlanRebind()
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createPlanRebindRequest()
+
+  const result = await repository.executeRebind(request)
+
+  assert.equal(result.status, "rebound")
+  assert.equal(result.reboundCheckpointVersion, 6)
+  assert.equal(pool.state.committed, true)
+  assert.equal(pool.state.rolledBack, false)
+
+  const updatedCp = pool.state.checkpoints.get(CASE_IMPORT_ID)
+  assert.equal(updatedCp.authorizable_plan_hash, NEW_AUTHORIZABLE_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.authorizablePlanHash, NEW_AUTHORIZABLE_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.planHash, NEW_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.manifestHash, NEW_MANIFEST_HASH)
+  assert.deepEqual(updatedCp.checkpoint_payload.authorizationIds, [NEW_AUTH_1, NEW_AUTH_2])
+  assert.equal(updatedCp.checkpoint_payload.version, 6)
+  assert.equal(updatedCp.checkpoint_payload.steps.contact.status, "pending")
+  assert.equal(updatedCp.checkpoint_payload.steps.contact.errorCode, undefined)
+  assert.equal(updatedCp.checkpoint_payload.steps.reservation.status, "completed")
+  assert.deepEqual(updatedCp.checkpoint_payload.resources, { contactId: null, dealId: null, associationId: null, areaFolderId: null, caseFolderId: null })
+  assert.deepEqual(updatedCp.checkpoint_payload.uploads, {})
+  assert.equal(updatedCp.checkpoint_payload.finalProof, null)
+})
+
+test("caminho antigo sem novos hashes permanece inalterado", async () => {
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease()]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const reconciliationEvidence = {
+    decision: "RECONCILIATION_ELIGIBLE",
+    reason: "CONTACT_READ_ONLY_VERIFIED",
+    contactEvidence: { caseImportId: CASE_IMPORT_ID },
+    namePresentation: { semanticMatch: true, materialDivergence: false },
+    resume: { checkpointRebindRequired: true, ambiguity: "NONE" },
+    evidenceHash: "e".repeat(64)
+  }
+  const request = createRebindRequest({
+    caseImportId: CASE_IMPORT_ID,
+    sourceCheckpointVersion: 5,
+    oldAuthorizationIds: [OLD_AUTH_1, OLD_AUTH_2],
+    newAuthorizationIds: [NEW_AUTH_1, NEW_AUTH_2],
+    reconciliationEvidence,
+    reason: "CONTACT_RECONCILED_AFTER_DIVERGENCE",
+    requestedBy: "rebind-coordinator"
+  })
+
+  const result = await repository.executeRebind(request)
+
+  assert.equal(result.status, "rebound")
+  const updatedCp = pool.state.checkpoints.get(CASE_IMPORT_ID)
+  assert.equal(updatedCp.authorizable_plan_hash, AUTHORIZABLE_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.authorizablePlanHash, AUTHORIZABLE_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.planHash, PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.steps.contact.status, "failed")
+  assert.equal(updatedCp.checkpoint_payload.steps.contact.errorCode, "CONTACT_FIELDS_DIVERGENCE")
+})
+
+test("rollback total em falha após inserir auditoria", async () => {
+  const pool = mockPoolForPlanRebind()
+  pool.state.audits.set("some-audit", {})
+  pool.state.authorizations.get(NEW_AUTH_1).expires_at = "2000-01-01T00:00:00.000Z"
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createPlanRebindRequest()
+
+  await assert.rejects(() => repository.executeRebind(request), /REBIND_NEW_PAIR_EXPIRED/)
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("idempotência: mesma solicitação retorna mesmo resultado", async () => {
+  const pool = mockPoolForPlanRebind()
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createPlanRebindRequest()
+
+  const result1 = await repository.executeRebind(request)
+  const result2 = await repository.executeRebind(request)
+
+  assert.equal(result1.rebindId, result2.rebindId)
+  assert.equal(result1.reboundCheckpointVersion, result2.reboundCheckpointVersion)
+  assert.equal(result1.status, "rebound")
+})
+
+test("concorrência: segunda solicitação divergente bloqueia", async () => {
+  const pool = mockPoolForPlanRebind()
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request1 = createPlanRebindRequest()
+  const request2 = createPlanRebindRequest({ newAuthorizablePlanHash: "0".repeat(64), newPlanHash: "1".repeat(64), newManifestHash: "2".repeat(64), requestedBy: "rebind-coordinator-concurrent" })
+
+  const result1 = await repository.executeRebind(request1)
+  await assert.rejects(() => repository.executeRebind(request2), /REBIND_CONSUME_BY_INVALID|REBIND_CHECKPOINT_DIVERGENT|REBIND_AUDIT_DIVERGENT|REBIND_NEW_PAIR_CONSUMED|REBIND_CONSUME_NEW_PAIR_FAILED|CHECKPOINT_CONTACT_NOT_FAILED/)
+
+  assert.equal(result1.status, "rebound")
+})
+
+test("lease antiga não é considerada ativa quando nova lease é exigida", async () => {
+  const pool = mockPoolForPlanRebind()
+  pool.state.leases.set(CASE_IMPORT_ID, { lease_id: "old-lease", fencing_token: 1, owner_id: OWNER_ID, expires_at: "2000-01-01T00:00:00.000Z", released_at: null })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createPlanRebindRequest()
+
+  await assert.rejects(() => repository.executeRebind(request), /REBIND_LEASE_EXPIRED_DURING_TRANSACTION|REBIND_LEASE_EXPIRED/)
 })
 
 // VerificaÃ§Ã£o de resposta sem IDs completos
@@ -1740,6 +2200,691 @@ test("auditoria com fencing divergente emite REBIND_LEASE_FENCING_MISMATCH", asy
   await assert.rejects(
     () => repository.executeRebind(request),
     /REBIND_LEASE_FENCING_MISMATCH/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+// Testes de transição lease antigo → lease novo
+
+test("transição de lease antigo para lease novo preserva par antigo ligado ao lease antigo", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const OLD_FENCING = 50
+  const NEW_LEASE_ID = "lease-renewed-002"
+  const NEW_FENCING = 101
+
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE_ID, fencing_token: NEW_FENCING })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: OLD_FENCING })]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const result = await repository.executeRebind(request)
+
+  assert.equal(result.status, "rebound")
+  assert.equal(pool.state.committed, true)
+
+  // Verificar que par antigo continua ligado ao lease antigo
+  const oldAuth1 = pool.state.authorizations.get(OLD_AUTH_1)
+  const oldAuth2 = pool.state.authorizations.get(OLD_AUTH_2)
+  assert.equal(oldAuth1.consumed_by, `executor:${OLD_LEASE_ID}`)
+  assert.equal(oldAuth2.consumed_by, `executor:${OLD_LEASE_ID}`)
+
+  // Verificar que checkpoint agora aponta para o lease novo
+  const checkpoint = pool.state.checkpoints.get(CASE_IMPORT_ID)
+  assert.equal(checkpoint.lease_id, NEW_LEASE_ID)
+  assert.equal(checkpoint.fencing_token, NEW_FENCING)
+
+  // Verificar que auditoria usa o lease novo
+  const audit = Array.from(pool.state.audits.values())[0]
+  assert.equal(audit.lease_id, NEW_LEASE_ID)
+  assert.equal(audit.fencing_token, NEW_FENCING)
+
+  // Verificar que novo par foi consumido com rebind ID
+  const newAuth1 = pool.state.authorizations.get(NEW_AUTH_1)
+  const newAuth2 = pool.state.authorizations.get(NEW_AUTH_2)
+  assert.equal(newAuth1.consumed_by, `rebind:${request.rebindId}`)
+  assert.equal(newAuth2.consumed_by, `rebind:${request.rebindId}`)
+})
+
+test("checkpoint já não possui mais o lease antigo esperado → CAS falha", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const WRONG_LEASE_ID = "lease-other-003"
+  const NEW_LEASE_ID = "lease-renewed-002"
+
+  // Checkpoint aponta para WRONG_LEASE_ID em vez do OLD_LEASE_ID esperado
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE_ID, fencing_token: 101 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: WRONG_LEASE_ID, fencing_token: 77 })]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  // Deve falhar porque consumed_by aponta para OLD_LEASE_ID mas checkpoint tem WRONG_LEASE_ID
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("CAS do checkpoint falha quando vínculo antigo foi alterado concorrentemente", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const OLD_FENCING = 50
+  const NEW_LEASE_ID = "lease-renewed-002"
+  const NEW_FENCING = 101
+  const CONCURRENT_LEASE = "lease-concorrente-003"
+  const CONCURRENT_FENCING = 75
+
+  // Estado inicial carregado pelo repositório
+  const initialCheckpoint = createCheckpoint({
+    lease_id: OLD_LEASE_ID,
+    fencing_token: OLD_FENCING,
+    checkpoint_version: 5
+  })
+
+  // Mock que simula alteração concorrente no checkpoint antes do UPDATE
+  const pool = {
+    state: {
+      queries: [],
+      committed: false,
+      rolledBack: false,
+      checkpointUpdated: false
+    },
+    async connect() {
+      const state = pool.state
+      return {
+        async query(sql, params) {
+          const text = String(sql).replace(/\s+/g, " ").trim()
+          state.queries.push({ text, params: params ? [...params] : [] })
+
+          if (text === "BEGIN") return { rows: [], rowCount: 0 }
+          if (text === "ROLLBACK") { state.rolledBack = true; return { rows: [], rowCount: 0 } }
+          if (text.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 0 }
+
+          // Lease FOR UPDATE - lease novo vigente
+          if (text.includes("FROM single_case_apply_leases") && text.includes("FOR UPDATE")) {
+            return { rows: [createLease({
+              lease_id: NEW_LEASE_ID,
+              fencing_token: NEW_FENCING,
+              owner_id: OWNER_ID,
+              released_at: null,
+              expires_at: "2026-07-17T13:00:00.000Z"
+            })], rowCount: 1 }
+          }
+
+          // Checkpoint FOR UPDATE - retorna checkpoint com lease antigo
+          if (text.includes("FROM single_case_apply_checkpoints") && text.includes("FOR UPDATE")) {
+            return { rows: [initialCheckpoint], rowCount: 1 }
+          }
+
+          // Audit SELECT
+          if (text.includes("FROM single_case_apply_rebind_audit")) {
+            return { rows: [], rowCount: 0 }
+          }
+
+          // Authorizations FOR UPDATE
+          if (text.includes("FROM single_case_apply_authorizations") && text.includes("FOR UPDATE")) {
+            return { rows: [
+              createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+                consumed_at: NOW,
+                consumed_by: `executor:${OLD_LEASE_ID}`
+              }),
+              createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+                consumed_at: NOW,
+                consumed_by: `executor:${OLD_LEASE_ID}`
+              }),
+              createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION"),
+              createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")
+            ], rowCount: 4 }
+          }
+
+          // UPDATE consume - sucesso
+          if (text.includes("UPDATE single_case_apply_authorizations") && text.includes("consumed_at")) {
+            return { rows: [
+              { authorization_id: NEW_AUTH_1, consumed_at: NOW, consumed_by: `rebind:${request.rebindId}` },
+              { authorization_id: NEW_AUTH_2, consumed_at: NOW, consumed_by: `rebind:${request.rebindId}` }
+            ], rowCount: 2 }
+          }
+
+          // UPDATE checkpoint - SIMULA ALTERAÇÃO CONCORRENTE
+          // O checkpoint foi alterado por outro processo e agora tem CONCURRENT_LEASE
+          // O WHERE não encontra mais o vínculo antigo esperado
+          if (text.includes("UPDATE single_case_apply_checkpoints")) {
+            state.checkpointUpdated = true
+
+            // Verificar que os parâmetros estão corretos
+            assert.equal(params[4], NEW_FENCING, "param[4] deve ser fencing novo")
+            assert.equal(params[5], NEW_LEASE_ID, "param[5] deve ser lease novo")
+            assert.equal(params[7], 5, "param[7] deve ser sourceCheckpointVersion")
+            assert.equal(params[8], OLD_LEASE_ID, "param[8] deve ser lease antigo")
+            assert.equal(params[9], OLD_FENCING, "param[9] deve ser fencing antigo")
+
+            // O WHERE não encontra mais o checkpoint porque foi alterado concorrentemente
+            return { rows: [], rowCount: 0 }
+          }
+
+          // Revalidação (diagnoseLeaseMutationFailure)
+          if (text.includes("expires_at > CURRENT_TIMESTAMP AS is_current")) {
+            return { rows: [{
+              owner_id: OWNER_ID,
+              fencing_token: NEW_FENCING,
+              released_at: null,
+              expires_at: "2026-07-17T13:00:00.000Z",
+              is_current: true
+            }], rowCount: 1 }
+          }
+
+          return { rows: [], rowCount: 0 }
+        },
+        async release() {}
+      }
+    },
+    async query() { return { rows: [], rowCount: 0 } }
+  }
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_CHECKPOINT_UPDATE_FAILED/
+  )
+
+  assert.equal(pool.state.checkpointUpdated, true, "UPDATE checkpoint deve ter sido executado")
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+
+  // Verificar que nenhuma auditoria foi inserida
+  const auditInsert = pool.state.queries.find(q =>
+    q.text.includes("INSERT INTO") && q.text.includes("single_case_apply_rebind_audit")
+  )
+  assert.equal(auditInsert, undefined, "Auditoria não deve ser inserida após falha do CAS")
+})
+
+test("novo lease está liberado → falha fechada", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const NEW_LEASE_ID = "lease-renewed-002"
+
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({
+      lease_id: NEW_LEASE_ID,
+      fencing_token: 101,
+      released_at: "2026-07-17T12:30:00.000Z"  // Lease liberado
+    })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_LEASE_EXPIRED/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("novo lease está expirado → falha fechada", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const NEW_LEASE_ID = "lease-renewed-002"
+
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({
+      lease_id: NEW_LEASE_ID,
+      fencing_token: 101,
+      expires_at: "2026-07-17T11:00:00.000Z"  // Lease expirado
+    })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_LEASE_EXPIRED_DURING_TRANSACTION/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("owner do novo lease diverge → falha", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const NEW_LEASE_ID = "lease-renewed-002"
+
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({
+      lease_id: NEW_LEASE_ID,
+      fencing_token: 101,
+      owner_id: "other-owner-002"  // Owner divergente
+    })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_LEASE_OWNER_MISMATCH/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("fencing do novo lease diverge → falha", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const NEW_LEASE_ID = "lease-renewed-002"
+  const EXPECTED_FENCING = 101
+  const ACTUAL_FENCING = 199
+
+  // Lease carregado no começo tem fencing 101
+  // Mas durante execução o fencing mudou para 199
+  const pool = {
+    state: {
+      queries: [],
+      committed: false,
+      rolledBack: false
+    },
+    async connect() {
+      const state = pool.state
+      return {
+        async query(sql, params) {
+          const text = String(sql).replace(/\s+/g, " ").trim()
+          state.queries.push({ text, params: params ? [...params] : [] })
+
+          if (text === "BEGIN") return { rows: [], rowCount: 0 }
+          if (text === "ROLLBACK") { state.rolledBack = true; return { rows: [], rowCount: 0 } }
+          if (text.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 0 }
+
+          // Lease FOR UPDATE - retorna fencing original
+          if (text.includes("FROM single_case_apply_leases") && text.includes("FOR UPDATE")) {
+            return { rows: [createLease({ lease_id: NEW_LEASE_ID, fencing_token: EXPECTED_FENCING })], rowCount: 1 }
+          }
+
+          // Checkpoint FOR UPDATE - lease antigo
+          if (text.includes("FROM single_case_apply_checkpoints") && text.includes("FOR UPDATE")) {
+            return { rows: [createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })], rowCount: 1 }
+          }
+
+          // Audit SELECT
+          if (text.includes("FROM single_case_apply_rebind_audit")) {
+            return { rows: [], rowCount: 0 }
+          }
+
+          // Authorizations FOR UPDATE
+          if (text.includes("FROM single_case_apply_authorizations") && text.includes("FOR UPDATE")) {
+            return { rows: [
+              createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${OLD_LEASE_ID}` }),
+              createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${OLD_LEASE_ID}` }),
+              createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION"),
+              createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")
+            ], rowCount: 4 }
+          }
+
+          // UPDATE consume - FALHA (fencing divergente no EXISTS)
+          if (text.includes("UPDATE single_case_apply_authorizations") && text.includes("consumed_at")) {
+            return { rows: [], rowCount: 0 }
+          }
+
+          // Revalidação - fencing mudou
+          if (text.includes("expires_at > CURRENT_TIMESTAMP AS is_current")) {
+            return { rows: [{
+              owner_id: OWNER_ID,
+              fencing_token: ACTUAL_FENCING,  // Fencing divergente
+              released_at: null,
+              expires_at: "2026-07-17T13:00:00.000Z",
+              is_current: true
+            }], rowCount: 1 }
+          }
+
+          return { rows: [], rowCount: 0 }
+        },
+        async release() {}
+      }
+    },
+    async query() { return { rows: [], rowCount: 0 } }
+  }
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_LEASE_FENCING_MISMATCH/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("o par antigo foi consumido por lease diferente do lease antigo do checkpoint → continua falhando", async () => {
+  const request = fixture()
+  const OLD_CHECKPOINT_LEASE = "lease-checkpoint-001"
+  const DIFFERENT_LEASE = "lease-divergent-002"
+  const NEW_LEASE = "lease-renewed-003"
+
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE, fencing_token: 101 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_CHECKPOINT_LEASE, fencing_token: 50 })]]),
+    authorizations: new Map([
+      // Par antigo consumido por lease diferente
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${DIFFERENT_LEASE}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${DIFFERENT_LEASE}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH/
+  )
+
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("UPDATE checkpoint valida lease novo no EXISTS e lease antigo no WHERE", async () => {
+  const request = fixture()
+  const OLD_LEASE_ID = "lease-expired-001"
+  const NEW_LEASE_ID = "lease-renewed-002"
+
+  const pool = mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE_ID, fencing_token: 101 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+        consumed_at: NOW,
+        consumed_by: `executor:${OLD_LEASE_ID}`
+      })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  await repository.executeRebind(request)
+
+  // Verificar que UPDATE checkpoint foi chamado
+  const updateQuery = pool.state.queries.find(q => q.text.includes("UPDATE single_case_apply_checkpoints"))
+  assert(updateQuery, "UPDATE checkpoint não encontrado")
+
+  // Verificar parâmetros:
+  // params[4] = lease.fencing_token (101) → usado no SET e no EXISTS
+  // params[5] = lease.lease_id (NEW_LEASE_ID) → usado no SET e no EXISTS
+  // params[7] = request.sourceCheckpointVersion (5)
+  // params[8] = checkpointRow.lease_id (OLD_LEASE_ID) → usado no WHERE
+  // params[9] = checkpointRow.fencing_token (50) → usado no WHERE
+
+  assert.equal(updateQuery.params[4], 101)
+  assert.equal(updateQuery.params[5], NEW_LEASE_ID)
+  assert.equal(updateQuery.params[7], 5)
+  assert.equal(updateQuery.params[8], OLD_LEASE_ID)
+  assert.equal(updateQuery.params[9], 50)
+
+  assert.equal(pool.state.committed, true)
+})
+
+test("dois objetos Date distintos com mesmo instante não causam REBIND_CONSUME_TIMESTAMP_DIVERGENT", async () => {
+  const request = fixture()
+
+  // Mock que retorna objetos Date distintos (não idênticos por referência)
+  // mas representando o mesmo instante
+  const pool = {
+    state: {
+      queries: [],
+      committed: false,
+      rolledBack: false
+    },
+    async connect() {
+      const state = pool.state
+      return {
+        async query(sql, params) {
+          const text = String(sql).replace(/\s+/g, " ").trim()
+          state.queries.push({ text, params: params ? [...params] : [] })
+
+          if (text === "BEGIN") return { rows: [], rowCount: 0 }
+          if (text === "COMMIT") { state.committed = true; return { rows: [], rowCount: 0 } }
+          if (text === "ROLLBACK") { state.rolledBack = true; return { rows: [], rowCount: 0 } }
+          if (text.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 0 }
+
+          // Lease FOR UPDATE
+          if (text.includes("FROM single_case_apply_leases") && text.includes("FOR UPDATE")) {
+            return { rows: [createLease()], rowCount: 1 }
+          }
+
+          // Checkpoint FOR UPDATE
+          if (text.includes("FROM single_case_apply_checkpoints") && text.includes("FOR UPDATE")) {
+            return { rows: [createCheckpoint()], rowCount: 1 }
+          }
+
+          // Audit SELECT
+          if (text.includes("FROM single_case_apply_rebind_audit")) {
+            return { rows: [], rowCount: 0 }
+          }
+
+          // Authorizations FOR UPDATE
+          if (text.includes("FROM single_case_apply_authorizations") && text.includes("FOR UPDATE")) {
+            return { rows: [
+              createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` }),
+              createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` }),
+              createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION"),
+              createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")
+            ], rowCount: 4 }
+          }
+
+          // UPDATE consume - RETORNA OBJETOS DATE DISTINTOS COM MESMO INSTANTE
+          if (text.includes("UPDATE single_case_apply_authorizations") && text.includes("consumed_at")) {
+            const timestamp1 = new Date(NOW)  // Primeiro objeto Date
+            const timestamp2 = new Date(NOW)  // Segundo objeto Date (DISTINTO por referência)
+
+            // Confirmar que são objetos distintos mas com mesmo instante
+            assert.notStrictEqual(timestamp1, timestamp2, "Objetos Date devem ser distintos por referência")
+            assert.equal(timestamp1.toISOString(), timestamp2.toISOString(), "Instantes devem ser iguais")
+            assert.equal(timestamp1.getTime(), timestamp2.getTime(), "Timestamps numéricos devem ser iguais")
+
+            return { rows: [
+              { authorization_id: NEW_AUTH_1, consumed_at: timestamp1, consumed_by: `rebind:${request.rebindId}` },
+              { authorization_id: NEW_AUTH_2, consumed_at: timestamp2, consumed_by: `rebind:${request.rebindId}` }
+            ], rowCount: 2 }
+          }
+
+          // UPDATE checkpoint - sucesso
+          if (text.includes("UPDATE single_case_apply_checkpoints")) {
+            return { rows: [{ checkpoint_version: 6 }], rowCount: 1 }
+          }
+
+          // INSERT auditoria - sucesso
+          if (text.includes("INSERT INTO") && text.includes("single_case_apply_rebind_audit")) {
+            return { rows: [{ rebind_id: request.rebindId }], rowCount: 1 }
+          }
+
+          // Revalidação
+          if (text.includes("expires_at > CURRENT_TIMESTAMP AS is_current")) {
+            return { rows: [{
+              owner_id: OWNER_ID,
+              fencing_token: 100,
+              released_at: null,
+              expires_at: "2026-07-17T13:00:00.000Z",
+              is_current: true
+            }], rowCount: 1 }
+          }
+
+          return { rows: [], rowCount: 0 }
+        },
+        async release() {}
+      }
+    },
+    async query() { return { rows: [], rowCount: 0 } }
+  }
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const result = await repository.executeRebind(request)
+
+  // Deve concluir com sucesso
+  assert.equal(result.status, "rebound")
+  assert.equal(pool.state.committed, true)
+  assert.equal(pool.state.rolledBack, false)
+
+  // Verificar que checkpoint e auditoria foram atualizados
+  const checkpointUpdate = pool.state.queries.find(q => q.text.includes("UPDATE single_case_apply_checkpoints"))
+  assert(checkpointUpdate, "UPDATE checkpoint deve ter sido executado")
+
+  const auditInsert = pool.state.queries.find(q => q.text.includes("INSERT INTO") && q.text.includes("single_case_apply_rebind_audit"))
+  assert(auditInsert, "INSERT auditoria deve ter sido executado")
+})
+
+test("consumed_at com instantes realmente divergentes causa REBIND_CONSUME_TIMESTAMP_DIVERGENT", async () => {
+  const request = fixture()
+  const FIRST_TIMESTAMP = "2026-07-17T12:00:00.000Z"
+  const SECOND_TIMESTAMP = "2026-07-17T12:00:01.000Z"  // 1 segundo depois
+
+  const pool = {
+    state: {
+      queries: [],
+      committed: false,
+      rolledBack: false
+    },
+    async connect() {
+      const state = pool.state
+      return {
+        async query(sql, params) {
+          const text = String(sql).replace(/\s+/g, " ").trim()
+          state.queries.push({ text, params: params ? [...params] : [] })
+
+          if (text === "BEGIN") return { rows: [], rowCount: 0 }
+          if (text === "ROLLBACK") { state.rolledBack = true; return { rows: [], rowCount: 0 } }
+          if (text.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 0 }
+
+          // Lease FOR UPDATE
+          if (text.includes("FROM single_case_apply_leases") && text.includes("FOR UPDATE")) {
+            return { rows: [createLease()], rowCount: 1 }
+          }
+
+          // Checkpoint FOR UPDATE
+          if (text.includes("FROM single_case_apply_checkpoints") && text.includes("FOR UPDATE")) {
+            return { rows: [createCheckpoint()], rowCount: 1 }
+          }
+
+          // Audit SELECT
+          if (text.includes("FROM single_case_apply_rebind_audit")) {
+            return { rows: [], rowCount: 0 }
+          }
+
+          // Authorizations FOR UPDATE
+          if (text.includes("FROM single_case_apply_authorizations") && text.includes("FOR UPDATE")) {
+            return { rows: [
+              createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` }),
+              createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` }),
+              createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION"),
+              createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")
+            ], rowCount: 4 }
+          }
+
+          // UPDATE consume - RETORNA TIMESTAMPS DIVERGENTES
+          if (text.includes("UPDATE single_case_apply_authorizations") && text.includes("consumed_at")) {
+            return { rows: [
+              { authorization_id: NEW_AUTH_1, consumed_at: new Date(FIRST_TIMESTAMP), consumed_by: `rebind:${request.rebindId}` },
+              { authorization_id: NEW_AUTH_2, consumed_at: new Date(SECOND_TIMESTAMP), consumed_by: `rebind:${request.rebindId}` }
+            ], rowCount: 2 }
+          }
+
+          return { rows: [], rowCount: 0 }
+        },
+        async release() {}
+      }
+    },
+    async query() { return { rows: [], rowCount: 0 } }
+  }
+
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_CONSUME_TIMESTAMP_DIVERGENT/
   )
 
   assert.equal(pool.state.committed, false)

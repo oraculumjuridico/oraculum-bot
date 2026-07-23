@@ -3,7 +3,8 @@
 const { canonicalize, sha256, deepClone, deepFreeze } = require("./single-case-apply-contracts")
 
 const REBIND_SCHEMA_VERSION = 1
-const ALLOWED_REBIND_REASONS = Object.freeze(["CONTACT_RECONCILED_AFTER_DIVERGENCE"])
+const ALLOWED_REBIND_REASONS = Object.freeze(["CONTACT_RECONCILED_AFTER_DIVERGENCE", "PLAN_REGENERATED_AFTER_SAFE_CORRECTION"])
+const REBIND_REASONS_REQUIRING_NEW_HASHES = new Set(["PLAN_REGENERATED_AFTER_SAFE_CORRECTION"])
 const AUTHORIZATION_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/
 const REQUESTED_BY_PATTERN = /^[A-Za-z][A-Za-z0-9._:-]{2,63}$/
 const HASH_PATTERN = /^[a-f0-9]{64}$/
@@ -36,6 +37,18 @@ function computeAuthorizationSetHash(ids) {
 function validateReason(reason) {
   if (typeof reason !== "string") fail("REBIND_REASON_NOT_STRING")
   if (!ALLOWED_REBIND_REASONS.includes(reason)) fail("REBIND_REASON_NOT_ALLOWED")
+  return true
+}
+
+function validateNewHashes(request) {
+  if (REBIND_REASONS_REQUIRING_NEW_HASHES.has(request.reason)) {
+    if (!request.newAuthorizablePlanHash || typeof request.newAuthorizablePlanHash !== "string" || !HASH_PATTERN.test(request.newAuthorizablePlanHash)) fail("REBIND_NEW_AUTHORIZABLE_PLAN_HASH_INVALID")
+    if (!request.newPlanHash || typeof request.newPlanHash !== "string" || !HASH_PATTERN.test(request.newPlanHash)) fail("REBIND_NEW_PLAN_HASH_INVALID")
+    if (!request.newManifestHash || typeof request.newManifestHash !== "string" || !HASH_PATTERN.test(request.newManifestHash)) fail("REBIND_NEW_MANIFEST_HASH_INVALID")
+    if (!request.newAuthorizationIds || !Array.isArray(request.newAuthorizationIds) || request.newAuthorizationIds.length !== 2 || request.newAuthorizationIds[0] === request.newAuthorizationIds[1]) fail("REBIND_NEW_AUTHORIZATION_IDS_INVALID")
+  } else {
+    if (request.newAuthorizablePlanHash != null || request.newPlanHash != null || request.newManifestHash != null) fail("REBIND_NEW_HASHES_NOT_ALLOWED_FOR_REASON")
+  }
   return true
 }
 
@@ -172,10 +185,13 @@ function validateRebindRequest(request) {
   validateAuthorizationIds(request.oldAuthorizationIds, "REBIND_OLD_AUTHORIZATION_IDS")
   validateAuthorizationIds(request.newAuthorizationIds, "REBIND_NEW_AUTHORIZATION_IDS")
 
-  // Validar hashes
+  // Validar hashes existentes
   if (!HASH_PATTERN.test(request.oldAuthorizationSetHash)) fail("REBIND_OLD_AUTHORIZATION_SET_HASH_INVALID")
   if (!HASH_PATTERN.test(request.newAuthorizationSetHash)) fail("REBIND_NEW_AUTHORIZATION_SET_HASH_INVALID")
   if (!HASH_PATTERN.test(request.reconciliationEvidenceHash)) fail("REBIND_RECONCILIATION_EVIDENCE_HASH_INVALID")
+
+  // Validar novos hashes de plano (opcionais para motivos antigos, obrigatórios para PLAN_REGENERATED_AFTER_SAFE_CORRECTION)
+  validateNewHashes(request)
 
   // Validar reason
   validateReason(request.reason)
@@ -186,8 +202,8 @@ function validateRebindRequest(request) {
   return true
 }
 
-function createRebindRequest({ caseImportId, sourceCheckpointVersion, oldAuthorizationIds, newAuthorizationIds, reconciliationEvidence, reason, requestedBy }) {
-  // Validar inputs bÃ¡sicos
+function createRebindRequest({ caseImportId, sourceCheckpointVersion, oldAuthorizationIds, newAuthorizationIds, reconciliationEvidence, reason, requestedBy, newAuthorizablePlanHash, newPlanHash, newManifestHash }) {
+  // Validar inputs básicos
   if (!CASE_IMPORT_ID_PATTERN.test(caseImportId)) fail("REBIND_CASE_IMPORT_ID_INVALID")
   if (!Number.isInteger(sourceCheckpointVersion) || sourceCheckpointVersion < 1) fail("REBIND_SOURCE_CHECKPOINT_VERSION_INVALID")
 
@@ -196,11 +212,21 @@ function createRebindRequest({ caseImportId, sourceCheckpointVersion, oldAuthori
   validateReason(reason)
   validateRequestedBy(requestedBy)
 
-  // Computar hashes (nÃ£o muta arrays originais)
+  // Validar novos hashes de plano (opcionais para motivos antigos, obrigatórios para PLAN_REGENERATED_AFTER_SAFE_CORRECTION)
+  validateNewHashes({
+    caseImportId,
+    reason,
+    newAuthorizablePlanHash,
+    newPlanHash,
+    newManifestHash,
+    newAuthorizationIds
+  })
+
+  // Computar hashes (não muta arrays originais)
   const oldAuthorizationSetHash = computeAuthorizationSetHash(oldAuthorizationIds)
   const newAuthorizationSetHash = computeAuthorizationSetHash(newAuthorizationIds)
 
-  // Validar evidÃªncia
+  // Validar evidência
   const preliminaryRequest = { caseImportId, sourceCheckpointVersion, oldAuthorizationIds, newAuthorizationIds }
   validateReconciliationEvidence(reconciliationEvidence, preliminaryRequest)
 
@@ -217,7 +243,10 @@ function createRebindRequest({ caseImportId, sourceCheckpointVersion, oldAuthori
     newAuthorizationSetHash,
     reconciliationEvidenceHash,
     reason,
-    requestedBy
+    requestedBy,
+    newAuthorizablePlanHash: newAuthorizablePlanHash || null,
+    newPlanHash: newPlanHash || null,
+    newManifestHash: newManifestHash || null
   }
 
   // Computar rebindId

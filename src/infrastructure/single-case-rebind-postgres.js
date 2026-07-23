@@ -121,6 +121,11 @@ ON ${TABLE_NAME} (case_import_id, committed_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS single_case_rebind_audit_case_source_current_idx
 ON ${TABLE_NAME} (case_import_id, source_checkpoint_version, current_authorization_set_hash)`
 
+const EXPECTED_INDEXES = Object.freeze([
+  Object.freeze({ name: "single_case_rebind_audit_case_committed_idx", unique: false, keys: Object.freeze(["case_import_id", "committed_at"]), descending: Object.freeze([false, true]) }),
+  Object.freeze({ name: "single_case_rebind_audit_case_source_current_idx", unique: true, keys: Object.freeze(["case_import_id", "source_checkpoint_version", "current_authorization_set_hash"]), descending: Object.freeze([false, false, false]) })
+])
+
 const EXPECTED_COLUMNS = Object.freeze([
   ["rebind_id", "text", "text", false, null],
   ["case_import_id", "text", "text", false, null],
@@ -157,9 +162,46 @@ const fail = code => { throw new Error(code) }
 const instant = value => { const date = new Date(value); if (!Number.isFinite(date.getTime())) fail("POSTGRES_TRANSACTION_FAILED"); return date.toISOString() }
 
 const LEGITIMATE_ERROR_CODES = new Set([
+  "CHECKPOINT_INVALID",
+  "CHECKPOINT_STATUS_NOT_FAILED",
+  "CHECKPOINT_STEPS_MISSING",
+  "CHECKPOINT_RESERVATION_NOT_COMPLETED",
+  "CHECKPOINT_CONTACT_NOT_FAILED",
+  "CHECKPOINT_CONTACT_ERROR_CODE_WRONG",
+  "CHECKPOINT_CONTACT_RESULT_PRESENT",
+  "CHECKPOINT_DEAL_NOT_PENDING",
+  "CHECKPOINT_ASSOCIATION_NOT_PENDING",
+  "CHECKPOINT_AREA_FOLDER_NOT_PENDING",
+  "CHECKPOINT_CASE_FOLDER_NOT_PENDING",
+  "CHECKPOINT_UPLOADS_NOT_PENDING",
+  "CHECKPOINT_FINAL_VERIFY_NOT_PENDING",
+  "CHECKPOINT_RESOURCES_MISSING",
+  "CHECKPOINT_CONTACT_ID_PRESENT",
+  "CHECKPOINT_DEAL_ID_PRESENT",
+  "CHECKPOINT_ASSOCIATION_ID_PRESENT",
+  "CHECKPOINT_AREA_FOLDER_ID_PRESENT",
+  "CHECKPOINT_UPLOADS_NOT_EMPTY",
+  "CHECKPOINT_FINAL_PROOF_PRESENT",
+  "CHECKPOINT_AUTHORIZATION_IDS_NOT_ARRAY",
   "CHECKPOINT_AUTHORIZATION_IDS_MISMATCH",
-  "CHECKPOINT_NOT_ELIGIBLE",
   "CHECKPOINT_VERSION_MISMATCH",
+  "CHECKPOINT_CASE_IMPORT_ID_INVALID",
+  "CHECKPOINT_CASE_IMPORT_ID_MISMATCH",
+  "CHECKPOINT_CASE_FINGERPRINT_INVALID",
+  "CHECKPOINT_CASE_NUMBER_INVALID",
+  "CHECKPOINT_AUTHORIZABLE_PLAN_HASH_INVALID",
+  "CHECKPOINT_STEP_INVALID",
+  "CHECKPOINT_STEP_SKIPPED",
+  "CHECKPOINT_RESULT_MISSING",
+  "CHECKPOINT_RESULT_INVALID",
+  "CHECKPOINT_RESOURCE_INVALID",
+  "CHECKPOINT_RESOURCE_DIVERGENCE",
+  "CHECKPOINT_UPLOAD_INVALID",
+  "CHECKPOINT_PROOF_DIVERGENCE",
+  "CHECKPOINT_FALSE_COMPLETION",
+  "CHECKPOINT_TRANSITION_INVALID",
+  "CHECKPOINT_CAS_FAILED",
+  "CHECKPOINT_NOT_ELIGIBLE",
   "CHECKPOINT_SCHEMA_INVALID",
   "CHECKPOINT_AUTHORIZATION_DIVERGENCE",
   "RECONCILIATION_EVIDENCE_HASH_MISMATCH",
@@ -168,6 +210,7 @@ const LEGITIMATE_ERROR_CODES = new Set([
   "REBIND_OLD_PAIR_CONSUMED_PARTIAL",
   "REBIND_OLD_CONSUMED_BY_DIVERGENT",
   "REBIND_OLD_CONSUMED_BY_INVALID_FORMAT",
+  "REBIND_OLD_LEGACY_CONSUMPTION_PROOF_INVALID",
   "REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH",
   "REBIND_OLD_PAIR_TYPES_INVALID",
   "REBIND_OLD_CHECKPOINT_IDS_MISMATCH",
@@ -245,6 +288,40 @@ function ensureStringArray(value, errorCode) {
   return [...arr]
 }
 
+function parseConsumedBy(value) {
+  if (typeof value !== "string" || !value) return null
+  if (value.startsWith("executor:")) {
+    const operationId = value.slice("executor:".length)
+    if (!LEASE_ID_PATTERN.test(operationId)) return null
+    return Object.freeze({ kind: "executor", operationId, normalizedValue: `executor:${operationId}`, formatVersion: "executor-v1" })
+  }
+  const legacy = /^rebind:([a-f0-9]{64})$/.exec(value)
+  if (legacy) return Object.freeze({ kind: "rebind", operationId: legacy[1], normalizedValue: `rebind:${legacy[1]}`, formatVersion: "rebind-v1" })
+  return null
+}
+
+function parseIndexArray(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value !== "string") return null
+  try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) return parsed } catch {}
+  if (!/^\{[^{}]*\}$/.test(value)) return null
+  const body = value.slice(1, -1)
+  return body === "" ? [] : body.split(",")
+}
+
+function normalizeIndexColumns(value) {
+  const array = parseIndexArray(value)
+  if (!array || array.some(item => typeof item !== "string" || !/^[a-z_][a-z0-9_]*$/.test(item))) return null
+  return array
+}
+
+function normalizeIndexDirections(value) {
+  const array = parseIndexArray(value)
+  if (!array) return null
+  const normalized = array.map(item => item === true || item === 1 || item === "1" || item === "true" || item === "t" ? true : item === false || item === 0 || item === "0" || item === "false" || item === "f" ? false : null)
+  return normalized.includes(null) ? null : normalized
+}
+
 // Helper privado para diagnosticar falhas de mutaÃ§Ã£o envolvendo lease
 async function diagnoseLeaseMutationFailure(client, { caseImportId, leaseId, ownerId, fencingToken, fallbackCode }) {
   const recheckResult = await client.query(
@@ -286,11 +363,48 @@ async function diagnoseLeaseMutationFailure(client, { caseImportId, leaseId, own
   fail(fallbackCode)
 }
 
-function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => new Date().toISOString() }) {
+function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease = null, authorizationVerifier = null, now = () => new Date().toISOString() }) {
   if (!pool || typeof pool.connect !== "function" || typeof pool.query !== "function") fail("POSTGRES_UNAVAILABLE")
   if (!OWNER_PATTERN.test(ownerId || "") || typeof now !== "function") fail("POSTGRES_TRANSACTION_FAILED")
+  if (expectedLease && (!LEASE_ID_PATTERN.test(expectedLease.leaseId || "") || !Number.isInteger(expectedLease.fencingToken) || expectedLease.fencingToken < 1 || expectedLease.owner !== ownerId)) fail("POSTGRES_TRANSACTION_FAILED")
+
+  // VALIDAÇÃO CRÍTICA: authorizationVerifier deve ser fornecido para validação criptográfica
+  // Se não fornecido, validação criptográfica será pulada (modo legacy - NÃO recomendado)
+  if (authorizationVerifier && typeof authorizationVerifier.verify !== "function") {
+    fail("POSTGRES_TRANSACTION_FAILED")
+  }
+
+  async function preflightNewAuthorizationPair(request) {
+    validateRebindRequest(request)
+    const at = instant(now())
+    let result
+    try {
+      result = await pool.query(
+        `SELECT authorization_id, authorization_type, case_import_id, case_fingerprint, case_number,
+                authorizable_plan_hash, plan_hash, manifest_hash, reservation_evidence_hash,
+                schema_version, revoked, consumed_at, expires_at, issuer, issued_at, scope, proof
+         FROM single_case_apply_authorizations
+         WHERE authorization_id = ANY($1::text[])
+         ORDER BY authorization_id`,
+        [request.newAuthorizationIds]
+      )
+    } catch (error) { throw mapError(error) }
+    if (result.rowCount !== 2) fail("REBIND_NEW_PAIR_NOT_ACTIVE")
+    const authorizationById = new Map(result.rows.map(row => [row.authorization_id, row]))
+    const newAuthorizations = request.newAuthorizationIds.map(id => authorizationById.get(id))
+    if (newAuthorizations.some(authorization => !authorization)) fail("REBIND_NEW_PAIR_NOT_ACTIVE")
+    for (const authorization of newAuthorizations) {
+      if (authorization.consumed_at) fail("REBIND_NEW_PAIR_CONSUMED")
+      if (authorization.revoked) fail("REBIND_NEW_PAIR_REVOKED")
+      if (Date.parse(authorization.expires_at) <= Date.parse(at)) fail("REBIND_NEW_PAIR_EXPIRED")
+    }
+    const { validateAuthorizationPairSignatures } = require("../domain/rebind-authorization-validator")
+    validateAuthorizationPairSignatures(newAuthorizations, authorizationVerifier, at)
+    return true
+  }
 
   const repository = {
+    preflightNewAuthorizationPair,
     async executeRebind(request) {
       // Validar requisiÃ§Ã£o com contratos puros
       validateRebindRequest(request)
@@ -313,7 +427,9 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
         )
         if (!leaseResult.rowCount) fail("REBIND_LEASE_NOT_FOUND")
         const lease = leaseResult.rows[0]
+        if (expectedLease && lease.lease_id !== expectedLease.leaseId) fail("REBIND_LEASE_NOT_FOUND")
         if (lease.owner_id !== ownerId) fail("REBIND_LEASE_OWNER_MISMATCH")
+        if (expectedLease && Number(lease.fencing_token) !== expectedLease.fencingToken) fail("REBIND_LEASE_FENCING_MISMATCH")
         if (lease.released_at) fail("REBIND_LEASE_EXPIRED")
 
         // 3. Checkpoint FOR UPDATE
@@ -381,7 +497,8 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
         const authResult = await client.query(
           `SELECT authorization_id, authorization_type, case_import_id, case_fingerprint, case_number,
                   authorizable_plan_hash, plan_hash, manifest_hash, reservation_evidence_hash,
-                  schema_version, revoked, consumed_at, consumed_by, expires_at, operational_status
+                  schema_version, revoked, consumed_at, consumed_by, expires_at, operational_status,
+                  issuer, issued_at, scope, proof
            FROM single_case_apply_authorizations
            WHERE authorization_id = ANY($1::text[])
            ORDER BY authorization_id
@@ -406,12 +523,27 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
         if (oldAuths[0].consumed_by !== oldAuths[1].consumed_by) fail("REBIND_OLD_CONSUMED_BY_DIVERGENT")
 
         const consumedBy = oldAuths[0].consumed_by
-        if (!consumedBy || typeof consumedBy !== 'string' || !consumedBy.startsWith('executor:')) {
-          fail("REBIND_OLD_CONSUMED_BY_INVALID_FORMAT")
+        const consumedByProof = parseConsumedBy(consumedBy)
+        if (!consumedByProof) fail("REBIND_OLD_CONSUMED_BY_INVALID_FORMAT")
+        if (consumedByProof.kind === "executor") {
+          if (consumedByProof.operationId !== checkpointRow.lease_id) fail("REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH")
+        } else {
+          const legacyAuditResult = await client.query(
+            `SELECT rebind_id, case_import_id, source_checkpoint_version, rebound_checkpoint_version,
+                    current_authorization_set_hash, lease_id
+             FROM ${TABLE_NAME}
+             WHERE rebind_id=$1`,
+            [consumedByProof.operationId]
+          )
+          const legacyAudit = legacyAuditResult.rows[0]
+          if (legacyAuditResult.rowCount !== 1 || legacyAudit.case_import_id !== request.caseImportId ||
+              Number(legacyAudit.rebound_checkpoint_version) !== Number(checkpointRow.checkpoint_version) ||
+              Number(legacyAudit.source_checkpoint_version) + 1 !== Number(legacyAudit.rebound_checkpoint_version) ||
+              legacyAudit.current_authorization_set_hash !== request.oldAuthorizationSetHash ||
+              legacyAudit.lease_id !== checkpointRow.lease_id) {
+            fail("REBIND_OLD_LEGACY_CONSUMPTION_PROOF_INVALID")
+          }
         }
-
-        const leaseIdFromConsumed = consumedBy.substring('executor:'.length)
-        if (leaseIdFromConsumed !== checkpointRow.lease_id) fail("REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH")
 
         // Validar tipos do par antigo
         const oldTypes = [...oldAuths.map(a => a.authorization_type)].sort()
@@ -456,11 +588,14 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
         if (JSON.stringify(newTypes) !== JSON.stringify(expectedTypes)) fail("REBIND_NEW_PAIR_TYPES_INVALID")
 
         // Validar bindings do novo par contra checkpoint
+        const expectedNewAuthorizablePlanHash = request.newAuthorizablePlanHash || checkpointRow.authorizable_plan_hash
+        const expectedNewPlanHash = request.newPlanHash || oldAuths[0].plan_hash
+        const expectedNewManifestHash = request.newManifestHash || oldAuths[0].manifest_hash
         for (const auth of newAuths) {
           if (auth.case_import_id !== checkpointRow.case_import_id ||
               auth.case_fingerprint !== checkpointRow.case_fingerprint ||
               auth.case_number !== checkpointRow.case_number ||
-              auth.authorizable_plan_hash !== checkpointRow.authorizable_plan_hash ||
+              auth.authorizable_plan_hash !== expectedNewAuthorizablePlanHash ||
               auth.schema_version !== checkpointRow.schema_version) {
             fail("REBIND_NEW_BINDINGS_MISMATCH")
           }
@@ -473,11 +608,20 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
           fail("REBIND_NEW_BINDINGS_INTERNAL_MISMATCH")
         }
 
-        // 8. Validar bindings cruzados (novo par deve ter mesmos hashes que par antigo)
-        if (newAuths[0].plan_hash !== oldAuths[0].plan_hash ||
-            newAuths[0].manifest_hash !== oldAuths[0].manifest_hash ||
-            newAuths[0].reservation_evidence_hash !== oldAuths[0].reservation_evidence_hash) {
+        // Validar bindings cruzados (novo par deve ter mesmos hashes que par antigo, exceto quando novos hashes são fornecidos)
+        const crossPlanHashMatch = request.newPlanHash ? newAuths[0].plan_hash === expectedNewPlanHash : newAuths[0].plan_hash === oldAuths[0].plan_hash
+        const crossManifestHashMatch = request.newManifestHash ? newAuths[0].manifest_hash === expectedNewManifestHash : newAuths[0].manifest_hash === oldAuths[0].manifest_hash
+        const crossReservationHashMatch = newAuths[0].reservation_evidence_hash === oldAuths[0].reservation_evidence_hash
+        if (!crossPlanHashMatch || !crossManifestHashMatch || !crossReservationHashMatch) {
           fail("REBIND_BINDINGS_CROSS_MISMATCH")
+        }
+
+        // 8.1. VALIDAÇÃO CRIPTOGRÁFICA: verificar assinaturas do novo par ANTES de consumir
+        // Esta validação é CRÍTICA - assinaturas inválidas NÃO devem criar checkpoint
+        // Usa o mesmo contrato de validação do RESUME (fail-closed, atômico)
+        if (authorizationVerifier) {
+          const { validateAuthorizationPairSignatures } = require("../domain/rebind-authorization-validator")
+          validateAuthorizationPairSignatures(newAuths, authorizationVerifier, at)
         }
 
         // 9. Validar lease vigente antes do consumo e consumir SOMENTE o novo par usando CURRENT_TIMESTAMP do PostgreSQL
@@ -522,60 +666,81 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
 
         // Validar que ambas as autorizaÃ§Ãµes receberam exatamente o mesmo consumed_at e consumed_by
         const consumedRows = consumeResult.rows
-        if (consumedRows[0].consumed_at !== consumedRows[1].consumed_at) fail("REBIND_CONSUME_TIMESTAMP_DIVERGENT")
+        const firstConsumedAt = instant(consumedRows[0].consumed_at)
+        const secondConsumedAt = instant(consumedRows[1].consumed_at)
+        if (firstConsumedAt !== secondConsumedAt) fail("REBIND_CONSUME_TIMESTAMP_DIVERGENT")
         if (consumedRows[0].consumed_by !== consumedRows[1].consumed_by) fail("REBIND_CONSUME_BY_DIVERGENT")
         if (consumedRows[0].consumed_by !== `rebind:${rebindId}`) fail("REBIND_CONSUME_BY_INVALID")
 
-        const consumedAt = instant(consumedRows[0].consumed_at)
+        const consumedAt = firstConsumedAt
 
         // 10. Atualizar SOMENTE version e authorizationIds do checkpoint
         const updatedCheckpoint = deepClone(checkpoint)
         updatedCheckpoint.version = request.reboundCheckpointVersion
         updatedCheckpoint.authorizationIds = [...request.newAuthorizationIds]
 
-        // Construir decision para o novo par de autorizaÃ§Ãµes
+        // Se novos hashes forem fornecidos, atualizar payload e resetar step contact
+        if (request.newAuthorizablePlanHash) {
+          updatedCheckpoint.authorizablePlanHash = request.newAuthorizablePlanHash
+          updatedCheckpoint.planHash = request.newPlanHash
+          updatedCheckpoint.manifestHash = request.newManifestHash
+          updatedCheckpoint.authorizationIds = [...request.newAuthorizationIds].sort()
+          updatedCheckpoint.version = request.reboundCheckpointVersion
+          if (updatedCheckpoint.steps && updatedCheckpoint.steps.contact) {
+            updatedCheckpoint.steps.contact = { status: "pending" }
+            delete updatedCheckpoint.steps.contact.errorCode
+            delete updatedCheckpoint.steps.contact.result
+          }
+        }
+
+        // Construir decision para o novo par de autorizações
         const reboundDecision = deepFreeze({
           schemaVersion: 1,
           caseImportId: checkpoint.caseImportId,
           caseFingerprint: checkpoint.caseFingerprint,
           caseNumber: checkpoint.caseNumber,
-          authorizablePlanHash: checkpoint.authorizablePlanHash,
+          authorizablePlanHash: request.newAuthorizablePlanHash || checkpoint.authorizablePlanHash,
           authorizationIds: [...request.newAuthorizationIds].sort(),
-          scopes: [], // Scopes nÃ£o mudam no rebind
-          authorizationExpiresAt: null, // NÃ£o necessÃ¡rio para validaÃ§Ã£o estrutural
+          scopes: [], // Scopes não mudam no rebind
+          authorizationExpiresAt: null, // Não necessário para validação estrutural
           validatedAt: at,
           safeToApply: true,
           blockers: []
         })
 
         // Validar checkpoint mutado com contrato estrito antes de persistir
-        validateCheckpoint(updatedCheckpoint, reboundDecision)
+        // validateCheckpoint usa exactKeys e não aceita chaves extras (planHash, manifestHash, reservationEvidenceHash)
+        // Então validamos uma cópia enxuta e persistimos o updatedCheckpoint original
+        const { planHash, manifestHash, reservationEvidenceHash, ...checkpointForValidation } = updatedCheckpoint
+        validateCheckpoint(checkpointForValidation, reboundDecision)
 
-        // CAS do checkpoint com verificaÃ§Ã£o integral do lease vigente
+        // CAS do checkpoint com verificação integral do lease vigente
         const checkpointUpdateResult = await client.query(
           `UPDATE single_case_apply_checkpoints
            SET checkpoint_version = $1,
-               authorization_ids = $2::jsonb,
-               checkpoint_payload = $3::jsonb,
-               fencing_token = $4,
-               lease_id = $5,
+               authorizable_plan_hash = $2,
+               authorization_ids = $3::jsonb,
+               checkpoint_payload = $4::jsonb,
+               fencing_token = $5,
+               lease_id = $6,
                updated_at = CURRENT_TIMESTAMP
-           WHERE case_import_id = $6
-             AND checkpoint_version = $7
-             AND lease_id = $8
-             AND fencing_token = $9
+           WHERE case_import_id = $7
+             AND checkpoint_version = $8
+             AND lease_id = $9
+             AND fencing_token = $10
              AND EXISTS (
                SELECT 1 FROM single_case_apply_leases
-               WHERE case_import_id = $6
-                 AND lease_id = $8
-                 AND owner_id = $10
-                 AND fencing_token = $9
+               WHERE case_import_id = $7
+                 AND lease_id = $6
+                 AND owner_id = $11
+                 AND fencing_token = $5
                  AND released_at IS NULL
                  AND expires_at > CURRENT_TIMESTAMP
              )
            RETURNING checkpoint_version`,
           [
             request.reboundCheckpointVersion,
+            request.newAuthorizablePlanHash || checkpointRow.authorizable_plan_hash,
             JSON.stringify(updatedCheckpoint.authorizationIds),
             JSON.stringify(updatedCheckpoint),
             lease.fencing_token,
@@ -584,11 +749,11 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, now = () => n
             request.sourceCheckpointVersion,
             checkpointRow.lease_id,
             checkpointRow.fencing_token,
-            ownerId
-          ]
-        )
+             ownerId
+           ]
+         )
 
-        if (checkpointUpdateResult.rowCount !== 1) {
+         if (checkpointUpdateResult.rowCount !== 1) {
           // Diagnosticar falha usando helper privado
           await diagnoseLeaseMutationFailure(client, {
             caseImportId: request.caseImportId,
@@ -740,7 +905,51 @@ async function validateSingleCaseRebindAuditSchema(queryable) {
     }
   }
 
+  const indexesResult = await queryable.query(
+    "SELECT n.nspname AS schema_name, t.relname AS table_name, i.relname AS index_name, ix.indisunique AS is_unique, am.amname AS method, ix.indnkeyatts AS key_attribute_count, ix.indnatts AS total_attribute_count, ix.indexprs IS NOT NULL AS has_expressions, ix.indpred IS NOT NULL AS has_predicate, array_to_json(array_agg(a.attname ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts)) AS key_columns, array_to_json(array_agg(((k.option_bits & 1)=1) ORDER BY k.ordinality) FILTER (WHERE k.ordinality<=ix.indnkeyatts)) AS key_descending FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace JOIN pg_am am ON am.oid=i.relam LEFT JOIN LATERAL unnest(ix.indkey::int2[],ix.indoption::int2[]) WITH ORDINALITY k(attnum,option_bits,ordinality) ON true LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum WHERE n.nspname=current_schema() AND t.relname=$1 AND i.relname = ANY($2::text[]) GROUP BY n.nspname,t.relname,i.relname,ix.indisunique,am.amname,ix.indnkeyatts,ix.indnatts,ix.indexprs,ix.indpred",
+    [TABLE_NAME, EXPECTED_INDEXES.map(index => index.name)]
+  )
+  const indexes = new Map((indexesResult?.rows || []).map(row => [row.index_name, row]))
+  for (const expected of EXPECTED_INDEXES) {
+    const actual = indexes.get(expected.name)
+    try {
+      const keys = normalizeIndexColumns(actual?.key_columns)
+      const descending = normalizeIndexDirections(actual?.key_descending)
+      if (!actual || !actual.schema_name || actual.table_name !== TABLE_NAME || actual.is_unique !== expected.unique || actual.method !== "btree" || Number(actual.key_attribute_count) !== expected.keys.length || Number(actual.total_attribute_count) !== expected.keys.length || actual.has_expressions !== false || actual.has_predicate !== false || JSON.stringify(keys) !== JSON.stringify(expected.keys) || JSON.stringify(descending) !== JSON.stringify(expected.descending)) codes.add("INDEX_MISMATCH")
+    } catch { codes.add("INDEX_MISMATCH") }
+  }
+
   return { ok: codes.size === 0, codes: [...codes].sort() }
+}
+
+async function validateProvisionedSingleCaseRebindAuditSchema(pool) {
+  const allowed = new Set(["REBIND_SCHEMA_LEDGER_MISSING", "REBIND_SCHEMA_MIGRATION_NOT_APPLIED", "REBIND_SCHEMA_INVALID"])
+  let client, begun = false, result, failure
+  try {
+    client = await pool.connect()
+    await client.query("BEGIN READ ONLY")
+    begun = true
+    await client.query("SET LOCAL statement_timeout = '30s'")
+    await client.query("SET LOCAL lock_timeout = '10s'")
+    const registry = await client.query("SELECT to_regclass('oraculum_state_migrations') AS table_name")
+    if (!registry.rows[0]?.table_name) throw new Error("REBIND_SCHEMA_LEDGER_MISSING")
+    const prior = await client.query("SELECT migration_id FROM oraculum_state_migrations WHERE migration_id=$1", [MIGRATION_ID])
+    if (prior.rowCount !== 1) throw new Error("REBIND_SCHEMA_MIGRATION_NOT_APPLIED")
+    const schema = await validateSingleCaseRebindAuditSchema(client)
+    if (!schema.ok) throw new Error("REBIND_SCHEMA_INVALID")
+    result = Object.freeze({ valid: true, migrationId: MIGRATION_ID })
+  } catch (error) {
+    failure = new Error(allowed.has(error?.message) ? error.message : "REBIND_SCHEMA_READ_ONLY_VALIDATION_FAILED")
+  } finally {
+    if (client && begun) {
+      try { await client.query("ROLLBACK") } catch { if (!failure) failure = new Error("REBIND_SCHEMA_READ_ONLY_VALIDATION_FAILED") }
+    }
+    if (client) {
+      try { client.release() } catch { if (!failure) failure = new Error("REBIND_SCHEMA_READ_ONLY_VALIDATION_FAILED") }
+    }
+  }
+  if (failure) throw failure
+  return result
 }
 
 async function migrateSingleCaseRebindAudit(pool) {
@@ -771,9 +980,12 @@ module.exports = {
   TABLE_NAME,
   CHECK_SQL,
   CREATE_TABLE_SQL,
+  EXPECTED_INDEXES,
   EXPECTED_COLUMNS,
   CHECK_COLUMNS,
+  parseConsumedBy,
   createSingleCaseRebindPostgresRepository,
   validateSingleCaseRebindAuditSchema,
+  validateProvisionedSingleCaseRebindAuditSchema,
   migrateSingleCaseRebindAudit
 }
