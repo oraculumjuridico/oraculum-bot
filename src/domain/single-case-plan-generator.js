@@ -4,6 +4,7 @@ const crypto = require("node:crypto")
 const path = require("node:path")
 const { validateFormat } = require("./case-number")
 const { caseFingerprintFor } = require("./single-case-target")
+const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
 
 const HASH = /^[a-f0-9]{64}$/
 const CONTENT_ID = /^C-[a-f0-9]{20}$/
@@ -76,7 +77,17 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
   if (!validDestination(caseDestination)) fail("DRIVE_CASE_DESTINATION_INVALID")
   if (!LOGICAL_ID.test(area.logicalId) || !LOGICAL_ID.test(caseDestination.logicalId)) fail("DRIVE_LOGICAL_ID_INVALID")
 
+  const rawAreaJuridica = basePlan?.dealPlan?.properties?.area_juridica
+  if (!rawAreaJuridica || typeof rawAreaJuridica !== "string" || String(rawAreaJuridica).trim() === "") fail("DEAL_AREA_JURIDICA_MISSING")
+
   const plan = clone(basePlan)
+  plan.dealPlan.properties = {
+    ...plan.dealPlan.properties,
+    dealname: montarTituloNegocioHubSpot({
+      area: plan.dealPlan.properties.area_juridica,
+      numeroCaso: plan.dealPlan.caseNumber
+    })
+  }
   plan.caseFingerprint = fingerprint
   plan.safeToApply = false
   plan.pendingDependencies = ["EXPLICIT_APPLY_AUTHORIZATION", "EXTERNAL_WRITES_AUTHORIZATION"]
