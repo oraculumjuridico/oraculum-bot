@@ -16,13 +16,12 @@ async function audit({ env = process.env, adapters = null } = {}) {
   if (!caseImportId) throw new Error("CASE_IMPORT_ID_MISSING")
   const plansRoot = String(env.SINGLE_CASE_PLANS_ROOT || path.join(process.cwd(), "data", "case-import", "plans"))
 
-  // Resolve modules relative to repository root (process.cwd()) so /tmp execution can require local src
-  const resolveModule = p => require(path.resolve(process.cwd(), p))
-  const { createSingleCasePlanLoader } = resolveModule('src/adapters/single-case-plan-loader')
-  const { createHubSpotHttpClient } = resolveModule('src/adapters/hubspot-http-client')
-  const { createHubSpotSingleCaseAdapters } = resolveModule('src/adapters/hubspot-single-case-adapter')
-  const { normalizarNomeComparacao } = resolveModule('src/domain/phone-name')
-  const { formatarNome } = resolveModule('src/utils/text')
+  // Use static requires (no dynamic require) to comply with consultation architecture
+  const { createSingleCasePlanLoader } = require("../src/adapters/single-case-plan-loader")
+  const { createHubSpotHttpClient } = require("../src/adapters/hubspot-http-client")
+  const { createHubSpotSingleCaseAdapters } = require("../src/adapters/hubspot-single-case-adapter")
+  const { normalizarNomeComparacao } = require("../src/domain/phone-name")
+  const { formatarNome } = require("../src/utils/text")
 
   // Load plan (allow injectedPlan for tests)
   let plan = null
