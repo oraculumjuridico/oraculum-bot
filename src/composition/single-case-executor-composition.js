@@ -3,6 +3,8 @@
 const { createSingleCaseApplyExecutor, REQUIRED_METHODS } = require("../domain/single-case-apply")
 const HASH = /^[a-f0-9]{64}$/
 
+const DEFAULT_OWNER_ID = "single-case-real-composition"
+
 function validateDependency(name, value, expectedMethods) {
   if (!value || typeof value !== "object") throw new Error(`${name}_MISSING`)
   for (const method of expectedMethods) {
@@ -87,7 +89,7 @@ function createSingleCaseExecutorComposition({
       adapters,
       authorizationVerifier,
       now: clock,
-      owner: args.owner || "composition-executor"
+      owner: args.owner || DEFAULT_OWNER_ID
     })
   })
 }
