@@ -72,6 +72,16 @@ function makeDecision(plan, hash, authorizations, instant) {
   return deepFreeze({ schemaVersion: 1, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, authorizationIds: authorizations.map(item => item.authorizationId).sort(), scopes: [...new Set(authorizations.flatMap(item => item.scope))].sort(), authorizationExpiresAt: authorizations.map(item => item.expiresAt).filter(Boolean).sort()[0] || null, validatedAt: instant, safeToApply: true, blockers: [] })
 }
 
+function makeContactDecision({ contactId, verified, fieldsHash, externalWriteRequired }) {
+  return deepFreeze({
+    contactId,
+    verified,
+    fieldsHash: fieldsHash || null,
+    externalWriteRequired,
+    decision: externalWriteRequired ? "CONTACT_REQUIRES_UPDATE" : "CONTACT_ALREADY_CORRECT_NO_EXTERNAL_WRITE"
+  })
+}
+
 function newCheckpoint(decision) {
   return { schemaVersion: CHECKPOINT_SCHEMA_VERSION, caseImportId: decision.caseImportId, caseFingerprint: decision.caseFingerprint, caseNumber: decision.caseNumber, authorizablePlanHash: decision.authorizablePlanHash, authorizationIds: decision.authorizationIds, status: "pending", version: 0, steps: Object.fromEntries(Object.keys(STEP_DEFINITIONS).map(name => [name, { status: "pending" }])), resources: {}, uploads: {}, finalProof: null }
 }
@@ -88,7 +98,7 @@ function validateCheckpoint(checkpoint, decision) {
     if (step.status === "completed" && dependencies.some(dep => checkpoint.steps[dep].status !== "completed")) fail("CHECKPOINT_STEP_SKIPPED")
     if (step.status === "completed" && !step.result) fail("CHECKPOINT_RESULT_MISSING")
     if (step.status === "completed") {
-      const allowed = name === "reservation" ? ["verified", "caseImportId", "caseNumber", "evidenceId"] : ["contact", "deal", "association", "area_folder", "case_folder"].includes(name) ? ["id", "evidence"] : name === "uploads" ? ["count"] : ["hash", "resources"]
+      const allowed = name === "reservation" ? ["verified", "caseImportId", "caseNumber", "evidenceId"] : name === "contact" ? ["id", "evidence", "decision"] : ["contact", "deal", "association", "area_folder", "case_folder"].includes(name) ? ["id", "evidence"] : name === "uploads" ? ["count"] : ["hash", "resources"]
       exactKeys(step.result, allowed, "CHECKPOINT_RESULT_INVALID")
     }
   }
@@ -261,7 +271,8 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       const verifyContext = await operationContext("contact-verify")
       const verified = verifyContactEvidence(await adapters.contacts.verify(selected.id, deepFreeze(deepClone(plan.contactPlan.properties)), verifyContext), selected.id, plan.caseImportId, plan.contactPlan.properties)
       checkpoint.resources.contactId = selected.id
-      return { id: selected.id, evidence: verified }
+      const contactDecision = makeContactDecision({ contactId: selected.id, verified: true, fieldsHash: verified.fieldsHash, externalWriteRequired: false })
+      return { id: selected.id, evidence: verified, decision: contactDecision }
     })
     const deal = await run("deal", async () => {
       let selected = oneOrNone(await adapters.deals.findByCaseNumber(plan.dealPlan.caseNumber), "DEAL_AMBIGUOUS")
@@ -357,4 +368,4 @@ function createSingleCaseApplyExecutor({ authorizationVerifier, rebindResumeVeri
   return Object.freeze(async args => executeSingleCaseApplyInternal({ ...args, authorizationVerifier, rebindResumeVerifier }))
 }
 
-module.exports = { STEP_DEFINITIONS, STATES, TRANSITIONS, REQUIRED_METHODS, validateAdapters, validatePlan, makeDecision, newCheckpoint, validateCheckpoint, createSingleCaseApplyExecutor, sanitizedErrorCode }
+module.exports = { STEP_DEFINITIONS, STATES, TRANSITIONS, REQUIRED_METHODS, validateAdapters, validatePlan, makeDecision, makeContactDecision, newCheckpoint, validateCheckpoint, createSingleCaseApplyExecutor, sanitizedErrorCode }

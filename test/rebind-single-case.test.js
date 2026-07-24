@@ -223,10 +223,29 @@ test("falha de release apos sucesso preserva resultado", async () => {
 
 test("concorrencia permite somente uma aquisicao", async () => {
   const file = await evidenceFile(); let held = false
-  const coordination = { async acquireLease() { if (held) throw new Error("LEASE_ALREADY_HELD"); held = true; return { caseImportId, leaseId: "lease-fixture-rebind", fencingToken: 11, owner: "single-case-real-composition" } }, async releaseLease() { held = false; return { released: true } } }
-  const first = runtime(mockPoolWithMigration(), async () => { await new Promise(resolve => setTimeout(resolve, 20)); return { rebindId: "1".repeat(64), status: "rebound", sourceCheckpointVersion: 1, reboundCheckpointVersion: 2 } }, argv(file), coordination)
+  let arriveResolve = () => {}
+  const arrivePromise = new Promise(resolve => { arriveResolve = resolve })
+  let proceedResolve = () => {}
+  const proceedPromise = new Promise(resolve => { proceedResolve = resolve })
+  const coordination = {
+    async acquireLease() {
+      if (held) throw new Error("LEASE_ALREADY_HELD")
+      held = true
+      return { caseImportId, leaseId: "lease-fixture-rebind", fencingToken: 11, owner: "single-case-real-composition" }
+    },
+    async releaseLease() {
+      held = false
+      return { released: true }
+    }
+  }
+  const first = runtime(mockPoolWithMigration(), async () => { arriveResolve(); await proceedPromise; return { rebindId: "1".repeat(64), status: "rebound", sourceCheckpointVersion: 1, reboundCheckpointVersion: 2 } }, argv(file), coordination)
+  await arrivePromise
   const second = runtime(mockPoolWithMigration(), async () => ({ rebindId: "2".repeat(64), status: "rebound", sourceCheckpointVersion: 1, reboundCheckpointVersion: 2 }), argv(file), coordination)
-  const settled = await Promise.allSettled([first, second]); assert.equal(settled.filter(item => item.status === "fulfilled").length, 1); assert.equal(settled.filter(item => item.status === "rejected").length, 1)
+  const secondResult = await Promise.allSettled([second])
+  proceedResolve()
+  const settled = await Promise.allSettled([first])
+  assert.equal(settled.filter(item => item.status === "fulfilled").length, 1)
+  assert.equal(secondResult.filter(item => item.status === "rejected").length, 1)
 })
 
 test("operador não pode informar estado derivado", () => assert.throws(() => parseArgs([...argv("evidence.json"), "--old-authorization-ids", "[]"]), /CLI_STATE_ARGUMENT_FORBIDDEN/))

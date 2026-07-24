@@ -582,3 +582,69 @@ test("checkpoint completed não duplica criações - validação positiva e nega
     assert.equal(system2.counts[key], beforeCounts[key])
   }
 })
+
+// ─── CONTACT NO-OP TESTS ──────────────────────────────────────────────────────
+
+test("contato já correto completa etapa sem escrita externa", async () => {
+  const system = fakeSystem()
+  system.state.contacts.push({ id: "contact-existing", properties: clone(fixture().contactPlan.properties), caseImportId: fixture().caseImportId })
+  const result = await run(system)
+  assert.equal(system.counts["contact.create"], undefined)
+  assert.equal(result.checkpoint.steps.contact.status, "completed")
+  assert.equal(result.checkpoint.steps.contact.result.decision.decision, "CONTACT_ALREADY_CORRECT_NO_EXTERNAL_WRITE")
+  assert.equal(result.checkpoint.steps.contact.result.evidence.verified, true)
+  assert.equal(result.checkpoint.resources.contactId, "contact-existing")
+})
+
+test("contato divergente bloqueia no-op", async () => {
+  const system = fakeSystem()
+  system.state.contacts.push({ id: "contact-existing", properties: { ...clone(fixture().contactPlan.properties), phone: "5500000000000" }, caseImportId: fixture().caseImportId })
+  await assert.rejects(() => run(system), /CONTACT_FIELDS_DIVERGENCE/)
+  assert.equal(system.counts["contact.create"], undefined)
+})
+
+test("contato ausente não permite no-op", async () => {
+  const system = fakeSystem(fixture(), { emptyContactId: true })
+  await assert.rejects(() => run(system), /CONTACT_RESPONSE_INVALID/)
+  assert.equal(system.counts["contact.create"], 1)
+})
+
+test("contatos ambíguos bloqueiam no-op", async () => {
+  const system = fakeSystem(fixture(), { multiPhone: true })
+  await assert.rejects(() => run(system), /CONTACT_PHONE_AMBIGUOUS/)
+  assert.equal(system.counts["contact.create"], undefined)
+})
+
+test("falha de leitura HubSpot bloqueia no-op", async () => {
+  const system = fakeSystem(fixture(), { timeout: "contact" })
+  await assert.rejects(() => run(system), /SIMULATED_TIMEOUT/)
+  assert.equal(system.counts["contact.create"], undefined)
+})
+
+test("idempotência do no-op de contato", async () => {
+  const system = fakeSystem()
+  system.state.contacts.push({ id: "contact-existing", properties: clone(fixture().contactPlan.properties), caseImportId: fixture().caseImportId })
+  const first = await run(system)
+  assert.equal(first.checkpoint.steps.contact.status, "completed")
+  const completedCheckpoint = clone(first.checkpoint)
+  const system2 = fakeSystem(fixture(), { checkpoint: completedCheckpoint })
+  system2.state.contacts = clone(system.state.contacts)
+  system2.state.deals = clone(system.state.deals)
+  system2.state.associations = clone(system.state.associations)
+  system2.state.areas = clone(system.state.areas)
+  system2.state.folders = clone(system.state.folders)
+  system2.state.files = new Map(system.state.files)
+  const beforeCounts = { ...system2.counts }
+  await run(system2)
+  assert.equal(system2.counts["contact.create"], beforeCounts["contact.create"])
+})
+
+test("após no-op de contato, negócio pode ser criado", async () => {
+  const system = fakeSystem()
+  system.state.contacts.push({ id: "contact-existing", properties: clone(fixture().contactPlan.properties), caseImportId: fixture().caseImportId })
+  const contactResult = await run(system)
+  assert.equal(contactResult.checkpoint.steps.contact.status, "completed")
+  assert.equal(contactResult.checkpoint.steps.deal.status, "completed")
+  assert.equal(system.counts["contact.create"], undefined)
+  assert.equal(system.counts["deal.create"], 1)
+})
