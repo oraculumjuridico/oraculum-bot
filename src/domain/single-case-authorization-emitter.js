@@ -18,9 +18,13 @@
 const { TABLE_NAME, ALGORITHM } = require("../infrastructure/single-case-authorization-postgres")
 
 /**
- * Historiza autorizações não mais utilizáveis
+ * Historiza autorizações não mais utilizáveis em todos os bindings do mesmo caseImportId.
+ *
+ * Escopo corrigido: remove o filtro por authorizable_plan_hash para permitir
+ * supersede entre bindings diferentes do mesmo caso, preservando apenas o par
+ * atualmente válido que será verificado em checkNoActiveAuthorizations().
  */
-async function supersedeNonUsableAuthorizations(client, caseImportId, caseFingerprint, caseNumber, aph) {
+async function supersedeNonUsableAuthorizations(client, caseImportId, caseFingerprint, caseNumber) {
   const res = await client.query(
     `UPDATE ${TABLE_NAME}
      SET operational_status = 'HISTORICAL',
@@ -28,7 +32,6 @@ async function supersedeNonUsableAuthorizations(client, caseImportId, caseFinger
      WHERE case_import_id = $1
        AND case_fingerprint = $2
        AND case_number = $3
-       AND authorizable_plan_hash = $4
        AND authorization_type IN ('EXPLICIT_APPLY_AUTHORIZATION', 'EXTERNAL_WRITES_AUTHORIZATION')
        AND operational_status = 'ACTIVE'
        AND (
@@ -36,8 +39,8 @@ async function supersedeNonUsableAuthorizations(client, caseImportId, caseFinger
          OR consumed_at IS NOT NULL
          OR revoked_at IS NOT NULL
        )
-     RETURNING authorization_id, authorization_type, expires_at, consumed_at, revoked_at`,
-    [caseImportId, caseFingerprint, caseNumber, aph]
+     RETURNING authorization_id, authorization_type, authorizable_plan_hash, expires_at, consumed_at, revoked_at`,
+    [caseImportId, caseFingerprint, caseNumber]
   )
   return res.rows
 }
@@ -75,19 +78,24 @@ async function checkNoActiveAuthorizations(client, caseImportId, caseFingerprint
  * @returns {object} { committed: true, superseded: [...] }
  */
 async function emitAuthorizationPair(client, signedRecords, binding, hooks = {}) {
-  const { caseImportId, caseFingerprint, caseNumber, authorizablePlanHash } = binding
+    const { caseImportId, caseFingerprint, caseNumber, authorizablePlanHash, requestedBy, requestId } = binding
+    if (typeof requestedBy !== "string" || !/^[A-Za-z][A-Za-z0-9._:-]{2,63}$/.test(requestedBy)) {
+      throw new Error("EMIT_REQUESTED_BY_FORMAT_INVALID")
+    }
+    if (typeof requestId !== 'string' || !requestId) {
+      throw new Error('EMIT_REQUEST_ID_MISSING')
+    }
 
-  await client.query("BEGIN")
+    await client.query("BEGIN")
 
-  try {
-    // 1. Supersede non-usable authorizations atomically
-    const superseded = await supersedeNonUsableAuthorizations(
-      client,
-      caseImportId,
-      caseFingerprint,
-      caseNumber,
-      authorizablePlanHash
-    )
+    try {
+      // 1. Supersede non-usable authorizations across all bindings for this caseImportId
+      const superseded = await supersedeNonUsableAuthorizations(
+        client,
+        caseImportId,
+        caseFingerprint,
+        caseNumber
+      )
 
     // Hook para teste: falha após historização
     if (hooks.afterSupersede) {
@@ -137,7 +145,7 @@ async function emitAuthorizationPair(client, signedRecords, binding, hooks = {})
           "ACTIVE",
           signed.proof,
           ALGORITHM,
-          "{}",
+          JSON.stringify({ requestedBy, requestId }),
         ]
       )
 

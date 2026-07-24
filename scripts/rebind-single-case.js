@@ -15,7 +15,7 @@ const { createSingleCaseCoordinationRepository } = require("../src/infrastructur
 const CASE_IMPORT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 const OWNER_ID_DEFAULT = "single-case-real-composition"
 const LEASE_DURATION_MS_DEFAULT = 60000
-const REQUIRED_ARGUMENTS = Object.freeze(["--case-import-id", "--requested-by", "--reason", "--reconciliation-evidence-file"])
+const REQUIRED_ARGUMENTS = Object.freeze(["--case-import-id", "--requested-by", "--reason"])
 const AUTHORIZATION_IDS_FILE_ARGUMENT = "--new-authorization-ids-file"
 const FORBIDDEN_ARGUMENTS = Object.freeze(["--source-checkpoint-version", "--old-authorization-ids"])
 // Optional: --schema-preprovisioned validates ledger and schema read-only instead of running migrations.
@@ -36,6 +36,38 @@ function parseArgs(argv = []) {
     if (!value || value.startsWith("--")) throw new Error(`${flag.slice(2).replace(/-/g, "_").toUpperCase()}_MISSING`)
     values[flag] = value
   }
+
+  const reason = values["--reason"]
+  const contactReason = reason === "CONTACT_RECONCILED_AFTER_DIVERGENCE"
+  const planReason = reason === "PLAN_REGENERATED_AFTER_SAFE_CORRECTION"
+
+  // Reconciliation evidence is required only for CONTACT_RECONCILED_AFTER_DIVERGENCE
+  const reconciliationEvidenceFlag = "--reconciliation-evidence-file"
+  const reconciliationEvidenceOccurrences = argv.filter(value => value === reconciliationEvidenceFlag).length
+  if (contactReason) {
+    if (!reconciliationEvidenceOccurrences) throw new Error("RECONCILIATION_EVIDENCE_FILE_MISSING")
+    if (reconciliationEvidenceOccurrences !== 1) throw new Error("CLI_ARGUMENTS_EXCESS")
+  } else {
+    if (reconciliationEvidenceOccurrences > 0) throw new Error("RECONCILIATION_EVIDENCE_FILE_NOT_ALLOWED_FOR_REASON")
+  }
+
+  // New hashes are required only for PLAN_REGENERATED_AFTER_SAFE_CORRECTION
+  const newAuthorizablePlanHash = argv.includes("--new-authorizable-plan-hash") ? argv[argv.indexOf("--new-authorizable-plan-hash") + 1] : undefined
+  const newPlanHash = argv.includes("--new-plan-hash") ? argv[argv.indexOf("--new-plan-hash") + 1] : undefined
+  const newManifestHash = argv.includes("--new-manifest-hash") ? argv[argv.indexOf("--new-manifest-hash") + 1] : undefined
+
+  if (planReason) {
+    if (!newAuthorizablePlanHash || typeof newAuthorizablePlanHash !== "string") throw new Error("NEW_AUTHORIZABLE_PLAN_HASH_MISSING")
+    if (!newPlanHash || typeof newPlanHash !== "string") throw new Error("NEW_PLAN_HASH_MISSING")
+    if (!newManifestHash || typeof newManifestHash !== "string") throw new Error("NEW_MANIFEST_HASH_MISSING")
+  } else {
+    if (newAuthorizablePlanHash != null || newPlanHash != null || newManifestHash != null) throw new Error("NEW_HASHES_NOT_ALLOWED_FOR_REASON")
+  }
+
+  const reconciliationEvidenceFile = contactReason
+    ? argv[argv.indexOf(reconciliationEvidenceFlag) + 1]
+    : undefined
+
   const inlineOccurrences = argv.filter(value => value === "--new-authorization-ids").length
   const fileOccurrences = argv.filter(value => value === AUTHORIZATION_IDS_FILE_ARGUMENT).length
   if (inlineOccurrences + fileOccurrences !== 1) throw new Error("NEW_AUTHORIZATION_IDS_MISSING")
@@ -44,16 +76,10 @@ function parseArgs(argv = []) {
   const authorizationIdsValue = argv[authorizationIdsIndex + 1]
   if (!authorizationIdsValue || authorizationIdsValue.startsWith("--")) throw new Error("NEW_AUTHORIZATION_IDS_MISSING")
 
-  // Novos argumentos opcionais de hash de plano
-  const newAuthorizablePlanHash = argv.includes("--new-authorizable-plan-hash") ? argv[argv.indexOf("--new-authorizable-plan-hash") + 1] : undefined
-  const newPlanHash = argv.includes("--new-plan-hash") ? argv[argv.indexOf("--new-plan-hash") + 1] : undefined
-  const newManifestHash = argv.includes("--new-manifest-hash") ? argv[argv.indexOf("--new-manifest-hash") + 1] : undefined
-
-  const allowedExtraFlags = 0
-  const extraFlags = (newAuthorizablePlanHash ? 2 : 0) + (newPlanHash ? 2 : 0) + (newManifestHash ? 2 : 0)
+  const extraFlags = (newAuthorizablePlanHash ? 2 : 0) + (newPlanHash ? 2 : 0) + (newManifestHash ? 2 : 0) + (reconciliationEvidenceFile ? 2 : 0)
   if (argv.length !== REQUIRED_ARGUMENTS.length * 2 + 2 + (schemaPreprovisioned ? 1 : 0) + extraFlags) throw new Error("CLI_ARGUMENTS_EXCESS")
   if (!CASE_IMPORT_ID.test(values["--case-import-id"])) throw new Error("CASE_IMPORT_ID_INVALID")
-  validateReason(values["--reason"])
+  validateReason(reason)
   validateRequestedBy(values["--requested-by"])
   let newAuthorizationIds
   let authorizationIdsJson = authorizationIdsValue
@@ -63,8 +89,8 @@ function parseArgs(argv = []) {
   try { newAuthorizationIds = JSON.parse(authorizationIdsJson) } catch { throw new Error("NEW_AUTHORIZATION_IDS_INVALID_JSON") }
   try { computeAuthorizationSetHash(newAuthorizationIds) } catch (error) { throw new Error(`REBIND_NEW_${error.message}`) }
   return Object.freeze({
-    caseImportId: values["--case-import-id"], requestedBy: values["--requested-by"], reason: values["--reason"],
-    reconciliationEvidenceFile: values["--reconciliation-evidence-file"], newAuthorizationIds, schemaPreprovisioned,
+    caseImportId: values["--case-import-id"], requestedBy: values["--requested-by"], reason,
+    reconciliationEvidenceFile, newAuthorizationIds, schemaPreprovisioned,
     newAuthorizablePlanHash, newPlanHash, newManifestHash
   })
 }
@@ -111,7 +137,8 @@ async function main({ argv = process.argv.slice(2), env = loadOperationalEnviron
   try {
     if (args.schemaPreprovisioned) await validateProvisionedSchema(pool)
     else await migrateSchema(pool)
-    const [checkpoint, reconciliationEvidence] = await Promise.all([loadCurrentCheckpoint(pool, args.caseImportId), evidenceLoader(args.reconciliationEvidenceFile)])
+    const checkpoint = await loadCurrentCheckpoint(pool, args.caseImportId)
+    const reconciliationEvidence = args.reconciliationEvidenceFile ? await evidenceLoader(args.reconciliationEvidenceFile) : null
     const request = createRebindRequest({ caseImportId: args.caseImportId, sourceCheckpointVersion: checkpoint.version, oldAuthorizationIds: checkpoint.authorizationIds, newAuthorizationIds: args.newAuthorizationIds, reconciliationEvidence, reason: args.reason, requestedBy: args.requestedBy, newAuthorizablePlanHash: args.newAuthorizablePlanHash, newPlanHash: args.newPlanHash, newManifestHash: args.newManifestHash })
     const ownerId = config.env.SINGLE_CASE_OWNER_ID || OWNER_ID_DEFAULT
     const operationalRepository = repositoryFactory === createSingleCaseRebindPostgresRepository

@@ -68,6 +68,10 @@ function validateRequestedBy(requestedBy) {
 }
 
 function validateReconciliationEvidence(evidence, request) {
+  if (request.reason === "PLAN_REGENERATED_AFTER_SAFE_CORRECTION") {
+    return true
+  }
+
   if (!evidence || typeof evidence !== "object") fail("RECONCILIATION_EVIDENCE_INVALID")
 
   if (evidence.decision !== "RECONCILIATION_ELIGIBLE") fail("RECONCILIATION_EVIDENCE_NOT_ELIGIBLE")
@@ -222,15 +226,20 @@ function createRebindRequest({ caseImportId, sourceCheckpointVersion, oldAuthori
     newAuthorizationIds
   })
 
+  // Validar que os novos IDs não reutilizam os antigos
+  const sortedOld = [...oldAuthorizationIds].sort()
+  const sortedNew = [...newAuthorizationIds].sort()
+  if (sortedOld.length === sortedNew.length && sortedOld.every((id, idx) => id === sortedNew[idx])) fail("REBIND_NEW_AUTHORIZATION_IDS_INVALID")
+
   // Computar hashes (não muta arrays originais)
   const oldAuthorizationSetHash = computeAuthorizationSetHash(oldAuthorizationIds)
   const newAuthorizationSetHash = computeAuthorizationSetHash(newAuthorizationIds)
 
   // Validar evidência
-  const preliminaryRequest = { caseImportId, sourceCheckpointVersion, oldAuthorizationIds, newAuthorizationIds }
+  const preliminaryRequest = { caseImportId, sourceCheckpointVersion, oldAuthorizationIds, newAuthorizationIds, reason }
   validateReconciliationEvidence(reconciliationEvidence, preliminaryRequest)
 
-  const reconciliationEvidenceHash = reconciliationEvidence.evidenceHash
+  const reconciliationEvidenceHash = reconciliationEvidence?.evidenceHash || null
 
   // Criar request completo
   const request = {
