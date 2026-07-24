@@ -382,7 +382,7 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
       result = await pool.query(
         `SELECT authorization_id, authorization_type, case_import_id, case_fingerprint, case_number,
                 authorizable_plan_hash, plan_hash, manifest_hash, reservation_evidence_hash,
-                schema_version, revoked, consumed_at, expires_at, issuer, issued_at, scope, proof
+                schema_version, revoked, consumed_at, expires_at, issuer, issued_at, scope, signature
          FROM single_case_apply_authorizations
          WHERE authorization_id = ANY($1::text[])
          ORDER BY authorization_id`,
@@ -498,7 +498,7 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
           `SELECT authorization_id, authorization_type, case_import_id, case_fingerprint, case_number,
                   authorizable_plan_hash, plan_hash, manifest_hash, reservation_evidence_hash,
                   schema_version, revoked, consumed_at, consumed_by, expires_at, operational_status,
-                  issuer, issued_at, scope, proof
+                  issuer, issued_at, scope, signature
            FROM single_case_apply_authorizations
            WHERE authorization_id = ANY($1::text[])
            ORDER BY authorization_id

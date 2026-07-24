@@ -42,6 +42,8 @@ function parseArgs(argv) {
     if (eq) { argv.splice(i, 1, `--${eq[1]}`, eq[2]); i-- ; continue }
     if (arg === "--case-import-id") { result.caseImportId = argv[++i]; continue }
     if (arg === "--ttl-minutes") { result.ttlMinutes = argv[++i]; continue }
+    if (arg === "--requested-by") { result.requestedBy = argv[++i]; continue }
+    if (arg === "--request-id") { result.requestId = argv[++i]; continue }
     fail("INVALID_ARGUMENT")
   }
   if (!result.caseImportId || !CASE_ID_RE.test(result.caseImportId)) fail("CASE_IMPORT_ID_INVALID")
@@ -179,7 +181,7 @@ async function main({
   if (!connectionString) fail("POSTGRES_CONNECTION_REQUIRED")
 
   const args = parseArgs(argv)
-  const { caseImportId, ttlMinutes, dryRun } = args
+  const { caseImportId, ttlMinutes, dryRun, requestedBy, requestId } = args
 
   // keys
   const { privateKey, trustedIssuers, issuer } = loadKeys(env)
@@ -243,6 +245,8 @@ async function main({
     if (!dryRun) {
       const binding = {
         caseImportId,
+        requestedBy,
+        requestId,
         caseFingerprint: plan.caseFingerprint,
         caseNumber: plan.dealPlan.caseNumber,
         authorizablePlanHash: aph,

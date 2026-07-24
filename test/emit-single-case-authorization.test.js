@@ -199,6 +199,8 @@ function makeMainArgs(keys, planOverrides = {}, envOverrides = {}, {
   const argv = [
     "--case-import-id", plan.caseImportId,
     "--ttl-minutes", String(ttl),
+    "--requested-by", "operador-humano-autorizado",
+    "--request-id", "test-req-id",
     ...(dryRun ? ["--dry-run"] : []),
   ]
   const outputs = []
@@ -356,7 +358,7 @@ test("main: postgres mode ausente falha POSTGRES_MODE_REQUIRED", async () => {
   const env = makeEnv(keys, { CASE_NUMBER_RESERVATION_MODE: "" })
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool(), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan: makePlan(), planBytes: Buffer.from("{}"), manifest: makeManifest(), manifestBytes: Buffer.from("[]") },
     }),
@@ -369,7 +371,7 @@ test("main: connection string ausente falha POSTGRES_CONNECTION_REQUIRED", async
   const env = makeEnv(keys, { EXTERNAL_STATE_DATABASE_URL: "", DATABASE_URL: undefined })
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool(), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan: makePlan(), planBytes: Buffer.from("{}"), manifest: makeManifest(), manifestBytes: Buffer.from("[]") },
     }),
@@ -395,7 +397,7 @@ test("main: plano com ID divergente falha PLAN_CASE_IMPORT_ID_MISMATCH", async (
   const env = makeEnv(keys)
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool(), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan)), manifest: makeManifest(), manifestBytes: Buffer.from("[]") },
     }),
@@ -409,7 +411,7 @@ test("main: reserva ausente falha RESERVATION_NOT_FOUND", async () => {
   const env = makeEnv(keys)
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool({ reservation: null }), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
     }),
@@ -424,7 +426,7 @@ test("main: reserva com número divergente falha RESERVATION_NUMBER_MISMATCH", a
   const badReservation = { reservation_key: `case-import:${CASE_ID}`, case_number: "PRV.999999.999", area: "INSS", status: "reserved" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool({ reservation: badReservation }), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
     }),
@@ -439,7 +441,7 @@ test("main: reserva com status inválido falha RESERVATION_STATUS_INVALID", asyn
   const badReservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "consumed" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool({ reservation: badReservation }), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
     }),
@@ -454,7 +456,7 @@ test("main: autorização ativa já existente falha AUTHORIZATION_ALREADY_ACTIVE
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => makePool({ reservation, activeCount: 1 }), output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
     }),
@@ -470,7 +472,7 @@ test("main: dry-run não insere no banco", async () => {
   const pool = makePool({ reservation })
   const outputs = []
   await main({
-    argv: ["--case-import-id", CASE_ID, "--dry-run"],
+    argv: ["--case-import-id", CASE_ID, "--dry-run", '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
     env, PoolClass: () => pool, output: s => outputs.push(s), clock: () => "2026-07-17T10:00:00.000Z",
     _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan, null, 2)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
   })
@@ -491,7 +493,7 @@ test("main: inserção atômica de duas autorizações no commit", async () => {
   const pool = makePool({ reservation })
   const outputs = []
   await main({
-    argv: ["--case-import-id", CASE_ID],
+    argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
     env, PoolClass: () => pool, output: s => outputs.push(s), clock: () => "2026-07-17T10:00:00.000Z",
     _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan, null, 2)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
   })
@@ -514,7 +516,7 @@ test("main: rollback quando a segunda inserção falha", async () => {
   const pool = makePool({ reservation, insertSecondFails: true })
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env, PoolClass: () => pool, output: () => {}, clock: () => "2026-07-17T10:00:00.000Z",
       _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan, null, 2)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
     })
@@ -532,7 +534,7 @@ test("main: hashes recalculados internamente — não dependem de input do opera
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   const outputs = []
   await main({
-    argv: ["--case-import-id", CASE_ID, "--dry-run"],
+    argv: ["--case-import-id", CASE_ID, "--dry-run", '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
     env, PoolClass: () => makePool({ reservation }), output: s => outputs.push(s), clock: () => "2026-07-17T10:00:00.000Z",
     _testArtifacts: { plan, planBytes, manifest: makeManifest(), manifestBytes },
   })
@@ -549,7 +551,7 @@ test("main: saída sanitizada não contém segredos", async () => {
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   const outputs = []
   await main({
-    argv: ["--case-import-id", CASE_ID, "--dry-run"],
+    argv: ["--case-import-id", CASE_ID, "--dry-run", '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
     env, PoolClass: () => makePool({ reservation }), output: s => outputs.push(s), clock: () => "2026-07-17T10:00:00.000Z",
     _testArtifacts: { plan, planBytes: Buffer.from(JSON.stringify(plan, null, 2)), manifest: makeManifest(), manifestBytes: Buffer.from(JSON.stringify(makeManifest())) },
   })
@@ -652,7 +654,7 @@ test("checkNoActive: unexpired active authorization blocks emission (Scenario A)
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 1 }),
       output: () => {},
@@ -772,7 +774,7 @@ test("historização: um expirado e outro vigente causa rollback sem persistir t
 
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 1 }), // Precheck encontra 1 vigente
       output: () => {},
@@ -799,7 +801,7 @@ test("historização: um consumido e outro vigente causa rollback", async () => 
 
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 1 }),
       output: () => {},
@@ -823,7 +825,7 @@ test("historização: um revogado e outro vigente causa rollback", async () => {
 
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 1 }),
       output: () => {},
@@ -847,7 +849,7 @@ test("historização: par completo vigente não sofre UPDATE, emissão bloqueada
 
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 2 }),
       output: () => {},
@@ -1040,7 +1042,7 @@ test("checkNoActive: partial pair (only EXPLICIT vigent) blocks emission", async
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 1 }), // one vigent = partial pair
       output: () => {},
@@ -1064,7 +1066,7 @@ test("checkNoActive: partial pair (only EXTERNAL_WRITES vigent) blocks emission"
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 1 }), // one vigent = partial pair
       output: () => {},
@@ -1088,7 +1090,7 @@ test("checkNoActive: complete vigent pair blocks emission", async () => {
   const reservation = { reservation_key: `case-import:${CASE_ID}`, case_number: CASE_NUM, area: "INSS", status: "reserved" }
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env: makeEnv(keys),
       PoolClass: () => makePool({ reservation, activeCount: 2 }), // both vigent
       output: () => {},
@@ -1190,7 +1192,7 @@ test("DIVERGENCE: precheck passes with expired ACTIVE, but unique index would bl
   // Emissão deve falhar com AUTHORIZATION_ALREADY_ACTIVE apesar do precheck passar
   await assert.rejects(
     () => main({
-      argv: ["--case-import-id", CASE_ID],
+      argv: ["--case-import-id", CASE_ID, '--requested-by', 'operador-humano-autorizado', '--request-id', 'test-req-id'],
       env,
       PoolClass: () => pool,
       output: () => {},

@@ -192,7 +192,7 @@ function validateRebindRequest(request) {
   // Validar hashes existentes
   if (!HASH_PATTERN.test(request.oldAuthorizationSetHash)) fail("REBIND_OLD_AUTHORIZATION_SET_HASH_INVALID")
   if (!HASH_PATTERN.test(request.newAuthorizationSetHash)) fail("REBIND_NEW_AUTHORIZATION_SET_HASH_INVALID")
-  if (!HASH_PATTERN.test(request.reconciliationEvidenceHash)) fail("REBIND_RECONCILIATION_EVIDENCE_HASH_INVALID")
+  if (request.reconciliationEvidenceHash !== null && !HASH_PATTERN.test(request.reconciliationEvidenceHash)) fail("REBIND_RECONCILIATION_EVIDENCE_HASH_INVALID")
 
   // Validar novos hashes de plano (opcionais para motivos antigos, obrigatórios para PLAN_REGENERATED_AFTER_SAFE_CORRECTION)
   validateNewHashes(request)
