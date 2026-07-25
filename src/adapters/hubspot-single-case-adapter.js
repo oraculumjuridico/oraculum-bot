@@ -232,7 +232,10 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
         const caseNumber = String(props.numero_de_caso || "").trim()
         const pipeline = String(props.pipeline || "").trim()
         const stage = String(props.dealstage || "").trim()
-        const fieldsHash = hash(canonicalize(props))
+        const verifiedProperties = Object.fromEntries(
+          Object.keys(properties).map(name => [name, props[name] ?? ""])
+        )
+        const fieldsHash = hash(canonicalize(verifiedProperties))
         return { verified: true, id: dealId, caseNumber, pipeline, stage, fieldsHash }
       } catch (e) {
         throw new Error("HUBSPOT_EXTERNAL_ERROR")
