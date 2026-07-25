@@ -548,10 +548,9 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
           )
           const legacyAudit = legacyAuditResult.rows[0]
           if (legacyAuditResult.rowCount !== 1 || legacyAudit.case_import_id !== request.caseImportId ||
-              Number(legacyAudit.rebound_checkpoint_version) !== Number(checkpointRow.checkpoint_version) ||
+              Number(legacyAudit.rebound_checkpoint_version) > Number(checkpointRow.checkpoint_version) ||
               Number(legacyAudit.source_checkpoint_version) + 1 !== Number(legacyAudit.rebound_checkpoint_version) ||
-              legacyAudit.current_authorization_set_hash !== request.oldAuthorizationSetHash ||
-              legacyAudit.lease_id !== checkpointRow.lease_id) {
+              legacyAudit.current_authorization_set_hash !== request.oldAuthorizationSetHash) {
             fail("REBIND_OLD_LEGACY_CONSUMPTION_PROOF_INVALID")
           }
         }
