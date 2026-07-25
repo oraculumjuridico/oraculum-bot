@@ -88,8 +88,12 @@ function newCheckpoint(decision) {
 }
 
 function validateCheckpoint(checkpoint, decision) {
-  exactKeys(checkpoint, ["schemaVersion", "caseImportId", "caseFingerprint", "caseNumber", "authorizablePlanHash", "authorizationIds", "status", "version", "steps", "resources", "uploads", "finalProof"], "CHECKPOINT_SCHEMA_INVALID")
+  const checkpointKeys = ["schemaVersion", "caseImportId", "caseFingerprint", "caseNumber", "authorizablePlanHash", "authorizationIds", "status", "version", "steps", "resources", "uploads", "finalProof"]
+  if (Object.hasOwn(checkpoint || {}, "planHash")) checkpointKeys.push("planHash")
+  if (Object.hasOwn(checkpoint || {}, "manifestHash")) checkpointKeys.push("manifestHash")
+  exactKeys(checkpoint, checkpointKeys, "CHECKPOINT_SCHEMA_INVALID")
   if (!checkpoint || checkpoint.schemaVersion !== CHECKPOINT_SCHEMA_VERSION || !Number.isInteger(checkpoint.version) || checkpoint.version < 0 || checkpoint.caseImportId !== decision.caseImportId || checkpoint.caseFingerprint !== decision.caseFingerprint || checkpoint.caseNumber !== decision.caseNumber || checkpoint.authorizablePlanHash !== decision.authorizablePlanHash) fail("CHECKPOINT_SCHEMA_INVALID")
+  if ((checkpoint.planHash !== undefined && !/^[a-f0-9]{64}$/.test(checkpoint.planHash)) || (checkpoint.manifestHash !== undefined && !/^[a-f0-9]{64}$/.test(checkpoint.manifestHash))) fail("CHECKPOINT_SCHEMA_INVALID")
   if (!Array.isArray(checkpoint.authorizationIds) || canonicalize([...checkpoint.authorizationIds].sort()) !== canonicalize([...decision.authorizationIds].sort())) fail("CHECKPOINT_AUTHORIZATION_DIVERGENCE")
   if (!STATES.has(checkpoint.status) || !checkpoint.steps || !checkpoint.resources || !checkpoint.uploads) fail("CHECKPOINT_SCHEMA_INVALID")
   for (const [name, dependencies] of Object.entries(STEP_DEFINITIONS)) {

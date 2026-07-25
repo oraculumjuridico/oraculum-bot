@@ -265,6 +265,13 @@ test("hashes diferentes são preservados", () => assert.equal(new Set(groupDocum
 test("mesmo nome com hashes diferentes preserva ambos", () => { const p = fixture(); p.documentPlan.occurrences[1].logicalName = p.documentPlan.occurrences[0].logicalName; assert.equal(groupDocuments(p).filter(x => x.logicalNames.includes(p.documentPlan.occurrences[0].logicalName)).length, 2) })
 test("metadados críticos conflitantes para mesmo hash bloqueiam", () => { const p = fixture(); p.documentPlan.contents.push({ ...p.documentPlan.contents[0], contentDocumentId: "DX", eligible: false }); p.documentPlan.occurrences.push({ contentDocumentId: "DX", sha256: p.documentPlan.contents[0].sha256, logicalName: "x.pdf" }); assert.throws(() => groupDocuments(p), /DOCUMENT_METADATA_CONFLICT/) })
 test("checkpoint truncado é recusado", () => { const p = fixture(), hash = authorizablePlanHash(p), decision = makeDecision(p, hash, [{ authorizationId: "fixture-auth-a", scope: [] }], NOW); assert.throws(() => validateCheckpoint({ schemaVersion: 2 }, decision), /CHECKPOINT_SCHEMA_INVALID/) })
+test("checkpoint de rebind aceita hashes de artefatos estritamente válidos", async () => {
+  const system = fakeSystem()
+  await run(system)
+  system.state.checkpoint.planHash = PLAN_HASH
+  system.state.checkpoint.manifestHash = MANIFEST_HASH
+  await assert.doesNotReject(() => run(system))
+})
 test("checkpoint falsamente concluído é recusado", () => { const p = fixture(), decision = makeDecision(p, authorizablePlanHash(p), [{ authorizationId: "fixture-auth-a", scope: [] }], NOW), cp = newCheckpoint(decision); cp.status = "completed"; assert.throws(() => validateCheckpoint(cp, decision), /CHECKPOINT_(FALSE_COMPLETION|PROOF_DIVERGENCE|PROOF_INVALID)/) })
 test("checkpoint concluído exige reverificação dos recursos", async () => { const options = {}, system = fakeSystem(fixture(), options); await run(system); options.nullContactVerify = true; await assert.rejects(() => run(system), /FINAL_CONTACT_INVALID/) })
 test("segunda aquisição concorrente de lease é bloqueada", async () => { const system = fakeSystem(); await system.adapters.coordination.acquireLease({ caseImportId: fixture().caseImportId, owner: "a", now: NOW }); await assert.rejects(() => system.adapters.coordination.acquireLease({ caseImportId: fixture().caseImportId, owner: "b", now: NOW }), /LEASE_ALREADY_HELD/) })
