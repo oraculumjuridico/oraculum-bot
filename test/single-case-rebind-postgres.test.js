@@ -1713,7 +1713,7 @@ test("concorrência: segunda solicitação divergente bloqueia", async () => {
   const request2 = createPlanRebindRequest({ newAuthorizablePlanHash: "0".repeat(64), newPlanHash: "1".repeat(64), newManifestHash: "2".repeat(64), requestedBy: "rebind-coordinator-concurrent" })
 
   const result1 = await repository.executeRebind(request1)
-  await assert.rejects(() => repository.executeRebind(request2), /REBIND_CONSUME_BY_INVALID|REBIND_CHECKPOINT_DIVERGENT|REBIND_AUDIT_DIVERGENT|REBIND_NEW_PAIR_CONSUMED|REBIND_CONSUME_NEW_PAIR_FAILED|CHECKPOINT_CONTACT_NOT_FAILED/)
+  await assert.rejects(() => repository.executeRebind(request2), /REBIND_CONSUME_BY_INVALID|REBIND_CHECKPOINT_DIVERGENT|REBIND_AUDIT_DIVERGENT|REBIND_NEW_PAIR_CONSUMED|REBIND_CONSUME_NEW_PAIR_FAILED|CHECKPOINT_CONTACT_NOT_FAILED|CHECKPOINT_AUTHORIZATION_IDS_MISMATCH/)
 
   assert.equal(result1.status, "rebound")
 })

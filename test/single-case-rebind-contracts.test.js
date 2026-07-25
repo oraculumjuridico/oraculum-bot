@@ -445,6 +445,25 @@ describe("single-case-rebind-contracts", () => {
     })
   })
 
+  describe("regeneração segura antes do contato", () => {
+    it("aceita contact pending quando nenhum efeito HubSpot começou", () => {
+      const checkpoint = {
+        ...validCheckpoint,
+        steps: {
+          ...validCheckpoint.steps,
+          contact: { status: "pending" }
+        }
+      }
+      const request = {
+        caseImportId: "case-import-synthetic-001",
+        sourceCheckpointVersion: 1,
+        oldAuthorizationIds: validAuthIds,
+        reason: "PLAN_REGENERATED_AFTER_SAFE_CORRECTION"
+      }
+      assert.doesNotThrow(() => validateCheckpointEligibility(checkpoint, request))
+    })
+  })
+
   describe("Teste 20: deal completed Ã© rejeitado", () => {
     it("deve rejeitar checkpoint com deal status completed", () => {
       const checkpoint = {

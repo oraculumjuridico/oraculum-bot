@@ -128,7 +128,8 @@ function validateCheckpointEligibility(checkpoint, request) {
   if (!reservation || reservation.status !== "completed") fail("CHECKPOINT_RESERVATION_NOT_COMPLETED")
   if (driveContinuationBoundary) {
     if (!contact?.result || !deal?.result || !association?.result) fail("CHECKPOINT_CONTINUATION_RESULT_MISSING")
-  } else if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY") {
+  } else if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY" ||
+             request.reason === "PLAN_REGENERATED_AFTER_SAFE_CORRECTION") {
     if (!contact || !["pending", "failed"].includes(contact.status)) fail("CHECKPOINT_CONTACT_NOT_ELIGIBLE")
   } else {
     if (!contact || contact.status !== "failed") fail("CHECKPOINT_CONTACT_NOT_FAILED")
