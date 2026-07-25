@@ -121,9 +121,13 @@ function validateCheckpointEligibility(checkpoint, request) {
   const { reservation, contact, deal, association, area_folder, case_folder, uploads, final_verify } = checkpoint.steps
 
   if (!reservation || reservation.status !== "completed") fail("CHECKPOINT_RESERVATION_NOT_COMPLETED")
-  if (!contact || contact.status !== "failed") fail("CHECKPOINT_CONTACT_NOT_FAILED")
-  if (!REBIND_ELIGIBLE_CONTACT_FAILURE_CODES.has(contact.errorCode)) fail("CHECKPOINT_CONTACT_ERROR_CODE_WRONG")
-  if (contact.result !== undefined) fail("CHECKPOINT_CONTACT_RESULT_PRESENT")
+  if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY") {
+    if (!contact || !["pending", "failed"].includes(contact.status)) fail("CHECKPOINT_CONTACT_NOT_ELIGIBLE")
+  } else {
+    if (!contact || contact.status !== "failed") fail("CHECKPOINT_CONTACT_NOT_FAILED")
+    if (!REBIND_ELIGIBLE_CONTACT_FAILURE_CODES.has(contact.errorCode)) fail("CHECKPOINT_CONTACT_ERROR_CODE_WRONG")
+    if (contact.result !== undefined) fail("CHECKPOINT_CONTACT_RESULT_PRESENT")
+  }
 
   if (!deal || deal.status !== "pending") fail("CHECKPOINT_DEAL_NOT_PENDING")
   if (!association || association.status !== "pending") fail("CHECKPOINT_ASSOCIATION_NOT_PENDING")
