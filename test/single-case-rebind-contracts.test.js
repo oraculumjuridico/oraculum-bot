@@ -106,6 +106,51 @@ describe("single-case-rebind-contracts", () => {
     })
   })
 
+  describe("fronteira HubSpot para continuação Drive", () => {
+    const request = {
+      caseImportId: validCheckpoint.caseImportId,
+      sourceCheckpointVersion: validCheckpoint.version,
+      oldAuthorizationIds: validAuthIds,
+      reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY"
+    }
+    const boundary = {
+      ...validCheckpoint,
+      status: "running",
+      steps: {
+        reservation: { status: "completed", result: { verified: true } },
+        contact: { status: "completed", result: { id: "contact-synthetic", evidence: { verified: true }, decision: {} } },
+        deal: { status: "completed", result: { id: "deal-synthetic", evidence: { verified: true } } },
+        association: { status: "completed", result: { id: "association-synthetic", evidence: { verified: true } } },
+        area_folder: { status: "pending" },
+        case_folder: { status: "pending" },
+        uploads: { status: "pending" },
+        final_verify: { status: "pending" }
+      },
+      resources: {
+        contactId: "contact-synthetic",
+        dealId: "deal-synthetic",
+        associationId: "association-synthetic",
+        areaFolderId: null,
+        caseFolderId: null
+      }
+    }
+
+    it("aceita refresh expirado com HubSpot completo e Drive pendente", () => {
+      assert.doesNotThrow(() => validateCheckpointEligibility(boundary, request))
+    })
+
+    it("rejeita fronteira parcial para outros motivos", () => {
+      assert.throws(() => validateCheckpointEligibility(boundary, { ...request, reason: "PLAN_REGENERATED_AFTER_SAFE_CORRECTION" }), /CHECKPOINT_STATUS_NOT_FAILED/)
+    })
+
+    it("rejeita Drive já iniciado ou recurso HubSpot ausente", () => {
+      const started = { ...boundary, steps: { ...boundary.steps, area_folder: { status: "running" } } }
+      assert.throws(() => validateCheckpointEligibility(started, request), /CHECKPOINT_STATUS_NOT_FAILED/)
+      const missing = { ...boundary, resources: { ...boundary.resources, dealId: null } }
+      assert.throws(() => validateCheckpointEligibility(missing, request), /CHECKPOINT_CONTINUATION_RESOURCE_MISSING/)
+    })
+  })
+
   describe("Teste 2: IDs em ordem diferente produzem mesmo set hash", () => {
     it("deve gerar o mesmo hash para IDs em ordens diferentes", () => {
       const hash1 = computeAuthorizationSetHash(validAuthIds)

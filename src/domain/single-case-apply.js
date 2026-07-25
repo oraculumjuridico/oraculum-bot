@@ -4,7 +4,7 @@ const { validateFormat } = require("./case-number")
 const { validateCaseFingerprint } = require("./single-case-target")
 const { normalizePersonName } = require("./name-normalization")
 const {
-  AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, AUTH_SCOPES, canonicalize, sha256, deepClone, deepFreeze,
+  AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, AUTH_SCOPES, EXECUTION_SCOPE_NAMES, authorizationScopesForExecution, canonicalize, sha256, deepClone, deepFreeze,
   groupDocuments, authorizablePlanHash, reservationEvidenceHash, validateAuthorizations, validateContactVerificationEvidence
 } = require("./single-case-apply-contracts")
 
@@ -68,8 +68,9 @@ function validatePlan(plan, caseImportId) {
   return eligible
 }
 
-function makeDecision(plan, hash, authorizations, instant) {
-  return deepFreeze({ schemaVersion: 1, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, authorizationIds: authorizations.map(item => item.authorizationId).sort(), scopes: [...new Set(authorizations.flatMap(item => item.scope))].sort(), authorizationExpiresAt: authorizations.map(item => item.expiresAt).filter(Boolean).sort()[0] || null, validatedAt: instant, safeToApply: true, blockers: [] })
+function makeDecision(plan, hash, authorizations, instant, executionScope = EXECUTION_SCOPE_NAMES.FULL) {
+  authorizationScopesForExecution(executionScope)
+  return deepFreeze({ schemaVersion: 1, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, authorizationIds: authorizations.map(item => item.authorizationId).sort(), scopes: [...new Set(authorizations.flatMap(item => item.scope))].sort(), executionScope, authorizationExpiresAt: authorizations.map(item => item.expiresAt).filter(Boolean).sort()[0] || null, validatedAt: instant, safeToApply: true, blockers: [] })
 }
 
 function makeContactDecision({ contactId, verified, fieldsHash, externalWriteRequired }) {
@@ -126,12 +127,13 @@ function transition(step, next) {
   step.status = next
 }
 
-async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifestHash, adapters, authorizationVerifier, resumeMode, rebindResumeVerifier, now = () => new Date().toISOString(), owner = "fixture-executor" }) {
+async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifestHash, adapters, authorizationVerifier, executionScope = EXECUTION_SCOPE_NAMES.FULL, resumeMode, rebindResumeVerifier, now = () => new Date().toISOString(), owner = "fixture-executor" }) {
   if (!validId(caseImportId)) fail("INVALID_CASE_IMPORT_ID")
   if (!/^[a-f0-9]{64}$/.test(planHash || "")) fail("PLAN_HASH_INVALID")
   if (!/^[a-f0-9]{64}$/.test(manifestHash || "")) fail("MANIFEST_HASH_INVALID")
   // Validate resumeMode
   if (resumeMode !== undefined && resumeMode !== "REBIND") fail("RESUME_MODE_INVALID")
+  authorizationScopesForExecution(executionScope)
   if (resumeMode === "REBIND" && (!rebindResumeVerifier || typeof rebindResumeVerifier.verifyResumeProof !== "function")) {
     fail("REBIND_RESUME_VERIFIER_MISSING")
   }
@@ -181,7 +183,8 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
           planHash,
           manifestHash,
           reservationEvidenceHash: reservationEvidenceHash(verifiedReservation),
-          schemaVersion: AUTHORIZATION_SCHEMA_VERSION
+          schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
+          executionScope
         }),
         now: now()
       })
@@ -205,7 +208,8 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
         manifestHash,
         reservationEvidenceHash: reservationEvidenceHash(verifiedReservation),
         schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
-        requiredScopes: AUTH_SCOPES
+        requiredScopes: authorizationScopesForExecution(executionScope),
+        executionScope
       })
 
       const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
@@ -216,17 +220,17 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
         fail("REBIND_RESUME_PROOF_RECORDS_MISMATCH")
       }
 
-      decision = makeDecision(plan, hash, validated, now())
+      decision = makeDecision(plan, hash, validated, now(), executionScope)
 
       validateCheckpoint(checkpoint, decision)
 
       prepareCheckpointForExecution(checkpoint)
     } else {
       // NORMAL PATH: Original flow with loadForCase + consumeAuthorizations
-      const authQuery = deepFreeze({ caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash, manifestHash, reservationEvidenceHash: reservationEvidenceHash(verifiedReservation), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: AUTH_SCOPES })
+      const authQuery = deepFreeze({ caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash, manifestHash, reservationEvidenceHash: reservationEvidenceHash(verifiedReservation), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: authorizationScopesForExecution(executionScope), executionScope })
       const records = await adapters.authorizations.loadForCase(authQuery)
       const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
-      decision = makeDecision(plan, hash, validated, now())
+      decision = makeDecision(plan, hash, validated, now(), executionScope)
       checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId) || newCheckpoint(decision))
       validateCheckpoint(checkpoint, decision)
       prepareCheckpointForExecution(checkpoint)
@@ -246,6 +250,11 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       const renewed = await adapters.coordination.renewLease({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, now: now() })
       if (!renewed || renewed.leaseId !== lease.leaseId || renewed.fencingToken !== lease.fencingToken || Date.parse(renewed.expiresAt) <= Date.parse(now())) fail("LEASE_EXPIRED")
       return deepFreeze({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, checkpointVersion: checkpoint.version, authorizablePlanHash: decision.authorizablePlanHash, caseNumber: decision.caseNumber, authorizationIds: [...decision.authorizationIds], idempotencyKey: `${caseImportId}:${operation}`, deadline: renewed.expiresAt })
+    }
+    if (executionScope === EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION) {
+      for (const name of ["reservation", "contact", "deal", "association"]) {
+        if (checkpoint.steps[name].status !== "completed") fail("DRIVE_CONTINUATION_PREREQUISITE_MISSING")
+      }
     }
     const run = async (name, action) => {
       const item = checkpoint.steps[name]
@@ -289,6 +298,19 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       checkpoint.resources.associationId = selected.id
       return { id: selected.id, evidence: verified }
     })
+    if (executionScope === EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY) {
+      outcome = {
+        completed: false,
+        executionOutcome: "continuation_required",
+        completedBoundary: "association",
+        nextStep: "area_folder",
+        decision,
+        checkpoint: deepClone(checkpoint),
+        safeToApply: true,
+        operationalWarnings: []
+      }
+      return outcome
+    }
     const area = await run("area_folder", async () => {
       let selected = oneOrNone(await adapters.drive.findAreaFolders(deepClone(plan.drivePlan.area)), "AREA_FOLDER_AMBIGUOUS")
       if (!selected) selected = await adapters.drive.createAreaFolder({ destination: deepFreeze(deepClone(plan.drivePlan.area)), context: await operationContext("area") })

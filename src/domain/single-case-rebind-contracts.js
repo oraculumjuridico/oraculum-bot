@@ -112,16 +112,23 @@ function computeReconciliationEvidenceHash(evidence) {
 function validateCheckpointEligibility(checkpoint, request) {
   if (!checkpoint || typeof checkpoint !== "object") fail("CHECKPOINT_INVALID")
 
-  // Validar status global
-  if (checkpoint.status !== "failed") fail("CHECKPOINT_STATUS_NOT_FAILED")
-
   // Validar steps
   if (!checkpoint.steps || typeof checkpoint.steps !== "object") fail("CHECKPOINT_STEPS_MISSING")
 
   const { reservation, contact, deal, association, area_folder, case_folder, uploads, final_verify } = checkpoint.steps
+  const driveContinuationBoundary = request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY" &&
+    checkpoint.status === "running" &&
+    [reservation, contact, deal, association].every(step => step?.status === "completed") &&
+    [area_folder, case_folder, uploads, final_verify].every(step => step?.status === "pending")
+
+  // Validar status global. O único estado running elegível é a fronteira
+  // oficial HubSpot concluído -> Drive pendente.
+  if (checkpoint.status !== "failed" && !driveContinuationBoundary) fail("CHECKPOINT_STATUS_NOT_FAILED")
 
   if (!reservation || reservation.status !== "completed") fail("CHECKPOINT_RESERVATION_NOT_COMPLETED")
-  if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY") {
+  if (driveContinuationBoundary) {
+    if (!contact?.result || !deal?.result || !association?.result) fail("CHECKPOINT_CONTINUATION_RESULT_MISSING")
+  } else if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY") {
     if (!contact || !["pending", "failed"].includes(contact.status)) fail("CHECKPOINT_CONTACT_NOT_ELIGIBLE")
   } else {
     if (!contact || contact.status !== "failed") fail("CHECKPOINT_CONTACT_NOT_FAILED")
@@ -129,8 +136,8 @@ function validateCheckpointEligibility(checkpoint, request) {
     if (contact.result !== undefined) fail("CHECKPOINT_CONTACT_RESULT_PRESENT")
   }
 
-  if (!deal || deal.status !== "pending") fail("CHECKPOINT_DEAL_NOT_PENDING")
-  if (!association || association.status !== "pending") fail("CHECKPOINT_ASSOCIATION_NOT_PENDING")
+  if (!driveContinuationBoundary && (!deal || deal.status !== "pending")) fail("CHECKPOINT_DEAL_NOT_PENDING")
+  if (!driveContinuationBoundary && (!association || association.status !== "pending")) fail("CHECKPOINT_ASSOCIATION_NOT_PENDING")
   if (!area_folder || area_folder.status !== "pending") fail("CHECKPOINT_AREA_FOLDER_NOT_PENDING")
   if (!case_folder || case_folder.status !== "pending") fail("CHECKPOINT_CASE_FOLDER_NOT_PENDING")
   if (!uploads || uploads.status !== "pending") fail("CHECKPOINT_UPLOADS_NOT_PENDING")
@@ -138,9 +145,13 @@ function validateCheckpointEligibility(checkpoint, request) {
 
   // Validar recursos vazios
   if (!checkpoint.resources || typeof checkpoint.resources !== "object") fail("CHECKPOINT_RESOURCES_MISSING")
-  if (checkpoint.resources.contactId !== null) fail("CHECKPOINT_CONTACT_ID_PRESENT")
-  if (checkpoint.resources.dealId !== null) fail("CHECKPOINT_DEAL_ID_PRESENT")
-  if (checkpoint.resources.associationId !== null) fail("CHECKPOINT_ASSOCIATION_ID_PRESENT")
+  if (driveContinuationBoundary) {
+    for (const name of ["contactId", "dealId", "associationId"]) if (!CASE_IMPORT_ID_PATTERN.test(checkpoint.resources[name] || "")) fail("CHECKPOINT_CONTINUATION_RESOURCE_MISSING")
+  } else {
+    if (checkpoint.resources.contactId !== null) fail("CHECKPOINT_CONTACT_ID_PRESENT")
+    if (checkpoint.resources.dealId !== null) fail("CHECKPOINT_DEAL_ID_PRESENT")
+    if (checkpoint.resources.associationId !== null) fail("CHECKPOINT_ASSOCIATION_ID_PRESENT")
+  }
   if (checkpoint.resources.areaFolderId !== null) fail("CHECKPOINT_AREA_FOLDER_ID_PRESENT")
   if (checkpoint.resources.caseFolderId !== null) fail("CHECKPOINT_CASE_FOLDER_ID_PRESENT")
 

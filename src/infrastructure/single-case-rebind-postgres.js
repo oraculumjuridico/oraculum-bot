@@ -2,6 +2,7 @@
 
 const { deepClone, deepFreeze, MINIMUM_REMAINING_TTL_MS } = require("../domain/single-case-apply-contracts")
 const { validateCheckpoint } = require("../domain/single-case-apply")
+const { executionScopeForAuthorization } = require("../domain/single-case-apply-contracts")
 const {
   HASH_PATTERN,
   ALLOWED_REBIND_REASONS,
@@ -79,6 +80,13 @@ function canonicalSqlExpression(value) { return JSON.stringify(parseSqlExpressio
 
 const MIGRATION_ID = "single-case-apply-rebind-audit-v1"
 const TABLE_NAME = "single_case_apply_rebind_audit"
+
+function validateAuthorizationExecutionScopePair(rows) {
+  if (!Array.isArray(rows) || rows.length !== 2) fail("REBIND_NEW_PAIR_EXECUTION_SCOPE_INVALID")
+  const scopes = rows.map(row => executionScopeForAuthorization({ authorizationId: row.authorization_id }))
+  if (new Set(scopes).size !== 1) fail("REBIND_NEW_PAIR_EXECUTION_SCOPE_MISMATCH")
+  return scopes[0]
+}
 const CASE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 const REBIND_ID_PATTERN = /^[a-f0-9]{64}$/
 const LEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
@@ -402,6 +410,7 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
     }
     const { validateAuthorizationPairSignatures } = require("../domain/rebind-authorization-validator")
     validateAuthorizationPairSignatures(newAuthorizations, authorizationVerifier, at)
+    validateAuthorizationExecutionScopePair(newAuthorizations)
     return true
   }
 
@@ -626,6 +635,7 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
         if (authorizationVerifier) {
           const { validateAuthorizationPairSignatures } = require("../domain/rebind-authorization-validator")
           validateAuthorizationPairSignatures(newAuths, authorizationVerifier, at)
+          validateAuthorizationExecutionScopePair(newAuths)
         }
 
         // 9. Validar lease vigente antes do consumo e consumir SOMENTE o novo par usando CURRENT_TIMESTAMP do PostgreSQL

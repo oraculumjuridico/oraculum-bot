@@ -6,7 +6,7 @@ const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
 const { createSingleCaseApplyExecutor, validateAdapters, validateCheckpoint, newCheckpoint, makeDecision, sanitizedErrorCode } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, reservationEvidenceHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, EXECUTION_SCOPE_NAMES, authorizationScopesForExecution, AUTHORIZATION_SCHEMA_VERSION, canonicalize, authorizablePlanHash, reservationEvidenceHash, authorizationPayload, createAuthorizationVerifier, groupDocuments, sha256 } = require("../src/domain/single-case-apply-contracts")
 const cli = require("../scripts/apply-single-case")
 
 const NOW = "2026-07-15T12:00:00.000Z"
@@ -21,11 +21,14 @@ function signAuthorization(record) {
   return { ...record, proof: crypto.sign(null, Buffer.from(authorizationPayload(record)), keys.privateKey).toString("base64") }
 }
 
-function authorizationRecords(plan, mutate = record => record) {
+function authorizationRecords(plan, mutate = record => record, executionScope = EXECUTION_SCOPE_NAMES.FULL) {
   const hash = authorizablePlanHash(plan)
-  return Object.entries(AUTH_SCOPES).map(([type, scope], index) => {
+  return Object.entries(authorizationScopesForExecution(executionScope)).map(([type, scope], index) => {
     const evidence = { verified: true, caseImportId: plan.caseImportId, caseNumber: plan.dealPlan.caseNumber, evidenceId: "reservation-proof" }
-    const base = { authorizationId: `fixture-auth-${index + 1}`, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, reservationEvidenceHash: reservationEvidenceHash(evidence), scope: [...scope], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
+    const authorizationId = executionScope === EXECUTION_SCOPE_NAMES.FULL
+      ? `fixture-auth-${index + 1}`
+      : `fixture-authority.${executionScope === EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY ? "s-H" : "s-D"}.fixture-auth-${index + 1}`
+    const base = { authorizationId, schemaVersion: AUTHORIZATION_SCHEMA_VERSION, type, caseImportId: plan.caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, reservationEvidenceHash: reservationEvidenceHash(evidence), scope: [...scope], issuer: "fixture-authority", issuedAt: "2026-07-15T11:45:00.000Z", expiresAt: "2026-07-15T12:15:00.000Z", revoked: false }
     return signAuthorization(mutate(base, index))
   })
 }
@@ -84,9 +87,9 @@ function fakeSystem(plan = fixture(), options = {}) {
       verify: async (associationId, contactId, dealId, type) => { const item = state.associations.find(x => x.id === associationId); return item ? { verified: item.contactId === contactId && item.dealId === dealId && item.type === type, id: item.id, contactId: item.contactId, dealId: item.dealId, relation: item.type } : null }
     },
     drive: {
-      findAreaFolders: async destination => options.multiAreas ? [{ id: "area-a" }, { id: "area-b" }] : state.areas.filter(item => item.logicalId === destination.logicalId && item.name === destination.name && item.parentId === "root").map(item => ({ id: item.id })),
+      findAreaFolders: async destination => { count("drive.findArea"); return options.multiAreas ? [{ id: "area-a" }, { id: "area-b" }] : state.areas.filter(item => item.logicalId === destination.logicalId && item.name === destination.name && item.parentId === "root").map(item => ({ id: item.id })) },
       createAreaFolder: async ({ destination, context }) => { validateContext(context); count("area.create"); const item = { id: id("area", state.areas.length), ...clone(destination), parentId: "root", trashed: false }; state.areas.push(item); return { id: item.id } },
-      findCaseFolders: async (parentId, destination) => options.multiFolders ? [{ id: "folder-a" }, { id: "folder-b" }] : state.folders.filter(item => item.parentId === parentId && item.logicalId === destination.logicalId && item.name === destination.name).map(item => ({ id: item.id })),
+      findCaseFolders: async (parentId, destination) => { count("drive.findCase"); return options.multiFolders ? [{ id: "folder-a" }, { id: "folder-b" }] : state.folders.filter(item => item.parentId === parentId && item.logicalId === destination.logicalId && item.name === destination.name).map(item => ({ id: item.id })) },
       createCaseFolder: async ({ parentId, destination, context }) => { validateContext(context); count("folder.create"); const item = { id: id("folder", state.folders.length), ...clone(destination), parentId, trashed: false }; state.folders.push(item); return { id: item.id } },
       verifyFolder: async folderId => { const item = [...state.areas, ...state.folders].find(x => x.id === folderId); return item ? { verified: true, id: item.id, parentId: item.parentId, logicalId: item.logicalId, name: item.name, trashed: item.trashed } : null },
       findFilesByHash: async (folderId, hash) => [...state.files.values()].filter(item => item.parentId === folderId && item.sha256 === hash).map(item => ({ id: item.id })),
@@ -99,6 +102,7 @@ function fakeSystem(plan = fixture(), options = {}) {
 }
 
 const run = system => executor({ caseImportId: fixture().caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, adapters: system.adapters, now: () => NOW })
+const runScoped = (system, executionScope) => executor({ caseImportId: fixture().caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, executionScope, adapters: system.adapters, now: () => NOW })
 const storedFileEntry = (system, hash) => [...system.state.files.entries()].find(([, item]) => item.sha256 === hash)
 const effectContext = (plan, system, lease, overrides = {}) => Object.freeze({
   caseImportId: plan.caseImportId,
@@ -114,6 +118,119 @@ const effectContext = (plan, system, lease, overrides = {}) => Object.freeze({
 })
 
 test("execucao autorizada conclui onze uploads", async () => { const system = fakeSystem(); const result = await run(system); assert.equal(result.completed, true); assert.equal(system.state.files.size, 11); assert.equal(result.checkpoint.status, "completed") })
+test("HUBSPOT_ONLY para oficialmente depois da associação sem chamar Drive", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const system = fakeSystem(plan, { records })
+  const result = await runScoped(system, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  assert.deepEqual({
+    completed: result.completed,
+    executionOutcome: result.executionOutcome,
+    completedBoundary: result.completedBoundary,
+    nextStep: result.nextStep
+  }, {
+    completed: false,
+    executionOutcome: "continuation_required",
+    completedBoundary: "association",
+    nextStep: "area_folder"
+  })
+  assert.equal(result.checkpoint.status, "running")
+  for (const name of ["reservation", "contact", "deal", "association"]) assert.equal(result.checkpoint.steps[name].status, "completed")
+  for (const name of ["area_folder", "case_folder", "uploads", "final_verify"]) assert.equal(result.checkpoint.steps[name].status, "pending")
+  assert.equal(system.counts["drive.findArea"], undefined)
+  assert.equal(system.counts["area.create"], undefined)
+  assert.equal(system.counts["drive.findCase"], undefined)
+  assert.equal(system.counts["folder.create"], undefined)
+  assert.equal(Object.keys(system.counts).filter(name => name.startsWith("upload:")).length, 0)
+  assert.equal(system.counts["lease.release"], 1)
+  assert.equal(system.state.lease, null)
+  assert.ok(system.state.checkpointVersion > 0)
+})
+test("retry HUBSPOT_ONLY reutiliza Deal e associação concluídos", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const first = fakeSystem(plan, { records })
+  await runScoped(first, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const second = fakeSystem(plan, { records, checkpoint: clone(first.state.checkpoint) })
+  second.state.contacts = clone(first.state.contacts)
+  second.state.deals = clone(first.state.deals)
+  second.state.associations = clone(first.state.associations)
+  const result = await runScoped(second, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  assert.equal(result.executionOutcome, "continuation_required")
+  assert.equal(second.counts["contact.create"], undefined)
+  assert.equal(second.counts["deal.create"], undefined)
+  assert.equal(second.counts["association.create"], undefined)
+  assert.equal(second.counts["drive.findArea"], undefined)
+  assert.equal(second.counts["lease.release"], 1)
+})
+test("DRIVE_CONTINUATION reutiliza HubSpot concluído e inicia na primeira etapa Drive", async () => {
+  const plan = fixture()
+  const hubRecords = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const first = fakeSystem(plan, { records: hubRecords })
+  await runScoped(first, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const driveRecords = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION)
+  const reboundCheckpoint = clone(first.state.checkpoint)
+  reboundCheckpoint.authorizationIds = driveRecords.map(record => record.authorizationId).sort()
+  reboundCheckpoint.version += 1
+  const second = fakeSystem(plan, { records: driveRecords, checkpoint: reboundCheckpoint })
+  second.state.contacts = clone(first.state.contacts)
+  second.state.deals = clone(first.state.deals)
+  second.state.associations = clone(first.state.associations)
+  const result = await runScoped(second, EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION)
+  assert.equal(result.completed, true)
+  assert.equal(result.checkpoint.status, "completed")
+  assert.equal(second.counts["contact.create"], undefined)
+  assert.equal(second.counts["deal.create"], undefined)
+  assert.equal(second.counts["association.create"], undefined)
+  assert.equal(second.counts["drive.findArea"], 1)
+  assert.equal(second.counts["lease.release"], 1)
+})
+test("DRIVE_CONTINUATION bloqueia antes de qualquer escrita HubSpot se pré-requisitos faltam", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION)
+  const system = fakeSystem(plan, { records })
+  await assert.rejects(() => runScoped(system, EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION), /DRIVE_CONTINUATION_PREREQUISITE_MISSING/)
+  assert.equal(system.counts["contact.create"], undefined)
+  assert.equal(system.counts["deal.create"], undefined)
+  assert.equal(system.counts["association.create"], undefined)
+  assert.equal(system.counts["drive.findArea"], undefined)
+  assert.equal(system.counts["lease.release"], 1)
+})
+test("autorização HUBSPOT_ONLY não pode ser usada como FULL ou DRIVE_CONTINUATION", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  await assert.rejects(() => run(fakeSystem(plan, { records })), /AUTH_EXECUTION_SCOPE_MISMATCH/)
+  await assert.rejects(() => runScoped(fakeSystem(plan, { records }), EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION), /AUTH_EXECUTION_SCOPE_MISMATCH/)
+})
+test("autorização DRIVE_CONTINUATION não pode ser usada para HUBSPOT_ONLY", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION)
+  await assert.rejects(() => runScoped(fakeSystem(plan, { records }), EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY), /AUTH_EXECUTION_SCOPE_MISMATCH/)
+})
+test("marcador de escopo desconhecido é rejeitado fail-closed", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => ({ ...record, authorizationId: `${record.authorizationId}.s-X.marker` }))
+  await assert.rejects(() => run(fakeSystem(plan, { records })), /AUTH_EXECUTION_SCOPE_INVALID/)
+})
+test("alterar o scope assinado ou ampliar sistemas invalida a prova", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const changedBoundary = clone(records)
+  changedBoundary[0].authorizationId = changedBoundary[0].authorizationId.replace(".s-H.", ".s-D.")
+  await assert.rejects(() => runScoped(fakeSystem(plan, { records: changedBoundary }), EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION), /AUTH_PROOF_INVALID/)
+  const expanded = clone(records)
+  expanded[1].scope.push("UNAUTHORIZED_EXTERNAL_SYSTEM")
+  await assert.rejects(() => runScoped(fakeSystem(plan, { records: expanded }), EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY), /AUTH_SCOPE_INVALID|AUTH_PROOF_INVALID/)
+})
+test("falha de CAS na conclusão da associação não retorna continuação falsa e libera lease", async () => {
+  const plan = fixture()
+  const records = authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  const system = fakeSystem(plan, { records, crashAfterEffect: "association" })
+  await assert.rejects(() => runScoped(system, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY), /SIMULATED_CRASH_AFTER_EFFECT/)
+  assert.equal(system.counts["lease.release"], 1)
+  assert.equal(system.state.lease, null)
+  assert.notEqual(system.state.checkpoint?.steps?.association?.status, "completed")
+})
 test("chamada operacional expõe somente um objeto de argumentos", () => assert.equal(executor.length, 1))
 test("objeto fabricado sem prova é recusado", async () => { const p = fixture(); const records = authorizationRecords(p); records[0] = { ...records[0], proof: "" }; await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_PROOF_INVALID/) })
 test("assinatura adulterada é recusada", async () => { const p = fixture(); const records = authorizationRecords(p); records[0].caseNumber = "PRV.260715.999"; await assert.rejects(() => run(fakeSystem(p, { records })), /AUTH_PROOF_INVALID/) })
@@ -215,6 +332,12 @@ for (const step of ["contact", "deal", "association", "area_folder", "case_folde
 test("CLI distingue argumento ausente", () => assert.throws(() => cli.parseArgs([]), /CASE_IMPORT_ID_MISSING/))
 test("CLI distingue argumento inválido", () => assert.throws(() => cli.parseArgs(["--case-import-id", "!"]), /CASE_IMPORT_ID_INVALID/))
 test("CLI distingue argumentos excedentes", () => assert.throws(() => cli.parseArgs(["--case-import-id", fixture().caseImportId, "extra"]), /CLI_ARGUMENTS_EXCESS/))
+test("CLI aceita escopo operacional explícito e preserva FULL por padrão", () => {
+  assert.equal(cli.parseArgs(["--case-import-id", fixture().caseImportId]).executionScope, "FULL")
+  assert.equal(cli.parseArgs(["--case-import-id", fixture().caseImportId, "--execution-scope", "HUBSPOT_ONLY"]).executionScope, "HUBSPOT_ONLY")
+  assert.equal(cli.parseArgs(["--case-import-id", fixture().caseImportId, "--resume-mode", "REBIND", "--execution-scope", "DRIVE_CONTINUATION"]).executionScope, "DRIVE_CONTINUATION")
+  assert.throws(() => cli.parseArgs(["--case-import-id", fixture().caseImportId, "--execution-scope", "UNKNOWN"]), /EXECUTION_SCOPE_INVALID/)
+})
 test("CLI real falha fechado quando configuração está ausente", async () => await assert.rejects(() => cli.main({ argv: ["--case-import-id", fixture().caseImportId], env: {} }), /POSTGRES_MODE_REQUIRED/))
 
 

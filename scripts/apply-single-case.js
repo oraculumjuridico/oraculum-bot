@@ -18,6 +18,7 @@ const { trustedPublicKeysFromEnv, createSingleCaseAuthorizationComponents } = re
 const { createHubSpotHttpClient } = require("../src/adapters/hubspot-http-client")
 const { createHubSpotSingleCaseAdapters } = require("../src/adapters/hubspot-single-case-adapter")
 const { validateP1PlanContract, resolveP1Target } = require("../src/domain/single-case-target")
+const { EXECUTION_SCOPE_NAMES } = require("../src/domain/single-case-apply-contracts")
 
 const REQUIRED_ENV = Object.freeze([
   "EXTERNAL_STATE_DATABASE_URL",
@@ -88,7 +89,7 @@ function validateP1Plan(plan, caseImportId) {
   }
 }
 
-async function createRuntimeExecutor({ env, config, caseImportId, resumeMode } = {}) {
+async function createRuntimeExecutor({ env, config, caseImportId, executionScope, resumeMode } = {}) {
   const runtimeConfig = config || await readAndValidateRuntimeConfig(env)
   env = runtimeConfig.env
   validateP1Target(caseImportId, runtimeConfig)
@@ -137,7 +138,7 @@ async function createRuntimeExecutor({ env, config, caseImportId, resumeMode } =
       },
     })
     return Object.freeze({
-      execute: () => composition.executor({ caseImportId, planHash: sha256(target.planBytes), manifestHash: sha256(manifestBytes), ...(resumeMode === undefined ? {} : { resumeMode }) }),
+      execute: () => composition.executor({ caseImportId, planHash: sha256(target.planBytes), manifestHash: sha256(manifestBytes), executionScope, ...(resumeMode === undefined ? {} : { resumeMode }) }),
       close: () => pool.end(),
     })
   } catch (error) {
@@ -148,14 +149,15 @@ async function createRuntimeExecutor({ env, config, caseImportId, resumeMode } =
 
 function parseArgs(argv) {
   if (!argv.includes("--case-import-id")) throw new Error("CASE_IMPORT_ID_MISSING")
-  if (argv.length !== 2 && argv.length !== 4) throw new Error("CLI_ARGUMENTS_EXCESS")
+  const allowed = new Set(["--case-import-id", "--resume-mode", "--execution-scope"])
+  for (let index = 0; index < argv.length; index += 2) if (!allowed.has(argv[index]) || argv[index + 1] === undefined) throw new Error("CLI_ARGUMENTS_EXCESS")
   const value = argv[argv.indexOf("--case-import-id") + 1]
   if (!value || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value)) throw new Error("CASE_IMPORT_ID_INVALID")
-  if (argv.length === 2) return { caseImportId: value }
-  if (!argv.includes("--resume-mode")) throw new Error("CLI_ARGUMENTS_EXCESS")
-  const resumeMode = argv[argv.indexOf("--resume-mode") + 1]
-  if (resumeMode !== "REBIND") throw new Error("RESUME_MODE_INVALID")
-  return { caseImportId: value, resumeMode }
+  const resumeMode = argv.includes("--resume-mode") ? argv[argv.indexOf("--resume-mode") + 1] : undefined
+  if (resumeMode !== undefined && resumeMode !== "REBIND") throw new Error("RESUME_MODE_INVALID")
+  const executionScope = argv.includes("--execution-scope") ? argv[argv.indexOf("--execution-scope") + 1] : EXECUTION_SCOPE_NAMES.FULL
+  if (!Object.hasOwn(EXECUTION_SCOPE_NAMES, executionScope)) throw new Error("EXECUTION_SCOPE_INVALID")
+  return { caseImportId: value, executionScope, ...(resumeMode === undefined ? {} : { resumeMode }) }
 }
 async function main({ argv = process.argv.slice(2), env = process.env, executor, runtimeFactory = createRuntimeExecutor } = {}) {
   const args = parseArgs(argv)

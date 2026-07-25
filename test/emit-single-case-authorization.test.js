@@ -223,6 +223,12 @@ test("parseArgs: id válido, defaults", () => {
   assert.equal(r.caseImportId, "inss-abc123def456")
   assert.equal(r.ttlMinutes, 30)
   assert.equal(r.dryRun, false)
+  assert.equal(r.executionScope, "FULL")
+})
+test("parseArgs: aceita fronteiras operacionais explícitas", () => {
+  assert.equal(parseArgs(["--case-import-id", "inss-abc123def456", "--execution-scope", "HUBSPOT_ONLY"]).executionScope, "HUBSPOT_ONLY")
+  assert.equal(parseArgs(["--case-import-id", "inss-abc123def456", "--execution-scope", "DRIVE_CONTINUATION"]).executionScope, "DRIVE_CONTINUATION")
+  assert.throws(() => parseArgs(["--case-import-id", "inss-abc123def456", "--execution-scope", "UNKNOWN"]), /EXECUTION_SCOPE_INVALID/)
 })
 test("parseArgs: id ausente falha com CASE_IMPORT_ID_INVALID", () => {
   assert.throws(() => parseArgs([]), /CASE_IMPORT_ID_INVALID/)
@@ -350,6 +356,17 @@ test("buildRecord: authorizationId inclui issuer e timestamp", () => {
   assert.equal(rec.schemaVersion, AUTHORIZATION_SCHEMA_VERSION)
   assert.equal(rec.type, "EXPLICIT_APPLY_AUTHORIZATION")
   assert.equal(rec.revoked, false)
+})
+test("buildRecord: fronteira operacional integra o authorizationId assinado", () => {
+  const common = {
+    type: "EXPLICIT_APPLY_AUTHORIZATION", scope: ["APPLY_SINGLE_CASE"], caseImportId: CASE_ID,
+    caseFingerprint: CASE_FP, caseNumber: CASE_NUM, aph: "a".repeat(64), ph: "b".repeat(64),
+    mh: "c".repeat(64), reh: "d".repeat(64), issuer: ISSUER,
+    issuedAt: "2026-07-17T10:00:00.000Z", expiresAt: "2026-07-17T10:30:00.000Z"
+  }
+  assert.match(buildRecord({ ...common, executionScope: "HUBSPOT_ONLY" }).authorizationId, /\.s-H\./)
+  assert.match(buildRecord({ ...common, executionScope: "DRIVE_CONTINUATION" }).authorizationId, /\.s-D\./)
+  assert.doesNotMatch(buildRecord(common).authorizationId, /\.s-[HD]\./)
 })
 
 // ─── tests: main() ───────────────────────────────────────────────────────────

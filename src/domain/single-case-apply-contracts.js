@@ -13,6 +13,16 @@ const AUTH_SCOPES = Object.freeze({
   EXPLICIT_APPLY_AUTHORIZATION: Object.freeze(["APPLY_SINGLE_CASE"]),
   EXTERNAL_WRITES_AUTHORIZATION: Object.freeze(["HUBSPOT_CONTACT", "HUBSPOT_DEAL", "HUBSPOT_ASSOCIATION", "DRIVE_FOLDERS", "DRIVE_UPLOADS", "CHECKPOINT_WRITE"])
 })
+const EXECUTION_SCOPE_NAMES = Object.freeze({
+  FULL: "FULL",
+  HUBSPOT_ONLY: "HUBSPOT_ONLY",
+  DRIVE_CONTINUATION: "DRIVE_CONTINUATION"
+})
+const EXECUTION_AUTH_SCOPES = Object.freeze({
+  [EXECUTION_SCOPE_NAMES.FULL]: AUTH_SCOPES,
+  [EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY]: AUTH_SCOPES,
+  [EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION]: AUTH_SCOPES
+})
 const REQUIRED_AUTHORIZATION_SCOPES = Object.freeze([...new Set(Object.values(AUTH_SCOPES).flat())].sort())
 const HASH = /^[a-f0-9]{64}$/
 
@@ -113,10 +123,27 @@ function authorizableProjection(plan) {
 }
 
 const authorizablePlanHash = plan => sha256(canonicalize(authorizableProjection(plan)))
-const exactScope = (scope, type) => {
+function authorizationScopesForExecution(executionScope = EXECUTION_SCOPE_NAMES.FULL) {
+  const scopes = EXECUTION_AUTH_SCOPES[executionScope]
+  if (!scopes) throw new Error("EXECUTION_SCOPE_INVALID")
+  return scopes
+}
+const exactScope = (scope, type, executionScope) => {
   if (!type || !Object.hasOwn(AUTH_SCOPES, type)) return false
-  const expected = AUTH_SCOPES[type]
+  if (executionScope === undefined) return Object.keys(EXECUTION_AUTH_SCOPES).some(name => exactScope(scope, type, name))
+  const expected = EXECUTION_AUTH_SCOPES[executionScope]?.[type]
+  if (!expected) return false
   return Array.isArray(scope) && scope.length === expected.length && new Set(scope).size === scope.length && canonicalize([...scope].sort()) === canonicalize([...expected].sort())
+}
+function executionScopeForAuthorization(record) {
+  const id = String(record?.authorizationId || "")
+  const encoded = Object.freeze({
+    [EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY]: ".s-H.",
+    [EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION]: ".s-D."
+  })
+  const markers = Object.entries(encoded).filter(([, marker]) => id.includes(marker)).map(([name]) => name)
+  if (markers.length > 1) throw new Error("AUTH_EXECUTION_SCOPE_INVALID")
+  return markers[0] || EXECUTION_SCOPE_NAMES.FULL
 }
 function reservationEvidenceProjection(value) {
   if (!value || value.verified !== true || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.evidenceId || "") || !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(value.caseImportId || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(value.caseNumber || "")) throw new Error("RESERVATION_EVIDENCE_INVALID")
@@ -134,6 +161,10 @@ const authorizationPayload = record => canonicalize({
 function validateAuthorizationShape(record) {
   if (!record || Object.getPrototypeOf(record) !== Object.prototype || record.schemaVersion !== AUTHORIZATION_SCHEMA_VERSION) return "AUTH_SCHEMA_INVALID"
   if (!/^[A-Za-z0-9._:-]{8,128}$/.test(record.authorizationId || "")) return "AUTH_ID_INVALID"
+  try {
+    if (String(record.authorizationId).includes(".s-") && ![".s-H.", ".s-D."].some(marker => String(record.authorizationId).includes(marker))) return "AUTH_EXECUTION_SCOPE_INVALID"
+    executionScopeForAuthorization(record)
+  } catch { return "AUTH_EXECUTION_SCOPE_INVALID" }
   if (!Object.hasOwn(AUTH_SCOPES, record.type)) return "AUTH_TYPE_INVALID"
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(record.caseImportId || "") || !/^[a-f0-9]{12}$/.test(record.caseFingerprint || "") || !/^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/.test(record.caseNumber || "")) return "AUTH_BINDING_INVALID"
   if (![record.authorizablePlanHash, record.planHash, record.manifestHash, record.reservationEvidenceHash].every(value => HASH.test(value || ""))) return "AUTH_HASH_INVALID"
@@ -181,6 +212,8 @@ function validateAuthorizations(records, expected, verifier, now) {
   if (!Array.isArray(records)) throw new Error("AUTH_REPOSITORY_RESPONSE_INVALID")
   const ids = new Set()
   const validated = []
+  const expectedExecutionScope = expected.executionScope || EXECUTION_SCOPE_NAMES.FULL
+  authorizationScopesForExecution(expectedExecutionScope)
   for (const type of Object.keys(AUTH_SCOPES)) {
     const matches = records.filter(record => record?.type === type)
     if (matches.length !== 1) throw new Error(`AUTH_AMBIGUOUS:${type}`)
@@ -190,10 +223,11 @@ function validateAuthorizations(records, expected, verifier, now) {
     const proof = verifier.verify(record, { now })
     if (!proof.valid) throw new Error(proof.reason)
     if (record.caseImportId !== expected.caseImportId || record.caseFingerprint !== expected.caseFingerprint || record.caseNumber !== expected.caseNumber || record.authorizablePlanHash !== expected.authorizablePlanHash || record.planHash !== expected.planHash || record.manifestHash !== expected.manifestHash || record.reservationEvidenceHash !== expected.reservationEvidenceHash) throw new Error("AUTH_BINDING_INVALID")
-    if (!exactScope(record.scope, record.type)) throw new Error("AUTH_SCOPE_INVALID")
+    if (!exactScope(record.scope, record.type, expectedExecutionScope)) throw new Error("AUTH_SCOPE_INVALID")
+    if (executionScopeForAuthorization(record) !== expectedExecutionScope) throw new Error("AUTH_EXECUTION_SCOPE_MISMATCH")
     validated.push({ authorizationId: record.authorizationId, type, scope: [...record.scope], expiresAt: record.expiresAt })
   }
   return validated
 }
 
-module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, MINIMUM_REMAINING_TTL_MS, AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, canonicalize, sha256, deepClone, deepFreeze, contactVerificationProjection, contactVerificationHash, validateContactVerificationEvidence, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }
+module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, MINIMUM_REMAINING_TTL_MS, AUTH_SCOPES, EXECUTION_SCOPE_NAMES, EXECUTION_AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, authorizationScopesForExecution, executionScopeForAuthorization, canonicalize, sha256, deepClone, deepFreeze, contactVerificationProjection, contactVerificationHash, validateContactVerificationEvidence, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }

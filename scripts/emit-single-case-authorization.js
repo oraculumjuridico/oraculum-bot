@@ -11,6 +11,8 @@ const { Pool } = require("pg")
 const {
   AUTHORIZATION_SCHEMA_VERSION,
   AUTH_SCOPES,
+  EXECUTION_SCOPE_NAMES,
+  authorizationScopesForExecution,
   sha256,
   authorizablePlanHash,
   reservationEvidenceHash,
@@ -34,7 +36,7 @@ const fail = code => { throw new Error(code) }
 
 // ─── arg parsing ─────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const result = { ttlMinutes: 30, dryRun: false }
+  const result = { ttlMinutes: 30, dryRun: false, executionScope: EXECUTION_SCOPE_NAMES.FULL }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === "--dry-run") { result.dryRun = true; continue }
@@ -44,12 +46,14 @@ function parseArgs(argv) {
     if (arg === "--ttl-minutes") { result.ttlMinutes = argv[++i]; continue }
     if (arg === "--requested-by") { result.requestedBy = argv[++i]; continue }
     if (arg === "--request-id") { result.requestId = argv[++i]; continue }
+    if (arg === "--execution-scope") { result.executionScope = argv[++i]; continue }
     fail("INVALID_ARGUMENT")
   }
   if (!result.caseImportId || !CASE_ID_RE.test(result.caseImportId)) fail("CASE_IMPORT_ID_INVALID")
   const ttl = Number(result.ttlMinutes)
   if (!Number.isInteger(ttl) || ttl < 1 || ttl > 30) fail("TTL_INVALID")
   result.ttlMinutes = ttl
+  authorizationScopesForExecution(result.executionScope)
   return result
 }
 
@@ -143,10 +147,11 @@ async function verifyReservation(client, caseImportId, plan) {
 }
 
 // ─── build unsigned record ────────────────────────────────────────────────────
-function buildRecord({ type, scope, caseImportId, caseFingerprint, caseNumber, aph, ph, mh, reh, issuer, issuedAt, expiresAt }) {
+function buildRecord({ type, scope, caseImportId, caseFingerprint, caseNumber, aph, ph, mh, reh, issuer, issuedAt, expiresAt, executionScope = EXECUTION_SCOPE_NAMES.FULL }) {
   const ts = issuedAt.replace(/[^0-9]/g, "").slice(0, 14)
   const rand = crypto.randomBytes(6).toString("hex")
-  const authorizationId = `${issuer}.${ts}.${rand}`
+  const scopeMarker = executionScope === EXECUTION_SCOPE_NAMES.FULL ? "" : executionScope === EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY ? ".s-H" : ".s-D"
+  const authorizationId = `${issuer}${scopeMarker}.${ts}.${rand}`
   return {
     authorizationId,
     schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
@@ -181,7 +186,7 @@ async function main({
   if (!connectionString) fail("POSTGRES_CONNECTION_REQUIRED")
 
   const args = parseArgs(argv)
-  const { caseImportId, ttlMinutes, dryRun, requestedBy, requestId } = args
+  const { caseImportId, ttlMinutes, dryRun, requestedBy, requestId, executionScope } = args
 
   // keys
   const { privateKey, trustedIssuers, issuer } = loadKeys(env)
@@ -226,12 +231,12 @@ async function main({
     const signer = createSingleCaseAuthorizationSigner({ privateKey, clock: () => issuedAt })
     const verifier = createAuthorizationVerifier({ trustedIssuers })
 
-    for (const [type, scope] of Object.entries(AUTH_SCOPES)) {
+    for (const [type, scope] of Object.entries(authorizationScopesForExecution(executionScope))) {
       const record = buildRecord({
         type, scope, caseImportId,
         caseFingerprint: plan.caseFingerprint,
         caseNumber: plan.dealPlan.caseNumber,
-        aph, ph, mh, reh, issuer, issuedAt, expiresAt,
+        aph, ph, mh, reh, issuer, issuedAt, expiresAt, executionScope,
       })
       const signed = signer.sign(record)
 
@@ -269,6 +274,7 @@ async function main({
       authorizablePlanHash: aph,
       reservationEvidenceHash: reh,
       types: signedRecords.map(r => r.type),
+      executionScope,
       authorizationIds: signedRecords.map(r => r.authorizationId),
       expiresAt,
       committed,
