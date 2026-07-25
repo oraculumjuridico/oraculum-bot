@@ -27,7 +27,7 @@ function constraintRows() {
     single_case_rebind_audit_previous_hash_check:["previous_authorization_set_hash","CHECK ((previous_authorization_set_hash ~ '^[a-f0-9]{64}$'::text))"],
     single_case_rebind_audit_current_hash_check:["current_authorization_set_hash","CHECK ((current_authorization_set_hash ~ '^[a-f0-9]{64}$'::text))"],
     single_case_rebind_audit_evidence_hash_check:["reconciliation_evidence_hash","CHECK ((reconciliation_evidence_hash ~ '^[a-f0-9]{64}$'::text))"],
-    single_case_rebind_audit_reason_check:["reason","CHECK ((reason = ANY(ARRAY['CONTACT_RECONCILED_AFTER_DIVERGENCE'::text, 'PLAN_REGENERATED_AFTER_SAFE_CORRECTION'::text])))"],
+    single_case_rebind_audit_reason_check:["reason","CHECK ((reason = ANY(ARRAY['CONTACT_RECONCILED_AFTER_DIVERGENCE'::text, 'PLAN_REGENERATED_AFTER_SAFE_CORRECTION'::text, 'AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY'::text])))"],
     single_case_rebind_audit_requested_by_check:["requested_by","CHECK ((requested_by ~ '^[A-Za-z][A-Za-z0-9._:-]{2,63}$'::text))"],
     single_case_rebind_audit_token_check:["fencing_token","CHECK ((fencing_token > 0))"],
     single_case_rebind_audit_lease_id_check:["lease_id","CHECK ((lease_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$'::text))"]

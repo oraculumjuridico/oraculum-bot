@@ -93,7 +93,7 @@ const CHECK_SQL = Object.freeze({
   single_case_rebind_audit_previous_hash_check: "previous_authorization_set_hash ~ '^[a-f0-9]{64}$'",
   single_case_rebind_audit_current_hash_check: "current_authorization_set_hash ~ '^[a-f0-9]{64}$'",
   single_case_rebind_audit_evidence_hash_check: "reconciliation_evidence_hash ~ '^[a-f0-9]{64}$'",
-  single_case_rebind_audit_reason_check: "reason IN ('CONTACT_RECONCILED_AFTER_DIVERGENCE', 'PLAN_REGENERATED_AFTER_SAFE_CORRECTION')",
+  single_case_rebind_audit_reason_check: `reason = ANY (ARRAY['${ALLOWED_REBIND_REASONS.join("'::text, '")}'::text])`,
   single_case_rebind_audit_requested_by_check: "requested_by ~ '^[A-Za-z][A-Za-z0-9._:-]{2,63}$'",
   single_case_rebind_audit_token_check: "fencing_token > 0",
   single_case_rebind_audit_lease_id_check: "lease_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$'"
