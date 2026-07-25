@@ -32,6 +32,16 @@ const LEGITIMATE_ERROR_CODES = new Set([
 
 const fail = code => { throw new Error(code) }
 
+function authorizationInstant(value) {
+  const milliseconds = value instanceof Date
+    ? value.getTime()
+    : typeof value === "string"
+      ? Date.parse(value)
+      : NaN
+  if (!Number.isFinite(milliseconds)) fail("REBIND_RESUME_AUTHORIZATION_RECORD_INVALID")
+  return milliseconds
+}
+
 const mapError = error => {
   const message = error?.message || ""
   if (LEGITIMATE_ERROR_CODES.has(message)) return new Error(message)
@@ -242,10 +252,8 @@ function createSingleCaseRebindResumeVerifier({ pool }) {
           if (!Number.isInteger(schemaVersion) || !Number.isFinite(schemaVersion)) fail("REBIND_RESUME_AUTHORIZATION_RECORD_INVALID")
 
           // Validar datas são válidas
-          const issuedAtMs = Date.parse(auth.issued_at)
-          const expiresAtMs = Date.parse(auth.expires_at)
-          if (!Number.isFinite(issuedAtMs)) fail("REBIND_RESUME_AUTHORIZATION_RECORD_INVALID")
-          if (!Number.isFinite(expiresAtMs)) fail("REBIND_RESUME_AUTHORIZATION_RECORD_INVALID")
+          const issuedAtMs = authorizationInstant(auth.issued_at)
+          const expiresAtMs = authorizationInstant(auth.expires_at)
           if (expiresAtMs <= issuedAtMs) fail("REBIND_RESUME_AUTHORIZATION_RECORD_INVALID")
 
           // Validar scope é array (com proteção contra JSON inválido)
@@ -312,8 +320,8 @@ function createSingleCaseRebindResumeVerifier({ pool }) {
           const scope = typeof auth.scope === 'string' ? JSON.parse(auth.scope) : auth.scope
 
           // Usar timestamps já validados para conversão segura
-          const issuedAtMs = Date.parse(auth.issued_at)
-          const expiresAtMs = Date.parse(auth.expires_at)
+          const issuedAtMs = authorizationInstant(auth.issued_at)
+          const expiresAtMs = authorizationInstant(auth.expires_at)
 
           return deepFreeze({
             authorizationId: auth.authorization_id,
@@ -364,5 +372,6 @@ function createSingleCaseRebindResumeVerifier({ pool }) {
 }
 
 module.exports = {
+  authorizationInstant,
   createSingleCaseRebindResumeVerifier
 }

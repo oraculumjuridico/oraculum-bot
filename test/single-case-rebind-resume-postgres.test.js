@@ -2,9 +2,10 @@
 
 const test = require("node:test")
 const assert = require("node:assert/strict")
-const { createSingleCaseRebindResumeVerifier } = require("../src/infrastructure/single-case-rebind-resume-postgres")
+const crypto = require("node:crypto")
+const { authorizationInstant, createSingleCaseRebindResumeVerifier } = require("../src/infrastructure/single-case-rebind-resume-postgres")
 const { computeAuthorizationSetHash } = require("../src/domain/single-case-rebind-contracts")
-const { AUTH_SCOPES } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, authorizationPayload, createAuthorizationVerifier } = require("../src/domain/single-case-apply-contracts")
 
 const NOW = "2026-07-19T12:00:00.000Z"
 const CASE_IMPORT_ID = "resume-case-001"
@@ -1014,4 +1015,86 @@ test("revocation_reason preenchida com revoked false falha", async () => {
     () => verifier.verifyResumeProof(createRequest()),
     /REBIND_RESUME_AUTHORIZATION_RECORD_INVALID/
   )
+})
+
+test("objetos Date preservam milissegundos no payload reconstruído", async () => {
+  const issuedAt = new Date("2026-07-19T11:00:00.123Z")
+  const expiresAt = new Date("2026-07-19T13:00:00.456Z")
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map([
+      [AUTH_1, createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { issued_at: issuedAt, expires_at: expiresAt })],
+      [AUTH_2, createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { issued_at: issuedAt, expires_at: expiresAt })]
+    ])
+  })
+
+  const proof = await createSingleCaseRebindResumeVerifier({ pool }).verifyResumeProof(createRequest())
+  for (const record of proof.authorizationRecords) {
+    assert.equal(record.issuedAt, "2026-07-19T11:00:00.123Z")
+    assert.equal(record.expiresAt, "2026-07-19T13:00:00.456Z")
+  }
+})
+
+test("payload consumido reconstruído coincide com emissor e mantém prova válida", async () => {
+  const keys = crypto.generateKeyPairSync("ed25519")
+  const issuedAt = "2026-07-19T11:00:00.123Z"
+  const expiresAt = "2026-07-19T11:29:59.456Z"
+  const verificationNow = "2026-07-19T11:10:00.000Z"
+  const rows = [
+    createAuthorization(AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
+      issued_at: new Date(issuedAt),
+      expires_at: new Date(expiresAt)
+    }),
+    createAuthorization(AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", {
+      issued_at: new Date(issuedAt),
+      expires_at: new Date(expiresAt)
+    })
+  ]
+  const emitterRecords = rows.map(row => ({
+    authorizationId: row.authorization_id,
+    schemaVersion: row.schema_version,
+    type: row.authorization_type,
+    caseImportId: row.case_import_id,
+    caseFingerprint: row.case_fingerprint,
+    caseNumber: row.case_number,
+    authorizablePlanHash: row.authorizable_plan_hash,
+    planHash: row.plan_hash,
+    manifestHash: row.manifest_hash,
+    reservationEvidenceHash: row.reservation_evidence_hash,
+    scope: JSON.parse(row.scope),
+    issuer: row.issuer,
+    issuedAt,
+    expiresAt,
+    revoked: row.revoked
+  }))
+  rows.forEach((row, index) => {
+    row.signature = crypto.sign(null, Buffer.from(authorizationPayload(emitterRecords[index])), keys.privateKey).toString("base64")
+  })
+  const pool = mockPool({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    audits: new Map([[REBIND_ID, createAudit()]]),
+    authorizations: new Map(rows.map(row => [row.authorization_id, row]))
+  })
+  const proof = await createSingleCaseRebindResumeVerifier({ pool }).verifyResumeProof(createRequest())
+  const verifier = createAuthorizationVerifier({ trustedIssuers: { "fixture-resume-issuer": keys.publicKey } })
+
+  proof.authorizationRecords.forEach((record, index) => {
+    assert.equal(authorizationPayload(record), authorizationPayload(emitterRecords[index]))
+    assert.equal(verifier.verify(record, { now: verificationNow }).valid, true)
+    assert.equal(
+      authorizationPayload({ ...record, consumedAt: NOW, consumedBy: `rebind:${REBIND_ID}`, operationalStatus: "ACTIVE" }),
+      authorizationPayload(record)
+    )
+    assert.equal(verifier.verify({ ...record, issuedAt: "2026-07-19T11:00:00.124Z" }, { now: verificationNow }).valid, false)
+    assert.equal(verifier.verify({ ...record, proof: Buffer.alloc(64, 2).toString("base64") }, { now: verificationNow }).valid, false)
+  })
+})
+
+test("normalização temporal preserva strings e rejeita datas inválidas", () => {
+  assert.equal(new Date(authorizationInstant("2026-07-19T11:00:00.123Z")).toISOString(), "2026-07-19T11:00:00.123Z")
+  assert.equal(new Date(authorizationInstant("2026-07-19T11:00:00Z")).toISOString(), "2026-07-19T11:00:00.000Z")
+  assert.throws(() => authorizationInstant(new Date(NaN)), /REBIND_RESUME_AUTHORIZATION_RECORD_INVALID/)
+  assert.throws(() => authorizationInstant("data-inválida"), /REBIND_RESUME_AUTHORIZATION_RECORD_INVALID/)
+  assert.throws(() => authorizationInstant(123), /REBIND_RESUME_AUTHORIZATION_RECORD_INVALID/)
 })
