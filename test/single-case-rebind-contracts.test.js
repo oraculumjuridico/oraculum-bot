@@ -974,3 +974,89 @@ describe("Teste 49: caseImportId dos bindings deve coincidir com a requisição"
     )
   })
 })
+
+describe("Teste 50: AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY aceita hashes ausentes e reconciliationEvidenceHash null", () => {
+  it("deve aceitar request sem hashes novos e com evidence null", () => {
+    const request = createRebindRequest({
+      caseImportId: "case-import-synthetic-001",
+      sourceCheckpointVersion: 1,
+      oldAuthorizationIds: validAuthIds,
+      newAuthorizationIds: newAuthIds,
+      reconciliationEvidence: null,
+      reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY",
+      requestedBy: "system-operator-01"
+    })
+
+    assert.equal(request.reason, "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY")
+    assert.equal(request.reconciliationEvidenceHash, null)
+    assert.equal(request.newAuthorizablePlanHash, null)
+    assert.equal(request.newPlanHash, null)
+    assert.equal(request.newManifestHash, null)
+    assert.deepEqual(request.newAuthorizationIds, [...newAuthIds].sort())
+  })
+})
+
+describe("Teste 51: AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita hashes novos", () => {
+  it("deve rejeitar newAuthorizablePlanHash", () => {
+    assert.throws(
+      () => createRebindRequest({
+        caseImportId: "case-import-synthetic-001",
+        sourceCheckpointVersion: 1,
+        oldAuthorizationIds: validAuthIds,
+        newAuthorizationIds: newAuthIds,
+        reconciliationEvidence: null,
+        reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY",
+        requestedBy: "system-operator-01",
+        newAuthorizablePlanHash: "a".repeat(64)
+      }),
+      /REBIND_NEW_HASHES_NOT_ALLOWED_FOR_REASON/
+    )
+  })
+
+  it("deve rejeitar evidence presente", () => {
+    assert.throws(
+      () => createRebindRequest({
+        caseImportId: "case-import-synthetic-001",
+        sourceCheckpointVersion: 1,
+        oldAuthorizationIds: validAuthIds,
+        newAuthorizationIds: newAuthIds,
+        reconciliationEvidence: validReconciliationEvidence,
+        reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY",
+        requestedBy: "system-operator-01"
+      }),
+      /RECONCILIATION_EVIDENCE_NOT_ALLOWED_FOR_REASON/
+    )
+  })
+})
+
+describe("Teste 52: AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita IDs inválidos", () => {
+  it("deve rejeitar count incorreto", () => {
+    assert.throws(
+      () => createRebindRequest({
+        caseImportId: "case-import-synthetic-001",
+        sourceCheckpointVersion: 1,
+        oldAuthorizationIds: validAuthIds,
+        newAuthorizationIds: newAuthIds.slice(0, 1),
+        reconciliationEvidence: null,
+        reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY",
+        requestedBy: "system-operator-01"
+      }),
+      /REBIND_NEW_AUTHORIZATION_IDS_WRONG_COUNT/
+    )
+  })
+
+  it("deve rejeitar IDs duplicados", () => {
+    assert.throws(
+      () => createRebindRequest({
+        caseImportId: "case-import-synthetic-001",
+        sourceCheckpointVersion: 1,
+        oldAuthorizationIds: validAuthIds,
+        newAuthorizationIds: ["auth-id-aaaaaa", "auth-id-aaaaaa"],
+        reconciliationEvidence: null,
+        reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY",
+        requestedBy: "system-operator-01"
+      }),
+      /REBIND_NEW_AUTHORIZATION_IDS_DUPLICATE/
+    )
+  })
+})

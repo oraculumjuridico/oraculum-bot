@@ -40,6 +40,7 @@ function parseArgs(argv = []) {
   const reason = values["--reason"]
   const contactReason = reason === "CONTACT_RECONCILED_AFTER_DIVERGENCE"
   const planReason = reason === "PLAN_REGENERATED_AFTER_SAFE_CORRECTION"
+  const refreshReason = reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY"
 
   // Reconciliation evidence is required only for CONTACT_RECONCILED_AFTER_DIVERGENCE
   const reconciliationEvidenceFlag = "--reconciliation-evidence-file"

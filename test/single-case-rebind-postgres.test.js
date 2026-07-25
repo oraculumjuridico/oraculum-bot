@@ -1367,6 +1367,277 @@ test("rebind com novos hashes atualiza authorizable_plan_hash e payload", async 
   assert.equal(updatedCp.checkpoint_payload.finalProof, null)
 })
 
+// ========== NOVOS TESTES PARA AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY ==========
+
+function createAuthRefreshRebindRequest(overrides = {}) {
+  return createRebindRequest({
+    caseImportId: CASE_IMPORT_ID,
+    sourceCheckpointVersion: 5,
+    oldAuthorizationIds: [OLD_AUTH_1, OLD_AUTH_2],
+    newAuthorizationIds: [NEW_AUTH_1, NEW_AUTH_2],
+    reconciliationEvidence: null,
+    reason: "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY",
+    requestedBy: "rebind-coordinator",
+    ...overrides
+  })
+}
+
+function mockPoolForAuthRefresh(overrides = {}) {
+  return mockPool({
+    leases: new Map([[CASE_IMPORT_ID, createLease()]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ]),
+    ...overrides
+  })
+}
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY happy path com hashes preservados", async () => {
+  const pool = mockPoolForAuthRefresh()
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  const result = await repository.executeRebind(request)
+
+  assert.equal(result.status, "rebound")
+  assert.equal(result.reboundCheckpointVersion, 6)
+  assert.equal(pool.state.committed, true)
+  assert.equal(pool.state.rolledBack, false)
+
+  const updatedCp = pool.state.checkpoints.get(CASE_IMPORT_ID)
+  assert.equal(updatedCp.authorizable_plan_hash, AUTHORIZABLE_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.authorizablePlanHash, AUTHORIZABLE_PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.planHash, PLAN_HASH)
+  assert.equal(updatedCp.checkpoint_payload.manifestHash, MANIFEST_HASH)
+  assert.deepEqual(updatedCp.checkpoint_payload.authorizationIds, [NEW_AUTH_1, NEW_AUTH_2])
+  assert.equal(updatedCp.checkpoint_payload.version, 6)
+  assert.equal(updatedCp.checkpoint_payload.steps.contact.status, "failed")
+  assert.equal(updatedCp.checkpoint_payload.steps.contact.errorCode, "CONTACT_FIELDS_DIVERGENCE")
+  assert.equal(updatedCp.checkpoint_payload.steps.reservation.status, "completed")
+
+  const audit = Array.from(pool.state.audits.values()).find(a => a.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY")
+  assert.ok(audit)
+  assert.equal(audit.reason, "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY")
+  assert.equal(audit.reconciliation_evidence_hash, null)
+  assert.equal(audit.source_checkpoint_version, 5)
+  assert.equal(audit.rebound_checkpoint_version, 6)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se ID antigo ainda válido", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_OLD_PAIR_NOT_CONSUMED/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se novo par expirado", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { expires_at: "2026-07-17T11:00:00.000Z" })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { expires_at: "2026-07-17T11:00:00.000Z" })]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_NEW_PAIR_EXPIRED/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se novo par consumido", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_NEW_PAIR_CONSUMED/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se novo par revogado", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { revoked: true })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_NEW_PAIR_REVOKED/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se binding divergente", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { case_fingerprint: "divergent-fingerprint" })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_NEW_BINDINGS_MISMATCH/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se binding cruzado divergente (plan_hash divergente)", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { plan_hash: "z".repeat(64) })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { plan_hash: "z".repeat(64) })]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_BINDINGS_CROSS_MISMATCH/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se binding cruzado divergente (manifest_hash divergente)", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { manifest_hash: "y".repeat(64) })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { manifest_hash: "y".repeat(64) })]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_BINDINGS_CROSS_MISMATCH/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se evidence presente", () => {
+  assert.throws(
+    () => createAuthRefreshRebindRequest({
+      reconciliationEvidence: {
+        decision: "RECONCILIATION_ELIGIBLE",
+        reason: "CONTACT_READ_ONLY_VERIFIED",
+        contactEvidence: { caseImportId: CASE_IMPORT_ID },
+        namePresentation: { semanticMatch: true, materialDivergence: false },
+        resume: { checkpointRebindRequired: true, ambiguity: "NONE" },
+        evidenceHash: "e".repeat(64)
+      }
+    }),
+    /RECONCILIATION_EVIDENCE_NOT_ALLOWED_FOR_REASON/
+  )
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se versão concorrente", async () => {
+  const pool = mockPoolForAuthRefresh({
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ checkpoint_version: 99 })]])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_CHECKPOINT_UPDATE_FAILED/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se tipo duplicado", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION")],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXPLICIT_APPLY_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_NEW_PAIR_TYPES_INVALID/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY bloqueia se case_number divergente", async () => {
+  const pool = mockPoolForAuthRefresh({
+    authorizations: new Map([
+      [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: `executor:${LEASE_ID}` })],
+      [NEW_AUTH_1, createAuthorization(NEW_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { case_number: "DIVERGENT.CASE.001" })],
+      [NEW_AUTH_2, createAuthorization(NEW_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION")]
+    ])
+  })
+  const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
+  const request = createAuthRefreshRebindRequest()
+
+  await assert.rejects(
+    () => repository.executeRebind(request),
+    /REBIND_NEW_BINDINGS_MISMATCH/
+  )
+  assert.equal(pool.state.committed, false)
+  assert.equal(pool.state.rolledBack, true)
+})
+
 test("caminho antigo sem novos hashes permanece inalterado", async () => {
   const pool = mockPool({
     leases: new Map([[CASE_IMPORT_ID, createLease()]]),

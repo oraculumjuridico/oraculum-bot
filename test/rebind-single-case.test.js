@@ -305,3 +305,46 @@ test("CONTACT_RECONCILED com evidência inválida continua rejeitado", async () 
   const pool = mockPoolWithMigration()
   await assert.rejects(runtime(pool, async () => {}, ["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "CONTACT_RECONCILED_AFTER_DIVERGENCE", "--reconciliation-evidence-file", file, "--new-authorization-ids", JSON.stringify(newAuthorizationIds)]), /RECONCILIATION_EVIDENCE_NOT_ELIGIBLE/)
 })
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY aceita IDs novos sem evidência nem hashes", async () => {
+  const pool = mockPoolWithMigration()
+  const cliArgs = ["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(newAuthorizationIds)]
+  const result = await runtime(pool, async request => {
+    assert.equal(request.reason, "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY")
+    assert.equal(request.reconciliationEvidenceHash, null)
+    assert.equal(request.newAuthorizablePlanHash, null)
+    assert.equal(request.newPlanHash, null)
+    assert.equal(request.newManifestHash, null)
+    assert.deepEqual(request.newAuthorizationIds, [...newAuthorizationIds].sort())
+    return { rebindId: "r".repeat(64), status: "rebound", sourceCheckpointVersion: 1, reboundCheckpointVersion: 2 }
+  }, cliArgs)
+  assert.equal(result.status, "rebound")
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita evidence file", () => {
+  const cliArgs = ["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--reconciliation-evidence-file", "x.json", "--new-authorization-ids", JSON.stringify(newAuthorizationIds)]
+  assert.throws(() => parseArgs(cliArgs), /RECONCILIATION_EVIDENCE_FILE_NOT_ALLOWED_FOR_REASON/)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita new-authorizable-plan-hash", () => {
+  const cliArgs = ["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(newAuthorizationIds), "--new-authorizable-plan-hash", "a".repeat(64)]
+  assert.throws(() => parseArgs(cliArgs), /NEW_HASHES_NOT_ALLOWED_FOR_REASON/)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita new-plan-hash", () => {
+  const cliArgs = ["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(newAuthorizationIds), "--new-plan-hash", "a".repeat(64)]
+  assert.throws(() => parseArgs(cliArgs), /NEW_HASHES_NOT_ALLOWED_FOR_REASON/)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita new-manifest-hash", () => {
+  const cliArgs = ["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(newAuthorizationIds), "--new-manifest-hash", "a".repeat(64)]
+  assert.throws(() => parseArgs(cliArgs), /NEW_HASHES_NOT_ALLOWED_FOR_REASON/)
+})
+
+test("AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY rejeita IDs inválidos", () => {
+  const validShortId = "auth-id-aaaaaa"
+  assert.throws(() => parseArgs(["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(newAuthorizationIds.slice(0, 1))]), /REBIND_NEW_AUTHORIZATION_IDS_WRONG_COUNT/)
+  assert.throws(() => parseArgs(["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify([...newAuthorizationIds, newAuthorizationIds[0]])]), /REBIND_NEW_AUTHORIZATION_IDS_WRONG_COUNT/)
+  assert.throws(() => parseArgs(["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(["auth-id-aaaaaa", "auth-id-aaaaaa"])]), /REBIND_NEW_AUTHORIZATION_IDS_DUPLICATE/)
+  assert.throws(() => parseArgs(["--case-import-id", caseImportId, "--requested-by", "operator-01", "--reason", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY", "--new-authorization-ids", JSON.stringify(["short", "ok"])]), /REBIND_NEW_AUTHORIZATION_IDS_INVALID_FORMAT/)
+})

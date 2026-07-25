@@ -648,3 +648,39 @@ test("após no-op de contato, negócio pode ser criado", async () => {
   assert.equal(system.counts["contact.create"], undefined)
   assert.equal(system.counts["deal.create"], 1)
 })
+
+test("novo par emitido é utilizável no apply após rebind simulado", async () => {
+  const records = authorizationRecords(fixture())
+  const newAuths = [
+    signAuthorization({ ...records[0], authorizationId: "rebind-auth-1" }),
+    signAuthorization({ ...records[1], authorizationId: "rebind-auth-2" })
+  ]
+  const system = fakeSystem(fixture(), { records: newAuths, checkpoint: {
+    schemaVersion: 2,
+    caseImportId: fixture().caseImportId,
+    caseFingerprint: fixture().caseFingerprint,
+    caseNumber: fixture().dealPlan.caseNumber,
+    authorizablePlanHash: authorizablePlanHash(fixture()),
+    authorizationIds: newAuths.map(a => a.authorizationId),
+    status: "pending",
+    version: 2,
+    steps: {
+      reservation: { status: "pending", result: null },
+      contact: { status: "pending", errorCode: null },
+      deal: { status: "pending", errorCode: null },
+      association: { status: "pending", errorCode: null },
+      area_folder: { status: "pending", errorCode: null },
+      case_folder: { status: "pending", errorCode: null },
+      uploads: { status: "pending", errorCode: null },
+      final_verify: { status: "pending", errorCode: null }
+    },
+    resources: { contactId: null, dealId: null, associationId: null, areaFolderId: null, caseFolderId: null },
+    uploads: {},
+    finalProof: null
+  }})
+  system.state.contacts.push({ id: "contact-existing", properties: clone(fixture().contactPlan.properties), caseImportId: fixture().caseImportId })
+
+  const result = await run(system)
+
+  assert.equal(result.completed, true)
+})

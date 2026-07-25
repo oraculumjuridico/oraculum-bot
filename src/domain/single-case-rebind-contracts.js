@@ -3,15 +3,16 @@
 const { canonicalize, sha256, deepClone, deepFreeze } = require("./single-case-apply-contracts")
 
 const REBIND_SCHEMA_VERSION = 1
-const ALLOWED_REBIND_REASONS = Object.freeze(["CONTACT_RECONCILED_AFTER_DIVERGENCE", "PLAN_REGENERATED_AFTER_SAFE_CORRECTION"])
+const ALLOWED_REBIND_REASONS = Object.freeze(["CONTACT_RECONCILED_AFTER_DIVERGENCE", "PLAN_REGENERATED_AFTER_SAFE_CORRECTION", "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY"])
 const REBIND_REASONS_REQUIRING_NEW_HASHES = new Set(["PLAN_REGENERATED_AFTER_SAFE_CORRECTION"])
+const REBIND_REASONS_REQUIRING_RECONCILIATION_EVIDENCE = new Set(["CONTACT_RECONCILED_AFTER_DIVERGENCE"])
 const AUTHORIZATION_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/
 const REQUESTED_BY_PATTERN = /^[A-Za-z][A-Za-z0-9._:-]{2,63}$/
 const HASH_PATTERN = /^[a-f0-9]{64}$/
 const CASE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
 const CASE_FINGERPRINT_PATTERN = /^[a-f0-9]{12}$/
 const CASE_NUMBER_PATTERN = /^[A-Z]{2,4}\.[0-9]{6}\.[0-9]{3}$/
-const REBIND_ELIGIBLE_CONTACT_FAILURE_CODES = new Set(["CONTACT_FIELDS_DIVERGENCE", "VERIFICATION_FAILED"])
+const REBIND_ELIGIBLE_CONTACT_FAILURE_CODES = new Set(["CONTACT_FIELDS_DIVERGENCE", "VERIFICATION_FAILED", "AUTH_EXPIRED", "AUTH_REVOKED", "AUTH_BINDING_INVALID"])
 
 function fail(code) {
   throw new Error(code)
@@ -69,6 +70,11 @@ function validateRequestedBy(requestedBy) {
 
 function validateReconciliationEvidence(evidence, request) {
   if (request.reason === "PLAN_REGENERATED_AFTER_SAFE_CORRECTION") {
+    return true
+  }
+
+  if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY") {
+    if (evidence !== null && evidence !== undefined) fail("RECONCILIATION_EVIDENCE_NOT_ALLOWED_FOR_REASON")
     return true
   }
 
