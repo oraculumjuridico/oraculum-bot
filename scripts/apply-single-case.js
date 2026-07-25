@@ -163,7 +163,11 @@ async function main({ argv = process.argv.slice(2), env = process.env, executor,
   const args = parseArgs(argv)
   const config = await readAndValidateRuntimeConfig(env)
   validateP1Target(args.caseImportId, config)
-  const executionArgs = { caseImportId: args.caseImportId, ...(args.resumeMode === undefined ? {} : { resumeMode: args.resumeMode }) }
+  const executionArgs = {
+    caseImportId: args.caseImportId,
+    executionScope: args.executionScope,
+    ...(args.resumeMode === undefined ? {} : { resumeMode: args.resumeMode }),
+  }
   if (typeof executor === "function") return executor(executionArgs)
   if (typeof runtimeFactory !== "function") throw new Error("REAL_SINGLE_CASE_APPLY_NOT_CONFIGURED")
   const runtime = await runtimeFactory({ env, config, ...executionArgs })

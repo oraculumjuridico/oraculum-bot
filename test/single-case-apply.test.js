@@ -341,6 +341,84 @@ test("CLI aceita escopo operacional explícito e preserva FULL por padrão", () 
 test("CLI real falha fechado quando configuração está ausente", async () => await assert.rejects(() => cli.main({ argv: ["--case-import-id", fixture().caseImportId], env: {} }), /POSTGRES_MODE_REQUIRED/))
 
 
+test("CLI encaminha executionScope validado sem alteração ao runtime oficial", async () => {
+  const plan = fixture()
+  const publicKeyPem = keys.publicKey.export({ type: "spki", format: "pem" }).toString()
+  const env = {
+    CASE_NUMBER_RESERVATION_MODE: "postgres",
+    EXTERNAL_STATE_DATABASE_URL: "postgres://fixture.invalid/db",
+    HUBSPOT_TOKEN: "fixture-token",
+    GOOGLE_DRIVE_CLIENT_ID: "fixture-client",
+    GOOGLE_DRIVE_CLIENT_SECRET: "fixture-secret",
+    GOOGLE_DRIVE_REFRESH_TOKEN: "fixture-refresh",
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: "fixture-drive-root",
+    SINGLE_CASE_CONTENT_ROOT: __dirname,
+    SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON: JSON.stringify([
+      { issuer: "fixture-authority", algorithm: "Ed25519", publicKeyPem },
+    ]),
+    SINGLE_CASE_P1_CASE_IMPORT_ID: plan.caseImportId,
+  }
+  for (const executionScope of ["HUBSPOT_ONLY", "DRIVE_CONTINUATION", "FULL"]) {
+    let received
+    let executeCalls = 0
+    let closeCalls = 0
+    const runtimeFactory = async options => {
+      received = options
+      return {
+        execute: async () => { executeCalls += 1; return { executionScope } },
+        close: async () => { closeCalls += 1 },
+      }
+    }
+    const result = await cli.main({
+      argv: ["--case-import-id", plan.caseImportId, "--execution-scope", executionScope],
+      env,
+      runtimeFactory,
+    })
+    assert.equal(received.executionScope, executionScope)
+    assert.notEqual(received.executionScope, undefined)
+    assert.equal(result.executionScope, executionScope)
+    assert.equal(executeCalls, 1)
+    assert.equal(closeCalls, 1)
+  }
+})
+
+test("CLI sem executionScope encaminha FULL e escopo inválido não cria runtime", async () => {
+  const plan = fixture()
+  const publicKeyPem = keys.publicKey.export({ type: "spki", format: "pem" }).toString()
+  const env = {
+    CASE_NUMBER_RESERVATION_MODE: "postgres",
+    EXTERNAL_STATE_DATABASE_URL: "postgres://fixture.invalid/db",
+    HUBSPOT_TOKEN: "fixture-token",
+    GOOGLE_DRIVE_CLIENT_ID: "fixture-client",
+    GOOGLE_DRIVE_CLIENT_SECRET: "fixture-secret",
+    GOOGLE_DRIVE_REFRESH_TOKEN: "fixture-refresh",
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: "fixture-drive-root",
+    SINGLE_CASE_CONTENT_ROOT: __dirname,
+    SINGLE_CASE_APPLY_TRUSTED_PUBLIC_KEYS_JSON: JSON.stringify([
+      { issuer: "fixture-authority", algorithm: "Ed25519", publicKeyPem },
+    ]),
+    SINGLE_CASE_P1_CASE_IMPORT_ID: plan.caseImportId,
+  }
+  let received
+  let factoryCalls = 0
+  const runtimeFactory = async options => {
+    factoryCalls += 1
+    received = options
+    return { execute: async () => true, close: async () => {} }
+  }
+  await cli.main({ argv: ["--case-import-id", plan.caseImportId], env, runtimeFactory })
+  assert.equal(received.executionScope, "FULL")
+  await assert.rejects(
+    () => cli.main({
+      argv: ["--case-import-id", plan.caseImportId, "--execution-scope", "INVALID"],
+      env,
+      runtimeFactory,
+    }),
+    /EXECUTION_SCOPE_INVALID/
+  )
+  assert.equal(factoryCalls, 1)
+})
+
 // REBIND mode tests
 test("resumeMode inválido bloqueia", async () => {
   const plan = fixture(), system = fakeSystem(plan)
