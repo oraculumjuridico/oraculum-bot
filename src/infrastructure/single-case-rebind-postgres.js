@@ -1,6 +1,6 @@
 ﻿"use strict"
 
-const { deepClone, deepFreeze } = require("../domain/single-case-apply-contracts")
+const { deepClone, deepFreeze, MINIMUM_REMAINING_TTL_MS } = require("../domain/single-case-apply-contracts")
 const { validateCheckpoint } = require("../domain/single-case-apply")
 const {
   HASH_PATTERN,
@@ -221,6 +221,7 @@ const LEGITIMATE_ERROR_CODES = new Set([
   "REBIND_NEW_PAIR_CONSUMED",
   "REBIND_NEW_PAIR_REVOKED",
   "REBIND_NEW_PAIR_EXPIRED",
+  "REBIND_NEW_PAIR_INSUFFICIENT_REMAINING_TTL",
   "REBIND_NEW_PAIR_TYPES_INVALID",
   "REBIND_NEW_BINDINGS_MISMATCH",
   "REBIND_NEW_BINDINGS_INTERNAL_MISMATCH",
@@ -582,6 +583,8 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
           if (auth.revoked) fail("REBIND_NEW_PAIR_REVOKED")
           // ValidaÃ§Ã£o prÃ©via de expiraÃ§Ã£o usando data da aplicaÃ§Ã£o
           if (Date.parse(auth.expires_at) <= Date.parse(at)) fail("REBIND_NEW_PAIR_EXPIRED")
+          // Validar tempo restante suficiente para conclusÃ£o do apply
+          if (Date.parse(auth.expires_at) - Date.parse(at) < MINIMUM_REMAINING_TTL_MS) fail("REBIND_NEW_PAIR_INSUFFICIENT_REMAINING_TTL")
         }
 
         // Validar tipos do novo par

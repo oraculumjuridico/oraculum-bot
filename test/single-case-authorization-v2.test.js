@@ -3,7 +3,7 @@
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const crypto = require("node:crypto")
-const { AUTHORIZATION_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTH_SCOPES, authorizationPayload, createAuthorizationVerifier, reservationEvidenceHash, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
+const { AUTHORIZATION_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTH_SCOPES, MINIMUM_REMAINING_TTL_MS, authorizationPayload, createAuthorizationVerifier, reservationEvidenceHash, validateAuthorizations } = require("../src/domain/single-case-apply-contracts")
 const { createSingleCaseAuthorizationSigner } = require("../src/domain/single-case-authorization-signer")
 
 const NOW = "2026-07-15T12:00:00.000Z", keys = crypto.generateKeyPairSync("ed25519"), issuer = "fixture-v2-authority"
@@ -29,3 +29,7 @@ test("três hashes não possuem fallback",()=>{for(const key of ["authorizablePl
 test("bindings divergentes são rejeitados",()=>{const records=[signer().sign(base()),signer().sign(base("EXTERNAL_WRITES_AUTHORIZATION"))];for(const key of ["planHash","manifestHash","reservationEvidenceHash"]){assert.throws(()=>validateAuthorizations(records,{...expected,[key]:"f".repeat(64)},verifier,NOW),/AUTH_BINDING_INVALID/)}})
 test("evidência de reserva é canônica e estrita",()=>{const a={verified:true,evidenceId:"reservation-fixture",caseImportId:"fixture-v2-case",caseNumber:"PRV.260715.707"};assert.equal(reservationEvidenceHash(a),reservationEvidenceHash({caseNumber:a.caseNumber,caseImportId:a.caseImportId,evidenceId:a.evidenceId,verified:true}));assert.throws(()=>reservationEvidenceHash({...a,evidenceId:null}),/RESERVATION_EVIDENCE_INVALID/)})
 test("payload v2 contém hashes distintos e escopo ordenado",()=>{const value=authorizationPayload(base());assert.match(value,/authorizablePlanHash/);assert.match(value,/planHash/);assert.match(value,/manifestHash/);assert.match(value,/reservationEvidenceHash/)})
+test("assinatura dummy é rejeitada",()=>{const record=signer().sign(base());assert.equal(verifier.verify({...record,proof:Buffer.from("dummy").toString("base64")},{now:NOW}).reason,"AUTH_PROOF_INVALID")})
+test("prova malformada retorna AUTH_PROOF_INVALID",()=>{const record=signer().sign(base());assert.equal(verifier.verify({...record,proof:"not-valid-base64!!!"},{now:NOW}).reason,"AUTH_PROOF_INVALID")})
+test("assinatura com comprimento Ed25519 inválido é rejeitada",()=>{const record=signer().sign(base());assert.equal(verifier.verify({...record,proof:"YWJj"},{now:NOW}).reason,"AUTH_PROOF_INVALID")})
+test("tempo restante insuficiente bloqueia emissão",()=>assert.throws(()=>signer().sign({...base(),issuedAt:NOW,expiresAt:new Date(Date.parse(NOW)+MINIMUM_REMAINING_TTL_MS-1).toISOString()}),/AUTH_INSUFFICIENT_REMAINING_TTL/))

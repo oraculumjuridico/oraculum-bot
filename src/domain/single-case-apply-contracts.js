@@ -8,6 +8,7 @@ const AUTHORIZATION_SCHEMA_VERSION = 2
 const CHECKPOINT_SCHEMA_VERSION = 2
 const MAX_AUTHORIZATION_TTL_MS = 30 * 60 * 1000
 const AUTHORIZATION_CLOCK_SKEW_MS = 30000
+const MINIMUM_REMAINING_TTL_MS = 5 * 60 * 1000
 const AUTH_SCOPES = Object.freeze({
   EXPLICIT_APPLY_AUTHORIZATION: Object.freeze(["APPLY_SINGLE_CASE"]),
   EXTERNAL_WRITES_AUTHORIZATION: Object.freeze(["HUBSPOT_CONTACT", "HUBSPOT_DEAL", "HUBSPOT_ASSOCIATION", "DRIVE_FOLDERS", "DRIVE_UPLOADS", "CHECKPOINT_WRITE"])
@@ -148,6 +149,7 @@ function validateAuthorizationDates(record, now, clockSkewMs = AUTHORIZATION_CLO
   if (expires - issued > MAX_AUTHORIZATION_TTL_MS) return "AUTH_TTL_EXCEEDED"
   if (issued > current + clockSkewMs) return "AUTH_ISSUED_IN_FUTURE"
   if (expires <= current) return "AUTH_EXPIRED"
+  if (expires - current < MINIMUM_REMAINING_TTL_MS) return "AUTH_INSUFFICIENT_REMAINING_TTL"
   return null
 }
 
@@ -161,8 +163,15 @@ function createAuthorizationVerifier({ trustedIssuers, clockSkewMs = AUTHORIZATI
       if (!key) return { valid: false, reason: "AUTH_ISSUER_UNKNOWN" }
       const dateError = validateAuthorizationDates(record, now, clockSkewMs)
       if (dateError) return { valid: false, reason: dateError }
+      let decodedProof
+      try {
+        const proof = record.proof || ""
+        if (!/^[A-Za-z0-9+/]+=*$/.test(proof)) return { valid: false, reason: "AUTH_PROOF_INVALID" }
+        decodedProof = Buffer.from(proof, "base64")
+        if (decodedProof.length !== 64) return { valid: false, reason: "AUTH_PROOF_INVALID" }
+      } catch { return { valid: false, reason: "AUTH_PROOF_INVALID" } }
       let signatureValid = false
-      try { signatureValid = crypto.verify(null, Buffer.from(authorizationPayload(record)), key, Buffer.from(record.proof || "", "base64")) } catch {}
+      try { signatureValid = crypto.verify(null, Buffer.from(authorizationPayload(record)), key, decodedProof) } catch {}
       return signatureValid ? { valid: true } : { valid: false, reason: "AUTH_PROOF_INVALID" }
     }
   })
@@ -187,4 +196,4 @@ function validateAuthorizations(records, expected, verifier, now) {
   return validated
 }
 
-module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, canonicalize, sha256, deepClone, deepFreeze, contactVerificationProjection, contactVerificationHash, validateContactVerificationEvidence, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }
+module.exports = { AUTHORIZABLE_SCHEMA_VERSION, AUTHORIZATION_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION, MAX_AUTHORIZATION_TTL_MS, AUTHORIZATION_CLOCK_SKEW_MS, MINIMUM_REMAINING_TTL_MS, AUTH_SCOPES, REQUIRED_AUTHORIZATION_SCOPES, canonicalize, sha256, deepClone, deepFreeze, contactVerificationProjection, contactVerificationHash, validateContactVerificationEvidence, groupDocuments, authorizableProjection, authorizablePlanHash, exactScope, reservationEvidenceProjection, reservationEvidenceHash, authorizationPayload, validateAuthorizationShape, validateAuthorizationDates, createAuthorizationVerifier, validateAuthorizations }
