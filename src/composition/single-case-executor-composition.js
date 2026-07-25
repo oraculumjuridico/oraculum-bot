@@ -1,6 +1,7 @@
 "use strict"
 
 const { createSingleCaseApplyExecutor, REQUIRED_METHODS } = require("../domain/single-case-apply")
+const { EXECUTION_SCOPE_NAMES, authorizationScopesForExecution } = require("../domain/single-case-apply-contracts")
 const HASH = /^[a-f0-9]{64}$/
 
 const DEFAULT_OWNER_ID = "single-case-real-composition"
@@ -80,11 +81,14 @@ function createSingleCaseExecutorComposition({
     if (args.resumeMode !== undefined && args.resumeMode !== "REBIND") {
       throw new Error("RESUME_MODE_INVALID")
     }
+    const executionScope = args.executionScope === undefined ? EXECUTION_SCOPE_NAMES.FULL : args.executionScope
+    authorizationScopesForExecution(executionScope)
     // Call the executor with bound adapters
     return executor({
       caseImportId: args.caseImportId,
       planHash: args.planHash,
       manifestHash: args.manifestHash,
+      executionScope,
       resumeMode: args.resumeMode,
       adapters,
       authorizationVerifier,

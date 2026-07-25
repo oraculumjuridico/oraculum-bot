@@ -4,7 +4,7 @@ const test = require("node:test")
 const assert = require("node:assert/strict")
 const { createSingleCaseExecutorComposition } = require("../src/composition/single-case-executor-composition")
 const { REQUIRED_METHODS } = require("../src/domain/single-case-apply")
-const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256, contactVerificationHash } = require("../src/domain/single-case-apply-contracts")
+const { AUTH_SCOPES, AUTHORIZATION_SCHEMA_VERSION, EXECUTION_SCOPE_NAMES, authorizationScopesForExecution, authorizablePlanHash, reservationEvidenceHash, canonicalize, sha256, contactVerificationHash } = require("../src/domain/single-case-apply-contracts")
 const { caseFingerprintFor } = require("../src/domain/single-case-target")
 
 const NOW = "2026-07-15T12:00:00.000Z"
@@ -36,10 +36,12 @@ function plan(overrides = {}) {
   return Object.assign(value, overrides)
 }
 
-function authorizations(value) {
+function authorizations(value, executionScope = EXECUTION_SCOPE_NAMES.FULL) {
   const hash = authorizablePlanHash(value)
-  return Object.entries(AUTH_SCOPES).map(([type, scope], index) => ({
-    authorizationId: `fixture-composition-auth-${index + 1}`,
+  const scopes = authorizationScopesForExecution(executionScope)
+  const marker = executionScope === EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY ? ".s-H." : executionScope === EXECUTION_SCOPE_NAMES.DRIVE_CONTINUATION ? ".s-D." : "."
+  return Object.entries(AUTH_SCOPES).map(([type], index) => ({
+    authorizationId: `fixture-composition${marker}auth-${index + 1}`,
     schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
     type,
     caseImportId: value.caseImportId,
@@ -49,7 +51,7 @@ function authorizations(value) {
     planHash: PLAN_HASH,
     manifestHash: MANIFEST_HASH,
     reservationEvidenceHash: reservationEvidenceHash({ verified: true, caseImportId: value.caseImportId, caseNumber: value.dealPlan.caseNumber, evidenceId: "fixture-reservation-proof" }),
-    scope: [...scope],
+    scope: [...scopes[type]],
     issuer: "fixture-authority",
     issuedAt: "2026-07-15T11:45:00.000Z",
     expiresAt: "2026-07-15T12:15:00.000Z",
@@ -135,6 +137,24 @@ test("bloqueia agrupador HubSpot ausente", () => { const item = system(); delete
 test("bloqueia clock inválido", () => { const item = system(); item.dependencies.clock = null; assert.throws(() => compose(item), /CLOCK_INVALID/) })
 test("bloqueia verificador ausente", () => { const item = system(); delete item.dependencies.authorizationVerifier; assert.throws(() => compose(item), /AUTHORIZATION_VERIFIER_MISSING/) })
 test("bloqueia argumentos operacionais inválidos", async () => { const executor = compose(system()); await assert.rejects(() => executor(), /EXECUTOR_ARGS_INVALID/); await assert.rejects(() => executor({}), /CASE_IMPORT_ID_INVALID/); await assert.rejects(() => executor({caseImportId:"fixture-composition-case"}), /PLAN_HASH_INVALID/); await assert.rejects(() => executor({caseImportId:"fixture-composition-case",planHash:PLAN_HASH}), /MANIFEST_HASH_INVALID/) })
+test("encaminha HUBSPOT_ONLY sem ampliar escopo e sem alcançar Drive", async () => {
+  const value = plan()
+  const item = system({ plan: value, records: authorizations(value, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY) })
+  const outcome = await compose(item)({ caseImportId: value.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, executionScope: EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY })
+  assert.equal(outcome.completed, false)
+  assert.equal(outcome.executionOutcome, "continuation_required")
+  assert.equal(outcome.completedBoundary, "association")
+  assert.equal(outcome.decision.executionScope, EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY)
+  assert.equal(item.state.calls["drive.findAreaFolders"], undefined)
+})
+test("rejeita executionScope inválido antes de adquirir lease", async () => {
+  const item = system()
+  await assert.rejects(
+    () => compose(item)({ caseImportId: item.value.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, executionScope: "INVALID" }),
+    /EXECUTION_SCOPE_INVALID/
+  )
+  assert.equal(item.state.lease, null)
+})
 test("CLI real falha fechado sem configuraÃ§Ã£o", async () => { const cli = require("../scripts/apply-single-case"); await assert.rejects(() => cli.main({ argv: ["--case-import-id", "fixture-composition-case"], env: {} }), /POSTGRES_MODE_REQUIRED/) })
 
 test("reutiliza contato, negócio e associação existentes", async () => { const value = plan(); const item = system({ contact: { id: "contact-existing", properties: clone(value.contactPlan.properties), caseImportId: value.caseImportId }, deal: { id: "deal-existing", properties: clone(value.dealPlan.properties) }, association: { id: "association-existing", contactId: "contact-existing", dealId: "deal-existing", type: value.associationPlan.type } }); await execute(item); assert.equal(item.state.calls["contacts.create"], undefined); assert.equal(item.state.calls["deals.create"], undefined); assert.equal(item.state.calls["associations.create"], undefined) })
