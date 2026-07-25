@@ -120,6 +120,13 @@ function validateCheckpointEligibility(checkpoint, request) {
     checkpoint.status === "running" &&
     [reservation, contact, deal, association].every(step => step?.status === "completed") &&
     [area_folder, case_folder, uploads, final_verify].every(step => step?.status === "pending")
+  const hubspotRecoveryBoundary = request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY" &&
+    checkpoint.status === "failed" &&
+    reservation?.status === "completed" &&
+    contact?.status === "completed" &&
+    ["pending", "failed"].includes(deal?.status) &&
+    association?.status === "pending" &&
+    [area_folder, case_folder, uploads, final_verify].every(step => step?.status === "pending")
 
   // Validar status global. O único estado running elegível é a fronteira
   // oficial HubSpot concluído -> Drive pendente.
@@ -128,6 +135,8 @@ function validateCheckpointEligibility(checkpoint, request) {
   if (!reservation || reservation.status !== "completed") fail("CHECKPOINT_RESERVATION_NOT_COMPLETED")
   if (driveContinuationBoundary) {
     if (!contact?.result || !deal?.result || !association?.result) fail("CHECKPOINT_CONTINUATION_RESULT_MISSING")
+  } else if (hubspotRecoveryBoundary) {
+    if (!contact?.result || deal?.result || association?.result) fail("CHECKPOINT_CONTINUATION_RESULT_MISSING")
   } else if (request.reason === "AUTHORIZATION_PAIR_REFRESHED_AFTER_EXPIRY" ||
              request.reason === "PLAN_REGENERATED_AFTER_SAFE_CORRECTION") {
     if (!contact || !["pending", "failed"].includes(contact.status)) fail("CHECKPOINT_CONTACT_NOT_ELIGIBLE")
@@ -137,7 +146,7 @@ function validateCheckpointEligibility(checkpoint, request) {
     if (contact.result !== undefined) fail("CHECKPOINT_CONTACT_RESULT_PRESENT")
   }
 
-  if (!driveContinuationBoundary && (!deal || deal.status !== "pending")) fail("CHECKPOINT_DEAL_NOT_PENDING")
+  if (!driveContinuationBoundary && !hubspotRecoveryBoundary && (!deal || deal.status !== "pending")) fail("CHECKPOINT_DEAL_NOT_PENDING")
   if (!driveContinuationBoundary && (!association || association.status !== "pending")) fail("CHECKPOINT_ASSOCIATION_NOT_PENDING")
   if (!area_folder || area_folder.status !== "pending") fail("CHECKPOINT_AREA_FOLDER_NOT_PENDING")
   if (!case_folder || case_folder.status !== "pending") fail("CHECKPOINT_CASE_FOLDER_NOT_PENDING")
@@ -148,6 +157,8 @@ function validateCheckpointEligibility(checkpoint, request) {
   if (!checkpoint.resources || typeof checkpoint.resources !== "object") fail("CHECKPOINT_RESOURCES_MISSING")
   if (driveContinuationBoundary) {
     for (const name of ["contactId", "dealId", "associationId"]) if (!CASE_IMPORT_ID_PATTERN.test(checkpoint.resources[name] || "")) fail("CHECKPOINT_CONTINUATION_RESOURCE_MISSING")
+  } else if (hubspotRecoveryBoundary) {
+    if (!CASE_IMPORT_ID_PATTERN.test(checkpoint.resources.contactId || "") || checkpoint.resources.dealId !== null || checkpoint.resources.associationId !== null) fail("CHECKPOINT_CONTINUATION_RESOURCE_MISSING")
   } else {
     if (checkpoint.resources.contactId !== null) fail("CHECKPOINT_CONTACT_ID_PRESENT")
     if (checkpoint.resources.dealId !== null) fail("CHECKPOINT_DEAL_ID_PRESENT")
