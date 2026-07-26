@@ -22,7 +22,7 @@ const analysis = {
 }
 
 const model = canonicalCaseFromAnalysis({ analysis, caseNumber: "PRV.260725.001" })
-assert.equal(model.title, "🟢 PRV.260725.001")
+assert.equal(model.title, "🟢 PRV.260725.001 - BPC LOAS")
 assert.equal(model.identifiers.abbreviation, "PRV")
 assert.equal(model.review.humanReviewApplied, true)
 assert.equal(model.documents.pending.length, 1)

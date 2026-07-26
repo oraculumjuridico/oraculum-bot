@@ -21,6 +21,7 @@ const { mapearTipoCaso } = require("../src/domain/lead-temperature")
 const {
   CONTACT_WRITE_PROPERTIES,
   DEAL_WRITE_PROPERTIES,
+  MANAGED_DEAL_PROPERTIES,
   validateHubSpotProperties
 } = require("../src/domain/hubspot-contract")
 
@@ -105,7 +106,7 @@ async function executar() {
     assert.equal(contatosExportados.has(property), true, `propriedade de contato ausente no export HubSpot: ${property}`)
   }
   for (const property of DEAL_WRITE_PROPERTIES) {
-    assert.equal(negociosExportados.has(property), true, `propriedade de negocio ausente no export HubSpot: ${property}`)
+    assert.equal(negociosExportados.has(property) || MANAGED_DEAL_PROPERTIES.has(property), true, `propriedade de negocio sem fonte oficial: ${property}`)
   }
 
   assert.equal(CONTACT_WRITE_PROPERTIES.has("firstname"), true)

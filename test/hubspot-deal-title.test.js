@@ -72,12 +72,32 @@ function main() {
   )
 
   assert.equal(
-    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260714.707" }),
-    "🟢 PRV.260714.707"
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260714.707", tipo_de_caso: "inss_incapacidade" }),
+    "🟢 PRV.260714.707 - Benefício por Incapacidade"
   )
   assert.equal(
     montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260714.707" }).includes("Prv-PRV"),
     false
+  )
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260725.427", tipo_de_caso: "inss_bpc" }),
+    "🟢 PRV.260725.427 - BPC LOAS"
+  )
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260725.428", tipo_de_caso: "inss_bpc", subtipo: "bpc_idoso" }),
+    "🟢 PRV.260725.428 - BPC LOAS Idoso"
+  )
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260725.429", tipo_de_caso: "inss_bpc", subtipo: "bpc_deficiencia" }),
+    "🟢 PRV.260725.429 - BPC LOAS Deficiência"
+  )
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260725.430", tipo_de_caso: "inss_incapacidade", subtipo: "incapacidade_temporaria" }),
+    "🟢 PRV.260725.430 - Auxílio por Incapacidade Temporária"
+  )
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260725.431", tipo_de_caso: "inss_incapacidade", subtipo: "incapacidade_permanente" }),
+    "🟢 PRV.260725.431 - Aposentadoria por Incapacidade Permanente"
   )
 
   console.log("hubspot-deal-title.test.js ok")

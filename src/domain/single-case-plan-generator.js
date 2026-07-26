@@ -96,7 +96,9 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
     ...mergeNonEmpty(plan.dealPlan.properties, hubspot.deal),
     dealname: montarTituloNegocioHubSpot({
       area: plan.dealPlan.properties.area_juridica,
-      numeroCaso: plan.dealPlan.caseNumber
+      numeroCaso: plan.dealPlan.caseNumber,
+      tipo_de_caso: plan.dealPlan.properties.tipo_de_caso,
+      subtipo: plan.dealPlan.properties.oraculum_case_subtype
     })
   }
   plan.canonicalCase = canonicalCase

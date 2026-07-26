@@ -67,7 +67,9 @@ function canonicalCaseFromAnalysis({ analysis, selection, caseNumber, provenance
   model.title = montarTituloNegocioHubSpot({
     area,
     numeroCaso: internalCaseNumber,
-    temperatura: model.legal.temperature
+    temperatura: model.legal.temperature,
+    tipo_de_caso: model.legal.type,
+    subtipo: model.legal.subtype
   })
   return model
 }
@@ -86,9 +88,16 @@ function canonicalCaseToHubSpot(model = {}) {
     numero_de_caso: model.identifiers?.internalCaseNumber,
     area_juridica: model.legal?.area,
     tipo_de_caso: model.legal?.type,
+    oraculum_case_subtype: model.legal?.subtype,
     temperatura_lead: model.legal?.temperature,
     pasta_drive: model.source?.folderReference,
-    resumo_cliente: model.documents?.summary
+    resumo_cliente: model.documents?.summary,
+    oraculum_case_import_id: model.caseImportId,
+    oraculum_document_status: model.documents?.pending?.length ? "pending_review" : "analyzed",
+    oraculum_documents_received: model.documents?.found?.map(item => item.categoria || item.category).filter(Boolean).join("; "),
+    oraculum_documents_pending: model.documents?.pending?.join("; "),
+    oraculum_review_required: Boolean(model.review?.required || model.review?.reasons?.length),
+    oraculum_analysis_status: model.review?.required ? "review_required" : "analyzed"
   })
   return { contact, deal }
 }

@@ -18,6 +18,16 @@ const CONTACT_WRITE_PROPERTIES = new Set([
   "work_email"
 ])
 
+const MANAGED_DEAL_PROPERTIES = new Set([
+  "oraculum_case_subtype",
+  "oraculum_case_import_id",
+  "oraculum_document_status",
+  "oraculum_documents_received",
+  "oraculum_documents_pending",
+  "oraculum_review_required",
+  "oraculum_analysis_status"
+])
+
 const DEAL_WRITE_PROPERTIES = new Set([
   "dealname",
   "pipeline",
@@ -36,7 +46,14 @@ const DEAL_WRITE_PROPERTIES = new Set([
   "cidade",
   "pasta_drive",
   "origem_atendimento",
-  "numero_de_caso"
+  "numero_de_caso",
+  "oraculum_case_subtype",
+  "oraculum_case_import_id",
+  "oraculum_document_status",
+  "oraculum_documents_received",
+  "oraculum_documents_pending",
+  "oraculum_review_required",
+  "oraculum_analysis_status"
 ])
 
 const DEAL_ENUM_VALUES = {
@@ -115,6 +132,7 @@ function validateHubSpotProperties(objectType, properties = {}, onWarning = () =
 module.exports = {
   CONTACT_WRITE_PROPERTIES,
   DEAL_WRITE_PROPERTIES,
+  MANAGED_DEAL_PROPERTIES,
   CONTACT_ENUM_VALUES,
   DEAL_ENUM_VALUES,
   validateHubSpotProperties

@@ -42,6 +42,29 @@ function siglaCanonicaNegocio(u = {}) {
   return siglaNumeroCaso(numeroCasoNegocio(u)) || siglaAreaNegocio(u.area || u.area_juridica || u.tipo || u.situacao)
 }
 
+const CASE_TYPE_LABELS = Object.freeze({
+  inss_bpc: "BPC LOAS",
+  inss_incapacidade: "Benefício por Incapacidade",
+  inss_aposentadoria: "Aposentadoria",
+  inss_dependentes: "Benefício para Dependentes",
+  inss_outros: "Demanda Previdenciária",
+  bpc_idoso: "BPC LOAS Idoso",
+  bpc_deficiencia: "BPC LOAS Deficiência",
+  incapacidade_temporaria: "Auxílio por Incapacidade Temporária",
+  incapacidade_permanente: "Aposentadoria por Incapacidade Permanente",
+  auxilio_acidente: "Auxílio-acidente",
+  pensao_morte: "Pensão por Morte",
+  salario_maternidade: "Salário-maternidade"
+})
+
+function rotuloTipoCasoNegocio(u = {}) {
+  const explicit = sanitizarTextoEntrada(u.caseTypeLabel || u.rotuloTipoCaso || "")
+  if (explicit) return explicit
+  const subtype = sanitizarTextoEntrada(u.subtipo || u.caseSubtype || "").toLowerCase()
+  const type = sanitizarTextoEntrada(u.tipo_de_caso || u.tipoCaso || u.caseType || "").toLowerCase()
+  return CASE_TYPE_LABELS[subtype] || CASE_TYPE_LABELS[type] || ""
+}
+
 function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = {}) {
   const stageAtual = sanitizarTextoEntrada(stage || u.negocioStageId || u.dealstage)
   const stagesCliente = new Set([
@@ -70,7 +93,8 @@ function montarTituloNegocioHubSpot(u = {}, options = {}) {
   const identificador = numeroCaso
     ? (siglaNumeroCaso(numeroCaso) ? numeroCaso : `${area}-${numeroCaso}`)
     : `${classificacao.prefixo}${area}`
-  return `${classificacao.bolinha} ${identificador}`
+  const tipo = numeroCaso ? rotuloTipoCasoNegocio(u) : ""
+  return `${classificacao.bolinha} ${identificador}${tipo ? ` - ${tipo}` : ""}`
 }
 
 function aplicarTituloNegocioHubSpot(u = {}, props = {}, options = {}) {
@@ -92,6 +116,7 @@ module.exports = {
   siglaAreaNegocio,
   siglaNumeroCaso,
   siglaCanonicaNegocio,
+  rotuloTipoCasoNegocio,
   numeroCasoNegocio,
   classificacaoTituloNegocio,
   montarTituloNegocioHubSpot,
