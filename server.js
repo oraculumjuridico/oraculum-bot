@@ -100,6 +100,7 @@ const { routeClientIntake } = require("./src/domain/client/client-intake-decisio
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const { executarComRetryHubSpot, mascararErroHubSpot } = require("./src/utils/hubspot-retry")
+const { resolverNomeParaAdmin, primeiroEUltimoNome: primeiroEUltimoNomeAdmin } = require("./src/domain/admin-name-resolver")
 const { handle: handleRevalidateNameCorrectText } = require("./src/domain/client/handlers/revalidate-name-correct-text.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const { handle: handleRevalidateCitySelect } = require("./src/domain/client/handlers/revalidate-city-select.handler")
@@ -3999,11 +4000,11 @@ const ADMIN_IDS = {
 configurarAdminCaseUi({
   ADMIN_IDS,
   labelStageAdmin,
-  resolverNomeBriefing,
+  resolverNomeBriefing: resolverNomeParaAdmin,
   resolverTelefoneAdminAutenticado: (item, adminAutenticado) => adminAutenticado
     ? normalizarNumeroWhatsAppEnvio(item?.from || item?.u?._numero || item?.u?.whatsappContato)
     : "",
-  primeiroEUltimoNome
+  primeiroEUltimoNome: primeiroEUltimoNomeAdmin
 })
 
 const ADMIN_REVISADO_TTL_MS = 6 * 60 * 60 * 1000
@@ -4040,10 +4041,20 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
   const snapshot = desserializarEstado(props.estado_bot_snapshot) || {}
   const urgenciaProps = sanitizarTextoEntrada(props.urgencia).toLowerCase()
   const telefone = normalizarNumeroWhatsAppEnvio(contato?.properties?.phone || from || snapshot._numero || snapshot.whatsappContato)
+
+  // Capturar nome do HubSpot se disponível
+  const nomeHubspotCompleto = contato ? (
+    contato.properties?.firstname && contato.properties?.lastname
+      ? `${contato.properties.firstname} ${contato.properties.lastname}`.trim()
+      : (contato.properties?.firstname || contato.properties?.lastname || "").trim()
+  ) : ""
+
   const base = hidratarUsuarioPersistido({
     ...snapshot,
-    nome: snapshot.nome || contato?.properties?.firstname || props.dealname || u?.nome || "Cliente",
-    nomeWA: snapshot.nomeWA || contato?.properties?.firstname || u?.nomeWA || "Cliente",
+    nome: snapshot.nome || nomeHubspotCompleto || props.dealname || u?.nome || null,
+    nomeWA: snapshot.nomeWA || u?.nomeWA || null,
+    nomePerfilWhatsApp: snapshot.nomePerfilWhatsApp || u?.nomePerfilWhatsApp || null,
+    nomeHubspot: nomeHubspotCompleto || snapshot.nomeHubspot || u?.nomeHubspot || null,
     contatoId: contato?.id || snapshot.contatoId || u?.contatoId || null,
     negocioId: negocio?.id || snapshot.negocioId || u?.negocioId || null,
     negocioStageId: negocio?.stageId || props.dealstage || snapshot.negocioStageId || u?.negocioStageId || null,
@@ -4266,9 +4277,15 @@ async function adminResumoOperacional() {
   const memoria = usuariosAdminOrdenados()
   const todos = mesclarItensAdminPorIdentidade(ativos, memoria)
 
+  // Contar casos reais (com numeroCaso) e pré-atendimentos
+  const casosComNumero = todos.filter(({ u }) => Boolean(u.numeroCaso))
+  const preAtendimentos = todos.filter(({ u }) => !u.numeroCaso)
+
   const resultado = {
     fonte: ativos.length ? "HubSpot + memoria local" : "memoria local",
     totalClientes: totalAtivos,
+    totalCasosComNumero: casosComNumero.length,
+    totalPreAtendimentos: preAtendimentos.length,
     consultasAtivas: todos.filter(({ u }) => u.consultaStatus === "agendada").length,
     docsPendentes: todos.filter(({ u }) => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)).length,
     urgentes: todos.filter(({ u }) => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || u.hs_priority === "high").length,
@@ -4679,6 +4696,10 @@ async function telaAdminPrioridades(from, pagina = 1) {
       }
     }
 
+    // Contar casos e pré-atendimentos
+    const casosComNumero = itens.filter(item => Boolean(item?.u?.numeroCaso)).length
+    const preAtendimentos = itens.length - casosComNumero
+
     const linhas = itensPagina.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1 + inicio, { adminAutenticado: true }))
     const opcoes = [
       ...itensPagina.map((item, idx) => ({
@@ -4686,13 +4707,31 @@ async function telaAdminPrioridades(from, pagina = 1) {
         title: tituloOpcaoCasoAdmin(item, idx + inicio)
       }))
     ]
-    if (pagina > 1) opcoes.push({ id: `admin_prioridades_pagina_${pagina - 1}`, title: "⬅️ Página anterior" })
-    if (pagina < totalPaginas) opcoes.push({ id: `admin_prioridades_pagina_${pagina + 1}`, title: "Próxima página ➡️" })
-    opcoes.push({ id: ADMIN_IDS.menu, title: "Menu admin" })
+
+    // Navegação entre páginas
+    if (pagina > 1) opcoes.push({ id: `admin_prioridades_pagina_${pagina - 1}`, title: "⬅️ Anterior" })
+    if (pagina < totalPaginas) opcoes.push({ id: `admin_prioridades_pagina_${pagina + 1}`, title: "➡️ Próxima" })
+    opcoes.push({ id: ADMIN_IDS.menu, title: "🏠 Menu admin" })
+
     const inicioExibicao = totalItens === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
     const fimExibicao = Math.min(pagina * tamanhoPagina, totalItens)
+
+    const composicao = casosComNumero > 0 && preAtendimentos > 0
+      ? `Casos: ${casosComNumero} · Pre-atendimentos: ${preAtendimentos}`
+      : (casosComNumero > 0 ? `Casos: ${casosComNumero}` : `Pre-atendimentos: ${preAtendimentos}`)
+
     return {
-      texto: ["📌 *Prioridades*", "", ...linhas, "", `Página ${pagina} de ${totalPaginas}`, `Exibindo ${inicioExibicao}–${fimExibicao} de ${totalItens}`, "Toque em um caso para ver o detalhe."].join("\n\n"),
+      texto: [
+        "📌 *Prioridades*",
+        "",
+        ...linhas,
+        "",
+        `Página ${pagina} de ${totalPaginas}`,
+        `Exibindo ${inicioExibicao}–${fimExibicao} de ${totalItens}`,
+        composicao,
+        "",
+        "Toque em um caso para ver o detalhe."
+      ].join("\n\n"),
       opcoes,
       registrarPergunta: false
     }
