@@ -16,7 +16,11 @@ const APPLY_CONFIRMATION = "PROCESS_ALL_INSS_CASES_IDEMPOTENTLY"
 const apply = process.argv.includes("--apply")
 const confirmed = process.argv.includes(`--confirm=${APPLY_CONFIRMATION}`)
 const root = "C:\\Users\\jesai\\Documents\\ARQUIVOS PESSOAIS\\Direito\\INSS"
-const stateFile = path.resolve("data/case-import/all-cases-batch-state.json")
+const shardArg = process.argv.find(value => value.startsWith("--shard="))?.slice(8) || "0/1"
+const shardMatch = shardArg.match(/^(\d+)\/(\d+)$/)
+if (!shardMatch || Number(shardMatch[2]) < 1 || Number(shardMatch[1]) >= Number(shardMatch[2])) throw new Error("SHARD_INVALID")
+const shardIndex = Number(shardMatch[1]), shardCount = Number(shardMatch[2])
+const stateFile = path.resolve(`data/case-import/all-cases-batch-state-${shardIndex}-of-${shardCount}.json`)
 const readJson = file => JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""))
 const sha = value => crypto.createHash("sha256").update(value).digest("hex")
 const cleanName = value => String(value || "").replace(/\s+/g, " ").trim()
@@ -139,6 +143,7 @@ async function main() {
     metrics.folders = discovered.totalFolders
     const area = await folder(driveEnv.root, "area:inss", "Previdenciário")
     for (let index = 0; index < discovered.records.length; index++) {
+      if (index % shardCount !== shardIndex) continue
       const record = discovered.records[index]
       const ref = `case-${String(index + 1).padStart(3, "0")}`
       try {
