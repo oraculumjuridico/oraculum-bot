@@ -33,6 +33,15 @@ function numeroCasoNegocio(u = {}) {
   )
 }
 
+function siglaNumeroCaso(numeroCaso = "") {
+  const match = sanitizarTextoEntrada(numeroCaso).match(/^([A-Z]{2,4})\./)
+  return match?.[1] || ""
+}
+
+function siglaCanonicaNegocio(u = {}) {
+  return siglaNumeroCaso(numeroCasoNegocio(u)) || siglaAreaNegocio(u.area || u.area_juridica || u.tipo || u.situacao)
+}
+
 function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = {}) {
   const stageAtual = sanitizarTextoEntrada(stage || u.negocioStageId || u.dealstage)
   const stagesCliente = new Set([
@@ -56,10 +65,12 @@ function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = 
 
 function montarTituloNegocioHubSpot(u = {}, options = {}) {
   const numeroCaso = numeroCasoNegocio(u)
-  const area = siglaAreaNegocio(u.area || u.area_juridica || u.tipo || u.situacao)
+  const area = siglaCanonicaNegocio(u)
   const classificacao = classificacaoTituloNegocio(u, options)
-  const sufixoNumero = numeroCaso ? `-${numeroCaso}` : ""
-  return `${classificacao.bolinha} ${classificacao.prefixo}${area}${sufixoNumero}`
+  const identificador = numeroCaso
+    ? (siglaNumeroCaso(numeroCaso) ? numeroCaso : `${area}-${numeroCaso}`)
+    : `${classificacao.prefixo}${area}`
+  return `${classificacao.bolinha} ${identificador}`
 }
 
 function aplicarTituloNegocioHubSpot(u = {}, props = {}, options = {}) {
@@ -79,6 +90,8 @@ function aplicarTituloNegocioHubSpot(u = {}, props = {}, options = {}) {
 
 module.exports = {
   siglaAreaNegocio,
+  siglaNumeroCaso,
+  siglaCanonicaNegocio,
   numeroCasoNegocio,
   classificacaoTituloNegocio,
   montarTituloNegocioHubSpot,

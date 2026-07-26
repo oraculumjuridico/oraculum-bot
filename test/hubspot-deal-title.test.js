@@ -67,8 +67,17 @@ function main() {
     {
       dealstage: HS_STAGE.ANALISE,
       area_juridica: "Família",
-      dealname: "🟢 Fam-CIV.260710.001"
+      dealname: "🟢 CIV.260710.001"
     }
+  )
+
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260714.707" }),
+    "🟢 PRV.260714.707"
+  )
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260714.707" }).includes("Prv-PRV"),
+    false
   )
 
   console.log("hubspot-deal-title.test.js ok")

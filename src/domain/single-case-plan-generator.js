@@ -5,6 +5,7 @@ const path = require("node:path")
 const { validateFormat } = require("./case-number")
 const { caseFingerprintFor } = require("./single-case-target")
 const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
+const { canonicalCaseFromAnalysis, canonicalCaseToHubSpot, mergeNonEmpty } = require("./canonical-case")
 
 const HASH = /^[a-f0-9]{64}$/
 const CONTENT_ID = /^C-[a-f0-9]{20}$/
@@ -81,13 +82,24 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
   if (!rawAreaJuridica || typeof rawAreaJuridica !== "string" || String(rawAreaJuridica).trim() === "") fail("DEAL_AREA_JURIDICA_MISSING")
 
   const plan = clone(basePlan)
+  const canonicalCase = canonicalCaseFromAnalysis({
+    analysis: identityConfirmed,
+    caseNumber,
+    provenance: {
+      sourceSnapshotSha256: identityConfirmed.traceability?.sourceSnapshotSha256,
+      documentReviewArtifactSha256: identityConfirmed.traceability?.documentReviewArtifactSha256
+    }
+  })
+  const hubspot = canonicalCaseToHubSpot(canonicalCase)
+  plan.contactPlan.properties = mergeNonEmpty(plan.contactPlan.properties, hubspot.contact)
   plan.dealPlan.properties = {
-    ...plan.dealPlan.properties,
+    ...mergeNonEmpty(plan.dealPlan.properties, hubspot.deal),
     dealname: montarTituloNegocioHubSpot({
       area: plan.dealPlan.properties.area_juridica,
       numeroCaso: plan.dealPlan.caseNumber
     })
   }
+  plan.canonicalCase = canonicalCase
   plan.caseFingerprint = fingerprint
   plan.safeToApply = false
   plan.pendingDependencies = ["EXPLICIT_APPLY_AUTHORIZATION", "EXTERNAL_WRITES_AUTHORIZATION"]
