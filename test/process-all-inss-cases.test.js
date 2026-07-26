@@ -1,0 +1,10 @@
+"use strict"
+const assert = require("node:assert/strict")
+const { classify, category, summary } = require("../scripts/process-all-inss-cases")
+assert.equal(classify(["cadunico.pdf"]).type, "inss_bpc")
+assert.equal(classify(["laudo.jpg"]).type, "inss_incapacidade")
+assert.equal(category("ctps-frente.jpg"), "02 - Carteira de trabalho")
+assert.equal(category("laudo-medico.jpg"), "04 - Documentos médicos")
+const text = summary({ name: "Pessoa Fictícia", caseNumber: "PRV.260726.001", classification: { label: "BPC LOAS" }, files: ["a"], groups: new Map([["01 - Documentos pessoais", []]]), folderUrl: "https://drive.invalid/folder" })
+for (const section of ["RESUMO DO CASO", "HISTÓRICO DO CLIENTE", "ANÁLISE DOCUMENTAL", "DOCUMENTOS PENDENTES", "PRÓXIMA AÇÃO", "GOOGLE DRIVE"]) assert.match(text, new RegExp(section))
+console.log("process-all-inss-cases.test.js ok")
