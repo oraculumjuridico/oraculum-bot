@@ -109,7 +109,7 @@ function normalizarTituloOpcaoWhatsApp(title, maxChars) {
   return Array.from(texto).slice(0, maxChars).join("")
 }
 
-async function enviar(to, texto, opcoes = null, comDelay = true, messageId = null) {
+async function enviar(to, texto, opcoes = null, comDelay = true, messageId = null, semFallback131009 = false) {
   try {
     // Validar destinatário
     const validacaoDestino = validarDestinatarioWhatsApp(to)
@@ -166,7 +166,7 @@ async function enviar(to, texto, opcoes = null, comDelay = true, messageId = nul
     logErro("whatsapp", `envio_falhou to=${mascararTelefoneLog(to)} http=${statusHttp} codigo=${codigoErro} msg=${mensagemErro}`)
 
     // Fallback para texto simples se erro 131009 (parâmetro inválido)
-    if (codigoErro === 131009 && opcoes && opcoes.length > 0) {
+    if (codigoErro === 131009 && opcoes && opcoes.length > 0 && !semFallback131009) {
       logDebug("[WHATSAPP_FALLBACK] Tentando envio como texto simples")
       try {
         const validacaoDestino = validarDestinatarioWhatsApp(to)

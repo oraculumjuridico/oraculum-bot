@@ -269,7 +269,10 @@ const {
   enviar,
   enviarAudio,
   enviarImagemWhatsApp,
-  ultimosAudiosEnviados
+  ultimosAudiosEnviados,
+  validarDestinatarioWhatsApp,
+  validarTextoWhatsApp,
+  validarOpcoesWhatsApp
 } = require("./src/domain/whatsapp-transport")
 const templateService = require("./src/domain/template-service")
 const { validarMetaWabaNoBoot } = require("./src/domain/meta-waba-validator")
@@ -595,10 +598,20 @@ async function enviarEmailNotificacao({ assunto, tituloCard, linhas, negocioId }
 async function enviarWhatsAppAdmin(mensagem) {
   const destino = normalizarNumeroWhatsAppEnvio(WHATSAPP_ADMIN)
   if (!destino) return
+  const validacaoDestino = validarDestinatarioWhatsApp(destino)
+  if (!validacaoDestino.valido) {
+    logErro("whatsapp-admin", `destinatario_invalido: ${validacaoDestino.motivo}`)
+    return
+  }
+  const textoValidado = validarTextoWhatsApp(mensagem)
+  if (!textoValidado.valido) {
+    logErro("whatsapp-admin", `texto_invalido: ${textoValidado.motivo}`)
+    return
+  }
   try {
     await axios.post(
       `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      { messaging_product: "whatsapp", to: destino, type: "text", text: { body: mensagem } },
+      { messaging_product: "whatsapp", to: validacaoDestino.numero, type: "text", text: { body: textoValidado.texto } },
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     )
   } catch (e) {
@@ -610,15 +623,40 @@ async function enviarWhatsAppAdmin(mensagem) {
 async function enviarWhatsAppAdmin_para(numero, mensagem) {
   const destino = normalizarNumeroWhatsAppEnvio(numero)
   if (!destino) return
+  const validacaoDestino = validarDestinatarioWhatsApp(destino)
+  if (!validacaoDestino.valido) {
+    logErro("whatsapp-parceiro", `destinatario_invalido: ${validacaoDestino.motivo}`)
+    return
+  }
+  const textoValidado = validarTextoWhatsApp(mensagem)
+  if (!textoValidado.valido) {
+    logErro("whatsapp-parceiro", `texto_invalido: ${textoValidado.motivo}`)
+    return
+  }
   try {
     await axios.post(
       `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      { messaging_product: "whatsapp", to: destino, type: "text", text: { body: mensagem } },
+      { messaging_product: "whatsapp", to: validacaoDestino.numero, type: "text", text: { body: textoValidado.texto } },
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     )
   } catch (e) {
     console.error("[whatsapp-parceiro] Falha ao notificar:", e.message)
   }
+}
+
+async function enviarRespostaAdmin(from, resposta, messageId) {
+  const texto = sanitizarTextoEntrada(resposta?.texto || "")
+  const opcoes = Array.isArray(resposta?.opcoes) ? resposta.opcoes : null
+  if (!texto && (!opcoes || opcoes.length === 0)) return false
+
+  if (texto.length > 800 && opcoes && opcoes.length > 0) {
+    const textoOk = await enviar(from, texto, null, true, messageId)
+    if (!textoOk) return false
+    const menuOk = await enviar(from, "Escolha uma opção abaixo:", opcoes, true, messageId, true)
+    return menuOk
+  }
+
+  return await enviar(from, texto, opcoes || null, true, messageId)
 }
 
 async function notificarMensagemUrgente(u, mensagem, negocioId) {
@@ -4019,6 +4057,18 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
   return { from: telefone || from || "", u: base, negocio, contato }
 }
 
+async function hsAdminContarNegociosPorStages(stages = []) {
+  const valores = stages.filter(Boolean)
+  if (!valores.length) return { total: 0 }
+  try {
+    const { total } = await hsAdminBuscarNegociosPorStages(valores, 1)
+    return { total }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminContarNegociosPorStages" })
+    return { total: 0 }
+  }
+}
+
 async function hsAdminBuscarContatoDoNegocio(dealId) {
   try {
     return await executarComRetryHubSpot(
@@ -4050,33 +4100,40 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
   }
 }
 
-async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50) {
+async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = null) {
   const valores = stages.filter(Boolean)
-  if (!valores.length) return []
+  if (!valores.length) return { deals: [], total: 0, after: null }
   try {
     return await executarComRetryHubSpot(
       async () => {
+        const body = {
+          filterGroups: [{ filters: [{ propertyName: "dealstage", operator: "IN", values: valores }] }],
+          sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
+          properties: [
+            "dealstage", "dealname", "createdate", "closedate", "description",
+            "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot",
+            "etapa_do_bot", "tipo_de_caso", "temperatura_lead", "hs_priority", "numero_de_caso",
+            "urgencia"
+          ],
+          limit
+        }
+        if (after) body.after = after
         const res = await axios.post(
           "https://api.hubapi.com/crm/v3/objects/deals/search",
-          {
-            filterGroups: [{ filters: [{ propertyName: "dealstage", operator: "IN", values: valores }] }],
-            sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
-            properties: [
-              "dealstage", "dealname", "createdate", "closedate", "description",
-              "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot",
-              "etapa_do_bot", "tipo_de_caso", "temperatura_lead", "hs_priority", "numero_de_caso",
-              "urgencia"
-            ],
-            limit
-          },
+          body,
           { headers: HS() }
         )
-        return (res.data?.results || []).map(n => ({
+        const deals = (res.data?.results || []).map(n => ({
           id: n.id,
           stageId: n.properties?.dealstage || null,
           createdate: n.properties?.createdate || null,
-          properties: n.properties || {}
+          properties: res.data?.properties || {}
         }))
+        return {
+          deals,
+          total: res.data?.total || 0,
+          after: res.data?.paging?.next?.after || null
+        }
       },
       {
         maxTentativas: 3,
@@ -4089,7 +4146,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50) {
     )
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarNegociosPorStages" })
-    return []
+    return { deals: [], total: 0, after: null }
   }
 }
 
@@ -4138,25 +4195,27 @@ async function reconciliarTituloNegocioHubSpotAdmin(negocio = {}, item = {}) {
   return Boolean(atualizado)
 }
 
-async function hsAdminItensPorStages(stages = [], limit = 30) {
-  const negocios = await hsAdminBuscarNegociosPorStages(stages, limit)
-  // CORREÇÃO: remover reconciliação de título do fluxo de leitura
-  // reconciliarTituloNegocioHubSpotAdmin só deve ser chamada em operações explícitas de escrita
-  return mapearComLimite(negocios, 2, async (negocio) => {
-    const contato = await hsAdminBuscarContatoDoNegocio(negocio.id)
-    const item = normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
-    // NÃO chamar reconciliarTituloNegocioHubSpotAdmin aqui
-    return item
-  })
+async function hsAdminItensPorStages(stages = [], limit = 30, after = null) {
+  const resultado = await hsAdminBuscarNegociosPorStages(stages, limit, after)
+  const deals = resultado.deals || []
+  return {
+    items: deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null)),
+    total: resultado.total || 0,
+    nextAfter: resultado.after || null
+  }
 }
+
 
 async function hsAdminItemPorDealId(dealId) {
   const id = sanitizarTextoEntrada(dealId)
   if (!id) return null
   try {
-    const res = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso,urgencia`,
-      { headers: HS() }
+    const res = await executarComRetryHubSpot(
+      async () => axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso,urgencia`,
+        { headers: HS() }
+      ),
+      { operacao: "adminBuscarDealPorCalendar", maxTentativas: 3 }
     )
     const negocio = {
       id,
@@ -4164,65 +4223,62 @@ async function hsAdminItemPorDealId(dealId) {
       createdate: res.data?.properties?.createdate || null,
       properties: res.data?.properties || {}
     }
-    const contato = await hsAdminBuscarContatoDoNegocio(id)
-    const item = normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
-    await reconciliarTituloNegocioHubSpotAdmin(negocio, item)
-    return item
+    return normalizarItemAdminLocal("", null, negocio, null)
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarDealPorCalendar", dealId: id })
     return null
   }
 }
 
-async function adminItensAtivosHubSpot(limit = 15) {
+async function adminItensAtivosHubSpot(limit = 100) {
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
-  return hsAdminItensPorStages(stagesAtivos, limit)
+  const resultado = await hsAdminItensPorStages(stagesAtivos, limit)
+  return resultado.items
 }
 
-async function adminFonteCasos(filtro = () => true, stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), limit = 30) {
-  const itensHubSpot = await hsAdminItensPorStages(stages, limit)
+async function adminFonteCasos(filtro = () => true, stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), limit = 30, after = null) {
+  const resultado = await hsAdminItensPorStages(stages, limit, after)
+  const itensHubSpot = resultado.items
   const vistos = new Set(itensHubSpot.map(item => String(item.u?.negocioId || item.negocio?.id || "")).filter(Boolean))
   const locais = usuariosAdminOrdenados(filtro).filter(item => {
     const id = String(item.u?.negocioId || "")
     return !id || !vistos.has(id)
   })
-  return [...itensHubSpot, ...locais].filter(({ u }) => u && filtro(u))
+  return {
+    items: [...itensHubSpot, ...locais].filter(({ u }) => u && filtro(u)),
+    total: resultado.total + (after ? 0 : locais.length),
+    nextAfter: resultado.nextAfter
+  }
 }
 
 async function adminResumoOperacional() {
-  // Verificar cache
   const agora = Date.now()
   if (cacheResumoOperacional.dados && (agora - cacheResumoOperacional.timestamp) < cacheResumoOperacional.TTL) {
     logDebug("[ADMIN_CACHE] Usando resumo operacional em cache")
     return cacheResumoOperacional.dados
   }
 
-  const ativos = await adminItensAtivosHubSpot(15) // reduzido de 100 para 15
+  const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
+  const { total: totalAtivos } = await hsAdminContarNegociosPorStages(stagesAtivos)
+  const { total: totalAnalise } = await hsAdminContarNegociosPorStages([HS_STAGE.ANALISE])
+
+  const ativos = await adminItensAtivosHubSpot(Math.min(totalAtivos, 100))
   const memoria = usuariosAdminOrdenados()
   const todos = mesclarItensAdminPorIdentidade(ativos, memoria)
 
-  // Reduzir concorrência de 5 para 2
-  await mapearComLimite(todos, 2, async ({ u }) => {
-    if (u?.negocioId) {
-      await atualizarEstadoConsultaUsuario(u).catch(() => null)
-    }
-  })
-
   const resultado = {
     fonte: ativos.length ? "HubSpot + memoria local" : "memoria local",
-    totalClientes: todos.filter(({ u }) => Boolean(u.numeroCaso)).length,
+    totalClientes: totalAtivos,
     consultasAtivas: todos.filter(({ u }) => u.consultaStatus === "agendada").length,
     docsPendentes: todos.filter(({ u }) => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)).length,
     urgentes: todos.filter(({ u }) => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || u.hs_priority === "high").length,
-    analise: todos.filter(({ u }) => u.negocioStageId === HS_STAGE.ANALISE && Boolean(u.numeroCaso)).length,
+    analise: totalAnalise,
     todos
   }
 
-  // Atualizar cache
   cacheResumoOperacional.dados = resultado
   cacheResumoOperacional.timestamp = agora
   logDebug("[ADMIN_CACHE] Resumo operacional armazenado em cache")
-
   return resultado
 }
 
@@ -4372,7 +4428,7 @@ function usuariosAdminOrdenados(filtro = () => true) {
     .map(([from, u]) => ({ from, u }))
 }
 
-function salvarListaCasosAdmin(from, itens, origem = ADMIN_IDS.casos) {
+function salvarListaCasosAdmin(from, itens, origem = ADMIN_IDS.casos, pagina = 1, tamanhoPagina = 8, totalItens = 0, totalPaginas = 1, nextAfter = null) {
   const chaveAdmin = normalizarNumeroWhatsAppEnvio(from)
   if (!chaveAdmin) return
   const sessaoAtual = sessoesAdminWhatsApp.get(chaveAdmin) || {}
@@ -4382,6 +4438,11 @@ function salvarListaCasosAdmin(from, itens, origem = ADMIN_IDS.casos) {
     casoSelecionado: null,
     origemCasos: origem,
     listaAtiva: "casos",
+    paginaAtual: pagina,
+    tamanhoPagina,
+    totalItens,
+    totalPaginas,
+    nextAfter,
     ts: Date.now()
   })
 }
@@ -4597,11 +4658,17 @@ async function telaAdminPrincipal() {
   }
 }
 
-async function telaAdminPrioridades(from) {
+async function telaAdminPrioridades(from, pagina = 1) {
   try {
-    const itens = await gerarPrioridadesAdmin(10)
-    salvarListaCasosAdmin(from, itens, ADMIN_IDS.prioridades)
-    if (!itens.length) {
+    const tamanhoPagina = 8
+    const itens = await gerarPrioridadesAdmin(100)
+    const totalItens = itens.length
+    const totalPaginas = Math.max(1, Math.ceil(totalItens / tamanhoPagina))
+    const inicio = (pagina - 1) * tamanhoPagina
+    const itensPagina = itens.slice(inicio, inicio + tamanhoPagina)
+
+    salvarListaCasosAdmin(from, itens, ADMIN_IDS.prioridades, pagina, tamanhoPagina, totalItens, totalPaginas, null)
+    if (!itensPagina.length) {
       return {
         texto: "📌 *Prioridades*\n\n✅ Nao encontrei casos com risco operacional relevante agora.",
         opcoes: [
@@ -4612,22 +4679,25 @@ async function telaAdminPrioridades(from) {
       }
     }
 
-    const itensExibidos = itens.slice(0, 8)
-    const linhas = itensExibidos.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1, { adminAutenticado: true }))
+    const linhas = itensPagina.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1 + inicio, { adminAutenticado: true }))
+    const opcoes = [
+      ...itensPagina.map((item, idx) => ({
+        id: `admin_caso_${idx + inicio}`,
+        title: tituloOpcaoCasoAdmin(item, idx + inicio)
+      }))
+    ]
+    if (pagina > 1) opcoes.push({ id: `admin_prioridades_pagina_${pagina - 1}`, title: "⬅️ Página anterior" })
+    if (pagina < totalPaginas) opcoes.push({ id: `admin_prioridades_pagina_${pagina + 1}`, title: "Próxima página ➡️" })
+    opcoes.push({ id: ADMIN_IDS.menu, title: "Menu admin" })
+    const inicioExibicao = totalItens === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
+    const fimExibicao = Math.min(pagina * tamanhoPagina, totalItens)
     return {
-      texto: ["📌 *Prioridades*", "", ...linhas, "", "Toque em um caso para ver o detalhe."].join("\n\n"),
-      opcoes: [
-        ...itensExibidos.map((item, idx) => ({
-        id: `admin_caso_${idx}`,
-        title: tituloOpcaoCasoAdmin(item, idx)
-        })),
-        { id: ADMIN_IDS.menu, title: "Menu admin" }
-      ],
+      texto: ["📌 *Prioridades*", "", ...linhas, "", `Página ${pagina} de ${totalPaginas}`, `Exibindo ${inicioExibicao}–${fimExibicao} de ${totalItens}`, "Toque em um caso para ver o detalhe."].join("\n\n"),
+      opcoes,
       registrarPergunta: false
     }
   } catch (erro) {
     logErro("admin", `telaAdminPrioridades falhou: ${mascararErroHubSpot(erro)}`)
-    // Garantir resposta mesmo com falha no HubSpot
     return {
       texto: "📌 *Prioridades*\n\n⚠️ O HubSpot esta temporariamente ocupado.\n\nSua sessao admin permanece ativa. Tente novamente em alguns segundos.",
       opcoes: [
@@ -4699,8 +4769,9 @@ async function telaAdminAlertas() {
   }
 }
 
-function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.casos) {
-  salvarListaCasosAdmin(from, itens, voltar)
+function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.casos, pagina = 1, totalPaginas = 1) {
+  const tamanhoPagina = 8
+  salvarListaCasosAdmin(from, itens, voltar, pagina, tamanhoPagina, itens.length, totalPaginas, null)
   if (!itens.length) {
     return {
       texto: `${titulo}\n\n${vazio}`,
@@ -4712,53 +4783,62 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
     }
   }
 
-  const itensExibidos = itens.slice(0, 8)
-  const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1, { adminAutenticado: true }))
+  const inicio = (pagina - 1) * tamanhoPagina
+  const itensExibidos = itens.slice(inicio, inicio + tamanhoPagina)
+  const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1 + inicio, { adminAutenticado: true }))
   const nomesOpcoes = itensExibidos.map(item => primeiroEUltimoNome(resolverNomeBriefing(item.u)) || "Cliente")
   const contagemNomes = nomesOpcoes.reduce((acc, nome) => {
     const chave = normalizarNomeComparacao(nome)
     acc.set(chave, (acc.get(chave) || 0) + 1)
     return acc
   }, new Map())
+  const opcoes = [
+    ...itensExibidos.map((item, idx) => ({
+      id: `admin_caso_${idx + inicio}`,
+      title: tituloOpcaoCasoAdmin(item, idx + inicio, {
+        nomeCurto: nomesOpcoes[idx],
+        duplicado: contagemNomes.get(normalizarNomeComparacao(nomesOpcoes[idx])) > 1
+      })
+    }))
+  ]
+  if (pagina > 1) opcoes.push({ id: `admin_casos_pagina_${pagina - 1}`, title: "⬅️ Página anterior" })
+  if (pagina < totalPaginas) opcoes.push({ id: `admin_casos_pagina_${pagina + 1}`, title: "Próxima página ➡️" })
+  opcoes.push({ id: voltar, title: "Voltar" }, { id: ADMIN_IDS.menu, title: "Menu admin" })
+  const inicioExibicao = itens.length === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
+  const fimExibicao = Math.min(pagina * tamanhoPagina, itens.length)
   return {
-    texto: [titulo, "", ...linhas, "", "Toque em um caso para ver o detalhe operacional."].join("\n\n"),
-    opcoes: [
-      ...itensExibidos.map((item, idx) => ({
-        id: `admin_caso_${idx}`,
-        title: tituloOpcaoCasoAdmin(item, idx, {
-          nomeCurto: nomesOpcoes[idx],
-          duplicado: contagemNomes.get(normalizarNomeComparacao(nomesOpcoes[idx])) > 1
-        })
-      })),
-      { id: voltar, title: "Voltar" },
-      { id: ADMIN_IDS.menu, title: "Menu admin" }
-    ],
+    texto: [titulo, "", ...linhas, "", `Página ${pagina} de ${totalPaginas}`, `Exibindo ${inicioExibicao}–${fimExibicao} de ${itens.length}`, "Toque em um caso para ver o detalhe operacional."].join("\n\n"),
+    opcoes,
     registrarPergunta: false
   }
 }
 
 async function telaAdminCasosNovos(from) {
   const filtro = u => [HS_STAGE.LEAD, HS_STAGE.CADASTRO].includes(u.negocioStageId) || (!u.numeroCaso && u.stage !== STAGES.CLIENTE)
-  const itens = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO], 30)
-  return telaAdminListaCasos(from, "🆕 *Novos casos e pre-cadastros*", itens, "✅ Nao encontrei novos casos ou pre-cadastros parados.", ADMIN_IDS.casos)
+  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO], 100)
+  const totalPaginas = Math.max(1, Math.ceil(total / 8))
+  return telaAdminListaCasos(from, "🆕 *Novos casos e pre-cadastros*", itens, "✅ Nao encontrei novos casos ou pre-cadastros parados.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminCasosAnalise(from) {
   const filtro = u => u.negocioStageId === HS_STAGE.ANALISE && Boolean(u.numeroCaso)
-  const itens = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 30)
-  return telaAdminListaCasos(from, "🔎 *Casos em analise*", itens, "✅ Nao encontrei casos em analise no HubSpot nem na memoria atual.", ADMIN_IDS.casos)
+  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 100)
+  const totalPaginas = Math.max(1, Math.ceil(total / 8))
+  return telaAdminListaCasos(from, "🔎 *Casos em analise*", itens, "✅ Nao encontrei casos em analise no HubSpot nem na memoria atual.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminCasosDocumentos(from) {
   const filtro = u => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)
-  const itens = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 50)
-  return telaAdminListaCasos(from, "📎 *Casos com documentos pendentes*", itens, "✅ Nao encontrei casos com documentos criticos pendentes.", ADMIN_IDS.casos)
+  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  const totalPaginas = Math.max(1, Math.ceil(total / 8))
+  return telaAdminListaCasos(from, "📎 *Casos com documentos pendentes*", itens, "✅ Nao encontrei casos com documentos criticos pendentes.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminAlertasUrgentes(from) {
   const filtro = u => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || scoreEmocional(u).nivel === "alto"
-  const itens = await adminFonteCasos(filtro, Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), 50)
-  return telaAdminListaCasos(from, "🔥 *Alertas criticos*", itens, "✅ Nao encontrei alerta critico no HubSpot nem na memoria atual.", ADMIN_IDS.alertas)
+  const { items: itens, total } = await adminFonteCasos(filtro, Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), 100)
+  const totalPaginas = Math.max(1, Math.ceil(total / 8))
+  return telaAdminListaCasos(from, "🔥 *Alertas criticos*", itens, "✅ Nao encontrei alerta critico no HubSpot nem na memoria atual.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
 
 async function telaAdminAlertasSemResposta(from) {
@@ -4766,14 +4846,16 @@ async function telaAdminAlertasSemResposta(from) {
     const idade = Date.now() - Number(u.ultimaMsg || 0)
     return idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado && u.stage !== STAGES.CLIENTE
   }
-  const itens = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE], 50)
-  return telaAdminListaCasos(from, "⏳ *Casos parados*", itens, "✅ Nao encontrei pre-atendimentos parados ha mais de 2 horas.", ADMIN_IDS.alertas)
+  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE], 100)
+  const totalPaginas = Math.max(1, Math.ceil(total / 8))
+  return telaAdminListaCasos(from, "⏳ *Casos parados*", itens, "✅ Nao encontrei pre-atendimentos parados ha mais de 2 horas.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
 
 async function telaAdminAlertasDocs(from) {
   const filtro = u => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)
-  const itens = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 50)
-  return telaAdminListaCasos(from, "📎 *Alertas de documentos*", itens, "✅ Nao encontrei documentos criticos pendentes.", ADMIN_IDS.alertas)
+  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  const totalPaginas = Math.max(1, Math.ceil(total / 8))
+  return telaAdminListaCasos(from, "📎 *Alertas de documentos*", itens, "✅ Nao encontrei documentos criticos pendentes.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
 
 async function telaAdminAlertasAgenda(from) {
@@ -4787,6 +4869,7 @@ async function telaAdminResumoDiario() {
   return {
     texto: textoResumoDiarioOperacional(resumo),
     opcoes: [
+      { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
       { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
@@ -4864,6 +4947,7 @@ function telaLinksCasoAdmin(from) {
 }
 
 async function marcarCasoRevisadoAdmin(from) {
+  invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
   if (!item) {
     return {
@@ -4898,6 +4982,7 @@ async function marcarCasoRevisadoAdmin(from) {
 }
 
 async function pedirDocsCasoAdmin(from) {
+  invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
   if (!item) {
     return {
@@ -4968,6 +5053,7 @@ async function pedirDocsCasoAdmin(from) {
 }
 
 async function marcarCasoUrgenteAdmin(from) {
+  invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
   if (!item) {
     return {
@@ -5004,6 +5090,7 @@ async function marcarCasoUrgenteAdmin(from) {
 }
 
 async function enviarAnaliseCasoAdmin(from) {
+  invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
   if (!item) {
     return {
@@ -5049,6 +5136,7 @@ async function enviarAnaliseCasoAdmin(from) {
 }
 
 async function enviarLembreteCasoAdmin(from) {
+  invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
   if (!item) {
     return {
@@ -5568,6 +5656,19 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       registrarPergunta: false
     }
   }
+
+  const matchPaginaCasos = comando.match(/^admin_casos_pagina_(\d+)$/)
+  if (matchPaginaCasos) {
+    const sessaoAdmin = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}
+    const origem = sessaoAdmin.origemCasos || ADMIN_IDS.casos
+    if (origem === ADMIN_IDS.prioridades) return await telaAdminPrioridades(from, Number(matchPaginaCasos[1]))
+    if (origem === ADMIN_IDS.casos) return await telaAdminCasos(from, Number(matchPaginaCasos[1]))
+    return await telaAdminListaCasos(from, "", sessaoAdmin.casos || [], "", origem, Number(matchPaginaCasos[1]), sessaoAdmin.totalPaginas || 1)
+  }
+
+  const matchPaginaPrioridades = comando.match(/^admin_prioridades_pagina_(\d+)$/)
+  if (matchPaginaPrioridades) return await telaAdminPrioridades(from, Number(matchPaginaPrioridades[1]))
+
   if (["admin_cancelar_consulta", ADMIN_IDS.cancelarConsulta].includes(comando)) return telaConfirmarCancelamentoAdmin(from)
   if (["admin_cancelar_nao", ADMIN_IDS.cancelarNao].includes(comando)) return telaDetalheConsultaAdmin(from)
   if (["admin_cancelar_sim", ADMIN_IDS.cancelarSim].includes(comando)) return await cancelarConsultaAdmin(from)
@@ -15387,9 +15488,17 @@ async function processarMensagemWebhook(value, message) {
   const respostaVisual = aplicarEmojiTelaCliente(from, resposta)
   registrarUltimaPergunta(users[from], respostaVisual)
   agendarPersistenciaUsers()
-  if (respostaVisual.texto) {
-    await enviarAudioAutomaticoTela(from, users[from], respostaVisual, "webhook")
-    await enviar(from, respostaVisual.texto, respostaVisual.opcoes, true, incomingMessageId)
+  if (respostaVisual.texto || (Array.isArray(respostaVisual.opcoes) && respostaVisual.opcoes.length > 0)) {
+    let envioOk = false
+    if (ehWhatsAppAdmin(from)) {
+      envioOk = await enviarRespostaAdmin(from, respostaVisual, incomingMessageId)
+    } else {
+      await enviarAudioAutomaticoTela(from, users[from], respostaVisual, "webhook")
+      envioOk = await enviar(from, respostaVisual.texto, respostaVisual.opcoes, true, incomingMessageId)
+    }
+    if (!envioOk) {
+      await enviar(from, "Tive uma dificuldade para responder agora. Pode enviar a mensagem novamente ou tocar em Menu para continuar.", null, false, incomingMessageId)
+    }
   }
 }
 
