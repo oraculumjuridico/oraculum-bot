@@ -51,6 +51,7 @@
     ,"test:single-case-authorizations": "node test/single-case-authorization-postgres.test.js"
     ,"test:single-case-coordination": "node test/single-case-coordination-postgres.test.js"
     ,"case-number:test": "node test/case-number.service.test.js && node test/case-number-postgres-infrastructure.test.js && node test/case-number-reservation-reconciliation.test.js && node test/case-number-plan-sync.test.js"
+    ,"cases:reconcile-all": "node scripts/reconcile-all-inss-cases.js --apply --confirm=RECONCILE_EXISTING_55_INSS_CASES"
   },
   "license": "ISC",
   "type": "commonjs",
