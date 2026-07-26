@@ -32,7 +32,10 @@ const DEAL_PROPERTY_DEFINITIONS = Object.freeze([
   ] },
   { name: "oraculum_documents_received", label: "Documentos recebidos", type: "string", fieldType: "textarea" },
   { name: "oraculum_documents_pending", label: "Documentos pendentes", type: "string", fieldType: "textarea" },
-  { name: "oraculum_review_required", label: "Revisão humana necessária", type: "bool", fieldType: "booleancheckbox" },
+  { name: "oraculum_review_required", label: "Revisão humana necessária", type: "bool", fieldType: "booleancheckbox", options: [
+    { label: "Sim", value: "true", displayOrder: 0, hidden: false },
+    { label: "Não", value: "false", displayOrder: 1, hidden: false }
+  ] },
   { name: "oraculum_analysis_status", label: "Status da análise Oráculum", type: "enumeration", fieldType: "select", options: [
     { label: "Analisado", value: "analyzed", displayOrder: 0, hidden: false },
     { label: "Revisão necessária", value: "review_required", displayOrder: 1, hidden: false }
