@@ -39,6 +39,61 @@ async function digitando(to, messageId = null, texto = "") {
   await new Promise(r => setTimeout(r, delay))
 }
 
+function validarDestinatarioWhatsApp(to) {
+  if (!to) return { valido: false, motivo: "destinatario_ausente" }
+  const texto = String(to).trim()
+  const digitos = texto.replace(/\D/g, "")
+  if (digitos.length < 10 || digitos.length > 15) {
+    return { valido: false, motivo: "quantidade_digitos_invalida" }
+  }
+  if (!/^55/.test(digitos)) {
+    return { valido: false, motivo: "prefixo_esperado" }
+  }
+  return { valido: true, numero: digitos }
+}
+
+function validarTextoWhatsApp(texto) {
+  if (texto === null || texto === undefined) {
+    return { valido: false, motivo: "texto_null_ou_undefined" }
+  }
+  const textoStr = String(texto).trim()
+  if (!textoStr) {
+    return { valido: false, motivo: "texto_vazio" }
+  }
+  return { valido: true, texto: textoStr }
+}
+
+function validarOpcoesWhatsApp(opcoes) {
+  if (!Array.isArray(opcoes) || opcoes.length === 0) {
+    return { valido: true, opcoes: [] }
+  }
+
+  const opcoesValidas = opcoes.filter(o => {
+    if (!o || typeof o !== "object") return false
+    const id = String(o.id || "").trim()
+    const title = String(o.title || "").trim()
+    return id && title
+  }).map(o => ({
+    id: String(o.id).slice(0, 256),
+    title: String(o.title).slice(0, 100)
+  }))
+
+  // Garantir IDs únicos
+  const idsVistos = new Set()
+  const opcoesUnicas = []
+  for (const opcao of opcoesValidas) {
+    if (!idsVistos.has(opcao.id)) {
+      idsVistos.add(opcao.id)
+      opcoesUnicas.push(opcao)
+    }
+  }
+
+  // Limitar quantidade
+  const opcoesFinais = opcoesUnicas.slice(0, 10)
+
+  return { valido: opcoesFinais.length > 0, opcoes: opcoesFinais }
+}
+
 function normalizarTituloOpcaoWhatsApp(title, maxChars) {
   let texto = String(title || "").trim()
   texto = texto
@@ -56,30 +111,84 @@ function normalizarTituloOpcaoWhatsApp(title, maxChars) {
 
 async function enviar(to, texto, opcoes = null, comDelay = true, messageId = null) {
   try {
-    if (comDelay) await digitando(to, messageId, texto)
+    // Validar destinatário
+    const validacaoDestino = validarDestinatarioWhatsApp(to)
+    if (!validacaoDestino.valido) {
+      logErro("whatsapp", `destinatario_invalido: ${validacaoDestino.motivo} to=${mascararTelefoneLog(to)}`)
+      return false
+    }
+    const numeroValidado = validacaoDestino.numero
+
+    // Validar texto
+    const validacaoTexto = validarTextoWhatsApp(texto)
+    if (!validacaoTexto.valido) {
+      logErro("whatsapp", `texto_invalido: ${validacaoTexto.motivo} to=${mascararTelefoneLog(to)}`)
+      return false
+    }
+    const textoValidado = validacaoTexto.texto
+
+    // Validar e normalizar opções
+    const validacaoOpcoes = validarOpcoesWhatsApp(opcoes)
+    const opcoesValidadas = validacaoOpcoes.opcoes
+
+    if (comDelay) await digitando(numeroValidado, messageId, textoValidado)
+
     let body
-    if (!opcoes || opcoes.length === 0) {
-      body = { messaging_product: "whatsapp", to, type: "text", text: { body: texto } }
-    } else if (opcoes.length <= 3) {
+    if (opcoesValidadas.length === 0) {
+      body = { messaging_product: "whatsapp", to: numeroValidado, type: "text", text: { body: textoValidado } }
+    } else if (opcoesValidadas.length <= 3) {
       body = {
-        messaging_product: "whatsapp", to, type: "interactive",
-        interactive: { type: "button", body: { text: texto }, action: { buttons: opcoes.map(o => ({ type: "reply", reply: { id: o.id, title: normalizarTituloOpcaoWhatsApp(o.title, 20) } })) } }
+        messaging_product: "whatsapp", to: numeroValidado, type: "interactive",
+        interactive: { type: "button", body: { text: textoValidado }, action: { buttons: opcoesValidadas.map(o => ({ type: "reply", reply: { id: o.id, title: normalizarTituloOpcaoWhatsApp(o.title, 20) } })) } }
       }
     } else {
       const sections = []
-      for (let i = 0; i < opcoes.length; i += 10)
-        sections.push({ title: "Opções", rows: opcoes.slice(i, i + 10).map(o => ({ id: o.id, title: normalizarTituloOpcaoWhatsApp(o.title, 24) })) })
+      for (let i = 0; i < opcoesValidadas.length; i += 10)
+        sections.push({ title: "Opções", rows: opcoesValidadas.slice(i, i + 10).map(o => ({ id: o.id, title: normalizarTituloOpcaoWhatsApp(o.title, 24) })) })
       body = {
-        messaging_product: "whatsapp", to, type: "interactive",
-        interactive: { type: "list", body: { text: texto }, action: { button: "Ver opções", sections } }
+        messaging_product: "whatsapp", to: numeroValidado, type: "interactive",
+        interactive: { type: "list", body: { text: textoValidado }, action: { button: "Ver opções", sections } }
       }
     }
-    await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, body, {
+
+    const resp = await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, body, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
     })
+
+    const messageIdResposta = resp.data?.messages?.[0]?.id
+    logDebug(`[WHATSAPP_ENVIO] sucesso to=${mascararTelefoneLog(numeroValidado)} message_id=${messageIdResposta} tipo=${body.type}`)
     return true
   } catch (e) {
-    logErro("whatsapp", `>${to}: ` + (e.response?.data?.error?.message || e.message))
+    const codigoErro = e.response?.data?.error?.code
+    const mensagemErro = e.response?.data?.error?.message || e.message
+    const statusHttp = e.response?.status
+
+    logErro("whatsapp", `envio_falhou to=${mascararTelefoneLog(to)} http=${statusHttp} codigo=${codigoErro} msg=${mensagemErro}`)
+
+    // Fallback para texto simples se erro 131009 (parâmetro inválido)
+    if (codigoErro === 131009 && opcoes && opcoes.length > 0) {
+      logDebug("[WHATSAPP_FALLBACK] Tentando envio como texto simples")
+      try {
+        const validacaoDestino = validarDestinatarioWhatsApp(to)
+        const validacaoTexto = validarTextoWhatsApp(texto)
+        if (validacaoDestino.valido && validacaoTexto.valido) {
+          const bodyTexto = {
+            messaging_product: "whatsapp",
+            to: validacaoDestino.numero,
+            type: "text",
+            text: { body: validacaoTexto.texto + "\n\nNao consegui carregar o menu completo agora. Tente novamente em alguns segundos." }
+          }
+          await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, bodyTexto, {
+            headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
+          })
+          logDebug("[WHATSAPP_FALLBACK] Fallback texto enviado com sucesso")
+          return true
+        }
+      } catch (fallbackError) {
+        logErro("whatsapp", `fallback_falhou: ${fallbackError.message}`)
+      }
+    }
+
     return false
   }
 }
@@ -226,6 +335,9 @@ async function enviarImagemWhatsApp(to, imageUrl, caption = "", opcoes = null) {
 module.exports = {
   digitando,
   normalizarTituloOpcaoWhatsApp,
+  validarDestinatarioWhatsApp,
+  validarTextoWhatsApp,
+  validarOpcoesWhatsApp,
   enviar,
   enviarTemplateWhatsApp,
   enviarAudio,

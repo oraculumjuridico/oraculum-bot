@@ -99,6 +99,7 @@ const { handleAudioIntake } = require("./src/domain/audio/audio-intake-pipeline-
 const { routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
+const { executarComRetryHubSpot, mascararErroHubSpot } = require("./src/utils/hubspot-retry")
 const { handle: handleRevalidateNameCorrectText } = require("./src/domain/client/handlers/revalidate-name-correct-text.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const { handle: handleRevalidateCitySelect } = require("./src/domain/client/handlers/revalidate-city-select.handler")
@@ -767,6 +768,18 @@ const locksUsuarios = new Map()
 const sessoesAdminAutenticadas = new Map()
 const tentativasAdminWhatsApp = new Map()
 const revisoesCasosAdmin = new Map()
+
+// Cache curto do resumo operacional para reduzir chamadas ao HubSpot
+const cacheResumoOperacional = {
+  dados: null,
+  timestamp: 0,
+  TTL: 20000 // 20 segundos
+}
+
+function invalidarCacheResumoOperacional() {
+  cacheResumoOperacional.dados = null
+  cacheResumoOperacional.timestamp = 0
+}
 
 async function executarComLockUsuario(from, tarefa) {
   const chave = normalizarNumeroWhatsAppEnvio(from) || sanitizarTextoEntrada(from)
@@ -4008,17 +4021,29 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
 
 async function hsAdminBuscarContatoDoNegocio(dealId) {
   try {
-    const assoc = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/deals/${dealId}/associations/contacts`,
-      { headers: HS() }
+    return await executarComRetryHubSpot(
+      async () => {
+        const assoc = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}/associations/contacts`,
+          { headers: HS() }
+        )
+        const contactId = assoc.data?.results?.[0]?.id
+        if (!contactId) return null
+        const contato = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,phone`,
+          { headers: HS() }
+        )
+        return contato.data || null
+      },
+      {
+        maxTentativas: 3,
+        operacao: "adminBuscarContatoDoNegocio",
+        idempotente: true,
+        onRetry: (info) => {
+          logDebug(`[HUBSPOT_RETRY] ${info.operacao} tentativa=${info.tentativa}/${info.maxTentativas} delay=${info.delayMs}ms`)
+        }
+      }
     )
-    const contactId = assoc.data?.results?.[0]?.id
-    if (!contactId) return null
-    const contato = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,phone`,
-      { headers: HS() }
-    )
-    return contato.data || null
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarContatoDoNegocio", dealId })
     return null
@@ -4029,34 +4054,46 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50) {
   const valores = stages.filter(Boolean)
   if (!valores.length) return []
   try {
-    const res = await axios.post(
-      "https://api.hubapi.com/crm/v3/objects/deals/search",
-      {
-        filterGroups: [{ filters: [{ propertyName: "dealstage", operator: "IN", values: valores }] }],
-        sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
-        properties: [
-          "dealstage", "dealname", "createdate", "closedate", "description",
-          "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot",
-          "etapa_do_bot", "tipo_de_caso", "temperatura_lead", "hs_priority", "numero_de_caso",
-          "urgencia"
-        ],
-        limit
+    return await executarComRetryHubSpot(
+      async () => {
+        const res = await axios.post(
+          "https://api.hubapi.com/crm/v3/objects/deals/search",
+          {
+            filterGroups: [{ filters: [{ propertyName: "dealstage", operator: "IN", values: valores }] }],
+            sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
+            properties: [
+              "dealstage", "dealname", "createdate", "closedate", "description",
+              "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot",
+              "etapa_do_bot", "tipo_de_caso", "temperatura_lead", "hs_priority", "numero_de_caso",
+              "urgencia"
+            ],
+            limit
+          },
+          { headers: HS() }
+        )
+        return (res.data?.results || []).map(n => ({
+          id: n.id,
+          stageId: n.properties?.dealstage || null,
+          createdate: n.properties?.createdate || null,
+          properties: n.properties || {}
+        }))
       },
-      { headers: HS() }
+      {
+        maxTentativas: 3,
+        operacao: "adminBuscarNegociosPorStages",
+        idempotente: true,
+        onRetry: (info) => {
+          logDebug(`[HUBSPOT_RETRY] ${info.operacao} tentativa=${info.tentativa}/${info.maxTentativas} delay=${info.delayMs}ms`)
+        }
+      }
     )
-    return (res.data?.results || []).map(n => ({
-      id: n.id,
-      stageId: n.properties?.dealstage || null,
-      createdate: n.properties?.createdate || null,
-      properties: n.properties || {}
-    }))
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarNegociosPorStages" })
     return []
   }
 }
 
-async function mapearComLimite(itens = [], limite = 5, fn) {
+async function mapearComLimite(itens = [], limite = 2, fn) {
   const entrada = Array.isArray(itens) ? itens : []
   const max = Math.max(1, Number(limite) || 1)
   const saida = new Array(entrada.length)
@@ -4095,16 +4132,20 @@ async function reconciliarTituloNegocioHubSpotAdmin(negocio = {}, item = {}) {
   if (atualizado) {
     negocio.properties = { ...props, dealname: tituloEsperado }
     if (item.u && (!item.u.nome || item.u.nome === tituloAtual)) item.u.nome = item.u.nomeWA || "Cliente"
+    // Invalidar cache após escrita no HubSpot
+    invalidarCacheResumoOperacional()
   }
   return Boolean(atualizado)
 }
 
 async function hsAdminItensPorStages(stages = [], limit = 30) {
   const negocios = await hsAdminBuscarNegociosPorStages(stages, limit)
-  return mapearComLimite(negocios, 5, async (negocio) => {
+  // CORREÇÃO: remover reconciliação de título do fluxo de leitura
+  // reconciliarTituloNegocioHubSpotAdmin só deve ser chamada em operações explícitas de escrita
+  return mapearComLimite(negocios, 2, async (negocio) => {
     const contato = await hsAdminBuscarContatoDoNegocio(negocio.id)
     const item = normalizarItemAdminLocal(contato?.properties?.phone || "", null, negocio, contato)
-    await reconciliarTituloNegocioHubSpotAdmin(negocio, item)
+    // NÃO chamar reconciliarTituloNegocioHubSpotAdmin aqui
     return item
   })
 }
@@ -4133,7 +4174,7 @@ async function hsAdminItemPorDealId(dealId) {
   }
 }
 
-async function adminItensAtivosHubSpot(limit = 50) {
+async function adminItensAtivosHubSpot(limit = 15) {
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
   return hsAdminItensPorStages(stagesAtivos, limit)
 }
@@ -4149,16 +4190,25 @@ async function adminFonteCasos(filtro = () => true, stages = Object.values(HS_ST
 }
 
 async function adminResumoOperacional() {
-  const ativos = await adminItensAtivosHubSpot(100)
+  // Verificar cache
+  const agora = Date.now()
+  if (cacheResumoOperacional.dados && (agora - cacheResumoOperacional.timestamp) < cacheResumoOperacional.TTL) {
+    logDebug("[ADMIN_CACHE] Usando resumo operacional em cache")
+    return cacheResumoOperacional.dados
+  }
+
+  const ativos = await adminItensAtivosHubSpot(15) // reduzido de 100 para 15
   const memoria = usuariosAdminOrdenados()
   const todos = mesclarItensAdminPorIdentidade(ativos, memoria)
-  await mapearComLimite(todos, 5, async ({ u }) => {
+
+  // Reduzir concorrência de 5 para 2
+  await mapearComLimite(todos, 2, async ({ u }) => {
     if (u?.negocioId) {
       await atualizarEstadoConsultaUsuario(u).catch(() => null)
     }
   })
 
-  return {
+  const resultado = {
     fonte: ativos.length ? "HubSpot + memoria local" : "memoria local",
     totalClientes: todos.filter(({ u }) => Boolean(u.numeroCaso)).length,
     consultasAtivas: todos.filter(({ u }) => u.consultaStatus === "agendada").length,
@@ -4167,6 +4217,13 @@ async function adminResumoOperacional() {
     analise: todos.filter(({ u }) => u.negocioStageId === HS_STAGE.ANALISE && Boolean(u.numeroCaso)).length,
     todos
   }
+
+  // Atualizar cache
+  cacheResumoOperacional.dados = resultado
+  cacheResumoOperacional.timestamp = agora
+  logDebug("[ADMIN_CACHE] Resumo operacional armazenado em cache")
+
+  return resultado
 }
 
 function gerarAlertasOperacionaisAdmin(item) {
@@ -4541,31 +4598,44 @@ async function telaAdminPrincipal() {
 }
 
 async function telaAdminPrioridades(from) {
-  const itens = await gerarPrioridadesAdmin(10)
-  salvarListaCasosAdmin(from, itens, ADMIN_IDS.prioridades)
-  if (!itens.length) {
+  try {
+    const itens = await gerarPrioridadesAdmin(10)
+    salvarListaCasosAdmin(from, itens, ADMIN_IDS.prioridades)
+    if (!itens.length) {
+      return {
+        texto: "📌 *Prioridades*\n\n✅ Nao encontrei casos com risco operacional relevante agora.",
+        opcoes: [
+          { id: ADMIN_IDS.menu, title: "🏠 Menu admin" },
+          { id: ADMIN_IDS.casos, title: "📂 Casos" }
+        ],
+        registrarPergunta: false
+      }
+    }
+
+    const itensExibidos = itens.slice(0, 8)
+    const linhas = itensExibidos.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1, { adminAutenticado: true }))
     return {
-      texto: "📌 *Prioridades*\n\n✅ Nao encontrei casos com risco operacional relevante agora.",
+      texto: ["📌 *Prioridades*", "", ...linhas, "", "Toque em um caso para ver o detalhe."].join("\n\n"),
       opcoes: [
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" },
-        { id: ADMIN_IDS.casos, title: "📂 Casos" }
+        ...itensExibidos.map((item, idx) => ({
+        id: `admin_caso_${idx}`,
+        title: tituloOpcaoCasoAdmin(item, idx)
+        })),
+        { id: ADMIN_IDS.menu, title: "Menu admin" }
       ],
       registrarPergunta: false
     }
-  }
-
-  const itensExibidos = itens.slice(0, 8)
-  const linhas = itensExibidos.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1, { adminAutenticado: true }))
-  return {
-    texto: ["📌 *Prioridades*", "", ...linhas, "", "Toque em um caso para ver o detalhe."].join("\n\n"),
-    opcoes: [
-      ...itensExibidos.map((item, idx) => ({
-      id: `admin_caso_${idx}`,
-      title: tituloOpcaoCasoAdmin(item, idx)
-      })),
-      { id: ADMIN_IDS.menu, title: "Menu admin" }
-    ],
-    registrarPergunta: false
+  } catch (erro) {
+    logErro("admin", `telaAdminPrioridades falhou: ${mascararErroHubSpot(erro)}`)
+    // Garantir resposta mesmo com falha no HubSpot
+    return {
+      texto: "📌 *Prioridades*\n\n⚠️ O HubSpot esta temporariamente ocupado.\n\nSua sessao admin permanece ativa. Tente novamente em alguns segundos.",
+      opcoes: [
+        { id: ADMIN_IDS.prioridades, title: "🔄 Tentar novamente" },
+        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      ],
+      registrarPergunta: false
+    }
   }
 }
 
@@ -5372,7 +5442,9 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     }
     if (senhaAdminValida(text)) {
       autenticarAdminWhatsApp(from)
-      return await telaAdminPrioridades(from)
+      // CORREÇÃO: não carregar prioridades imediatamente após autenticação
+      // Retornar menu principal leve para evitar dependência do HubSpot
+      return await telaAdminPrincipal()
     }
     const tentativaInvalida = Boolean(sanitizarTextoEntrada(text))
     if (tentativaInvalida) registrarFalhaSenhaAdmin(from)
