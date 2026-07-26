@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict")
 const {
   redactSecrets, parseMarkdownCases, matchMarkdownBlock, evidenceForCase,
-  summarizeCase, preserve, similarity
+  summarizeCase, preserve, similarity, extractCaseSignals
 } = require("../src/domain/inss-case-reconciliation")
 
 const markdown = [
@@ -53,5 +53,10 @@ for (const section of ["RESUMO DO CASO", "IDENTIFICAÇÃO DO CLIENTE", "HISTÓRI
 }
 assert(!summary.includes("jamais"))
 assert.notEqual(summary, summarizeCase({ caseNumber: "PRV.2", classification: { label: "Aposentadoria" }, evidence: { ...evidence, facts: ["Fato distinto"] }, categories: [], driveUrl: "x", fileCount: 1 }))
+const signals = extractCaseSignals("Nome completo: MARIA APARECIDA DA SILVA\nDER 12/03/2025\nNB: 123.456.789-0\nPedido indeferido em 14/04/2025.")
+assert.equal(signals.officialNameCandidates[0], "Maria Aparecida da Silva")
+assert.equal(signals.dates.length, 2)
+assert.equal(signals.benefitNumbers.length, 1)
+assert(signals.events.some(line => /indeferido/i.test(line)))
 
 console.log("inss-case-reconciliation.test.js: ok")

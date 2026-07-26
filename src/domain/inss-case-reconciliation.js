@@ -78,6 +78,78 @@ function plausibleName(value) {
   return normalized
 }
 
+function cleanOfficialName(value) {
+  const text = String(value || "").trim()
+  if (!text) return ""
+  const upper = text.toUpperCase()
+  const suffixes = [
+    "DATA DE NASCIMENTO",
+    "NOME DA MAE",
+    "NOME DO PAI",
+    "NOME COMPLETO",
+    "NOME SOCIAL",
+    "CPF",
+    "RG",
+    "CNH",
+    "TELEFONE",
+    "E-MAIL",
+    "EMAIL",
+    "ENDERECO",
+    "DOCUMENTO",
+    "CERTIDAO",
+    "PROCESSO",
+    "PROTOCOLO",
+    "BENEFICIO",
+    "RESPONSAVEL",
+    "SEXO",
+    "COR",
+    "REGISTRO",
+    "CARTORIO",
+    "LOCAL",
+    "NUMERO",
+    "LIVRO",
+    "FOLHA",
+    "MATRICULA",
+    "TERMO",
+    "EMISSAO",
+    "COMPLEMENTO",
+    "INTEGRANTES",
+    "PROFISSAO",
+    "ATIVIDADE",
+    "ORIGEM",
+    "INDICACAO",
+    "PASTA",
+    "ARQUIVO",
+    "TIPO",
+    "CATEGORIA",
+    "CLASSIFICACAO",
+    "STATUS",
+    "FASE",
+    "ESTAGIO",
+    "PRIORIDADE",
+    "TEMPERATURA",
+    "AREA",
+    "SUBTIPO",
+    "SITUACAO",
+    "ESTADO",
+    "UF",
+    "CEP",
+    "BAIRRO",
+    "CIDADE",
+    "NIS",
+    "PIS",
+    "PASEP"
+  ]
+  for (const suffix of suffixes) {
+    const index = upper.lastIndexOf(suffix)
+    if (index >= 0) {
+      const before = text.slice(0, index).trim()
+      if (before.length >= 3 && before.split(/\s+/).length >= 2) return before
+    }
+  }
+  return text
+}
+
 function phone(value) {
   try { return normalizarTelefone(value) } catch { return "" }
 }
@@ -128,7 +200,7 @@ function evidenceForCase({ record, files, blocks }) {
   }
 }
 
-function summarizeCase({ caseNumber, classification, evidence, categories, driveUrl, fileCount }) {
+function summarizeCase({ caseNumber, classification, evidence, categories, driveUrl, fileCount, signals = {}, legalAnalysis = {} }) {
   const facts = evidence.facts.length
     ? evidence.facts.map(value => `- ${value}`).join("\n")
     : "- Não há relato textual inequivocamente associado nas fontes Markdown."
@@ -150,6 +222,14 @@ function summarizeCase({ caseNumber, classification, evidence, categories, drive
     "",
     "HISTÓRICO E RELATO DISPONÍVEL",
     facts,
+    ...(signals.events?.length ? ["", "EVENTOS DOCUMENTAIS", ...signals.events.map(value => `- ${value}`)] : []),
+    "",
+    "INFORMAÇÕES PREVIDENCIÁRIAS E PROCESSUAIS",
+    `Datas identificadas: ${signals.dates?.length ? signals.dates.join("; ") : "não confirmadas"}.`,
+    `Períodos identificados: ${signals.periods?.length ? signals.periods.join("; ") : "não confirmados"}.`,
+    `NB identificados: ${signals.benefitNumbers?.length ? signals.benefitNumbers.join("; ") : "não confirmado"}.`,
+    `Protocolos identificados: ${signals.protocols?.length ? signals.protocols.join("; ") : "não confirmados"}.`,
+    `Processos identificados: ${signals.processNumbers?.length ? signals.processNumbers.join("; ") : "não confirmados"}.`,
     "",
     "ANÁLISE DOCUMENTAL",
     `Foram inventariados ${fileCount} arquivos, organizados nas categorias: ${categories.join("; ") || "outros documentos"}.`,
@@ -162,6 +242,13 @@ function summarizeCase({ caseNumber, classification, evidence, categories, drive
     `Enquadramento aparente: ${classification.label}.`,
     `Revisão concreta: ${review}`,
     "A análise é preliminar e não substitui revisão jurídica nem conclusão médica.",
+    "",
+    "ESTRATÉGIAS POSSÍVEIS",
+    ...(legalAnalysis.documentosPendentes?.length
+      ? [`- Regularização documental: obter ${legalAnalysis.documentosPendentes.slice(0, 6).join("; ")}.`]
+      : ["- Prosseguir com a medida previdenciária compatível após conferência final do conjunto."]),
+    ...(legalAnalysis.riscosIdentificados || []).map(value => `- Mitigar: ${value}`),
+    "- As estratégias são preliminares e dependem de validação do advogado.",
     "",
     "PRÓXIMA AÇÃO",
     evidence.reviewReasons.length
@@ -186,7 +273,23 @@ function caseFingerprint(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16)
 }
 
+function extractCaseSignals(text) {
+  const safe = redactSecrets(text)
+  const unique = values => [...new Set(values.map(value => String(value || "").trim()).filter(Boolean))]
+  const dates = unique(safe.match(/\b(?:0?[1-9]|[12]\d|3[01])[/-](?:0?[1-9]|1[0-2])[/-](?:19|20)\d{2}\b/g) || [])
+  const periods = unique(safe.match(/\b(?:desde|entre|de|a partir de)\s+(?:\d{1,2}[/-])?(?:\d{1,2}[/-])?(?:19|20)\d{2}(?:\s+(?:a|até)\s+(?:\d{1,2}[/-])?(?:\d{1,2}[/-])?(?:19|20)\d{2})?/gi) || [])
+  const protocols = unique((safe.match(/\b\d{8,21}\b/g) || []).filter(value => value.length !== 11)).slice(0, 12)
+  const benefitNumbers = unique([...safe.matchAll(/\b(?:NB|benef[ií]cio)\s*[:ºn.-]*\s*(\d[\d .-]{7,20})/gi)].map(match => match[1].replace(/\D/g, ""))).slice(0, 6)
+  const processNumbers = unique(safe.match(/\b\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}\b/g) || []).slice(0, 6)
+  const officialNameCandidates = unique([...safe.matchAll(/\b(?:nome(?:\s+completo)?|segurado|requerente|titular)\s*[:\-]\s*([A-ZÀ-Ý][A-ZÀ-Ý' -]{5,80})/gi)]
+    .map(match => cleanOfficialName(plausibleName(match[1])))).filter(Boolean)
+  const events = safe.split(/\r?\n/).map(line => line.trim()).filter(line =>
+    /\b(requer\w*|protocol\w*|per[ií]cia\w*|indefer\w*|conced\w*|cess\w*|suspend\w*|recurso\w*|exig[eê]ncia\w*|decis[aã]o\w*|laudo\w*|atestado\w*|cad[uú]nico|cras)\b/i.test(line)
+  ).slice(0, 20)
+  return { dates, periods, protocols, benefitNumbers, processNumbers, officialNameCandidates, events }
+}
+
 module.exports = {
   redactSecrets, parseMarkdownCases, matchMarkdownBlock, evidenceForCase,
-  summarizeCase, preserve, similarity, caseFingerprint
+  summarizeCase, preserve, similarity, caseFingerprint, extractCaseSignals
 }

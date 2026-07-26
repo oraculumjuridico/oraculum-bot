@@ -12,8 +12,10 @@ const { montarTituloNegocioHubSpot } = require("../src/domain/hubspot-deal-title
 const { loadOperationalEnvironment } = require("../src/composition/oraculum-runtime-env")
 const { createService, createPostgresAdapter } = require("../src/domain/case-number")
 const { normalizarTelefone } = require("../src/domain/phone-name")
+const { analisarCasoJuridico } = require("../src/domain/legal-copilot")
 const {
-  parseMarkdownCases, evidenceForCase, summarizeCase, preserve, caseFingerprint
+  parseMarkdownCases, evidenceForCase, summarizeCase, preserve, caseFingerprint,
+  extractCaseSignals, similarity
 } = require("../src/domain/inss-case-reconciliation")
 
 const CONFIRMATION = "RECONCILE_EXISTING_55_INSS_CASES"
@@ -33,6 +35,11 @@ const DEAL_PROPERTIES = [
   { name: "oraculum_review_reasons", label: "Motivos concretos de revisão Oráculum" },
   { name: "oraculum_referrer", label: "Indicado por Oráculum" },
   { name: "oraculum_third_parties", label: "Terceiros do caso Oráculum" }
+  ,{ name: "oraculum_case_facts", label: "Fatos principais Oráculum" }
+  ,{ name: "oraculum_case_periods", label: "Períodos relevantes Oráculum" }
+  ,{ name: "oraculum_document_evidence", label: "Provas documentais Oráculum" }
+  ,{ name: "oraculum_possible_strategies", label: "Estratégias possíveis Oráculum" }
+  ,{ name: "oraculum_analysis_confidence", label: "Confiança da análise Oráculum" }
 ]
 const CONTACT_PROPERTIES = [
   { name: "oraculum_nickname", label: "Apelido Oráculum" },
@@ -80,6 +87,32 @@ function excerpt(text, heading, fallback) {
   const lines = String(text || "").split("\n")
   const index = lines.findIndex(line => line === heading)
   return index >= 0 ? lines.slice(index + 1, index + 5).filter(Boolean).join("\n").slice(0, 5000) : fallback
+}
+
+async function extractFastDocumentText(files) {
+  const relevant = files.filter(file => /\.(pdf|txt|md)$/i.test(file) && /(rg|cpf|cnh|ident|inss|cnis|benef|requer|indefer|decis|process|laudo|atestado|cras|cad.?unico|contrato|procur)/i.test(path.basename(file))).slice(0, 12)
+  const chunks = []
+  let pdfjs = null
+  for (const file of relevant) {
+    try {
+      if (/\.(txt|md)$/i.test(file)) {
+        chunks.push(fs.readFileSync(file, "utf8").slice(0, 30000))
+        continue
+      }
+      pdfjs ||= await import("pdfjs-dist/legacy/build/pdf.mjs")
+      const bytes = new Uint8Array(fs.readFileSync(file))
+      const document = await pdfjs.getDocument({ data: bytes, disableWorker: true, useSystemFonts: true }).promise
+      try {
+        for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 5); pageNumber++) {
+          const page = await document.getPage(pageNumber)
+          const content = await page.getTextContent()
+          chunks.push(content.items.map(item => item.str).join(" ").slice(0, 12000))
+          page.cleanup()
+        }
+      } finally { await document.destroy() }
+    } catch {}
+  }
+  return chunks.join("\n")
 }
 
 async function main() {
@@ -145,6 +178,24 @@ async function main() {
         const pilot = (pilotSelection.selection || []).find(item => item?.importId === record.importId)
         const evidenceRecord = pilot?.name ? { ...record, name: pilot.name } : record
         const evidence = evidenceForCase({ record: evidenceRecord, files, blocks: markdownGroups })
+        const documentText = await extractFastDocumentText(files)
+        const signals = extractCaseSignals([evidence.facts.join("\n"), documentText].join("\n"))
+        const supportedNames = signals.officialNameCandidates.filter(name =>
+          similarity(name, evidence.officialName || evidenceRecord.name) >= 0.5
+        )
+        if (supportedNames.length === 1) {
+          evidence.officialName = supportedNames[0]
+          evidence.provenance.unshift("documento_oficial:texto_pdf")
+          evidence.reviewReasons = evidence.reviewReasons.filter(reason => !/nome_sem_|identidade_sem_/.test(reason))
+        } else if (supportedNames.length > 1) {
+          evidence.reviewReasons.push("multiplos_nomes_oficiais_compativeis")
+        }
+        const legalAnalysis = analisarCasoJuridico({
+          areaJuridica: "INSS",
+          tipoCaso: classification.label,
+          resumo: [...evidence.facts, ...signals.events].join(" "),
+          documentosJaInformados: [...new Set(files.map(category))]
+        })
         const deals = await search("deals", "oraculum_case_import_id", record.importId, [
           "dealname", "numero_de_caso", "pasta_drive", "descricao_completa", "resumo_cliente",
           "oraculum_review_required", "oraculum_case_subtype", "oraculum_documents_received",
@@ -203,7 +254,7 @@ async function main() {
         const categories = [...new Set(files.map(category))]
         const summary = summarizeCase({
           caseNumber: reservation.case_number, classification, evidence, categories,
-          driveUrl, fileCount: files.length
+          driveUrl, fileCount: files.length, signals, legalAnalysis
         })
         const nickname = field(evidence.block, ["Apelido"])
         const currentName = String(contact.properties?.firstname || "").trim()
@@ -226,6 +277,11 @@ async function main() {
           oraculum_review_reasons: reviewText,
           oraculum_referrer: evidence.referrer,
           oraculum_third_parties: evidence.thirdParties,
+          oraculum_case_facts: signals.events.join("\n").slice(0, 5000),
+          oraculum_case_periods: [...signals.dates, ...signals.periods].join("; ").slice(0, 5000),
+          oraculum_document_evidence: categories.map(value => `${value}: documentos presentes no acervo`).join("\n").slice(0, 5000),
+          oraculum_possible_strategies: excerpt(summary, "ESTRATÉGIAS POSSÍVEIS", ""),
+          oraculum_analysis_confidence: supportedNames.length === 1 ? "alta_para_identidade" : evidence.block ? "moderada" : "baixa",
           oraculum_review_required: evidence.reviewReasons.length ? "true" : "false",
           oraculum_analysis_status: evidence.reviewReasons.length ? "review_required" : "analyzed",
           oraculum_documents_received: categories.join("; ").slice(0, 5000),
@@ -240,10 +296,15 @@ async function main() {
           ? await hs("GET", `/crm/v3/objects/contacts/${contactId}?properties=firstname,phone,oraculum_nickname,oraculum_referrer,oraculum_identity_provenance`)
           : { properties: { ...contact.properties, ...contactProperties } }
         const verifiedDeal = apply
-          ? await hs("GET", `/crm/v3/objects/deals/${deal.id}?properties=dealname,descricao_completa,oraculum_case_history,oraculum_next_action,oraculum_data_provenance,oraculum_review_required,oraculum_review_reasons,pasta_drive`)
+          ? await hs("GET", `/crm/v3/objects/deals/${deal.id}?properties=dealname,descricao_completa,oraculum_case_history,oraculum_next_action,oraculum_data_provenance,oraculum_review_required,oraculum_review_reasons,oraculum_case_facts,oraculum_case_periods,oraculum_document_evidence,oraculum_possible_strategies,oraculum_analysis_confidence,pasta_drive`)
           : { properties: { ...deal.properties, ...dealProperties } }
         if (verifiedContact.properties.firstname !== contactProperties.firstname) throw new Error("CONTACT_REREAD_MISMATCH")
         if (verifiedDeal.properties.descricao_completa !== dealProperties.descricao_completa) throw new Error("DEAL_REREAD_MISMATCH")
+        for (const property of ["oraculum_case_history", "oraculum_next_action", "oraculum_data_provenance", "oraculum_document_evidence", "oraculum_possible_strategies", "oraculum_case_facts", "oraculum_case_periods", "oraculum_analysis_confidence"]) {
+          const actual = String(verifiedDeal.properties?.[property] || "")
+          const expected = String(dealProperties[property] || "")
+          if (actual !== expected) throw new Error(`DEAL_STRUCTURED_REREAD_MISMATCH:${property}`)
+        }
         metrics.reconciled++; metrics.dealsUpdated += apply ? 1 : 0; metrics.contactsUpdated += apply ? 1 : 0
         if (evidence.officialName && evidence.officialName !== currentName) metrics.namesCorrected++
         if (evidence.clientPhone && !contact.properties?.phone) metrics.phonesAdded++
