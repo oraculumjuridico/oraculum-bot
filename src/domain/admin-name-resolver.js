@@ -1,111 +1,89 @@
 "use strict"
 
-/**
- * Resolvedor unificado de nomes para WhatsApp Admin
- * 
- * Estabelece ordem clara de prioridade para exibição de nomes:
- * 1. Nome completo válido do contato HubSpot (firstname + lastname ou firstname)
- * 2. Nome confirmado pelo usuário durante atendimento
- * 3. Nome salvo na sessão (nomeHubspot)
- * 4. Nome do perfil WhatsApp
- * 5. Fallback "Cliente"
- */
-
 function sanitizarNomeExibicao(valor) {
   if (!valor || typeof valor !== "string") return ""
   const limpo = valor.trim()
   if (!limpo) return ""
   const lower = limpo.toLowerCase()
-  if (lower === "cliente" || lower === "usuário" || lower === "usuário" || lower === "whatsapp") return ""
+  if (lower === "cliente" || lower === "usuário" || lower === "whatsapp") return ""
   if (/^[0-9+\-\s()]+$/.test(limpo)) return ""
   if (limpo.length < 2) return ""
   return limpo
 }
 
+function validarNomePerfilWhatsApp(nome) {
+  const sanitizado = sanitizarNomeExibicao(nome)
+  if (!sanitizado) return { valido: false, nome: "" }
+  if (!/\s/.test(sanitizado) && sanitizado.length < 2) return { valido: false, nome: "" }
+  return { valido: true, nome: sanitizado }
+}
+
 function montarNomeCompletoHubSpot(contato) {
   if (!contato || !contato.properties) return ""
-  
   const firstname = sanitizarNomeExibicao(contato.properties.firstname)
   const lastname = sanitizarNomeExibicao(contato.properties.lastname)
-  
   if (firstname && lastname) {
     return `${firstname} ${lastname}`
   }
   return firstname || lastname || ""
 }
 
-function resolverNomeParaAdmin(item) {
-  const contato = item?.contato
-  const u = item?.u || {}
-  
-  // 1. Nome completo do HubSpot (prioridade máxima se existir)
+function resolverNomeUnificado({ contato, u, nomePerfilWhatsApp = "" } = {}) {
   const nomeHubSpotCompleto = montarNomeCompletoHubSpot(contato)
   if (nomeHubSpotCompleto) {
-    return nomeHubSpotCompleto
+    return { nome: nomeHubSpotCompleto, origem: "hubspot" }
   }
-  
-  // 2. Nome confirmado durante o atendimento
-  if (u.nomeConfirmado) {
-    const nomeConfirmado = sanitizarNomeExibicao(u.nome)
-    if (nomeConfirmado) return nomeConfirmado
+  const nomeHubspotSessao = sanitizarNomeExibicao(u?.nomeHubspot)
+  if (nomeHubspotSessao) {
+    return { nome: nomeHubspotSessao, origem: "persisted_session" }
   }
-  
-  // 3. Nome já salvo do HubSpot na sessão
-  const nomeHubspotSessao = sanitizarNomeExibicao(u.nomeHubspot)
-  if (nomeHubspotSessao) return nomeHubspotSessao
-  
-  // 4. Nome do perfil do WhatsApp (preferir nomePerfilWhatsApp sobre nomeWA)
-  const nomePerfilWhatsApp = sanitizarNomeExibicao(u.nomePerfilWhatsApp)
-  const nomeWA = sanitizarNomeExibicao(u.nomeWA)
-  
-  // Se nomeWA não tem espaço mas nomePerfilWhatsApp tem, preferir o perfil
-  if (nomeWA && nomePerfilWhatsApp) {
-    const temEspacoWA = /\s/.test(nomeWA)
-    const temEspacoPerfil = /\s/.test(nomePerfilWhatsApp)
-    if (!temEspacoWA && temEspacoPerfil) {
-      return nomePerfilWhatsApp
+  if (u?.nomeConfirmado) {
+    const nomeConfirmado = sanitizarNomeExibicao(u?.nome)
+    if (nomeConfirmado) {
+      return { nome: nomeConfirmado, origem: "confirmed_intake" }
     }
   }
-  
-  if (nomeWA) return nomeWA
-  if (nomePerfilWhatsApp) return nomePerfilWhatsApp
-  
-  // 5. Nome do objeto base
-  const nomeBase = sanitizarNomeExibicao(u.nome)
-  if (nomeBase) return nomeBase
-  
-  // 6. Fallback final
-  return "Cliente"
+  const { valido: perfilValido, nome: perfilSanitizado } = validarNomePerfilWhatsApp(nomePerfilWhatsApp || u?.nomePerfilWhatsApp)
+  if (perfilValido) {
+    return { nome: perfilSanitizado, origem: "whatsapp_profile" }
+  }
+  const nomeWA = sanitizarNomeExibicao(u?.nomeWA)
+  if (nomeWA) {
+    return { nome: nomeWA, origem: "whatsapp_profile" }
+  }
+  const nomeBase = sanitizarNomeExibicao(u?.nome)
+  if (nomeBase && !u?.nomeConfirmado) {
+    return { nome: nomeBase, origem: "persisted_session" }
+  }
+  return { nome: "Cliente", origem: "fallback" }
+}
+
+function resolverNomeParaAdmin(item) {
+  const resultado = resolverNomeUnificado(item)
+  return resultado.nome
 }
 
 function resolverNomeParaUsuario(u) {
   if (!u) return "Cliente"
-  
-  // Criar item simulado para usar o resolvedor
-  const item = {
-    u,
-    contato: null
-  }
-  
+  const item = { u, contato: null }
   return resolverNomeParaAdmin(item)
 }
 
 function primeiroEUltimoNome(nomeCompleto) {
   if (!nomeCompleto || typeof nomeCompleto !== "string") return "Cliente"
-  
   const nome = nomeCompleto.trim()
   if (!nome) return "Cliente"
-  
   const partes = nome.split(/\s+/).filter(Boolean)
   if (partes.length === 0) return "Cliente"
   if (partes.length === 1) return partes[0]
-  
   return `${partes[0]} ${partes[partes.length - 1]}`
 }
 
 module.exports = {
   sanitizarNomeExibicao,
+  validarNomePerfilWhatsApp,
   montarNomeCompletoHubSpot,
+  resolverNomeUnificado,
   resolverNomeParaAdmin,
   resolverNomeParaUsuario,
   primeiroEUltimoNome

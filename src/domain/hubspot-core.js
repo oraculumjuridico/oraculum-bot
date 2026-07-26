@@ -25,6 +25,7 @@ function warnHubSpotPayload(warning) {
 
 const CONTACT_SEARCH_PROPERTIES = [
   "firstname",
+  "lastname",
   "email",
   "phone",
   "city",

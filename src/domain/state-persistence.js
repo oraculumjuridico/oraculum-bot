@@ -567,6 +567,8 @@ function hidratarUsuarioPersistido(data) {
   hidratado._casoRecemAberto = Boolean(hidratado._casoRecemAberto)
   hidratado._contextoDocsCasoAtual = hidratado._contextoDocsCasoAtual && typeof hidratado._contextoDocsCasoAtual === "object" ? hidratado._contextoDocsCasoAtual : null
   hidratado._docKey = DOCS_EXTRA[hidratado._docKey] ? hidratado._docKey : null
+  hidratado._hubspotConsultadoEm = hidratado._hubspotConsultadoEm || null
+  hidratado._hubspotResultadoId = hidratado._hubspotResultadoId || null
   hidratado.processing = false
   hidratado.modoDigitando = Boolean(hidratado.modoDigitando)
   hidratado.aguardandoResposta = Boolean(hidratado.aguardandoResposta)

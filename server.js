@@ -100,7 +100,7 @@ const { routeClientIntake } = require("./src/domain/client/client-intake-decisio
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const { executarComRetryHubSpot, mascararErroHubSpot } = require("./src/utils/hubspot-retry")
-const { resolverNomeParaAdmin, primeiroEUltimoNome: primeiroEUltimoNomeAdmin } = require("./src/domain/admin-name-resolver")
+const { resolverNomeParaAdmin, resolverNomeUnificado, validarNomePerfilWhatsApp, montarNomeCompletoHubSpot, primeiroEUltimoNome: primeiroEUltimoNomeAdmin } = require("./src/domain/admin-name-resolver")
 const { handle: handleRevalidateNameCorrectText } = require("./src/domain/client/handlers/revalidate-name-correct-text.handler")
 const { handle: handleRevalidateCityConfirm } = require("./src/domain/client/handlers/revalidate-city-confirm.handler")
 const { handle: handleRevalidateCitySelect } = require("./src/domain/client/handlers/revalidate-city-select.handler")
@@ -886,6 +886,7 @@ function novoUsuario(nomeWA) {
     atendimentoParaTerceiro: false, relacaoComAtendido: null, papelContato: null,
     _nomeTitularPendente: null, _nomeTitularOrigem: null,
     nomeConfirmado: false,
+    nomeHubspot: null,
     contatoId: null, negocioId: null, numeroCaso: null,
     pastaDriveId: null, pastaDriveLink: null,
     consultaStatus: "sem_consulta",
@@ -902,6 +903,8 @@ function novoUsuario(nomeWA) {
     _ofereceuExplicarTudo: false,
     _sugestaoFluxo: null,
     _hubspotSyncSnapshot: null,
+    _hubspotConsultadoEm: null,
+    _hubspotResultadoId: null,
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
@@ -952,23 +955,49 @@ function resolverNomeBaseWhatsApp(nomeWA, sessaoAtual = null) {
 }
 
 function resolverNomeBriefing(u = {}) {
-  const nomeWA = nomeValidoParaExibicao(u.nomeWA)
-  const nomePerfilWhatsApp = nomeValidoParaExibicao(u.nomePerfilWhatsApp)
-  const nomeWhatsApp = nomeWA && !/\s/.test(nomeWA) && /\s/.test(nomePerfilWhatsApp)
-    ? nomePerfilWhatsApp
-    : nomeWA || nomePerfilWhatsApp
-  return (u.nomeConfirmado ? nomeValidoParaExibicao(u.nome) : "") ||
-    nomeValidoParaExibicao(u.nomeHubspot) ||
-    nomeWhatsApp ||
-    "Cliente"
+  const resultado = resolverNomeUnificado({
+    contato: null,
+    u: {
+      nomeConfirmado: u.nomeConfirmado,
+      nome: u.nome,
+      nomeHubspot: u.nomeHubspot,
+      nomeWA: u.nomeWA,
+      nomePerfilWhatsApp: u.nomePerfilWhatsApp
+    },
+    nomePerfilWhatsApp: u.nomePerfilWhatsApp
+  })
+  return resultado.nome
 }
 
 async function resolverUsuarioPorHubSpot(from, nomeWA) {
-  const contato = await hsBuscarPorPhone(from)
   const sessaoAtual = users[from] || null
   let u = null
-  const nomePerfilWhatsApp = nomeValidoParaExibicao(nomeWA) || nomeValidoParaExibicao(sessaoAtual?.nomePerfilWhatsApp) || "Cliente"
+  
+  // Validar nome do perfil WhatsApp
+  const { valido: perfilValido, nome: perfilSanitizado } = (typeof validarNomePerfilWhatsApp === "function")
+    ? validarNomePerfilWhatsApp(nomeWA)
+    : { valido: false, nome: "" }
+  const nomePerfilWhatsApp = perfilSanitizado || nomeValidoParaExibicao(sessaoAtual?.nomePerfilWhatsApp) || "Cliente"
   const nomeBase = resolverNomeBaseWhatsApp(nomeWA, sessaoAtual)
+  
+  // Verificar se já consultou HubSpot recentemente (TTL 5 minutos)
+  const jaConsultouHubSpot = sessaoAtual?._hubspotConsultadoEm &&
+    (Date.now() - sessaoAtual._hubspotConsultadoEm < 5 * 60 * 1000)
+  
+  let contato = null
+  
+  // Só consultar HubSpot se não consultou recentemente
+  if (!jaConsultouHubSpot) {
+    contato = await hsBuscarPorPhone(from)
+    if (sessaoAtual) {
+      sessaoAtual._hubspotConsultadoEm = Date.now()
+      sessaoAtual._hubspotResultadoId = contato?.id || null
+    }
+  } else if (sessaoAtual?._hubspotResultadoId) {
+    // Reutilizar resultado da consulta anterior
+    contato = { id: sessaoAtual._hubspotResultadoId }
+  }
+  
   const podeReutilizarSessaoLocalSemHubSpot = Boolean(
     !contato?.id &&
     sessaoAtual &&
@@ -985,7 +1014,17 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     }
     u = users[from]
     u._hubspotSemContato = false
-    u.nomeHubspot = contato.properties?.firstname || u.nomeHubspot || null
+    u._hubspotConsultadoEm = Date.now()
+    u._hubspotResultadoId = contato.id
+    
+    // Salvar nome completo do HubSpot
+    const nomeHubspotCompleto = montarNomeCompletoHubSpot(contato)
+    u.nomeHubspot = nomeHubspotCompleto || u.nomeHubspot || null
+    
+    // Se não tiver nome confirmado, usar nome do HubSpot
+    if (!u.nomeConfirmado && nomeHubspotCompleto) {
+      u.nome = nomeHubspotCompleto
+    }
   } else if (podeReutilizarSessaoLocalSemHubSpot) {
     u = sessaoAtual
   } else {
@@ -998,13 +1037,15 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u = novoUsuario(nomeBase)
     users[from] = u
     u._hubspotSemContato = true
+    u._hubspotConsultadoEm = Date.now()
+    u._hubspotResultadoId = null
   }
 
   if (!u._numero && from) u._numero = from
   u.nomeWA = nomeBase
   u.nomePerfilWhatsApp = nomePerfilWhatsApp
+  
   if (!contato?.id) {
-    // Só zera o nome se ainda não foi confirmado pelo usuário nesta sessão
     if (!u.nomeConfirmado) {
       u.nome = null
       u.nomeHubspot = null
@@ -1014,6 +1055,7 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
   } else {
     u._hubspotSemContato = false
   }
+  
   u._numero = from
   agendarPersistenciaUsers()
 
@@ -4042,19 +4084,14 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
   const urgenciaProps = sanitizarTextoEntrada(props.urgencia).toLowerCase()
   const telefone = normalizarNumeroWhatsAppEnvio(contato?.properties?.phone || from || snapshot._numero || snapshot.whatsappContato)
 
-  // Capturar nome do HubSpot se disponível
-  const nomeHubspotCompleto = contato ? (
-    contato.properties?.firstname && contato.properties?.lastname
-      ? `${contato.properties.firstname} ${contato.properties.lastname}`.trim()
-      : (contato.properties?.firstname || contato.properties?.lastname || "").trim()
-  ) : ""
+  const { nome: nomeResolvido } = resolverNomeUnificado({ contato, u })
 
   const base = hidratarUsuarioPersistido({
     ...snapshot,
-    nome: snapshot.nome || nomeHubspotCompleto || props.dealname || u?.nome || null,
+    nome: snapshot.nome || nomeResolvido || props.dealname || u?.nome || null,
     nomeWA: snapshot.nomeWA || u?.nomeWA || null,
     nomePerfilWhatsApp: snapshot.nomePerfilWhatsApp || u?.nomePerfilWhatsApp || null,
-    nomeHubspot: nomeHubspotCompleto || snapshot.nomeHubspot || u?.nomeHubspot || null,
+    nomeHubspot: nomeResolvido || snapshot.nomeHubspot || u?.nomeHubspot || null,
     contatoId: contato?.id || snapshot.contatoId || u?.contatoId || null,
     negocioId: negocio?.id || snapshot.negocioId || u?.negocioId || null,
     negocioStageId: negocio?.stageId || props.dealstage || snapshot.negocioStageId || u?.negocioStageId || null,
@@ -4091,7 +4128,7 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
         const contactId = assoc.data?.results?.[0]?.id
         if (!contactId) return null
         const contato = await axios.get(
-          `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,phone`,
+          `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,lastname,phone`,
           { headers: HS() }
         )
         return contato.data || null
@@ -15337,7 +15374,8 @@ async function processarComLock(from, nomeWA, text, msgObj) {
     const resolvido = await resolverUsuarioPorHubSpot(from, nomeWA)
     const contato = resolvido.contato
     u = resolvido.u
-    const nomeWAEfetivo = contato?.id ? (nomeWA || u.nomeWA || "Cliente") : "Cliente"
+    const { nome: nomeExibicao } = resolverNomeUnificado({ contato, u })
+    const nomeWAEfetivo = nomeExibicao
     if (u.negocioId) {
       await atualizarEstadoConsultaUsuario(u).catch(e =>
         logErro("calendar", "Falha ao atualizar estado da consulta na entrada: " + e.message)
@@ -15754,7 +15792,7 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
 
     // 4. Buscar nome e telefone do contato
     const contato = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,phone`,
+        `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,lastname,phone`,
       { headers: HS() }
     )
     const props = contato.data?.properties || {}
@@ -15881,7 +15919,7 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
     let name = "cliente"
     if (contactId) {
       const contato = await axios.get(
-        `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,phone`,
+      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,lastname,phone`,
         { headers: HS() }
       )
       const props = contato.data?.properties || {}
