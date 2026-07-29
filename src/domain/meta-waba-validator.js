@@ -27,7 +27,7 @@ function normalizarCatalogo() {
     nomeConfigurado: template.nome || "",
     nomeCatalogo: template.nomeCatalogo || template.nome || id,
     idioma: template.idioma || "pt_BR",
-    headerEsperado: Boolean(template.headerImageUrl),
+    headerEsperado: template.componentes ? template.componentes.some(c => (c.tipo || c.type || "").toUpperCase() === "HEADER") : Boolean(template.headerImageUrl),
     parametrosEsperados: Number.isInteger(template.parametrosEsperados) ? template.parametrosEsperados : null,
     critico: template.critico === true
   }))
@@ -249,5 +249,6 @@ module.exports = {
   validarMetaWabaNoBoot,
   formatarRelatorioMetaWaba,
   contarParametrosBody,
-  possuiHeader
+  possuiHeader,
+  normalizarCatalogo
 }

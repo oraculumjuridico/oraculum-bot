@@ -2,8 +2,11 @@
 
 const test = require("node:test")
 const assert = require("node:assert/strict")
+const templatesPath = require.resolve("../src/domain/meta-templates")
+const validatorPath = require.resolve("../src/domain/meta-waba-validator")
 const { META_TEMPLATES } = require("../src/domain/meta-templates")
 const { enviarSolicitacaoAdaptativa } = require("../src/domain/post-human-adaptive-sender")
+const { normalizarCatalogo, possuiHeader } = require("../src/domain/meta-waba-validator")
 
 function repository() {
   return {
@@ -57,4 +60,72 @@ test("fora da janela bloqueia contrato ausente ou mídia oficial ausente", async
     assert.equal(result.failed, true)
     assert.equal(sent, 0)
   }
+})
+
+test("variável canônica POST_HUMAN_TEMPLATE_IMAGE_URL tem prioridade sobre alias legado", () => {
+  const previousCanonical = process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+  const previousLegacy = process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+  try {
+    process.env.POST_HUMAN_TEMPLATE_IMAGE_URL = "https://canonical.example/img.png"
+    process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL = "https://legacy.example/img.png"
+    delete require.cache[templatesPath]
+    const { META_TEMPLATES: reloaded } = require(templatesPath)
+    assert.equal(reloaded.casoAtualizacao.headerImageUrl, "https://canonical.example/img.png")
+  } finally {
+    if (previousCanonical === undefined) delete process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+    else process.env.POST_HUMAN_TEMPLATE_IMAGE_URL = previousCanonical
+    if (previousLegacy === undefined) delete process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+    else process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL = previousLegacy
+    delete require.cache[templatesPath]
+  }
+})
+
+test("alias legado WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL continua funcionando", () => {
+  const previousCanonical = process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+  const previousLegacy = process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+  try {
+    delete process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+    process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL = "https://legacy.example/img.png"
+    delete require.cache[templatesPath]
+    const { META_TEMPLATES: reloaded } = require(templatesPath)
+    assert.equal(reloaded.casoAtualizacao.headerImageUrl, "https://legacy.example/img.png")
+  } finally {
+    if (previousCanonical === undefined) delete process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+    else process.env.POST_HUMAN_TEMPLATE_IMAGE_URL = previousCanonical
+    if (previousLegacy === undefined) delete process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+    else process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL = previousLegacy
+    delete require.cache[templatesPath]
+  }
+})
+
+test("ausência das duas URLs mantém headerImageUrl vazio", () => {
+  const previousCanonical = process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+  const previousLegacy = process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+  try {
+    delete process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+    delete process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+    delete require.cache[templatesPath]
+    const { META_TEMPLATES: reloaded } = require(templatesPath)
+    assert.equal(reloaded.casoAtualizacao.headerImageUrl, "")
+  } finally {
+    if (previousCanonical === undefined) delete process.env.POST_HUMAN_TEMPLATE_IMAGE_URL
+    else process.env.POST_HUMAN_TEMPLATE_IMAGE_URL = previousCanonical
+    if (previousLegacy === undefined) delete process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL
+    else process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL = previousLegacy
+    delete require.cache[templatesPath]
+  }
+})
+
+test("contrato com HEADER continua esperando HEADER mesmo sem URL", () => {
+  const catalogo = normalizarCatalogo()
+  const atualizacao = catalogo.find(item => item.id === "casoAtualizacao")
+  assert.ok(atualizacao, "casoAtualizacao deve existir no catálogo")
+  assert.equal(atualizacao.headerEsperado, true)
+})
+
+test("templates legados sem componentes caem para Boolean(headerImageUrl)", () => {
+  const catalogo = normalizarCatalogo()
+  const terceiro = catalogo.find(item => item.id === "casoTerceiroAberto")
+  assert.ok(terceiro, "casoTerceiroAberto deve existir no catálogo")
+  assert.equal(terceiro.headerEsperado, false)
 })
