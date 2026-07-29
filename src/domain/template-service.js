@@ -33,6 +33,9 @@ function persistirContextoConversaAposTemplate(usuario, contextoConversa) {
 
 async function enviarTemplateCatalogado(to, template, params = [], options = {}) {
   if (!template?.nome || !to) return false
+  if (template.exigeContratoComponentes &&
+      (!Number.isInteger(template.parametrosEsperados) || !Array.isArray(template.componentes))) return false
+  if (Number.isInteger(template.parametrosEsperados) && params.length !== template.parametrosEsperados) return false
   const opts = options && typeof options === "object" ? options : {}
   let contextoPersistidoAntesDoEnvio = false
   let contextoAnterior = null
@@ -80,7 +83,8 @@ async function consultaLembrete(to, tipo, params = [], options = {}) {
 }
 
 async function retomadaAtendimento(to, { ultimaMsg, texto, params = [] } = {}, options = {}) {
-  if (!options?.forceTemplate && conversaDentroJanela24h(ultimaMsg)) {
+  const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
+  if (!options?.forceTemplate && conversaDentroJanela24h(ultimaMsg, agora)) {
     return enviar(to, texto || "Podemos retomar seu atendimento por aqui.")
   }
 
