@@ -34,8 +34,8 @@ async function test(name, fn) {
   const admin = new Pool({ connectionString, max: 2 })
   const versionResult = await admin.query("SELECT version() AS version, current_setting('server_version_num')::int AS version_num")
   console.log(`POSTGRES_VERSION ${versionResult.rows[0].version}`)
-  assert.ok(versionResult.rows[0].version_num >= 170000 && versionResult.rows[0].version_num < 180000,
-    "PostgreSQL 17.x obrigatório")
+  const major = Math.floor(versionResult.rows[0].version_num / 10000)
+  assert.ok(major === 17 || major === 18, "PostgreSQL 17.x ou 18.x obrigatório")
   await test("migration cria contrato completo e rejeita valores invalidos", async () => {
     await admin.query("DROP FUNCTION IF EXISTS create_post_human_cycle(UUID,TEXT,TEXT,TEXT); DROP TABLE IF EXISTS post_human_cycles")
     await admin.query(migration)
