@@ -19,7 +19,7 @@ const META_TEMPLATES = {
     idioma: "pt_BR",
     status: "APPROVED",
     categoria: "UTILITY",
-    headerImageUrl: process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL || "",
+    headerImageUrl: process.env.POST_HUMAN_TEMPLATE_IMAGE_URL || process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL || "",
     parametrosEsperados: 1,
     componentes: [
       { tipo: "HEADER", formato: "IMAGE", parametros: [{ tipo: "image" }] },
