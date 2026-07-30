@@ -49,4 +49,20 @@ const ocorrenciasDescricao =
 assert.equal(ocorrenciasDescricao.length, 2)
 assert.doesNotMatch(legacyIntakeRouter, /Tenho todo o tempo do mundo!/)
 
+const posHumano = trechoEntre(
+  "function criarDispatcherPosHumano",
+  "cancelarReengajamentosPendentes({"
+)
+for (const texto of [
+  "REVISÃO PÓS-ATENDIMENTO",
+  "Há mais de um caso aguardando complemento. Selecione o caso no Menu do Cliente para continuar.",
+  "Tudo bem. Seu progresso foi salvo e você pode responder depois.",
+  "Recebi sua informação. Ela seguirá para revisão segura antes de qualquer atualização.",
+  "Informação recebida e vinculada ao seu caso. Você pode continuar enviando os itens pendentes.",
+  "Informação recebida e vinculada ao seu caso."
+]) {
+  assert.ok(posHumano.includes(texto), `texto pós-humano ausente: ${texto}`)
+}
+assert.doesNotMatch(posHumano, /\uFFFD/)
+
 console.log("pilot-ux-messages.test.js: ok")
