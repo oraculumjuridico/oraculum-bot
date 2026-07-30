@@ -7,7 +7,7 @@ const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8")
 const flowSource = fs.readFileSync(path.join(root, "src/domain/admin-assisted-ai-flow.js"), "utf8")
 
 assert.match(serverSource, /atendimentoAssistidoIa:\s*"adm_atendimento_assistido_ia"/)
-assert.match(serverSource, /title:\s*"👨‍⚖️ Atendimento Assistido por IA"/)
+assert.match(serverSource, /title:\s*"👨‍⚖️ Atendimento com IA"/)
 assert.match(serverSource, /async function processarAdminWhatsApp\(from, text, msgObj = null\)/)
 assert.match(serverSource, /processarAdminWhatsApp\(from, text, msgObj\)/)
 assert.match(serverSource, /iniciarAtendimentoAssistidoAdmin\(from, depsAtendimentoAssistido\)/)
