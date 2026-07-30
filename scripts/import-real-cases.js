@@ -9,6 +9,7 @@ const crypto = require("node:crypto")
 const axios = require("axios")
 const { montarTituloNegocioHubSpot } = require("../src/domain/hubspot-deal-title")
 const { normalizePersonName } = require("../src/domain/name-normalization")
+const { createCanonicalCasePlan } = require("../src/domain/canonical-case-plan")
 let planejarSincronizacaoDocumentalHubSpot
 try {
   planejarSincronizacaoDocumentalHubSpot = require("../src/domain/document-hubspot-sync").planejarSincronizacaoDocumentalHubSpot
@@ -580,6 +581,30 @@ function buildCanonicalDryRunReport(results, scanned) {
       },
       documentCount: Number(registry.documents?.count || 0),
       documentsPending: analysisExecuted ? item.reviewReasons?.includes('incomplete_documents') || false : null
+    }
+    const canonicalPlan = createCanonicalCasePlan({
+      source: "local_import",
+      identity: {
+        name: registry.name,
+        cpf: registry.cpf,
+        phone: phoneNormalized,
+        email: contato.props?.email || null,
+        provenance: { source: "local_inventory" },
+        ambiguous: allBlocked.some(block => /duplic|conflit|ambig/i.test(block.reason))
+      },
+      contact: { action: item.contact?.status === "existing" ? "update" : "create", id: item.contact?.id, properties: contato.props },
+      deal: { action: item.deal?.status === "existing" ? "update" : "create", id: item.deal?.id, properties: negocio.props },
+      association: { required: true, verified: false },
+      caseNumber: { value: negocio.props?.numero_de_caso || registry.officialNumber, reservationRequired: !negocio.props?.numero_de_caso && !registry.officialNumber },
+      documents: { received: [], pending: item.reviewReasons || [] },
+      hubspot: { contactUpdates: contato.props, dealUpdates: negocio.props },
+      review: { required: allBlocked.length > 0, blockers: allBlocked.map(block => `${block.field}:${block.reason}`) }
+    })
+    report.canonicalPlan = {
+      version: canonicalPlan.version,
+      status: canonicalPlan.status,
+      hash: canonicalPlan.hash,
+      blockers: canonicalPlan.review.blockers
     }
 
     reports.push(report)

@@ -278,6 +278,8 @@ const {
 const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
+const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
+const { createAdminAssistedMediaStaging } = require("./src/domain/admin-assisted-media")
 const { criarGracefulShutdown } = require("./src/infrastructure/graceful-shutdown")
 const {
   consolidarDocumentosDoCaso
@@ -420,6 +422,10 @@ const {
   montarTituloNegocioHubSpot,
   aplicarTituloNegocioHubSpot
 } = require("./src/domain/hubspot-deal-title")
+
+const adminAssistedMediaStaging = createAdminAssistedMediaStaging({
+  maxBytes: Number(process.env.WHATSAPP_MEDIA_MAX_BYTES || 20 * 1024 * 1024)
+})
 
 const {
   primeiroNomeCliente,
@@ -4661,6 +4667,12 @@ function linhaPrioridadeAdmin(item, idx, { adminAutenticado = false } = {}) {
   const briefing = gerarBriefingCaso(u)
   const caso = briefing.numeroCaso ? `📄 Caso ${briefing.numeroCaso}` : "📄 Sem caso"
   const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
+  const statusDocumental = sanitizarTextoEntrada(u.oraculumDocumentStatus || u.oraculum_document_status)
+  const subtipo = sanitizarTextoEntrada(u.oraculumCaseSubtype || u.oraculum_case_subtype || u.subTipo)
+  const quarentena = Array.isArray(u.documentosQuarentena) ? u.documentosQuarentena.length : Number(u.documentosQuarentena || 0)
+  const divergencias = Array.isArray(u.divergenciasDocumentais) ? u.divergenciasDocumentais.length : Number(u.divergenciasDocumentais || 0)
+  const tarefasAbertas = Array.isArray(u.tarefasAbertas) ? u.tarefasAbertas.length : Number(u.tarefasAbertas || 0)
+  const consolidacao = sanitizarTextoEntrada(u.statusConsolidacao || u.consolidacaoDocumental?.status)
   return [
     `${idx}. 👤 *${briefing.nome || "Cliente"}*`,
     telefoneAdmin ? `   📱 ${telefoneAdmin}` : null,
@@ -4683,15 +4695,27 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
   const relatoCurto = relato ? relato.slice(0, 700) + (relato.length > 700 ? "..." : "") : "Sem relato consolidado."
   const dossieJuridico = montarDossieJuridicoAdminWhatsApp(item)
   const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
+  const statusDocumental = sanitizarTextoEntrada(u.oraculumDocumentStatus || u.oraculum_document_status)
+  const subtipo = sanitizarTextoEntrada(u.oraculumCaseSubtype || u.oraculum_case_subtype || u.subTipo)
+  const quarentena = Array.isArray(u.documentosQuarentena) ? u.documentosQuarentena.length : Number(u.documentosQuarentena || 0)
+  const divergencias = Array.isArray(u.divergenciasDocumentais) ? u.divergenciasDocumentais.length : Number(u.divergenciasDocumentais || 0)
+  const tarefasAbertas = Array.isArray(u.tarefasAbertas) ? u.tarefasAbertas.length : Number(u.tarefasAbertas || 0)
+  const consolidacao = sanitizarTextoEntrada(u.statusConsolidacao || u.consolidacaoDocumental?.status)
   return [
     `👤 *${briefing.nome || "Cliente"}*`,
     "",
     `📄 Caso: ${briefing.numeroCaso || "sem caso"}`,
     telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : "",
     `⚖️ Area: ${briefing.area || "nao definida"}`,
+    `🧭 Tipo/subtipo: ${[u.tipo, subtipo].filter(Boolean).join(" / ") || "nao definido"}`,
     `📌 Status: ${briefing.stageLabel}`,
     `💬 Emocional: ${briefing.scoreEmocional.nivel}/${briefing.scoreEmocional.valor}`,
     `📎 Docs: ${docs.faltantesCriticos.length ? `${docs.faltantesCriticos.length} faltante(s)` : "sem critico faltante"}`,
+    statusDocumental ? `🗃️ Status documental: ${statusDocumental}` : "",
+    quarentena ? `🛡️ Quarentena: ${quarentena}` : "",
+    divergencias ? `⚠️ Divergencias: ${divergencias}` : "",
+    tarefasAbertas ? `✅ Tarefas abertas: ${tarefasAbertas}` : "",
+    consolidacao ? `📚 Consolidação: ${consolidacao}` : "",
     `📅 Consulta: ${consulta}`,
     alerta ? `🚨 Alerta: ${alerta.texto}` : "",
     revisao ? `✅ Revisado: ate ${new Date(revisao.ate).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}` : "",
@@ -5129,26 +5153,25 @@ async function pedirDocsCasoAdmin(from) {
 
   const nome = primeiroNomeCliente(u) || "cliente"
   const lista = faltantes.map(doc => `- ${doc.label}`).join("\n")
-  const enviadoCliente = await enviar(
-    destino,
-    [
+  const mensagemDocumentos = [
       `Oi, *${nome}*. Passando para lembrar dos documentos que ainda faltam no seu caso:`,
       "",
       lista,
       "",
       "Quando puder, envie por aqui no WhatsApp. Se tiver dificuldade, pode mandar foto aos poucos."
-    ].join("\n"),
-    [
-      { id: "docs_pedido_admin", title: "Enviar docs" },
-      { id: "m_inicio", title: "Menu cliente" }
-    ],
-    false
-  )
+    ].join("\n")
+  const envioDocumentos = await templateService.atualizacaoCasoSegura(destino, {
+    ultimaMsg: u.ultimaMsg,
+    texto: mensagemDocumentos,
+    resumoTemplate: `Documentos pendentes do caso ${u.numeroCaso || ""}: ${faltantes.map(doc => doc.label).join(", ")}.`,
+    usuario: u
+  })
+  const enviadoCliente = envioDocumentos.sent
 
   let notaContato = false
   let notaNegocio = false
   if (enviadoCliente) {
-    const corpo = `Pedido de documentos enviado pelo WhatsApp admin.\nCaso: ${u.numeroCaso || "-"}\nDocumentos:\n${lista}`
+    const corpo = `Pedido de documentos enviado pelo WhatsApp admin.\nCanal: ${envioDocumentos.channel}\nCaso: ${u.numeroCaso || "-"}\nDocumentos:\n${lista}`
     notaContato = u.contatoId ? await hsCriarNota(u.contatoId, "PEDIDO DE DOCUMENTOS PELO ADMIN", corpo) : false
     notaNegocio = u.negocioId ? await hsCriarNotaNegocio(u.negocioId, "PEDIDO DE DOCUMENTOS PELO ADMIN", corpo) : false
   }
@@ -5292,23 +5315,25 @@ async function enviarLembreteCasoAdmin(from) {
 
   const briefing = gerarBriefingCaso(u)
   const nome = primeiroNomeCliente(u) || "cliente"
-  const enviadoCliente = await enviar(
-    destino,
-    [
+  const mensagemLembrete = [
       `Oi, *${nome}*. Passando para lembrar do andamento do seu caso *${u.numeroCaso || ""}*.`,
       "",
       briefing.proximaAcao || "Nossa equipe segue acompanhando seu atendimento.",
       "",
       "Se precisar falar com a equipe, responda por aqui mesmo."
-    ].join("\n"),
-    [{ id: "m_inicio", title: "Menu cliente" }],
-    false
-  )
+    ].join("\n")
+  const envioLembrete = await templateService.atualizacaoCasoSegura(destino, {
+    ultimaMsg: u.ultimaMsg,
+    texto: mensagemLembrete,
+    resumoTemplate: `Atualização do caso ${u.numeroCaso || ""}: ${briefing.proximaAcao || "Nossa equipe segue acompanhando o atendimento."}`,
+    usuario: u
+  })
+  const enviadoCliente = envioLembrete.sent
 
   let notaContato = false
   let notaNegocio = false
   if (enviadoCliente) {
-    const corpo = `Lembrete operacional enviado pelo WhatsApp admin.\nCaso: ${u.numeroCaso || "-"}\nProxima acao: ${briefing.proximaAcao || "-"}`
+    const corpo = `Lembrete operacional enviado pelo WhatsApp admin.\nCanal: ${envioLembrete.channel}\nCaso: ${u.numeroCaso || "-"}\nProxima acao: ${briefing.proximaAcao || "-"}`
     notaContato = u.contatoId ? await hsCriarNota(u.contatoId, "LEMBRETE PELO ADMIN", corpo) : false
     notaNegocio = u.negocioId ? await hsCriarNotaNegocio(u.negocioId, "LEMBRETE PELO ADMIN", corpo) : false
   }
@@ -5713,7 +5738,24 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       return await transcrever(midia.buffer, midia.mimeType, {
         origem: "admin_atendimento_assistido"
       })
-    }
+    },
+    processarMidiaAdminAssistida: async (msg, contexto = {}) => adminAssistedMediaStaging.stage(msg, {
+      downloadMedia: baixarMidia,
+      analyzeDocument: input => executarPipelineDocumental(input),
+      resolveIntegrity: async ({ pipeline }) => {
+        const esperado = String(contexto.adminAssistido?.dados?.cpf?.valor || "").replace(/\D/g, "")
+        const campos = pipeline?.extracao?.camposExtraidos || {}
+        const encontrado = String(campos.cpf || campos.cpf_do_cliente || "").replace(/\D/g, "")
+        if (esperado && encontrado && esperado === encontrado) {
+          return { approved: true, partyRole: "titular" }
+        }
+        return {
+          approved: false,
+          partyRole: null,
+          reason: esperado && encontrado ? "cpf_divergente" : "identidade_documental_nao_confirmada"
+        }
+      }
+    })
   }
 
   if (["admin_atendimento_assistido_ia", ADMIN_IDS.atendimentoAssistidoIa].includes(comando)) {

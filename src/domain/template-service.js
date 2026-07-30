@@ -91,11 +91,38 @@ async function retomadaAtendimento(to, { ultimaMsg, texto, params = [] } = {}, o
   return enviarTemplateCatalogado(to, META_TEMPLATES.retomadaAtendimento, params, options)
 }
 
+async function atualizacaoCasoSegura(to, {
+  ultimaMsg,
+  texto,
+  resumoTemplate,
+  usuario
+} = {}, options = {}) {
+  const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
+  if (conversaDentroJanela24h(ultimaMsg, agora)) {
+    return {
+      sent: Boolean(await enviar(to, texto)),
+      channel: "freeform"
+    }
+  }
+  const resumo = String(resumoTemplate || texto || "").trim()
+  if (!resumo) return { sent: false, channel: "template", reason: "template_param_missing" }
+  const sent = await casoAtualizacao(to, [resumo], {
+    ...options,
+    usuario
+  })
+  return {
+    sent: Boolean(sent),
+    channel: "template",
+    reason: sent ? null : "template_send_failed"
+  }
+}
+
 module.exports = {
   casoTerceiro,
   casoAtualizacao,
   consultaLembrete,
   retomadaAtendimento,
+  atualizacaoCasoSegura,
   primeiroNomeTemplate,
   conversaDentroJanela24h,
   persistirContextoConversaAposTemplate,

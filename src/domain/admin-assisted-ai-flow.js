@@ -1086,6 +1086,51 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
     return responderEstadoAtualAtendimentoAssistido(adminAssistido)
   }
 
+  const tipoMidia = tipoEntradaAdminAssistido(msgObj)
+  if (["image", "document"].includes(tipoMidia)) {
+    if (typeof deps.processarMidiaAdminAssistida !== "function") {
+      return {
+        texto: "A mídia não pôde ser preparada com segurança. Tente novamente ou envie após selecionar o caso.",
+        opcoes: opcoesNavegacaoAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+    const resultadoMidia = await deps.processarMidiaAdminAssistida(msgObj, {
+      from,
+      adminAssistido
+    })
+    if (!resultadoMidia?.ok) {
+      return {
+        texto: "Não consegui validar esse arquivo. Ele não foi anexado ao caso.",
+        opcoes: opcoesNavegacaoAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+    const documentos = Array.isArray(adminAssistido.documentos) ? adminAssistido.documentos : []
+    const documento = resultadoMidia.document
+    const novoEstado = {
+      ...adminAssistido,
+      documentos: documentos.some(item => item.sha256 === documento.sha256)
+        ? documentos
+        : [...documentos, documento],
+      revisaoDocumentalNecessaria: documento.status !== "approved"
+    }
+    salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+    return {
+      texto: [
+        resultadoMidia.duplicate ? "Arquivo já recebido anteriormente." : "Arquivo recebido e analisado.",
+        `Status: ${documento.status === "approved" ? "aprovado" : "em quarentena para revisão"}.`,
+        documento.type ? `Tipo: ${documento.type}.` : null,
+        "Você pode enviar outros arquivos ou continuar o atendimento."
+      ].filter(Boolean).join("\n"),
+      opcoes: opcoesNavegacaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
   const entradaCapturada = await capturarEntradaAtendimentoAssistido(text, msgObj, deps)
   registrarEntradaAtendimentoAssistidoAdmin(from, entradaCapturada.texto, msgObj, deps)
   const sessaoRegistrada = obterSessaoAdmin(from, deps).sessao || sessao
