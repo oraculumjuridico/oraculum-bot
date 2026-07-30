@@ -89,6 +89,39 @@ function normalizeDefault(raw) {
   return value
 }
 
+function normalizePgTextArray(value, label = "Array PostgreSQL obrigatório") {
+  let elements
+
+  if (Array.isArray(value)) {
+    elements = value
+  } else if (typeof value === "string") {
+    const serialized = value.trim()
+    if (serialized.startsWith("[") && serialized.endsWith("]")) {
+      try {
+        elements = JSON.parse(serialized)
+      } catch {
+        throw new Error(`${label}: JSON inválido`)
+      }
+      if (!Array.isArray(elements)) throw new Error(`${label}: JSON deve representar um array`)
+    } else if (/^\{[^{}]*\}$/.test(serialized)) {
+      const contents = serialized.slice(1, -1)
+      elements = contents === "" ? [] : contents.split(",")
+    } else {
+      throw new Error(`${label}: formato de array inválido`)
+    }
+  } else {
+    throw new Error(`${label}: valor deve ser um array ou string serializada`)
+  }
+
+  if (elements.length === 0) throw new Error(`${label}: array vazio`)
+  return elements.map(element => {
+    if (typeof element !== "string") throw new Error(`${label}: elemento deve ser string`)
+    const normalized = element.trim()
+    if (!normalized) throw new Error(`${label}: elemento vazio`)
+    return normalized
+  })
+}
+
 function canonicalSql(definition) {
   return String(definition)
     .replace(/::(?:text|character varying|integer|bigint|text\[\])\b/gi, "")
@@ -96,17 +129,62 @@ function canonicalSql(definition) {
     .toLowerCase()
 }
 
-function parseExactEnumRule(definition, column, nullable = false) {
-  const compact = String(definition)
-    .replace(/::(?:text\[\]|text|character varying)/gi, "")
+function hasSingleOuterParentheses(value) {
+  if (!value.startsWith("(") || !value.endsWith(")")) return false
+  let depth = 0
+  let inLiteral = false
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === "'" && inLiteral && value[index + 1] === "'") {
+      index += 1
+      continue
+    }
+    if (character === "'") {
+      inLiteral = !inLiteral
+      continue
+    }
+    if (inLiteral) continue
+    if (character === "(") depth += 1
+    if (character === ")") depth -= 1
+    if (depth < 0 || (depth === 0 && index < value.length - 1)) return false
+  }
+  return depth === 0 && !inLiteral
+}
+
+function stripOuterParentheses(value) {
+  let normalized = value.trim()
+  while (hasSingleOuterParentheses(normalized)) {
+    normalized = normalized.slice(1, -1).trim()
+  }
+  return normalized
+}
+
+function normalizeConstraintDefinition(definition) {
+  if (typeof definition !== "string") throw new Error("Definição de constraint inválida")
+  const normalizedWhitespace = definition.trim().replace(/\s+/g, " ")
+  const match = normalizedWhitespace.match(/^check\b(.*)$/i)
+  if (!match) throw new Error("Definição deve usar CHECK")
+  const wrappedRule = match[1].trim()
+  if (!hasSingleOuterParentheses(wrappedRule)) throw new Error("Wrapper CHECK inválido")
+  return stripOuterParentheses(wrappedRule.slice(1, -1))
+    .replace(/\b(?:AND|OR|IS|NULL|BETWEEN|ANY|ARRAY|TRUE|FALSE)\b/gi, keyword => keyword.toLowerCase())
+}
+
+function compactConstraintRule(definition) {
+  return normalizeConstraintDefinition(definition)
+    .replace(/::\s*text\b/gi, "")
     .replace(/[\s()]/g, "")
+}
+
+function parseExactEnumRule(definition, column, nullable = false) {
+  const compact = compactConstraintRule(definition)
   const matches = [...compact.matchAll(/'((?:''|[^'])*)'/g)]
   if (matches.length === 0) return null
   const markerList = matches.map(() => "'value'").join(",")
   const skeleton = compact.replace(/'((?:''|[^'])*)'/g, "'value'").toLowerCase()
   const prefix = nullable ? `${column.toLowerCase()}isnullor` : ""
-  const expectedIn = `check${prefix}${column.toLowerCase()}in${markerList}`
-  const expectedAny = `check${prefix}${column.toLowerCase()}=anyarray[${markerList}]`
+  const expectedIn = `${prefix}${column.toLowerCase()}in${markerList}`
+  const expectedAny = `${prefix}${column.toLowerCase()}=anyarray[${markerList}]`
   if (skeleton !== expectedIn && skeleton !== expectedAny) return null
   return new Set(matches.map(item => item[1].replace(/''/g, "'")))
 }
@@ -129,8 +207,24 @@ function requireConstraint(constraints, name, type, columns) {
   return constraint.definition
 }
 
-function assertExactCheck(definition, canonical, label) {
-  if (canonicalSql(definition) !== `check${canonical}`) throw new Error(`Constraint ${label} divergente`)
+function assertExactCheck(definition, expected, label) {
+  if (compactConstraintRule(definition).toLowerCase() !== expected) {
+    throw new Error(`Constraint ${label} divergente`)
+  }
+}
+
+function assertLengthRule(definition, column, minimum, maximum, label, nullable = false) {
+  const compact = compactConstraintRule(definition).toLowerCase()
+  const prefix = nullable ? `${column}isnullor` : ""
+  const between = `${prefix}length${column}between${minimum}and${maximum}`
+  const comparisons = `${prefix}length${column}>=${minimum}andlength${column}<=${maximum}`
+  if (compact !== between && compact !== comparisons) {
+    throw new Error(`Constraint ${label} divergente`)
+  }
+}
+
+function assertNullableMaximum(definition, column, maximum, label) {
+  assertExactCheck(definition, `${column}isnullorlength${column}<=${maximum}`, label)
 }
 
 async function validatePostHumanMigration(options = {}) {
@@ -187,7 +281,7 @@ async function validatePostHumanMigration(options = {}) {
              constraint_row.convalidated,
              constraint_row.conenforced,
              pg_get_constraintdef(constraint_row.oid, true) AS definition,
-             array_agg(attribute.attname ORDER BY key.ordinality)
+             array_agg(attribute.attname::text ORDER BY key.ordinality)
                FILTER (WHERE key.attnum IS NOT NULL) AS columns
       FROM pg_catalog.pg_constraint constraint_row
       LEFT JOIN LATERAL unnest(constraint_row.conkey) WITH ORDINALITY AS key(attnum, ordinality) ON true
@@ -197,16 +291,19 @@ async function validatePostHumanMigration(options = {}) {
       GROUP BY constraint_row.oid, constraint_row.conname, constraint_row.contype,
                constraint_row.conkey, constraint_row.convalidated, constraint_row.conenforced
     `)
-    const constraints = new Map(constraintsCheck.rows.map(row => [row.conname, row]))
+    const constraints = new Map(constraintsCheck.rows.map(row => [
+      row.conname,
+      { ...row, columns: normalizePgTextArray(row.columns, `Constraint ${row.conname}: colunas`) }
+    ]))
 
     const primaryKey = requireConstraint(constraints, "post_human_cycles_pkey", "p", ["cycle_id"])
     if (canonicalSql(primaryKey) !== "primarykeycycle_id") throw new Error("Constraint post_human_cycles_pkey divergente")
     const unique = requireConstraint(constraints, "post_human_cycles_negocio_id_sequencia_key", "u", ["negocio_id", "sequencia"])
     if (canonicalSql(unique) !== "uniquenegocio_id,sequencia") throw new Error("Constraint post_human_cycles_negocio_id_sequencia_key divergente")
 
-    assertExactCheck(requireConstraint(constraints, "post_human_cycles_negocio_id_check", "c", ["negocio_id"]), "lengthnegocio_idbetween1and128", "post_human_cycles_negocio_id_check")
-    assertExactCheck(requireConstraint(constraints, "post_human_cycles_numero_caso_check", "c", ["numero_caso"]), "lengthnumero_casobetween3and80", "post_human_cycles_numero_caso_check")
-    assertExactCheck(requireConstraint(constraints, "post_human_cycles_contato_id_check", "c", ["contato_id"]), "contato_idisnullorlengthcontato_idbetween1and128", "post_human_cycles_contato_id_check")
+    assertLengthRule(requireConstraint(constraints, "post_human_cycles_negocio_id_check", "c", ["negocio_id"]), "negocio_id", 1, 128, "post_human_cycles_negocio_id_check")
+    assertLengthRule(requireConstraint(constraints, "post_human_cycles_numero_caso_check", "c", ["numero_caso"]), "numero_caso", 3, 80, "post_human_cycles_numero_caso_check")
+    assertLengthRule(requireConstraint(constraints, "post_human_cycles_contato_id_check", "c", ["contato_id"]), "contato_id", 1, 128, "post_human_cycles_contato_id_check", true)
     assertExactCheck(requireConstraint(constraints, "post_human_cycles_sequencia_check", "c", ["sequencia"]), "sequencia>0", "post_human_cycles_sequencia_check")
 
     const statusDef = requireConstraint(constraints, "post_human_cycles_status_check", "c", ["status"])
@@ -216,8 +313,8 @@ async function validatePostHumanMigration(options = {}) {
     const sendResultDef = requireConstraint(constraints, "post_human_cycles_resultado_envio_check", "c", ["resultado_envio"])
     assertExactSet(parseExactEnumRule(sendResultDef, "resultado_envio", true), SEND_RESULTS, "Constraint resultado_envio")
 
-    assertExactCheck(requireConstraint(constraints, "post_human_cycles_provider_message_id_check", "c", ["provider_message_id"]), "provider_message_idisnullorlengthprovider_message_id<=256", "post_human_cycles_provider_message_id_check")
-    assertExactCheck(requireConstraint(constraints, "post_human_cycles_erro_check", "c", ["erro"]), "erroisnullorlengtherro<=1000", "post_human_cycles_erro_check")
+    assertNullableMaximum(requireConstraint(constraints, "post_human_cycles_provider_message_id_check", "c", ["provider_message_id"]), "provider_message_id", 256, "post_human_cycles_provider_message_id_check")
+    assertNullableMaximum(requireConstraint(constraints, "post_human_cycles_erro_check", "c", ["erro"]), "erro", 1000, "post_human_cycles_erro_check")
     assertExactCheck(requireConstraint(constraints, "post_human_cycles_version_check", "c", ["version"]), "version>=0", "post_human_cycles_version_check")
 
     const indexesCheck = await client.query(`
@@ -227,7 +324,7 @@ async function validatePostHumanMigration(options = {}) {
              ix.indisvalid,
              ix.indisready,
              ix.indislive,
-             array_agg(attribute.attname ORDER BY key.ordinality)
+             array_agg(attribute.attname::text ORDER BY key.ordinality)
                FILTER (WHERE key.ordinality <= ix.indnkeyatts) AS columns,
              array_agg(CASE WHEN (ix.indoption[key.ordinality - 1] & 1) = 1 THEN 'DESC' ELSE 'ASC' END
                ORDER BY key.ordinality)
@@ -245,7 +342,14 @@ async function validatePostHumanMigration(options = {}) {
       GROUP BY index_class.relname, ix.indisunique, access_method.amname,
                ix.indisvalid, ix.indisready, ix.indislive, ix.indpred, ix.indrelid
     `)
-    const indexes = new Map(indexesCheck.rows.map(row => [row.indexname, row]))
+    const indexes = new Map(indexesCheck.rows.map(row => [
+      row.indexname,
+      {
+        ...row,
+        columns: normalizePgTextArray(row.columns, `Índice ${row.indexname}: colunas`),
+        ordering: normalizePgTextArray(row.ordering, `Índice ${row.indexname}: ordenação`)
+      }
+    ]))
     for (const required of REQUIRED_INDEXES) {
       const actual = indexes.get(required.name)
       if (!actual) throw new Error(`Índice ${required.name} não encontrado`)
@@ -305,4 +409,9 @@ if (require.main === module) {
   })
 }
 
-module.exports = { validatePostHumanMigration, sanitizeMessage }
+module.exports = {
+  validatePostHumanMigration,
+  sanitizeMessage,
+  normalizePgTextArray,
+  normalizeConstraintDefinition
+}
