@@ -1,0 +1,447 @@
+const { createCanonicalCasePlan, validateCanonicalCasePlan, PLAN_STATUS } = require("./canonical-case-plan")
+const { createCanonicalCaseExecutor } = require("./canonical-case-executor")
+const { createHubSpotTaskService } = require("./hubspot-task-service")
+
+function clean(value) {
+  return value === null || value === undefined ? null : String(value).trim() || null
+}
+
+function buildCanonicalPlan(u, context = {}) {
+  const documents = (u.documents || []).map(doc => ({
+    sha256: clean(doc.sha256),
+    fileId: clean(doc.fileId || doc.id),
+    name: clean(doc.name || doc.nome),
+    mimeType: clean(doc.mimeType),
+    type: clean(doc.type || doc.tipoDocumental),
+    partyRole: clean(doc.partyRole || doc.documentOwnerRole),
+    confidence: Number.isFinite(Number(doc.confidence ?? doc.confianca)) ? Number(doc.confidence ?? doc.confianca) : null,
+    status: clean(doc.status) || "received",
+    quarantineReason: clean(doc.quarantineReason),
+    originalPreserved: doc.originalPreserved !== false
+  }))
+
+  const plan = createCanonicalCasePlan({
+    source: context.source || "live_whatsapp_client",
+    identity: {
+      name: clean(u.nome || u.nomeContato),
+      cpf: clean(u.cpf || u._cpf),
+      dateOfBirth: clean(u.dataNascimento),
+      phone: clean(u.whatsappContato || u._numero),
+      email: clean(u.email),
+      provenance: { stage: u.stage, confirmed: Boolean(u.nomeConfirmado), source: context.source || "live" },
+      ambiguous: Boolean(u._identityAmbiguous)
+    },
+    contact: {
+      action: u.contatoId ? "verify" : "resolve",
+      id: clean(u.contatoId),
+      properties: context.contactProperties || {},
+      ambiguous: Boolean(u._contactAmbiguous)
+    },
+    deal: {
+      action: u.negocioId ? "verify" : "resolve",
+      id: clean(u.negocioId),
+      properties: context.dealProperties || {},
+      ambiguous: Boolean(u._dealAmbiguous)
+    },
+    association: {
+      required: true,
+      verified: Boolean(u.contatoId && u.negocioId),
+      ambiguous: Boolean(u._associationAmbiguous)
+    },
+    caseNumber: {
+      value: clean(u.numeroCaso),
+      reservationRequired: !u.numeroCaso
+    },
+    confirmedData: u.confirmedData || {},
+    inferredData: u.inferredData || {},
+    divergences: u.divergences || [],
+    parties: u.parties || [],
+    documents: {
+      received: documents,
+      pending: (u.documentosPendentes || []).map(d => clean(d.sha256 || d.name)).filter(Boolean)
+    },
+    drive: {
+      canonicalFolderId: clean(u.pastaDriveId),
+      canonicalFolderUrl: clean(u.pastaDriveLink),
+      quarantineFolderId: clean(u._pastaDriveQuarentenaId),
+      ambiguous: Boolean(u._driveAmbiguous),
+      uploads: (u.documents || []).filter(d => d.fileId || d.id).map(d => ({ fileId: clean(d.fileId || d.id), sha256: clean(d.sha256) }))
+    },
+    hubspot: {
+      contactUpdates: context.contactUpdates || {},
+      dealUpdates: context.dealUpdates || {}
+    },
+    tasks: context.tasks || [],
+    nextAction: clean(u.nextAction),
+    review: {
+      required: Boolean(u._reviewRequired),
+      blockers: (u._reviewBlockers || []).map(b => clean(b)).filter(Boolean)
+    },
+    notifications: {
+      internal: context.internalNotifications || [],
+      external: [],
+      externalAuthorized: false
+    },
+    createdAt: u._canonicalPlanCreatedAt || new Date().toISOString()
+  })
+
+  const validation = validateCanonicalCasePlan(plan)
+  if (!validation.ok) {
+    const error = new Error(`canonical case plan invalid: ${validation.errors.join(",")}`)
+    error.code = "CANONICAL_CASE_PLAN_INVALID"
+    error.errors = validation.errors
+    throw error
+  }
+
+  return plan
+}
+
+function createLiveCaseFlow(deps = {}) {
+  const checkpointRepository = deps.checkpointRepository || {
+    async load() { return null },
+    async save() { return }
+  }
+
+  const hubspotToken = deps.hubspotToken || process.env.HUBSPOT_TOKEN
+  const taskService = createHubSpotTaskService(
+    deps.taskAdapter || {
+      async findByMarker(marker) {
+        if (!hubspotToken) return []
+        const axios = require("axios")
+        const response = await axios.post("https://api.hubapi.com/crm/v3/objects/tasks/search", {
+          filterGroups: [{ filters: [{ propertyName: "hs_task_body", operator: "CONTAINS_TOKEN", value: marker }] }],
+          properties: ["hs_task_subject", "hs_task_body", "hs_task_status", "hs_timestamp", "hubspot_owner_id"],
+          limit: 100
+        }, { headers: { Authorization: `Bearer ${hubspotToken}`, "Content-Type": "application/json" } })
+        return response.data?.results || []
+      },
+      async create(properties) {
+        const axios = require("axios")
+        const response = await axios.post("https://api.hubapi.com/crm/v3/objects/tasks", { properties }, { headers: { Authorization: `Bearer ${hubspotToken}`, "Content-Type": "application/json" } })
+        return response.data
+      },
+      async update(id, properties) {
+        const axios = require("axios")
+        const response = await axios.patch(`https://api.hubapi.com/crm/v3/objects/tasks/${encodeURIComponent(id)}`, { properties }, { headers: { Authorization: `Bearer ${hubspotToken}`, "Content-Type": "application/json" } })
+        return response.data
+      },
+      async associate(taskId, objectType, objectId) {
+        const axios = require("axios")
+        const associationType = objectType === "contacts" ? "task_to_contact" : "task_to_deal"
+        await axios.put(
+          `https://api.hubapi.com/crm/v3/objects/tasks/${encodeURIComponent(taskId)}/associations/${objectType}/${encodeURIComponent(objectId)}/${associationType}`,
+          {},
+          { headers: { Authorization: `Bearer ${hubspotToken}`, "Content-Type": "application/json" } }
+        )
+        return true
+      },
+      async verify(id, marker, expected = {}) {
+        const axios = require("axios")
+        const response = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/tasks/${encodeURIComponent(id)}?properties=hs_task_body,hs_task_status,hs_timestamp&associations=contacts,deals`,
+          { headers: { Authorization: `Bearer ${hubspotToken}`, "Content-Type": "application/json" } }
+        )
+        const record = response.data
+        const contacts = (record?.associations?.contacts?.results || []).map(item => String(item.id))
+        const deals = (record?.associations?.deals?.results || []).map(item => String(item.id))
+        return {
+          ok: Boolean(record?.properties?.hs_task_body?.includes(marker)) &&
+            (!expected.contactId || contacts.includes(String(expected.contactId))) &&
+            (!expected.dealId || deals.includes(String(expected.dealId))),
+          record
+        }
+      }
+    }
+  )
+
+  const adapters = {
+    identity: async (plan, checkpoint) => {
+      if (!plan.identity?.name) throw new Error("identity_name_missing")
+      if (!plan.identity?.cpf && !plan.identity?.phone && !plan.identity?.email) throw new Error("identity_safe_key_missing")
+      if (plan.identity?.ambiguous) throw new Error("identity_ambiguous")
+      return { verified: true, name: plan.identity.name, cpf: plan.identity.cpf, phone: plan.identity.phone, email: plan.identity.email }
+    },
+
+    contact: async (plan, checkpoint) => {
+      const { hsBuscarPorPhone, hsCriarContato, hsAtualizarContato, montarPropsContatoHubSpot, montarPropsAusentesContatoHubSpot } = deps
+      if (!hsCriarContato) return { id: plan.contact?.id, action: "skipped" }
+
+      let contactId = plan.contact?.id
+      let action = "skipped"
+
+      if (!contactId && plan.identity?.phone) {
+        const existing = await hsBuscarPorPhone(plan.identity.phone)
+        contactId = existing?.id || null
+        if (contactId && existing?.properties?.firstname && !deps.u?.nomeHubspot) {
+          deps.u.nomeHubspot = existing.properties.firstname
+        }
+      }
+
+      if (!contactId) {
+        const props = montarPropsContatoHubSpot(plan.identity.phone, deps.u || {})
+        contactId = await hsCriarContato(plan.identity.phone, deps.u || {})
+        action = "created"
+      } else {
+        action = "verified"
+        const props = montarPropsContatoHubSpot(plan.identity.phone, deps.u || {})
+        const existing = plan.identity?.phone ? await hsBuscarPorPhone(plan.identity.phone) : null
+        const missing = montarPropsAusentesContatoHubSpot(existing, props)
+        if (Object.keys(missing).length) {
+          await hsAtualizarContato(contactId, missing)
+        }
+      }
+
+      if (deps.u) deps.u.contatoId = contactId
+      return { id: contactId, action, verified: Boolean(contactId) }
+    },
+
+    deal: async (plan, checkpoint) => {
+      const { hsCriarNegocio, hsAtualizarNegocioSerializado, hsAtualizarEtapaNegocio, hsBuscarNegocioAbertoDoContato, montarTituloNegocioHubSpot, getHubSpotDealStateProps } = deps
+      if (!hsCriarNegocio) return { id: plan.deal?.id, action: "skipped" }
+
+      let dealId = plan.deal?.id
+      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      let action = "skipped"
+
+      if (!dealId && contactId) {
+        dealId = await hsBuscarNegocioAbertoDoContato(contactId)
+        if (dealId && deps.u) deps.u.negocioId = dealId
+      }
+
+      const dealname = montarTituloNegocioHubSpot(
+        { ...(deps.u || {}), numeroCaso: plan.caseNumber?.value, negocioStageId: deps.HS_STAGE?.ANALISE },
+        { HS_STAGE: deps.HS_STAGE, stage: deps.HS_STAGE?.ANALISE }
+      )
+
+      if (!dealId) {
+        dealId = await hsCriarNegocio(deps.u || {}, { stage: deps.HS_STAGE?.ANALISE })
+        if (deps.u) deps.u.negocioId = dealId
+        action = "created"
+      } else {
+        action = "verified"
+        await hsAtualizarNegocioSerializado(dealId, { dealname })
+      }
+
+      if (plan.caseNumber?.value) {
+        await hsAtualizarNegocioSerializado(dealId, {
+          numero_de_caso: plan.caseNumber.value,
+          dealname
+        })
+      }
+      await hsAtualizarEtapaNegocio(dealId, deps.HS_STAGE?.ANALISE)
+      if (deps.u) deps.u.negocioStageId = deps.HS_STAGE?.ANALISE
+
+      return { id: dealId, action, verified: Boolean(dealId) }
+    },
+
+    association: async (plan, checkpoint) => {
+      const { hsAssociar } = deps
+      if (!hsAssociar) return { id: null, action: "skipped" }
+      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      if (!contactId || !dealId) return { id: null, action: "skipped" }
+      const associated = await hsAssociar(contactId, dealId)
+      return { id: associated ? `${contactId}-${dealId}` : null, action: associated ? "created" : "failed", verified: associated }
+    },
+
+    case_number: async (plan, checkpoint) => {
+      if (plan.caseNumber?.value) return { value: plan.caseNumber.value, action: "reserved" }
+      throw new Error("case_number_missing")
+    },
+
+    drive: async (plan, checkpoint) => {
+      const { criarPastaCliente } = deps
+      const caseNumber = plan.caseNumber?.value
+      if (!caseNumber) return { id: plan.drive?.canonicalFolderId, action: "skipped" }
+
+      let folderId = plan.drive?.canonicalFolderId
+      let action = "skipped"
+
+      if (!folderId) {
+        const pasta = await criarPastaCliente(caseNumber, plan.identity?.name || "Cliente", deps.u?.area, deps.u?.situacao, deps.u?.tipo)
+        folderId = pasta?.id
+        if (deps.u) {
+          deps.u.pastaDriveId = folderId
+          deps.u.pastaDriveLink = pasta?.webViewLink || deps.u.pastaDriveLink || null
+        }
+        action = "created"
+      } else {
+        action = "verified"
+      }
+
+      return { id: folderId, action, verified: Boolean(folderId) }
+    },
+
+    documents: async (plan, checkpoint) => {
+      const { uploadDrive, processarAnaliseDocumentalSegura } = deps
+      const folderId = checkpoint.steps.drive?.result?.id || deps.u?.pastaDriveId
+      const results = []
+
+      for (const doc of (plan.documents?.received || [])) {
+        if (doc.fileId && doc.status === "approved") {
+          results.push({ sha256: doc.sha256, fileId: doc.fileId, action: "already_uploaded" })
+          continue
+        }
+        if (doc.status === "quarantined" || doc.status === "review_required") {
+          results.push({ sha256: doc.sha256, action: "quarantined", reason: doc.quarantineReason })
+          continue
+        }
+        if (doc.buffer && folderId && uploadDrive) {
+          try {
+            const uploaded = await uploadDrive(folderId, doc.name || `doc_${doc.sha256?.slice(0, 8)}`, doc.buffer, doc.mimeType)
+            if (uploaded?.id) {
+              results.push({ sha256: doc.sha256, fileId: uploaded.id, action: "uploaded" })
+            } else {
+              results.push({ sha256: doc.sha256, action: "upload_failed" })
+            }
+          } catch (e) {
+            results.push({ sha256: doc.sha256, action: "upload_failed", error: e.message })
+          }
+        } else {
+          results.push({ sha256: doc.sha256, action: "pending" })
+        }
+      }
+
+      return { count: results.length, documents: results }
+    },
+
+    hubspot: async (plan, checkpoint) => {
+      const { hsAtualizarNegocioSerializado, getHubSpotDealStateProps } = deps
+      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      if (!dealId || !hsAtualizarNegocioSerializado) return { updated: false }
+
+      const props = {
+        ...(plan.hubspot?.dealUpdates || {}),
+        ...(getHubSpotDealStateProps ? getHubSpotDealStateProps(deps.u || {}) : {})
+      }
+      await hsAtualizarNegocioSerializado(dealId, props)
+      return { updated: true, dealId }
+    },
+
+    tasks: async (plan, checkpoint) => {
+      const { ensureTask } = taskService
+      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      const results = []
+
+      for (const taskSpec of (plan.tasks || [])) {
+        try {
+          const result = await ensureTask({
+            ...taskSpec,
+            contactId: contactId || taskSpec.contactId,
+            dealId: dealId || taskSpec.dealId
+          })
+          results.push(result)
+        } catch (e) {
+          results.push({ error: e.message, key: taskSpec.key })
+        }
+      }
+
+      return { created: results.filter(r => !r.error).length, tasks: results }
+    },
+
+    internal_notifications: async (plan, checkpoint) => {
+      const { enviarWhatsAppAdmin, hsCriarNota, hsCriarNotaNegocio } = deps
+      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      const results = []
+
+      for (const notification of (plan.notifications?.internal || [])) {
+        try {
+          if (notification.type === "whatsapp_admin" && enviarWhatsAppAdmin) {
+            await enviarWhatsAppAdmin(notification.message)
+            results.push({ type: "whatsapp_admin", sent: true })
+          } else if (notification.type === "hubspot_note" && contactId && hsCriarNota) {
+            await hsCriarNota(contactId, notification.subject || "NOTIFICACAO", notification.message)
+            results.push({ type: "hubspot_note_contact", sent: true })
+          } else if (notification.type === "hubspot_deal_note" && dealId && hsCriarNotaNegocio) {
+            await hsCriarNotaNegocio(dealId, notification.subject || "NOTIFICACAO", notification.message)
+            results.push({ type: "hubspot_note_deal", sent: true })
+          }
+        } catch (e) {
+          results.push({ type: notification.type, error: e.message })
+        }
+      }
+
+      return { sent: results.filter(r => r.sent).length, notifications: results }
+    },
+
+    final_verify: async (plan, checkpoint) => {
+      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      const folderId = checkpoint.steps.drive?.result?.id || deps.u?.pastaDriveId
+
+      if (!contactId || !dealId || !folderId) {
+        throw new Error("final_verify_missing_resources")
+      }
+
+      return {
+        verified: true,
+        contactId,
+        dealId,
+        folderId,
+        documentsCount: (plan.documents?.received || []).length,
+        tasksCount: (plan.tasks || []).length
+      }
+    }
+  }
+
+  const executor = createCanonicalCaseExecutor({
+    adapters,
+    checkpointRepository
+  })
+
+  async function executeLiveCaseFlow(u, context = {}) {
+    const plan = buildCanonicalPlan(u, context)
+    try {
+      const result = await executor.execute(plan)
+
+      if (deps.u && result.checkpoint) {
+        deps.u._canonicalPlanHash = plan.hash
+        deps.u._canonicalCheckpoint = result.checkpoint
+        deps.u._canonicalPlanStatus = result.planStatus || plan.status
+      }
+
+      return { plan, result }
+    } catch (error) {
+      const partialCheckpoint = await checkpointRepository.load(plan.hash)
+      const partialResources = partialCheckpoint?.resources || {}
+      const interruptedStep = partialCheckpoint
+        ? Object.keys(partialCheckpoint.steps || {}).find(step =>
+            partialCheckpoint.steps[step].status === "failed" ||
+            partialCheckpoint.steps[step].status === "processing"
+          ) || null
+        : null
+      const hasPartialWrites = Object.keys(partialResources).length > 0
+
+      if (deps.u && partialCheckpoint) {
+        deps.u._canonicalPlanHash = plan.hash
+        deps.u._canonicalCheckpoint = partialCheckpoint
+        deps.u._canonicalPlanStatus = partialCheckpoint.status
+      }
+
+      return {
+        plan,
+        result: {
+          completed: false,
+          error: error.message,
+          code: error.code,
+          planHash: plan.hash,
+          planStatus: plan.status,
+          interruptedStep,
+          partialResources,
+          hasPartialWrites,
+          partialCheckpoint
+        }
+      }
+    }
+  }
+
+  return { executeLiveCaseFlow, buildCanonicalPlan, taskService }
+}
+
+module.exports = {
+  createLiveCaseFlow,
+  buildCanonicalPlan,
+  clean
+}

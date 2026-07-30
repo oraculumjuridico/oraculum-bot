@@ -9,6 +9,8 @@ const crypto = require("node:crypto")
 const axios = require("axios")
 const { montarTituloNegocioHubSpot } = require("../src/domain/hubspot-deal-title")
 const { normalizePersonName } = require("../src/domain/name-normalization")
+const { createCanonicalCasePlan, validateCanonicalCasePlan, PLAN_STATUS } = require("../src/domain/canonical-case-plan")
+const { createCanonicalCaseExecutor } = require("../src/domain/canonical-case-executor")
 let planejarSincronizacaoDocumentalHubSpot
 try {
   planejarSincronizacaoDocumentalHubSpot = require("../src/domain/document-hubspot-sync").planejarSincronizacaoDocumentalHubSpot
@@ -298,6 +300,115 @@ function summarize(inventoryResult, results, mode) {
   }
 }
 
+function buildImportCanonicalPlan(record, contactStatus, dealStatus, contatoProps, negocioProps, caseNumber) {
+  const allBlocked = (record.reviewReasons || []).filter(reason => !['negocio_sem_numero_oficial'].includes(reason))
+  return createCanonicalCasePlan({
+    source: "local_import",
+    identity: {
+      name: record.name,
+      cpf: record.cpf,
+      phone: record.phone,
+      email: record.email,
+      provenance: { source: "local_inventory", folder: record.sourceFolderHash },
+      ambiguous: allBlocked.some(reason => /duplic|conflit|ambig|multipl/i.test(reason))
+    },
+    contact: {
+      action: contactStatus === "existing" || contactStatus === "checkpoint" ? "verify" : "resolve",
+      id: contactStatus === "existing" || contactStatus === "checkpoint" ? record.contact?.id : null,
+      properties: contatoProps || {},
+      ambiguous: false
+    },
+    deal: {
+      action: dealStatus === "existing" || dealStatus === "checkpoint" ? "verify" : "resolve",
+      id: dealStatus === "existing" || dealStatus === "checkpoint" ? record.deal?.id : null,
+      properties: { ...(negocioProps || {}), numero_de_caso: caseNumber },
+      ambiguous: false
+    },
+    association: { required: true, verified: false },
+    caseNumber: { value: caseNumber, reservationRequired: !caseNumber },
+    documents: { received: [], pending: record.reviewReasons || [] },
+    hubspot: { contactUpdates: contatoProps || {}, dealUpdates: negocioProps || {} },
+    review: { required: allBlocked.length > 0, blockers: allBlocked.map(reason => `import_review:${reason}`) }
+  })
+}
+
+async function executeCanonicalImportCase(record, contactStatus, dealStatus, contatoProps, negocioProps, caseNumber) {
+  const plan = buildImportCanonicalPlan(record, contactStatus, dealStatus, contatoProps, negocioProps, caseNumber)
+  const validation = validateCanonicalCasePlan(plan)
+  if (!validation.ok) {
+    const error = new Error(`canonical import plan invalid: ${validation.errors.join(",")}`)
+    error.code = "CANONICAL_IMPORT_PLAN_INVALID"
+    error.errors = validation.errors
+    throw error
+  }
+  if (plan.status === PLAN_STATUS.REVIEW_REQUIRED) {
+    const error = new Error("canonical import plan requires review")
+    error.code = "CANONICAL_IMPORT_REVIEW_REQUIRED"
+    error.blockers = plan.review.blockers
+    throw error
+  }
+
+  const checkpointRepo = {
+    async load() { return null },
+    async save() { return }
+  }
+
+  const adapters = {
+    identity: async () => ({ verified: true, name: plan.identity.name, cpf: plan.identity.cpf, phone: plan.identity.phone, email: plan.identity.email }),
+    contact: async () => {
+      let contactId = plan.contact.id
+      if (!contactId && plan.identity.phone) {
+        const found = await search("contacts", "phone", plan.identity.phone, ["firstname", "phone", "email", "cpf_do_cliente"])
+        contactId = found.length === 1 ? found[0].id : null
+      }
+      if (!contactId) {
+        const properties = { firstname: normalizePersonName(plan.identity.name), ...(plan.identity.phone && { phone: plan.identity.phone }), ...(plan.identity.email && { email: plan.identity.email }), ...(plan.identity.cpf && { cpf_do_cliente: plan.identity.cpf }), area_juridica: "Previdenciário (INSS)" }
+        contactId = (await hsRequest("post", "/crm/v3/objects/contacts", { properties })).data.id
+      }
+      return { id: contactId, action: contactId ? "verified" : "created", verified: Boolean(contactId) }
+    },
+    deal: async () => {
+      let dealId = plan.deal.id
+      if (!dealId && plan.caseNumber.value) {
+        const found = await search("deals", "numero_de_caso", plan.caseNumber.value, ["dealname", "numero_de_caso"])
+        dealId = found.length === 1 ? found[0].id : null
+      }
+      const dealname = montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: plan.caseNumber.value }, {})
+      if (!dealId) {
+        const properties = { dealname, pipeline: "default", dealstage: "presentationscheduled", area_juridica: "INSS", numero_de_caso: plan.caseNumber.value, origem_atendimento: "importacao_arquivo", description: `Importacao segura ${record.importId}. Acervo: ${record.documents?.count || 0} arquivo(s).` }
+        dealId = (await hsRequest("post", "/crm/v3/objects/deals", { properties })).data.id
+      } else {
+        await hsRequest("patch", `/crm/v3/objects/deals/${dealId}`, { properties: { dealname, numero_de_caso: plan.caseNumber.value } })
+      }
+      return { id: dealId, action: dealId ? "verified" : "created", verified: Boolean(dealId) }
+    },
+    association: async ({ contact, deal }) => {
+      if (!contact?.id || !deal?.id) return { id: null, action: "skipped", verified: false }
+      await hsRequest("put", `/crm/v3/objects/deals/${deal.id}/associations/contacts/${contact.id}/deal_to_contact`, {})
+      return { id: `${contact.id}-${deal.id}`, action: "created", verified: true }
+    },
+    case_number: async () => ({ value: plan.caseNumber.value, action: "reserved" }),
+    drive: async () => ({ id: null, action: "skipped", verified: false }),
+    documents: async () => ({ count: 0, documents: [] }),
+    hubspot: async () => ({ updated: false }),
+    tasks: async () => ({ created: 0, tasks: [] }),
+    internal_notifications: async () => ({ sent: 0, notifications: [] }),
+    final_verify: async ({ contact, deal }) => {
+      if (!contact?.id || !deal?.id) throw new Error("final_verify_missing_resources")
+      return { verified: true, contactId: contact.id, dealId: deal.id, documentsCount: 0, tasksCount: 0 }
+    }
+  }
+
+  const executor = createCanonicalCaseExecutor({ adapters, checkpointRepository: checkpointRepo })
+  const result = await executor.execute(plan)
+  return {
+    contactId: result.checkpoint?.steps?.contact?.result?.id,
+    dealId: result.checkpoint?.steps?.deal?.result?.id,
+    completed: result.completed,
+    planHash: plan.hash
+  }
+}
+
 async function apply(results, checkpoint) {
   // Reservation adapter is gated behind ENABLE_CASE_NUMBER_RESERVATION env var.
   // Allowed values: 'local' (file-backed test adapter), 'postgres' (requires EXTERNAL_STATE_DATABASE_URL and pool).
@@ -336,45 +447,34 @@ async function apply(results, checkpoint) {
   if (!process.env.HUBSPOT_TOKEN) throw new Error("hubspot_token_ausente")
   for (const item of results) {
     if (checkpoint.records[item.importId]?.status === "applied") continue
-    // Check only blocking review reasons (non-resolvable ones)
     const blockingReasons = getBlockingReviewReasons(item.reviewReasons)
     if (item.error || blockingReasons.length || item.contact.status === "duplicate" || item.deal.status === "duplicate") continue
-    let contactId = item.contact.id
-    if (!contactId) {
-      const properties = { firstname: normalizePersonName(item.name), ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "Previdenciário (INSS)" }
-      contactId = (await hsRequest("post", "/crm/v3/objects/contacts", { properties })).data.id
-    }
-    let dealId = item.deal.id
-    if (!dealId) {
-      // Determine numero_de_caso to use. Priority:
-      // 1) existing officialNumber in item
-      // 2) checkpoint stored caseNumber
-      // 3) reserve via caseNumberService (if enabled)
-      let numeroParaEnviar = item.officialNumber || null
-      if (!numeroParaEnviar && checkpoint.records[item.importId] && checkpoint.records[item.importId].caseNumber) {
-        numeroParaEnviar = checkpoint.records[item.importId].caseNumber
-      }
-      if (!numeroParaEnviar && caseNumberService) {
-        // use idempotent key: importId (stable per source folder)
-        const key = item.importId
-        const res = await caseNumberService.reserve({ key, area: item.area })
-        if (!res || !res.reserved) throw new Error('case_number_reservation_failed')
-        numeroParaEnviar = res.numero
-        // persist reservation in checkpoint immediately to ensure idempotence across retries
-        checkpoint.records[item.importId] = checkpoint.records[item.importId] || {}
-        checkpoint.records[item.importId].caseNumber = numeroParaEnviar
-        await atomicWrite(CHECKPOINT, checkpoint)
-      }
 
-      const properties = {
-        dealname: montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: numeroParaEnviar }), pipeline: "default",
-        dealstage: "presentationscheduled", area_juridica: "INSS", numero_de_caso: numeroParaEnviar,
-        origem_atendimento: "importacao_arquivo", description: `Importacao segura ${item.importId}. Acervo: ${item.documents.count} arquivo(s).`
-      }
-      dealId = (await hsRequest("post", "/crm/v3/objects/deals", { properties })).data.id
+    let numeroParaEnviar = item.officialNumber || null
+    if (!numeroParaEnviar && checkpoint.records[item.importId] && checkpoint.records[item.importId].caseNumber) {
+      numeroParaEnviar = checkpoint.records[item.importId].caseNumber
     }
-    await hsRequest("put", `/crm/v3/objects/deals/${dealId}/associations/contacts/${contactId}/deal_to_contact`, {})
-    checkpoint.records[item.importId] = { status: "applied", contactId, dealId, sourceHash: item.sourceHash, appliedAt: new Date().toISOString(), caseNumber: checkpoint.records[item.importId]?.caseNumber || item.officialNumber || null }
+    if (!numeroParaEnviar && caseNumberService) {
+      const key = item.importId
+      const res = await caseNumberService.reserve({ key, area: item.area })
+      if (!res || !res.reserved) throw new Error('case_number_reservation_failed')
+      numeroParaEnviar = res.numero
+      checkpoint.records[item.importId] = checkpoint.records[item.importId] || {}
+      checkpoint.records[item.importId].caseNumber = numeroParaEnviar
+      await atomicWrite(CHECKPOINT, checkpoint)
+    }
+
+    const contatoProps = { firstname: normalizePersonName(item.name), ...(item.phone && { phone: item.phone }), ...(item.email && { email: item.email }), ...(item.cpf && { cpf_do_cliente: item.cpf }), area_juridica: "Previdenciário (INSS)" }
+    const negocioProps = {
+      dealname: montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: numeroParaEnviar }), pipeline: "default",
+      dealstage: "presentationscheduled", area_juridica: "INSS", numero_de_caso: numeroParaEnviar,
+      origem_atendimento: "importacao_arquivo", description: `Importacao segura ${item.importId}. Acervo: ${item.documents.count} arquivo(s).`
+    }
+
+    const canonical = await executeCanonicalImportCase(item, item.contact.status, item.deal.status, contatoProps, negocioProps, numeroParaEnviar)
+    const contactId = canonical.contactId || item.contact.id
+    const dealId = canonical.dealId || item.deal.id
+    checkpoint.records[item.importId] = { status: "applied", contactId, dealId, sourceHash: item.sourceHash, appliedAt: new Date().toISOString(), caseNumber: numeroParaEnviar, planHash: canonical.planHash }
     await atomicWrite(CHECKPOINT, checkpoint)
   }
   return checkpoint
@@ -580,6 +680,30 @@ function buildCanonicalDryRunReport(results, scanned) {
       },
       documentCount: Number(registry.documents?.count || 0),
       documentsPending: analysisExecuted ? item.reviewReasons?.includes('incomplete_documents') || false : null
+    }
+    const canonicalPlan = createCanonicalCasePlan({
+      source: "local_import",
+      identity: {
+        name: registry.name,
+        cpf: registry.cpf,
+        phone: phoneNormalized,
+        email: contato.props?.email || null,
+        provenance: { source: "local_inventory" },
+        ambiguous: allBlocked.some(block => /duplic|conflit|ambig/i.test(block.reason))
+      },
+      contact: { action: item.contact?.status === "existing" ? "update" : "create", id: item.contact?.id, properties: contato.props },
+      deal: { action: item.deal?.status === "existing" ? "update" : "create", id: item.deal?.id, properties: negocio.props },
+      association: { required: true, verified: false },
+      caseNumber: { value: negocio.props?.numero_de_caso || registry.officialNumber, reservationRequired: !negocio.props?.numero_de_caso && !registry.officialNumber },
+      documents: { received: [], pending: item.reviewReasons || [] },
+      hubspot: { contactUpdates: contato.props, dealUpdates: negocio.props },
+      review: { required: allBlocked.length > 0, blockers: allBlocked.map(block => `${block.field}:${block.reason}`) }
+    })
+    report.canonicalPlan = {
+      version: canonicalPlan.version,
+      status: canonicalPlan.status,
+      hash: canonicalPlan.hash,
+      blockers: canonicalPlan.review.blockers
     }
 
     reports.push(report)

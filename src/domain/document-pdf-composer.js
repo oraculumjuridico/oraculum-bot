@@ -313,11 +313,13 @@ async function comporPdfsDocumentais(grupos = {}, options = {}) {
   const avisos = []
   const erros = []
   const pdfsGerados = []
+  const originaisPreservados = []
   const definicoes = options.definicoes || PDF_DEFINITIONS
 
   if (!grupos || typeof grupos !== "object") {
     return {
       pdfsGerados,
+      originaisPreservados,
       avisos,
       erros: [{
         code: "DOCUMENT_PDF_GROUPS_INVALID",
@@ -346,8 +348,22 @@ async function comporPdfsDocumentais(grupos = {}, options = {}) {
     }
   }
 
+  for (const aviso of avisos) {
+    if (aviso.code === "DOCUMENT_PDF_SOURCE_PDF_UNSUPPORTED" && aviso.original) {
+      const chave = aviso.original.fileId || aviso.original.nome
+      if (!originaisPreservados.some(item => (item.fileId || item.nome) === chave)) {
+        originaisPreservados.push({
+          ...aviso.original,
+          status: "preserved_outside_consolidated_pdf",
+          reason: aviso.code
+        })
+      }
+    }
+  }
+
   return {
     pdfsGerados,
+    originaisPreservados,
     avisos,
     erros
   }

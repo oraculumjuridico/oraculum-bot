@@ -23,7 +23,7 @@ const indiceProtecaoPendente = processamentoMidia.indexOf(
   "u._docClientePendenteId || u._docClientePendenteArquivo"
 )
 const indiceDownload = processamentoMidia.indexOf("await baixarMidia")
-const indiceUploadAvulso = processamentoMidia.indexOf("await uploadDrive")
+const indiceUploadAvulso = processamentoMidia.indexOf("await uploadDocumentoCano")
 assert.notEqual(indiceProtecaoPendente, -1)
 assert.notEqual(indiceDownload, -1)
 assert.notEqual(indiceUploadAvulso, -1)

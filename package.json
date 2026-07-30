@@ -38,6 +38,7 @@
     "cases:apply": "node scripts/import-real-cases.js apply --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
     "cases:resume": "node scripts/import-real-cases.js resume --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
     "cases:report": "node scripts/import-real-cases.js report",
+    "cases:reconcile-state": "node scripts/reconcile-case-state.js",
     "state:migrate:postgres": "node scripts/migrate-state-to-postgres.js",
     "state:migrate:postgres:force": "node scripts/migrate-state-to-postgres.js --force",
     "state:migrate:postgres:dry": "node scripts/migrate-state-to-postgres.js --dry-run",
