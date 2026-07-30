@@ -64,8 +64,6 @@ function textoResumoDiarioOperacional(resumo) {
   const alertas = resumo.filas.alertasOperacionais.slice(0, 5).map(linhaAlerta)
   const proximasAcoes = resumo.filas.proximasAcoes.slice(0, 3).map(linhaAcao)
   const recentes = resumo.filas.recentes.slice(0, 5).map(linhaBriefing)
-  const checklist = (resumo.checklistProducao || []).map(item => `- ${item}`)
-
   return [
     "*Resumo diario*",
     "",
@@ -96,8 +94,8 @@ function textoResumoDiarioOperacional(resumo) {
     "*Recentes*",
     ...(recentes.length ? recentes : ["Nenhum caso recente encontrado."]),
     "",
-    "*Checklist producao*",
-    ...checklist
+    "*Validação técnica*",
+    "Verificações técnicas são realizadas durante a validação e o deploy."
   ].join("\n")
 }
 

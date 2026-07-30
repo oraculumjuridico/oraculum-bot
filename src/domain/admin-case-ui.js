@@ -9,6 +9,18 @@ let deps = {
   primeiroEUltimoNome: nome => sanitizarTextoEntrada(nome)
 }
 
+const ADMIN_MENU_LABELS = Object.freeze({
+  marcarRevisado: "Marcar como revisado",
+  marcarUrgente: "Marcar como urgente",
+  registrarAnalise: "Registrar análise",
+  pedirDocumentos: "Pedir documentos",
+  lembrarCliente: "Lembrar cliente",
+  abrirLinksCaso: "Abrir links do caso",
+  verConsultas: "Ver consultas",
+  voltarLista: "Voltar à lista",
+  voltarMenu: "Voltar ao menu admin"
+})
+
 function configurarAdminCaseUi(config = {}) {
   deps = { ...deps, ...config }
 }
@@ -90,9 +102,9 @@ function tituloOpcaoCasoAdmin(item, idx, options = {}) {
 
 function opcoesAposAcaoCasoAdmin() {
   return [
-    { id: deps.ADMIN_IDS.casoRevisado, title: "Revisado" },
+    { id: deps.ADMIN_IDS.casoRevisado, title: ADMIN_MENU_LABELS.marcarRevisado },
     { id: deps.ADMIN_IDS.prioridades, title: "Prioridades" },
-    { id: deps.ADMIN_IDS.menu, title: "Menu admin" }
+    { id: deps.ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
   ]
 }
 
@@ -105,5 +117,6 @@ module.exports = {
   tituloCasoCurtoAdmin,
   resumoCasoAdmin,
   tituloOpcaoCasoAdmin,
-  opcoesAposAcaoCasoAdmin
+  opcoesAposAcaoCasoAdmin,
+  ADMIN_MENU_LABELS
 }
