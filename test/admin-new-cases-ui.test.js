@@ -1,37 +1,70 @@
 "use strict"
 
 const assert = require("node:assert/strict")
-const fs = require("node:fs")
-const path = require("node:path")
-const vm = require("node:vm")
 const {
   configurarAdminCaseUi,
   resumoCasoAdmin,
   tituloOpcaoCasoAdmin
 } = require("../src/domain/admin-case-ui")
 const { primeiroEUltimoNome, normalizarNomeComparacao } = require("../src/domain/phone-name")
+const { resolverNomeParaAdmin } = require("../src/domain/admin-name-resolver")
+const { mapearNegociosHubSpotAdmin } = require("../src/domain/admin-hubspot-deal-mapper")
 
 function resolverNomeBriefing(u = {}) {
-  const valido = valor => {
-    const nome = String(valor || "").trim()
-    return nome && nome.toLowerCase() !== "cliente" ? nome : ""
-  }
-  return (u.nomeConfirmado ? valido(u.nome) : "") || valido(u.nomeHubspot) || valido(u.nomeWA) || valido(u.nomePerfilWhatsApp) || "Cliente"
+  return resolverNomeParaAdmin({
+    contato: null,
+    u,
+    nomePerfilWhatsApp: u.nomePerfilWhatsApp
+  })
 }
 
-const serverSource = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
-const inicioNome = serverSource.indexOf("function nomeValidoParaExibicao")
-const fimNome = serverSource.indexOf("async function resolverUsuarioPorHubSpot", inicioNome)
-const nomeSandbox = {
-  sanitizarTextoEntrada: valor => String(valor || "").trim(),
-  resolverNomeProdução: null
-}
-vm.runInNewContext(`${serverSource.slice(inicioNome, fimNome)}\nresolverNomeProdução = resolverNomeBriefing`, nomeSandbox)
-assert.equal(nomeSandbox.resolverNomeProdução({
+assert.equal(resolverNomeBriefing({
   nomeWA: "pessoaficticiadasilva",
   nomePerfilWhatsApp: "Pessoa Ficticia da Silva"
 }), "Pessoa Ficticia da Silva")
-assert.equal(nomeSandbox.resolverNomeProdução({ nomeWA: "pessoaficticiadasilva" }), "pessoaficticiadasilva")
+assert.equal(resolverNomeBriefing({ nomeWA: "pessoaficticiadasilva" }), "pessoaficticiadasilva")
+
+const negociosMapeados = mapearNegociosHubSpotAdmin({
+  results: [
+    {
+      id: "deal-1",
+      properties: {
+        dealname: "Caso Previdenciario",
+        numero_de_caso: "PREV-001",
+        area_juridica: "Previdenciario",
+        dealstage: "appointmentscheduled",
+        createdate: "2026-07-01T10:00:00Z",
+        estado_bot_snapshot: "{\"cliente\":\"Ana\"}",
+        urgencia: "Alta"
+      }
+    },
+    {
+      id: "deal-2",
+      properties: {
+        dealname: "Caso Trabalhista",
+        numero_de_caso: "TRAB-002",
+        area_juridica: "Trabalhista",
+        dealstage: "qualifiedtobuy",
+        createdate: "2026-07-02T11:00:00Z",
+        estado_bot_snapshot: "{\"cliente\":\"Bruno\"}",
+        urgencia: "Baixa"
+      }
+    }
+  ]
+})
+assert.equal(negociosMapeados.length, 2)
+assert.deepEqual(negociosMapeados.map(item => item.id), ["deal-1", "deal-2"])
+assert.equal(negociosMapeados[0].stageId, "appointmentscheduled")
+assert.equal(negociosMapeados[1].stageId, "qualifiedtobuy")
+assert.equal(negociosMapeados[0].properties.dealname, "Caso Previdenciario")
+assert.equal(negociosMapeados[1].properties.dealname, "Caso Trabalhista")
+assert.equal(negociosMapeados[0].properties.numero_de_caso, "PREV-001")
+assert.equal(negociosMapeados[1].properties.numero_de_caso, "TRAB-002")
+assert.equal(negociosMapeados[0].properties.area_juridica, "Previdenciario")
+assert.equal(negociosMapeados[1].properties.area_juridica, "Trabalhista")
+assert.equal(negociosMapeados[0].properties.estado_bot_snapshot, "{\"cliente\":\"Ana\"}")
+assert.equal(negociosMapeados[1].properties.urgencia, "Baixa")
+assert.notStrictEqual(negociosMapeados[0].properties, negociosMapeados[1].properties)
 
 configurarAdminCaseUi({
   ADMIN_IDS: {},

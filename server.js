@@ -236,6 +236,13 @@ const {
   mesclarItensAdminPorIdentidade
 } = require("./src/domain/admin-item-merge")
 const {
+  mapearNegociosHubSpotAdmin
+} = require("./src/domain/admin-hubspot-deal-mapper")
+const {
+  resolverUrgenciaAdmin,
+  persistirUrgenciaAltaAdmin
+} = require("./src/domain/admin-urgency")
+const {
   numeroPorExtenso,
   formatarSlot,
   formatarSlotAudio
@@ -405,7 +412,8 @@ const {
 const {
   atendimentoAssistidoAdminAtivo,
   iniciarAtendimentoAssistidoAdmin,
-  processarAtendimentoAssistidoAdmin
+  processarAtendimentoAssistidoAdmin,
+  criarPayloadLogAdminAssistido
 } = require("./src/domain/admin-assisted-ai-flow")
 const {
   montarTituloNegocioHubSpot,
@@ -4104,7 +4112,6 @@ function montarNotificacaoCancelamentoClienteAdmin({ from, u, dataHora, eventoId
 function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
   const props = negocio?.properties || {}
   const snapshot = desserializarEstado(props.estado_bot_snapshot) || {}
-  const urgenciaProps = sanitizarTextoEntrada(props.urgencia).toLowerCase()
   const telefone = normalizarNumeroWhatsAppEnvio(contato?.properties?.phone || from || snapshot._numero || snapshot.whatsappContato)
 
   const { nome: nomeResolvido } = resolverNomeUnificado({ contato, u })
@@ -4120,7 +4127,11 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     negocioStageId: negocio?.stageId || props.dealstage || snapshot.negocioStageId || u?.negocioStageId || null,
     numeroCaso: getNumeroCasoOficialDoNegocio(negocio) || snapshot.numeroCaso || u?.numeroCaso || null,
     area: snapshot.area || props.area_juridica || u?.area || null,
-    urgencia: snapshot.urgencia || ({ alta: "alta", moderada: "normal", baixa: "baixa" }[urgenciaProps]) || u?.urgencia || "normal",
+    urgencia: resolverUrgenciaAdmin({
+      hubspot: props.urgencia,
+      snapshot: snapshot.urgencia,
+      local: u?.urgencia
+    }),
     descricao: snapshot.descricao || props.description || props.descricao_completa || u?.descricao || null,
     assuntoResumo: snapshot.assuntoResumo || props.resumo_cliente || u?.assuntoResumo || null
   })
@@ -4194,12 +4205,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
           body,
           { headers: HS() }
         )
-        const deals = (res.data?.results || []).map(n => ({
-          id: n.id,
-          stageId: n.properties?.dealstage || null,
-          createdate: n.properties?.createdate || null,
-          properties: res.data?.properties || {}
-        }))
+        const deals = mapearNegociosHubSpotAdmin(res.data)
         return {
           deals,
           total: res.data?.total || 0,
@@ -5168,25 +5174,43 @@ async function marcarCasoUrgenteAdmin(from) {
   }
 
   const { u } = item
-  const anterior = u.urgencia || "normal"
-  u.urgencia = "alta"
-  const briefing = gerarBriefingCaso(u)
-  let notaContato = false
-  let notaNegocio = false
-  const corpo = `Caso marcado como urgente pelo admin.\nCaso: ${u.numeroCaso || "-"}\nUrgencia anterior: ${anterior}\nProxima acao: ${briefing.proximaAcao || "revisar com prioridade"}`
-  if (u.contatoId) notaContato = await hsCriarNota(u.contatoId, "CASO MARCADO URGENTE", corpo)
-  if (u.negocioId) notaNegocio = await hsCriarNotaNegocio(u.negocioId, "CASO MARCADO URGENTE", corpo)
+  const resultado = await persistirUrgenciaAltaAdmin({
+    item,
+    atualizarNegocio: hsAtualizarNegocioSerializado,
+    criarNotaContato: hsCriarNota,
+    criarNotaNegocio: hsCriarNotaNegocio,
+    gerarBriefing: gerarBriefingCaso
+  })
+
+  if (!resultado.persisted) {
+    return {
+      texto: [
+        "⚠️ *Não foi possível marcar o caso como urgente no HubSpot.*",
+        "",
+        `👤 Cliente: ${u.nome || u.nomeWA || "Cliente"}`,
+        `📄 Caso: ${u.numeroCaso || "-"}`,
+        "",
+        "A urgência local não foi alterada. Tente novamente."
+      ].join("\n"),
+      opcoes: [
+        { id: ADMIN_IDS.casoMarcarUrgente, title: "🔄 Tentar novamente" },
+        ...opcoesAposAcaoCasoAdmin()
+      ],
+      registrarPergunta: false
+    }
+  }
 
   return {
     texto: [
-      "🚨 *Caso marcado como urgente.*",
+      "🚨 *Caso marcado como urgente no HubSpot.*",
       "",
       `👤 Cliente: ${u.nome || u.nomeWA || "Cliente"}`,
       `📄 Caso: ${u.numeroCaso || "-"}`,
       `⚡ Urgencia: ${u.urgencia}`,
       "",
-      `👤 Nota contato: ${notaContato ? "✅ ok" : "⚠️ nao registrada"}`,
-      `📄 Nota negocio: ${notaNegocio ? "✅ ok" : "⚠️ nao registrada"}`
+      `👤 Nota contato: ${resultado.notaContato ? "✅ ok" : "⚠️ nao registrada"}`,
+      `📄 Nota negocio: ${resultado.notaNegocio ? "✅ ok" : "⚠️ nao registrada"}`,
+      resultado.notesComplete ? "" : "⚠️ A urgência foi persistida, mas uma ou mais notas não foram registradas."
     ].join("\n"),
     opcoes: opcoesAposAcaoCasoAdmin(),
     registrarPergunta: false
@@ -5654,7 +5678,10 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     agendarPersistenciaSessoesAdminAssistidas,
     logDebug,
     logErro,
-    logAdminAssistido: evento => logDebug("[ADMIN_ASSISTIDO]", JSON.stringify(evento)),
+    logAdminAssistido: evento => {
+      const payloadSeguro = criarPayloadLogAdminAssistido(evento?.evento, evento)
+      logDebug("[ADMIN_ASSISTIDO]", JSON.stringify(payloadSeguro))
+    },
     transcreverAudioAdmin: async msg => {
       const mediaId = msg?.audio?.id || msg?.voice?.id
       if (!mediaId) return ""
@@ -15579,7 +15606,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
           update: async (type, id, properties) => type === "contact"
             ? hsAtualizarContato(id, properties) : hsAtualizarNegocio(id, properties),
           createReviewNote: async (_type, _id, note) =>
-            hsCriarNotaNegocio(cycle.negocioId, "REVIS�O P�S-ATENDIMENTO", `Ciclo: ${note.cycleId}\nCampos divergentes: ${note.fields.join(", ")}`)
+            hsCriarNotaNegocio(cycle.negocioId, "REVISÃO PÓS-ATENDIMENTO", `Ciclo: ${note.cycleId}\nCampos divergentes: ${note.fields.join(", ")}`)
         }
       }),
     legacyDocumentPipeline: createLegacyDocumentPipeline({
@@ -15620,13 +15647,13 @@ async function processarComLock(from, nomeWA, text, msgObj) {
       if (postHumanDispatch.handled) {
         const postHumanResponse = postHumanDispatch.response
         if (postHumanDispatch.requiresCaseSelection) {
-          return { texto: "H� mais de um caso aguardando complemento. Selecione o caso no Menu do Cliente para continuar.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+          return { texto: "Há mais de um caso aguardando complemento. Selecione o caso no Menu do Cliente para continuar.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         }
-        if (postHumanResponse.deferred) return { texto: "Tudo bem. Seu progresso foi salvo e voc� pode responder depois.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanResponse.deferred) return { texto: "Tudo bem. Seu progresso foi salvo e você pode responder depois.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         if (postHumanResponse.pipelineResponse) return postHumanResponse.pipelineResponse
-        if (postHumanDispatch.humanReviewRequired) return { texto: "Recebi sua informa��o. Ela seguir� para revis�o segura antes de qualquer atualiza��o.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
-        if (postHumanResponse.partial) return { texto: "Informa��o recebida e vinculada ao seu caso. Voc� pode continuar enviando os itens pendentes.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
-        if (!postHumanResponse.partial) return { texto: "Informa��o recebida e vinculada ao seu caso.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanDispatch.humanReviewRequired) return { texto: "Recebi sua informação. Ela seguirá para revisão segura antes de qualquer atualização.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanResponse.partial) return { texto: "Informação recebida e vinculada ao seu caso. Você pode continuar enviando os itens pendentes.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (!postHumanResponse.partial) return { texto: "Informação recebida e vinculada ao seu caso.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
       }
     }
 

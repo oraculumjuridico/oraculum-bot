@@ -653,12 +653,47 @@ function atualizarAnaliseAdminAssistido(analise, dados, origemAtual = null) {
   }
 }
 
-function registrarLogAdminAssistido(deps = {}, evento, detalhes = {}) {
+const CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO = new Set([
+  "resultado",
+  "code",
+  "operation",
+  "numeroCaso",
+  "contatoId",
+  "negocioId",
+  "pastaDriveId",
+  "area",
+  "etapa",
+  "status",
+  "reason",
+  "faltantes"
+])
+
+function criarPayloadLogAdminAssistido(evento, detalhes = {}) {
   const payload = {
-    evento,
-    origem: ADMIN_ASSISTIDO_ORIGEM,
-    ...detalhes
+    evento: sanitizarTextoEntrada(evento),
+    origem: ADMIN_ASSISTIDO_ORIGEM
   }
+  if (!detalhes || typeof detalhes !== "object" || Array.isArray(detalhes)) return payload
+
+  for (const [campo, valor] of Object.entries(detalhes)) {
+    if (!CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO.has(campo)) continue
+    if (Array.isArray(valor)) {
+      payload[campo] = valor
+        .filter(item => typeof item === "string")
+        .map(item => sanitizarTextoEntrada(item).slice(0, 80))
+        .filter(Boolean)
+      continue
+    }
+    if (!["string", "number", "boolean"].includes(typeof valor)) continue
+    payload[campo] = typeof valor === "string"
+      ? sanitizarTextoEntrada(valor).slice(0, 160)
+      : valor
+  }
+  return payload
+}
+
+function registrarLogAdminAssistido(deps = {}, evento, detalhes = {}) {
+  const payload = criarPayloadLogAdminAssistido(evento, detalhes)
   if (typeof deps.logAdminAssistido === "function") {
     deps.logAdminAssistido(payload)
     return
@@ -855,7 +890,10 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       pendentesPosterior
     }
     salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
-    registrarLogAdminAssistido(deps, "confirmacao_bloqueada_campos_faltantes", { faltantes: faltantesCriticos })
+    registrarLogAdminAssistido(deps, "confirmacao_bloqueada_campos_faltantes", {
+      resultado: "bloqueado",
+      faltantes: faltantesCriticos
+    })
     return {
       texto: textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo }),
       opcoes: opcoesNavegacaoAdminAssistido(),
@@ -871,9 +909,8 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
   const snapshotSessao = { ...sessao, adminAssistido }
   const u = montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido, deps)
   registrarLogAdminAssistido(deps, "criacao_caso_iniciada", {
-    nome: u.nome,
-    area: u.area,
-    telefone: u.whatsappContato
+    resultado: "iniciado",
+    area: u.area
   })
 
   try {
@@ -895,7 +932,10 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       listaAtiva: null,
       adminAssistido: novoEstado
     }, deps)
-    registrarLogAdminAssistido(deps, "criacao_caso_concluida", novoEstado.casoCriado)
+    registrarLogAdminAssistido(deps, "criacao_caso_concluida", {
+      resultado: "sucesso",
+      ...novoEstado.casoCriado
+    })
     return {
       texto: textoSucessoCriacaoCasoAdminAssistido(u, numeroCaso),
       opcoes: opcoesNavegacaoAdminAssistido({ voltar: false, cancelar: false }),
@@ -908,12 +948,14 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       await deps.rollbackCriacaoCasoAssistido({ erro: e, usuario: u, sessao: snapshotSessao })
     }
     registrarLogAdminAssistido(deps, "criacao_caso_falhou_rollback_sessao", {
+      resultado: "falha",
       code: e?.code || null,
-      operation: e?.operation || null,
-      message: e?.message || "erro desconhecido"
+      operation: e?.operation || null
     })
     if (typeof deps.logErro === "function") {
-      deps.logErro("admin_assistido", `Falha ao criar caso assistido: ${e.message}`, e)
+      const code = sanitizarTextoEntrada(e?.code) || "CASE_CREATION_FAILURE"
+      const operation = sanitizarTextoEntrada(e?.operation) || "finalizar_cadastro_assistido"
+      deps.logErro("admin_assistido", `Falha técnica ao criar caso assistido; code=${code}; operation=${operation}`)
     }
     return {
       texto: [
@@ -1262,5 +1304,6 @@ module.exports = {
   registrarEntradaAtendimentoAssistidoAdmin,
   gerarResumoAdminAssistido,
   montarUsuarioFinalizacaoAdminAssistido,
-  confirmarCriarCasoAdminAssistido
+  confirmarCriarCasoAdminAssistido,
+  criarPayloadLogAdminAssistido
 }
