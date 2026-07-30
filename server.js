@@ -209,7 +209,8 @@ const {
   labelIdadeAdmin,
   resumoCasoAdmin,
   tituloOpcaoCasoAdmin,
-  opcoesAposAcaoCasoAdmin
+  opcoesAposAcaoCasoAdmin,
+  ADMIN_MENU_LABELS
 } = require("./src/domain/admin-case-ui")
 const {
   montarBotaoAtendimentoRealizado,
@@ -4731,11 +4732,11 @@ async function telaAdminPrincipal() {
     ].join("\n"),
     opcoes: [
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
-      { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
-      { id: ADMIN_IDS.resumo, title: "📊 Resumo" },
-      { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento Assistido por IA" }
+      { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
+      { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento com IA" }
     ],
     registrarPergunta: false
   }
@@ -4755,7 +4756,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
       return {
         texto: "📌 *Prioridades*\n\n✅ Nao encontrei casos com risco operacional relevante agora.",
         opcoes: [
-          { id: ADMIN_IDS.menu, title: "🏠 Menu admin" },
+          { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` },
           { id: ADMIN_IDS.casos, title: "📂 Casos" }
         ],
         registrarPergunta: false
@@ -4777,7 +4778,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
     // Navegação entre páginas
     if (pagina > 1) opcoes.push({ id: `admin_prioridades_pagina_${pagina - 1}`, title: "⬅️ Anterior" })
     if (pagina < totalPaginas) opcoes.push({ id: `admin_prioridades_pagina_${pagina + 1}`, title: "➡️ Próxima" })
-    opcoes.push({ id: ADMIN_IDS.menu, title: "🏠 Menu admin" })
+    opcoes.push({ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` })
 
     const inicioExibicao = totalItens === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
     const fimExibicao = Math.min(pagina * tamanhoPagina, totalItens)
@@ -4807,7 +4808,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
       texto: "📌 *Prioridades*\n\n⚠️ O HubSpot esta temporariamente ocupado.\n\nSua sessao admin permanece ativa. Tente novamente em alguns segundos.",
       opcoes: [
         { id: ADMIN_IDS.prioridades, title: "🔄 Tentar novamente" },
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
       ],
       registrarPergunta: false
     }
@@ -4831,9 +4832,10 @@ async function telaAdminCasos() {
       "Escolha uma fila."
     ].join("\n"),
     opcoes: [
-      { id: ADMIN_IDS.casosNovos, title: "🆕 Novos" },
-      { id: ADMIN_IDS.casosAnalise, title: "🔎 Analise" },
-      { id: ADMIN_IDS.casosDocs, title: "📎 Docs" }
+      { id: ADMIN_IDS.casosNovos, title: "🆕 Novos casos" },
+      { id: ADMIN_IDS.casosAnalise, title: "🔎 Casos em análise" },
+      { id: ADMIN_IDS.casosDocs, title: "📎 Documentos pendentes" },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -4864,11 +4866,12 @@ async function telaAdminAlertas() {
       "Escolha uma fila para agir."
     ].join("\n"),
     opcoes: [
-      { id: ADMIN_IDS.alertasCriticos, title: "🔥 Criticos" },
-      { id: ADMIN_IDS.alertasParados, title: "⏳ Parados" },
-      { id: ADMIN_IDS.alertasDocs, title: "📎 Docs" },
-      { id: ADMIN_IDS.alertasAgenda, title: "📅 Agenda" },
-      { id: ADMIN_IDS.resumo, title: "📊 Resumo" }
+      { id: ADMIN_IDS.alertasCriticos, title: "🔥 Casos críticos" },
+      { id: ADMIN_IDS.alertasParados, title: "⏳ Casos parados" },
+      { id: ADMIN_IDS.alertasDocs, title: "📎 Documentos pendentes" },
+      { id: ADMIN_IDS.alertasAgenda, title: "📅 Consultas futuras" },
+      { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -4882,7 +4885,7 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
       texto: `${titulo}\n\n${vazio}`,
       opcoes: [
         { id: voltar, title: "⬅️ Voltar" },
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
       ],
       registrarPergunta: false
     }
@@ -4908,7 +4911,10 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
   ]
   if (pagina > 1) opcoes.push({ id: `admin_casos_pagina_${pagina - 1}`, title: "⬅️ Página anterior" })
   if (pagina < totalPaginas) opcoes.push({ id: `admin_casos_pagina_${pagina + 1}`, title: "Próxima página ➡️" })
-  opcoes.push({ id: voltar, title: "Voltar" }, { id: ADMIN_IDS.menu, title: "Menu admin" })
+  opcoes.push(
+    { id: voltar, title: ADMIN_MENU_LABELS.voltarLista },
+    { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+  )
   const inicioExibicao = itens.length === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
   const fimExibicao = Math.min(pagina * tamanhoPagina, itens.length)
   return {
@@ -4977,7 +4983,7 @@ async function telaAdminResumoDiario() {
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5008,15 +5014,15 @@ function telaDetalheCasoAdmin(from, idx) {
     texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
     opcoes: [
       botaoPosAtendimento,
-      { id: ADMIN_IDS.casoRevisado, title: "✅ Revisado" },
-      { id: ADMIN_IDS.casoMarcarUrgente, title: "🚨 Marcar urgente" },
-      { id: ADMIN_IDS.casoEnviarAnalise, title: "📝 Enviar analise" },
-      { id: ADMIN_IDS.casoPedirDocs, title: "📎 Pedir docs" },
-      { id: ADMIN_IDS.casoLembrete, title: "🔔 Lembrete" },
-      { id: ADMIN_IDS.casoLinks, title: "🔗 Links" },
-      { id: voltar, title: "⬅️ Voltar" },
-      { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.casoRevisado, title: `✅ ${ADMIN_MENU_LABELS.marcarRevisado}` },
+      { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
+      { id: ADMIN_IDS.casoEnviarAnalise, title: `📝 ${ADMIN_MENU_LABELS.registrarAnalise}` },
+      { id: ADMIN_IDS.casoPedirDocs, title: `📎 ${ADMIN_MENU_LABELS.pedirDocumentos}` },
+      { id: ADMIN_IDS.casoLembrete, title: `🔔 ${ADMIN_MENU_LABELS.lembrarCliente}` },
+      { id: ADMIN_IDS.casoLinks, title: `🔗 ${ADMIN_MENU_LABELS.abrirLinksCaso}` },
+      { id: voltar, title: `⬅️ ${ADMIN_MENU_LABELS.voltarLista}` },
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5048,9 +5054,9 @@ function telaLinksCasoAdmin(from) {
       telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : ""
     ].filter(Boolean).join("\n"),
     opcoes: [
-      { id: ADMIN_IDS.casoRevisado, title: "✅ Revisado" },
+      { id: ADMIN_IDS.casoRevisado, title: `✅ ${ADMIN_MENU_LABELS.marcarRevisado}` },
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5085,7 +5091,7 @@ async function marcarCasoRevisadoAdmin(from) {
     opcoes: [
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5381,7 +5387,7 @@ async function telaConsultasAdmin(from) {
     return {
       texto: "📅 *Consultas futuras*\n\n✅ Nao encontrei consultas futuras ativas no HubSpot nem na memoria local.",
       opcoes: [
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" },
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` },
         { id: ADMIN_IDS.casos, title: "📂 Casos" }
       ],
       registrarPergunta: false
@@ -5397,7 +5403,7 @@ async function telaConsultasAdmin(from) {
         id: `admin_consulta_${idx}`,
         title: `${idx + 1}. ${(item.u?.nome || "Cliente").slice(0, 16)}`
       })),
-      { id: ADMIN_IDS.menu, title: "Menu admin" }
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ],
     registrarPergunta: false
   }
@@ -5422,7 +5428,10 @@ function telaDetalheConsultaAdmin(from, idx) {
   if (!item) {
     return {
       texto: "Nao encontrei essa consulta na lista atual. Envie *consultas* para atualizar.",
-      opcoes: [{ id: ADMIN_IDS.agenda, title: "Atualizar" }],
+      opcoes: [
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+      ],
       registrarPergunta: false
     }
   }
@@ -5443,12 +5452,14 @@ function telaDetalheConsultaAdmin(from, idx) {
 
   const opcoes = item.eventId
     ? [
-      { id: ADMIN_IDS.cancelarConsulta, title: "❌ Cancelar" },
-      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar" }
+      { id: ADMIN_IDS.cancelarConsulta, title: "❌ Cancelar consulta" },
+      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar consultas" },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ]
     : [
-      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar" },
-      { id: ADMIN_IDS.casos, title: "📂 Casos" }
+      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar consultas" },
+      { id: ADMIN_IDS.casos, title: "📂 Ver casos" },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ]
 
   return {
@@ -5463,7 +5474,10 @@ function telaConfirmarCancelamentoAdmin(from) {
   if (!item) {
     return {
       texto: "Nao encontrei a consulta selecionada. Envie *consultas* para atualizar.",
-      opcoes: [{ id: ADMIN_IDS.agenda, title: "Atualizar" }],
+      opcoes: [
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+      ],
       registrarPergunta: false
     }
   }
@@ -5473,8 +5487,9 @@ function telaConfirmarCancelamentoAdmin(from) {
     return {
       texto: "Essa consulta esta no HubSpot, mas nao encontrei o ID do evento Calendar para cancelar com seguranca. Abra o HubSpot ou atualize a agenda.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "Atualizar" },
-        { id: ADMIN_IDS.casos, title: "Casos" }
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.casos, title: "Ver casos" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
     }
@@ -5483,9 +5498,10 @@ function telaConfirmarCancelamentoAdmin(from) {
   return {
     texto: `❌ *Confirmar cancelamento?*\n\n👤 Cliente: *${u.nome || "Cliente"}*\n🕒 Consulta: *${dataHora}*`,
     opcoes: [
-      { id: ADMIN_IDS.cancelarSim, title: "❌ Cancelar" },
-      { id: ADMIN_IDS.cancelarNao, title: "⬅️ Voltar" },
-      { id: ADMIN_IDS.agenda, title: "📅 Consultas" }
+      { id: ADMIN_IDS.cancelarSim, title: "❌ Confirmar cancelar" },
+      { id: ADMIN_IDS.cancelarNao, title: "⬅️ Voltar à consulta" },
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ],
     registrarPergunta: false
   }
@@ -5496,7 +5512,10 @@ async function cancelarConsultaAdmin(from) {
   if (!item) {
     return {
       texto: "Nao encontrei a consulta selecionada. Envie *consultas* para atualizar.",
-      opcoes: [{ id: ADMIN_IDS.agenda, title: "Atualizar" }],
+      opcoes: [
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+      ],
       registrarPergunta: false
     }
   }
@@ -5514,8 +5533,9 @@ async function cancelarConsultaAdmin(from) {
     return {
       texto: "Nao consegui cancelar o evento no Google Calendar. Tente novamente em instantes.",
       opcoes: [
-        { id: ADMIN_IDS.cancelarSim, title: "Tentar de novo" },
-        { id: ADMIN_IDS.agenda, title: "Atualizar" }
+        { id: ADMIN_IDS.cancelarSim, title: "Tentar cancelar" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
     }
@@ -5558,7 +5578,10 @@ async function cancelarConsultaAdmin(from) {
       `📝 Nota HubSpot: ${notaHubSpotOk ? "✅ ok" : "⚠️ nao registrada"}`,
       `📨 Cliente avisado: ${clienteAvisadoOk ? "✅ ok" : "⚠️ nao enviado"}`
     ].filter(Boolean).join("\n"),
-    opcoes: [{ id: ADMIN_IDS.agenda, title: "📅 Consultas" }],
+    opcoes: [
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+    ],
     registrarPergunta: false
   }
 }
@@ -5708,7 +5731,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       opcoes: [
         { id: ADMIN_IDS.casos, title: "📂 Casos" },
         { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento IA" },
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
       ],
       registrarPergunta: false,
       audio: false
@@ -5769,7 +5792,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
         opcoes: [
           { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
           { id: ADMIN_IDS.casos, title: "📂 Casos" },
-          { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+          { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
         ],
         registrarPergunta: false
       }
@@ -5780,7 +5803,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return {
       texto: "⚠️ Nao ha uma lista ativa para esse numero.\n\nAbra *Agenda*, *Prioridades* ou *Casos* primeiro.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
+        { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
         { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
         { id: ADMIN_IDS.casos, title: "📂 Casos" }
       ],
