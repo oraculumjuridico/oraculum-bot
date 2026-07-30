@@ -134,6 +134,116 @@ function replaceConstraint(constraints, name, definition) {
   return constraints.map(row => row.conname === name ? { ...row, definition } : row)
 }
 
+function realPg18Constraints() {
+  const definitions = {
+    post_human_cycles_negocio_id_check: `
+      CHECK (length(negocio_id) >= 1 AND length(negocio_id) <= 128)
+    `,
+    post_human_cycles_numero_caso_check: `
+      CHECK (length(numero_caso) >= 3 AND length(numero_caso) <= 80)
+    `,
+    post_human_cycles_contato_id_check: `
+      CHECK (
+        contato_id IS NULL
+        OR length(contato_id) >= 1
+        AND length(contato_id) <= 128
+      )
+    `,
+    post_human_cycles_sequencia_check: "CHECK (sequencia > 0)",
+    post_human_cycles_status_check: `
+      CHECK (
+        status = ANY (
+          ARRAY[${sqlArray(STATUSES)}]
+        )
+      )
+    `,
+    post_human_cycles_estado_documental_check: `
+      CHECK (
+        estado_documental IS NULL
+        OR (
+          estado_documental = ANY (
+            ARRAY[${sqlArray(DOCUMENT_STATES)}]
+          )
+        )
+      )
+    `,
+    post_human_cycles_provider_message_id_check: `
+      CHECK (
+        provider_message_id IS NULL
+        OR length(provider_message_id) <= 256
+      )
+    `,
+    post_human_cycles_resultado_envio_check: `
+      CHECK (
+        resultado_envio IS NULL
+        OR (
+          resultado_envio = ANY (
+            ARRAY[${sqlArray(SEND_RESULTS)}]
+          )
+        )
+      )
+    `,
+    post_human_cycles_erro_check: `
+      CHECK (
+        erro IS NULL
+        OR length(erro) <= 1000
+      )
+    `,
+    post_human_cycles_version_check: "CHECK (version >= 0)"
+  }
+  return validConstraints().map(row => ({
+    ...row,
+    definition: definitions[row.conname] || row.definition,
+    columns: `{${row.columns.join(",")}}`
+  }))
+}
+
+function realPg18Indexes() {
+  return validIndexes().map(row => {
+    if (row.indexname === "post_human_cycles_contact_active") {
+      return {
+        ...row,
+        indexdef: `CREATE INDEX post_human_cycles_contact_active
+          ON public.post_human_cycles USING btree
+          (contato_id, updated_at DESC)
+          WHERE (contato_id IS NOT NULL)`,
+        columns: "{contato_id,updated_at}",
+        ordering: "{ASC,DESC}",
+        predicate: "(contato_id IS NOT NULL)"
+      }
+    }
+    if (row.indexname === "post_human_cycles_recovery") {
+      return {
+        ...row,
+        indexdef: `CREATE INDEX post_human_cycles_recovery
+          ON public.post_human_cycles USING btree
+          (status, updated_at)`,
+        columns: "{status,updated_at}",
+        ordering: "{ASC,ASC}",
+        predicate: null
+      }
+    }
+    return {
+      ...row,
+      indexdef: `CREATE UNIQUE INDEX post_human_one_active_cycle_per_business
+        ON public.post_human_cycles USING btree
+        (negocio_id)
+        WHERE (
+          status = ANY (
+            ARRAY[${sqlArray(ACTIVE)}]
+          )
+        )`,
+      columns: "{negocio_id}",
+      ordering: "{ASC}",
+      predicate: `
+        status = ANY (
+          ARRAY[${sqlArray(ACTIVE)}]
+        )
+      `
+    }
+  })
+}
+
 function createMockPool(options = {}) {
   const {
     tableExists = true,
@@ -285,6 +395,66 @@ test("validate aceita catálogo PostgreSQL 18 completo", async () => {
   assert.deepEqual(await promise, { ok: true })
 })
 
+test("validate percorre o catálogo completo reconstruído pelo PostgreSQL 18.4", async () => {
+  const { promise } = await validateWith({
+    constraints: realPg18Constraints(),
+    indexes: realPg18Indexes()
+  })
+  assert.deepEqual(await promise, { ok: true })
+})
+
+test("normalizePgTextArray aceita arrays JavaScript, PostgreSQL e JSON preservando a ordem", () => {
+  const { normalizePgTextArray } = require(validatePath)
+  assert.deepEqual(normalizePgTextArray(["cycle_id"]), ["cycle_id"])
+  assert.deepEqual(normalizePgTextArray("{cycle_id}"), ["cycle_id"])
+  assert.deepEqual(normalizePgTextArray("{negocio_id,sequencia}"), ["negocio_id", "sequencia"])
+  assert.deepEqual(normalizePgTextArray('["cycle_id"]'), ["cycle_id"])
+})
+
+for (const [description, value] of [
+  ["elemento vazio em string PostgreSQL", "{cycle_id,}"],
+  ["string arbitrária", "cycle_id"],
+  ["objeto", { cycle_id: true }],
+  ["null obrigatório", null],
+  ["elemento vazio em array", ["cycle_id", ""]]
+]) {
+  test(`normalizePgTextArray rejeita ${description}`, () => {
+    const { normalizePgTextArray } = require(validatePath)
+    assert.throws(() => normalizePgTextArray(value), /Array PostgreSQL obrigatório:/)
+  })
+}
+
+test("validate aceita columns de constraints no formato PostgreSQL real", async () => {
+  const constraints = validConstraints().map(row => {
+    if (row.conname === "post_human_cycles_pkey") return { ...row, columns: "{cycle_id}" }
+    if (row.conname === "post_human_cycles_negocio_id_sequencia_key") {
+      return { ...row, columns: "{negocio_id,sequencia}" }
+    }
+    return row
+  })
+  const { promise } = await validateWith({ constraints })
+  assert.deepEqual(await promise, { ok: true })
+})
+
+test("validate aceita key columns de índice no formato PostgreSQL real", async () => {
+  const indexes = validIndexes().map(row => row.indexname === "post_human_cycles_contact_active"
+    ? { ...row, columns: "{contato_id,updated_at}" }
+    : row)
+  const { promise } = await validateWith({ indexes })
+  assert.deepEqual(await promise, { ok: true })
+})
+
+test("validate aceita arrays JSON retornados pelos mocks", async () => {
+  const constraints = validConstraints().map(row => ({ ...row, columns: JSON.stringify(row.columns) }))
+  const indexes = validIndexes().map(row => ({
+    ...row,
+    columns: JSON.stringify(row.columns),
+    ordering: JSON.stringify(row.ordering)
+  }))
+  const { promise } = await validateWith({ constraints, indexes })
+  assert.deepEqual(await promise, { ok: true })
+})
+
 test("validate encerra pool próprio mesmo quando release falha", async () => {
   const mock = createMockPool({ releaseFails: true })
   const result = await require(validatePath).validatePostHumanMigration({
@@ -363,6 +533,19 @@ test("constraint contato_id divergente falha", async () => {
   const { promise } = await validateWith({ constraints })
   await assert.rejects(promise, /contato_id_check divergente/)
 })
+
+for (const [description, definition] of [
+  ["coluna errada", "CHECK (length(numero_caso) >= 1 AND length(numero_caso) <= 128)"],
+  ["mínimo ausente", "CHECK (length(negocio_id) <= 128)"],
+  ["máximo ausente", "CHECK (length(negocio_id) >= 1)"],
+  ["condição adicional", "CHECK (length(negocio_id) >= 1 AND length(negocio_id) <= 128 AND negocio_id <> 'x')"]
+]) {
+  test(`constraint de comprimento com ${description} falha`, async () => {
+    const constraints = replaceConstraint(validConstraints(), "post_human_cycles_negocio_id_check", definition)
+    const { promise } = await validateWith({ constraints })
+    await assert.rejects(promise, /negocio_id_check divergente/)
+  })
+}
 
 test("constraint sequencia divergente falha", async () => {
   const constraints = replaceConstraint(validConstraints(), "post_human_cycles_sequencia_check", "CHECK (sequencia >= 0)")
@@ -540,6 +723,7 @@ test("validador usa pg_catalog para colunas, ordem e predicado de índices", asy
   await require(validatePath).validatePostHumanMigration({ pool: mock.pool })
   const query = mock.queries.find(value => value.includes("pg_catalog.pg_index"))
   assert.match(query, /pg_catalog\.pg_attribute/)
+  assert.match(query, /attribute\.attname::text/)
   assert.match(query, /pg_catalog\.pg_am/)
   assert.match(query, /indoption/)
   assert.match(query, /indisvalid/)
@@ -558,7 +742,7 @@ test("validador consulta estrutura e validação das constraints", async () => {
   assert.match(query, /convalidated/)
   assert.match(query, /conenforced/)
   assert.match(query, /WITH ORDINALITY/)
-  assert.match(query, /attribute\.attname/)
+  assert.match(query, /attribute\.attname::text/)
 })
 
 test("validador usa assinatura exata de to_regprocedure", async () => {
