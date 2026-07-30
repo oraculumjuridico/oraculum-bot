@@ -14,12 +14,21 @@ const STEPS = Object.freeze([
   "final_verify"
 ])
 
+const RESOURCE_STEP_MAP = Object.freeze({
+  contact: "contactId",
+  deal: "dealId",
+  association: "associationId",
+  drive: "caseFolderId",
+  case_number: "caseNumber"
+})
+
 function createCheckpoint(plan) {
   return {
     schemaVersion: 1,
     planHash: plan.hash,
     status: "pending",
-    steps: Object.fromEntries(STEPS.map(step => [step, { status: "pending" }]))
+    steps: Object.fromEntries(STEPS.map(step => [step, { status: "pending" }])),
+    resources: {}
   }
 }
 
@@ -41,6 +50,10 @@ function createCanonicalCaseExecutor({ adapters = {}, checkpointRepository } = {
       try {
         const result = await handler(plan, checkpoint)
         checkpoint.steps[step] = { status: "completed", completedAt: new Date().toISOString(), result: result || null }
+        const resourceKey = RESOURCE_STEP_MAP[step]
+        if (resourceKey && result && typeof result === "object" && result.id) {
+          checkpoint.resources[resourceKey] = result.id
+        }
         await checkpointRepository.save(plan.hash, checkpoint)
       } catch (error) {
         checkpoint.status = "blocked"
@@ -52,8 +65,7 @@ function createCanonicalCaseExecutor({ adapters = {}, checkpointRepository } = {
     checkpoint.status = "completed"
     checkpoint.completedAt = new Date().toISOString()
     await checkpointRepository.save(plan.hash, checkpoint)
-    plan.status = PLAN_STATUS.APPLIED
-    return { completed: true, resumed: false, checkpoint }
+    return { completed: true, resumed: false, checkpoint, planStatus: PLAN_STATUS.APPLIED }
   }
 
   return { execute }

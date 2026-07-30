@@ -393,15 +393,28 @@ function createLiveCaseFlow(deps = {}) {
 
   async function executeLiveCaseFlow(u, context = {}) {
     const plan = buildCanonicalPlan(u, context)
-    const result = await executor.execute(plan)
+    try {
+      const result = await executor.execute(plan)
 
-    if (deps.u && result.checkpoint) {
-      deps.u._canonicalPlanHash = plan.hash
-      deps.u._canonicalCheckpoint = result.checkpoint
-      deps.u._canonicalPlanStatus = plan.status
+      if (deps.u && result.checkpoint) {
+        deps.u._canonicalPlanHash = plan.hash
+        deps.u._canonicalCheckpoint = result.checkpoint
+        deps.u._canonicalPlanStatus = result.planStatus || plan.status
+      }
+
+      return { plan, result }
+    } catch (error) {
+      return {
+        plan,
+        result: {
+          completed: false,
+          error: error.message,
+          code: error.code,
+          planHash: plan.hash,
+          planStatus: plan.status
+        }
+      }
     }
-
-    return { plan, result }
   }
 
   return { executeLiveCaseFlow, buildCanonicalPlan, taskService }
