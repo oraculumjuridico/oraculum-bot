@@ -280,6 +280,7 @@ const {
 } = require("./src/domain/document-analysis-integration")
 const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
 const { createAdminAssistedMediaStaging } = require("./src/domain/admin-assisted-media")
+const { createLiveCaseFlow, buildCanonicalPlan } = require("./src/domain/live-case-executor-bridge")
 const { criarGracefulShutdown } = require("./src/infrastructure/graceful-shutdown")
 const {
   consolidarDocumentosDoCaso
@@ -425,6 +426,23 @@ const {
 
 const adminAssistedMediaStaging = createAdminAssistedMediaStaging({
   maxBytes: Number(process.env.WHATSAPP_MEDIA_MAX_BYTES || 20 * 1024 * 1024)
+})
+
+const liveCaseFlow = createLiveCaseFlow({
+  hubspotToken: process.env.HUBSPOT_TOKEN,
+  checkpointRepository: {
+    async load(hash) {
+      const key = `canonical_checkpoint:${hash}`
+      const raw = users?._canonicalCheckpoints?.[key]
+      return raw || null
+    },
+    async save(hash, checkpoint) {
+      const key = `canonical_checkpoint:${hash}`
+      if (!users._canonicalCheckpoints) users._canonicalCheckpoints = {}
+      users._canonicalCheckpoints[key] = checkpoint
+      agendarPersistenciaUsers()
+    }
+  }
 })
 
 const {
@@ -944,6 +962,9 @@ function novoUsuario(nomeWA) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    _canonicalPlanHash: null,
+    _canonicalPlanStatus: null,
+    _canonicalCheckpoints: {},
     atendente: null,
     aguardandoRetomada: false,
     temCadastroCompleto: false,
@@ -6267,6 +6288,28 @@ async function prepararFluxoResumoOutro(from, u) {
   return await telaConfirmacaoComImagem(from, u)
 }
 
+async function uploadDocumentoCano(u, pastaId, nome, buffer, mimeType, contexto = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return null
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex")
+  if (!u._canonicalDocuments) u._canonicalDocuments = {}
+  if (u._canonicalDocuments[sha256]?.fileId) {
+    return { id: u._canonicalDocuments[sha256].fileId, sha256, webViewLink: u._canonicalDocuments[sha256].webViewLink || null }
+  }
+  const arquivo = await uploadDrive(pastaId, nome, buffer, mimeType)
+  if (!arquivo?.id) return null
+  u._canonicalDocuments[sha256] = {
+    fileId: arquivo.id,
+    sha256,
+    name: nome,
+    mimeType,
+    status: "uploaded",
+    uploadedAt: new Date().toISOString(),
+    webViewLink: arquivo.webViewLink || null,
+    contexto: contexto || {}
+  }
+  return arquivo
+}
+
 async function detectarEncerramentoPorAudio(from, u, msgObj, tipo) {
   const mediaId = msgObj?.[tipo]?.id
   if (!mediaId) return null
@@ -6354,108 +6397,156 @@ async function finalizarCadastro(from, u) {
   u.docsEntregues = []; u.docsAusentes = []; u.docsPulados = []; u.docsParciais = []; u.docsDispensados = []
   u.docAtualIdx = 0; u.ultimoArqId = null
 
-  const pasta = u.pastaDriveId
-    ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
-    : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
-  assertFinalizationOperation("drive_folder", pasta?.id)
-  u.pastaDriveId = pasta.id
-  u.pastaDriveLink = pasta.webViewLink || u.pastaDriveLink || null
-  persistirUsersAgora({ propagarErro: true })
-
-  const existente = await hsBuscarPorPhone(telefoneContato)
-  if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
-  let contatoId = u.contatoId || existente?.id || null
-
-  const nomeExistenteHS = existente?.properties?.firstname || ""
-  const nomeTerceiro = (u.nome || "").trim()
-  // Se o telefone informado para terceiro já existe com outro nome, preserva o contato.
-  // O nome divergente fica registrado no negócio/nota, sem sobrescrever nem duplicar contato.
-  const telefoneJaEhDeOutro = ehTerceiro && contatoId &&
-    nomeExistenteHS &&
-    normalizarNomeComparacao(nomeExistenteHS) !== normalizarNomeComparacao(nomeTerceiro)
-
-  if (telefoneJaEhDeOutro) {
-    logDebug("[HUBSPOT] Telefone do terceiro ja existe com outro nome. Preservando contato e registrando divergencia no negocio.")
-  } else if (!contatoId) {
-    contatoId = await hsCriarContato(telefoneContato, u)
-  } else {
-    logDebug("Contato encontrado no HubSpot:", contatoId)
-    const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
-    const propsAusentes = montarPropsAusentesContatoHubSpot(existente, propsContato)
-    // Para caso próprio do cliente: nome confirmado sobrepõe o anterior no HubSpot.
-    // Os demais campos só completam lacunas, sem apagar informação já existente.
-    if (u.nomeConfirmado && u.nome && !ehTerceiro) propsAusentes.firstname = u.nome
-    if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
-  }
-  assertFinalizationOperation("hubspot_contact", contatoId)
-  u.contatoId = contatoId
-  if (contatoId) u._hubspotSemContato = false
-  persistirUsersAgora({ propagarErro: true })
-
-  let negocioId = u.negocioId || null
-  if (!negocioId && contatoId && !ehNovoCasoCliente) {
-    const negocioExistente = await hsBuscarNegocioAbertoDoContato(contatoId)
-    if (negocioExistente) {
-      negocioId = negocioExistente
-      u.negocioId = negocioId
-      logDebug("Negócio existente encontrado:", negocioId)
+  let canonicalExecuted = false
+  try {
+    const canonicalContext = {
+      source: "live_finalize_cadastro",
+      contactProperties: montarPropsContatoHubSpot(telefoneContato, u),
+      dealProperties: { ...getHubSpotDealStateProps(u), numero_de_caso: numeroCaso },
+      tasks: [
+        {
+          key: `case-created-${numeroCaso}`,
+          subject: `Caso ${numeroCaso} criado`,
+          body: `Contato e negócio criados para o caso ${numeroCaso}.`,
+          status: "NOT_STARTED",
+          priority: "MEDIUM",
+          type: "TODO",
+          ownerId: u.ownerId || null
+        }
+      ],
+      internalNotifications: [
+        {
+          type: "hubspot_note",
+          subject: "CADASTRO COMPLETO",
+          message: resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`
+        }
+      ]
     }
-  }
-
-  const dealnameFinal = montarTituloNegocioHubSpot(
-    { ...u, numeroCaso, negocioStageId: HS_STAGE.ANALISE },
-    { HS_STAGE, stage: HS_STAGE.ANALISE }
-  )
-
-  if (!negocioId) {
-    logDebug("Nenhum negócio encontrado, criando novo")
-    negocioId = await hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
-    u.negocioId = negocioId
-  } else {
-    logDebug("Negócio já existe, atualizando dealname:", negocioId)
-    u.negocioId = negocioId
-    await hsAtualizarNegocioSerializado(u.negocioId, {
-      dealname: dealnameFinal
-    })
-  }
-  assertFinalizationOperation("hubspot_deal", negocioId)
-  u.negocioId = negocioId
-  persistirUsersAgora({ propagarErro: true })
-
-  if (u.negocioId && u.numeroCaso) {
-    const casoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, {
-      numero_de_caso: u.numeroCaso,
-      dealname: dealnameFinal
-    })
-    assertFinalizationOperation("hubspot_case_number", casoAtualizado)
-    const etapaAtualizada = await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
-    assertFinalizationOperation("hubspot_stage", etapaAtualizada)
-    u.negocioStageId = HS_STAGE.ANALISE
-  }
-  if (contatoId) {
-    const propsContatoPosCaso = montarPropsAusentesContatoHubSpot(existente, montarPropsContatoHubSpot(telefoneContato, u))
-    if (Object.keys(propsContatoPosCaso).length) await hsAtualizarContato(contatoId, propsContatoPosCaso)
-  }
-  const associado = await hsAssociar(contatoId, negocioId)
-  assertFinalizationOperation("hubspot_association", associado)
-  const estadoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
-  assertFinalizationOperation("hubspot_state", estadoAtualizado)
-
-  if (contatoId) {
-    await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
-    if (u.negocioId) {
-      await hsCriarNotaNegocio(u.negocioId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
+    if (ehTerceiro) {
+      canonicalContext.internalNotifications.push({
+        type: "hubspot_note",
+        subject: "DIVERGENCIA DE NOME - CASO PARA TERCEIRO",
+        message: [
+          "Caso para terceiro com telefone ja existente no HubSpot.",
+          `Nome atual do contato: ${existente?.properties?.firstname || "nao informado"}`,
+          `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
+          `Telefone informado: ${telefoneContato}`,
+          "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
+        ].join("\n")
+      })
     }
+
+    const canonicalResult = await liveCaseFlow.executeLiveCaseFlow(u, canonicalContext)
+    if (canonicalResult?.result?.completed) {
+      canonicalExecuted = true
+      if (!u.pastaDriveId && u._canonicalCheckpoint?.steps?.drive?.result?.id) {
+        u.pastaDriveId = u._canonicalCheckpoint.steps.drive.result.id
+      }
+    }
+  } catch (canonicalError) {
+    logErro("canonical_executor", `fallback para legado: ${canonicalError.message}`, canonicalError)
+    canonicalExecuted = false
+  }
+
+  if (!canonicalExecuted) {
+    const pasta = u.pastaDriveId
+      ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
+      : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
+    assertFinalizationOperation("drive_folder", pasta?.id)
+    u.pastaDriveId = pasta.id
+    u.pastaDriveLink = pasta.webViewLink || u.pastaDriveLink || null
+    persistirUsersAgora({ propagarErro: true })
+
+    const existente = await hsBuscarPorPhone(telefoneContato)
+    if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
+    let contatoId = u.contatoId || existente?.id || null
+
+    const nomeExistenteHS = existente?.properties?.firstname || ""
+    const telefoneJaEhDeOutro = ehTerceiro && contatoId &&
+      nomeExistenteHS &&
+      normalizarNomeComparacao(nomeExistenteHS) !== normalizarNomeComparacao(nomeTerceiro)
+
     if (telefoneJaEhDeOutro) {
-      const notaDivergencia = [
-        "Caso para terceiro com telefone ja existente no HubSpot.",
-        `Nome atual do contato: ${nomeExistenteHS || "nao informado"}`,
-        `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
-        `Telefone informado: ${telefoneContato}`,
-        "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
-      ].join("\n")
-      await hsCriarNota(contatoId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
-      if (u.negocioId) await hsCriarNotaNegocio(u.negocioId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
+      logDebug("[HUBSPOT] Telefone do terceiro ja existe com outro nome. Preservando contato e registrando divergencia no negocio.")
+    } else if (!contatoId) {
+      contatoId = await hsCriarContato(telefoneContato, u)
+    } else {
+      logDebug("Contato encontrado no HubSpot:", contatoId)
+      const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
+      const propsAusentes = montarPropsAusentesContatoHubSpot(existente, propsContato)
+      if (u.nomeConfirmado && u.nome && !ehTerceiro) propsAusentes.firstname = u.nome
+      if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
+    }
+    assertFinalizationOperation("hubspot_contact", contatoId)
+    u.contatoId = contatoId
+    if (contatoId) u._hubspotSemContato = false
+    persistirUsersAgora({ propagarErro: true })
+
+    let negocioId = u.negocioId || null
+    if (!negocioId && contatoId && !ehNovoCasoCliente) {
+      const negocioExistente = await hsBuscarNegocioAbertoDoContato(contatoId)
+      if (negocioExistente) {
+        negocioId = negocioExistente
+        u.negocioId = negocioId
+        logDebug("Negócio existente encontrado:", negocioId)
+      }
+    }
+
+    const dealnameFinal = montarTituloNegocioHubSpot(
+      { ...u, numeroCaso, negocioStageId: HS_STAGE.ANALISE },
+      { HS_STAGE, stage: HS_STAGE.ANALISE }
+    )
+
+    if (!negocioId) {
+      logDebug("Nenhum negócio encontrado, criando novo")
+      negocioId = await hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
+      u.negocioId = negocioId
+    } else {
+      logDebug("Negócio já existe, atualizando dealname:", negocioId)
+      u.negocioId = negocioId
+      await hsAtualizarNegocioSerializado(u.negocioId, {
+        dealname: dealnameFinal
+      })
+    }
+    assertFinalizationOperation("hubspot_deal", negocioId)
+    u.negocioId = negocioId
+    persistirUsersAgora({ propagarErro: true })
+
+    if (u.negocioId && u.numeroCaso) {
+      const casoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, {
+        numero_de_caso: u.numeroCaso,
+        dealname: dealnameFinal
+      })
+      assertFinalizationOperation("hubspot_case_number", casoAtualizado)
+      const etapaAtualizada = await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
+      assertFinalizationOperation("hubspot_stage", etapaAtualizada)
+      u.negocioStageId = HS_STAGE.ANALISE
+    }
+    if (u.contatoId) {
+      const propsContatoPosCaso = montarPropsAusentesContatoHubSpot(existente, montarPropsContatoHubSpot(telefoneContato, u))
+      if (Object.keys(propsContatoPosCaso).length) await hsAtualizarContato(contatoId, propsContatoPosCaso)
+    }
+    const associado = await hsAssociar(contatoId, negocioId)
+    assertFinalizationOperation("hubspot_association", associado)
+    const estadoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
+    assertFinalizationOperation("hubspot_state", estadoAtualizado)
+
+    if (contatoId) {
+      await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
+      if (u.negocioId) {
+        await hsCriarNotaNegocio(u.negocioId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
+      }
+      if (telefoneJaEhDeOutro) {
+        const notaDivergencia = [
+          "Caso para terceiro com telefone ja existente no HubSpot.",
+          `Nome atual do contato: ${nomeExistenteHS || "nao informado"}`,
+          `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
+          `Telefone informado: ${telefoneContato}`,
+          "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
+        ].join("\n")
+        await hsCriarNota(contatoId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
+        if (u.negocioId) await hsCriarNotaNegocio(u.negocioId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
+      }
     }
   }
 
@@ -9569,7 +9660,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     const nCli = ulN && ulN !== prN ? `${prN} ${ulN}` : prN
     const ext = (nomeArq || "").split(".").pop()
     const nomeFinal = `Aguardando classificacao - ${nCli}${ext && ext.length <= 4 ? "." + ext : ".jpg"}`
-    const arquivo = await uploadDrive(u.pastaDriveId, nomeFinal, midia.buffer, midia.mimeType)
+    const arquivo = await uploadDocumentoCano(u, u.pastaDriveId, nomeFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "avulso_pendente", nomeSalvo: nomeFinal })
     if (!arquivo) {
       return responderTelaDocumento(from, u, criarTela({
         id: "documento_avulso_upload_falhou",
@@ -9635,7 +9726,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const nArqFinal = `${lblD} - ${folha} - ${nCli}${ext2 && ext2.length <= 4 ? "."+ext2 : ".jpg"}`
   const arquivoEhPdf = /pdf/i.test(midia.mimeType || mimeType || "") || /\.pdf$/i.test(nomeArq || "")
 
-  const arquivo = await uploadDrive(u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType)
+  const arquivo = await uploadDocumentoCano(u, u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "guiado", documentoId: docAtual?.id || null, documentoLabel: lblD, folha, nomeSalvo: nArqFinal })
   if (!arquivo) {
     return responderTelaDocumento(from, u, criarTela({
       id: "documento_guiado_upload_falhou",
