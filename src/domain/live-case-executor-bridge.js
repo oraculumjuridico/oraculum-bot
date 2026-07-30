@@ -404,6 +404,22 @@ function createLiveCaseFlow(deps = {}) {
 
       return { plan, result }
     } catch (error) {
+      const partialCheckpoint = await checkpointRepository.load(plan.hash)
+      const partialResources = partialCheckpoint?.resources || {}
+      const interruptedStep = partialCheckpoint
+        ? Object.keys(partialCheckpoint.steps || {}).find(step =>
+            partialCheckpoint.steps[step].status === "failed" ||
+            partialCheckpoint.steps[step].status === "processing"
+          ) || null
+        : null
+      const hasPartialWrites = Object.keys(partialResources).length > 0
+
+      if (deps.u && partialCheckpoint) {
+        deps.u._canonicalPlanHash = plan.hash
+        deps.u._canonicalCheckpoint = partialCheckpoint
+        deps.u._canonicalPlanStatus = partialCheckpoint.status
+      }
+
       return {
         plan,
         result: {
@@ -411,7 +427,11 @@ function createLiveCaseFlow(deps = {}) {
           error: error.message,
           code: error.code,
           planHash: plan.hash,
-          planStatus: plan.status
+          planStatus: plan.status,
+          interruptedStep,
+          partialResources,
+          hasPartialWrites,
+          partialCheckpoint
         }
       }
     }

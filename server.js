@@ -6398,7 +6398,6 @@ async function finalizarCadastro(from, u) {
   u.docAtualIdx = 0; u.ultimoArqId = null
 
   let canonicalExecuted = false
-  try {
     const canonicalContext = {
       source: "live_finalize_cadastro",
       contactProperties: montarPropsContatoHubSpot(telefoneContato, u),
@@ -6442,11 +6441,27 @@ async function finalizarCadastro(from, u) {
       if (!u.pastaDriveId && u._canonicalCheckpoint?.steps?.drive?.result?.id) {
         u.pastaDriveId = u._canonicalCheckpoint.steps.drive.result.id
       }
+    } else if (canonicalResult?.result?.error) {
+      const partial = canonicalResult.result.partialResources || {}
+      const hasPartial = canonicalResult.result.hasPartialWrites
+      const interruptedStep = canonicalResult.result.interruptedStep
+      logErro("canonical_executor", `fallback para legado: ${canonicalResult.result.error}`, {
+        canonicalError: canonicalResult.result.error,
+        canonicalErrorCode: canonicalResult.result.code,
+        interruptedStep,
+        hasPartialWrites: hasPartial,
+        partialResources: partial,
+        planHash: canonicalResult.result.planHash
+      })
+      if (hasPartial) {
+        if (partial.contactId) u.contatoId = u.contatoId || partial.contactId
+        if (partial.dealId) u.negocioId = u.negocioId || partial.dealId
+        if (partial.caseFolderId && !u.pastaDriveId) {
+          u.pastaDriveId = partial.caseFolderId
+        }
+      }
+      canonicalExecuted = false
     }
-  } catch (canonicalError) {
-    logErro("canonical_executor", `fallback para legado: ${canonicalError.message}`, canonicalError)
-    canonicalExecuted = false
-  }
 
   if (!canonicalExecuted) {
     const pasta = u.pastaDriveId
