@@ -428,6 +428,17 @@ const adminAssistedMediaStaging = createAdminAssistedMediaStaging({
   maxBytes: Number(process.env.WHATSAPP_MEDIA_MAX_BYTES || 20 * 1024 * 1024)
 })
 
+const HS_STAGE = {
+  LEAD: "appointmentscheduled",
+  CADASTRO: "qualifiedtobuy",
+  ANALISE: "presentationscheduled",
+  AGUARDANDO_DOCS: "decisionmakerboughtin",
+  DOCS: "contractsent",
+  PROTOCOLO: "1343040098",
+  PROCESSO: "1337291921",
+  FINAL: "1343039663"
+}
+
 const liveCaseFlow = createLiveCaseFlow({
   hubspotToken: process.env.HUBSPOT_TOKEN,
   checkpointRepository: {
@@ -442,7 +453,31 @@ const liveCaseFlow = createLiveCaseFlow({
       users._canonicalCheckpoints[key] = checkpoint
       agendarPersistenciaUsers()
     }
-  }
+  },
+  hsBuscarPorPhone,
+  hsCriarContato,
+  hsAtualizarContato,
+  montarPropsContatoHubSpot,
+  montarPropsAusentesContatoHubSpot,
+  hsCriarNegocio,
+  hsAtualizarNegocioSerializado,
+  hsAtualizarEtapaNegocio,
+  hsBuscarNegocioAbertoDoContato,
+  montarTituloNegocioHubSpot,
+  getHubSpotDealStateProps,
+  criarPastaCliente,
+  uploadDrive,
+  marcarArquivoDriveSubstituido,
+  renomearArquivoDrive,
+  uploadPastaAudio,
+  salvarAudioTranscritoNoCaso,
+  listarArquivosDriveNaPasta,
+  hsCriarNota,
+  hsCriarNotaNegocio,
+  hsAssociar,
+  hsAtualizarNegocio,
+  enviarWhatsAppAdmin,
+  processarAnaliseDocumentalSegura
 })
 
 const {
@@ -1319,16 +1354,6 @@ const ETAPAS_NAO_RETOMAVEIS = new Set([
   STAGES.INICIO_RETORNO
 ].map(normalizarStageKey))
 const ETAPAS_VALIDAS = new Set([...STAGE_VALUES].filter(stage => !ETAPAS_NAO_RETOMAVEIS.has(stage)))
-const HS_STAGE = {
-  LEAD: "appointmentscheduled",
-  CADASTRO: "qualifiedtobuy",
-  ANALISE: "presentationscheduled",
-  AGUARDANDO_DOCS: "decisionmakerboughtin",
-  DOCS: "contractsent",
-  PROTOCOLO: "1343040098",
-  PROCESSO: "1337291921",
-  FINAL: "1343039663"
-}
 configurarStatePersistence({
   DATA_DIR,
   USERS_STATE_FILE,
@@ -6464,6 +6489,10 @@ async function finalizarCadastro(from, u) {
     }
 
   if (!canonicalExecuted) {
+    if (hasPartial) {
+      logErro("canonical_executor", "FALLBACK_BLOCKED_PARTIAL_WRITES", { hasPartialWrites: hasPartial, interruptedStep, partialResources: partial })
+      throw new Error("FALLBACK_BLOCKED_PARTIAL_WRITES: require admin-assisted resolution")
+    }
     const pasta = u.pastaDriveId
       ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
       : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)

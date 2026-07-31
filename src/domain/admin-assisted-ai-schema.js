@@ -96,6 +96,11 @@ function valorENormalizadoInvalido(valor, campoNome) {
       if (!/^[A-Z]{2}$/i.test(valor.trim())) return true
       break
     }
+    case "email": {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(valor.trim())) return true
+      break
+    }
   }
 
   return false
@@ -390,5 +395,6 @@ module.exports = {
   valorENormalizadoInvalido,
   proximoCampoObrigatorioAdminAssistido,
   perguntaCampoAdminAssistido,
-  labelCampoAdminAssistido
+  labelCampoAdminAssistido,
+  PLACEHOLDERS_INVALIDOS
 }

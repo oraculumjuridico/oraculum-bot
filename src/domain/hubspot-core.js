@@ -78,6 +78,22 @@ function normalizarTipoContatoHubSpot(u = {}) {
   return "Outro"
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const EMAIL_PLACEHOLDERS_INVALIDOS = new Set([
+  "email do cliente",
+  "nao informado",
+  "nao sei",
+  "sem informacao"
+])
+
+function emailValidoHubSpot(email) {
+  if (!email || typeof email !== "string") return false
+  const trimmed = email.trim().toLowerCase()
+  if (!trimmed) return false
+  if (EMAIL_PLACEHOLDERS_INVALIDOS.has(trimmed)) return false
+  return EMAIL_REGEX.test(trimmed)
+}
+
 function montarPropsContatoHubSpot(from, u = {}) {
   const telefone = normalizarNumeroWhatsAppEnvio(u.whatsappContato || from)
   const nomeContato =
@@ -91,13 +107,15 @@ function montarPropsContatoHubSpot(from, u = {}) {
   const firstname = partesNome.shift() || nomeContato
   const lastname = partesNome.join(" ")
 
+  const emailValido = emailValidoHubSpot(u.email)
+
   return validateHubSpotProperties(
     "contacts",
     filtrarPropsHubSpot({
       firstname,
       lastname,
-      email: u.email || "",
-      work_email: u.email || "",
+      email: emailValido ? u.email : null,
+      work_email: emailValido ? u.email : null,
       phone: telefone,
       mobilephone: telefone,
       address: u.address || u.endereco || "",
@@ -335,5 +353,6 @@ module.exports = {
   hsAtualizarContato,
   hsAtualizarNegocio,
   hsCriarNota,
-  hsCriarNotaNegocio
+  hsCriarNotaNegocio,
+  emailValidoHubSpot
 }
