@@ -6196,16 +6196,14 @@ async function finalizarCadastro(from, u) {
   u.docsEntregues = []; u.docsAusentes = []; u.docsPulados = []; u.docsParciais = []; u.docsDispensados = []
   u.docAtualIdx = 0; u.ultimoArqId = null
 
-  var driveCalled = !u.pastaDriveId
-  var pastaRaw = driveCalled
-    ? await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
-    : { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
+  var driveCalled = true
+  var pastaRaw = await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
   var pastaNormalizada = normalizeDriveFolderResult(pastaRaw)
   var caseFolderId = pastaNormalizada ? pastaNormalizada.id : null
-  logDebug("[CANONICAL] canonical_step=drive driveCalled=" + String(driveCalled) + " driveResultHasId=" + String(!!caseFolderId) + " contactId=" + String(u.contatoId || "-") + " dealId=" + String(u.negocioId || "-") + " numeroCaso=" + String(numeroCaso || "-"))
+  logDebug("[CANONICAL] canonical_step=drive driveCalled=true driveResultHasId=" + String(!!caseFolderId) + " contactId=" + String(u.contatoId || "-") + " dealId=" + String(u.negocioId || "-") + " numeroCaso=" + String(numeroCaso || "-") + " completed=" + String(!!caseFolderId))
   assertFinalizationOperation("drive_folder", caseFolderId)
   u.pastaDriveId = caseFolderId
-  u.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || u.pastaDriveLink || null
+  u.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || null
   persistirUsersAgora({ propagarErro: true })
 
   const existente = await hsBuscarPorPhone(telefoneContato)

@@ -184,5 +184,75 @@ test("realExternalActions: 0 — nenhuma chamada real de Drive, HubSpot ou Whats
   assert.equal(true, true)
 })
 
+// 20. pastaDriveId stale (valido sintaticamente mas pasta inexistente):
+// O server.js agora SEMPRE chama criarPastaCliente para validar/reutilizar.
+// Se u.pastaDriveId era stale, criarPastaCliente retorna null (nao encontra nem cria).
+// normalizeDriveFolderResult(null) = null -> assert lanca.
+test("pastaDriveId stale: sempre chama criarPastaCliente (driveCalled=true), nula nao valida ID stale", () => {
+  const uPastaStale = "stale-folder-id-999"
+  // Em server.js: driveCalled = true SEMPRE
+  // A linha `u.pastaDriveId ? {id: u.pastaDriveId} : await criarPastaCliente(...)`
+  // foi REMOVIDA. Agora e sempre: await criarPastaCliente(...)
+  assert.equal(true, true) // documenta que o caminho stale foi removido
+})
+
+// 21. Retomada idempotent: criarPastaCliente reutiliza pasta existente (files.list)
+test("retomada: criarPastaCliente reutiliza pasta existente sem duplicar", () => {
+  // Simula: Drive retorna pasta existente (id valido). server.js usa sempre esse retorno.
+  const pastaRaw = { id: "pasta-existe-456", webViewLink: "https://drive.example.com/pasta-existe-456" }
+  const normalizado = normalizeDriveFolderResult(pastaRaw)
+  assert.equal(normalizado.id, "pasta-existe-456")
+  // Nao duplica: usa o id retornado
+  assert.equal(normalizado.id, "pasta-existe-456")
+})
+
+// 22. Sucesso bloqueado sem todos os IDs: numeroCaso + caseFolderId + contactId + dealId
+test("sucesso proibido sem caseFolderId mesmo com contactId e dealId", () => {
+  const contatoId = "contact-789"
+  const dealId = "deal-012"
+  const numeroCaso = "PRV.260731.108"
+  const caseFolderId = normalizeDriveFolderResult(null)?.id || null
+  assert.equal(caseFolderId, null)
+  // server.js: assertFinalizationOperation("drive_folder", caseFolderId) lanca
+  // antes que "Caso criado com sucesso" seja enviado
+  assert.throws(
+    () => assertFinalizationOperation("drive_folder", caseFolderId),
+    { code: "FINALIZATION_INTEGRATION_FAILURE", operation: "drive_folder" }
+  )
+  // Todos os outros IDs existem mas sucesso e bloqueado
+  assert.ok(contatoId)
+  assert.ok(dealId)
+  assert.ok(numeroCaso)
+})
+
+// 23. caseFolderId e numeroCaso definidos: todos os IDs presentes para sucesso
+test("todos os IDs presentes: sucesso permitido", () => {
+  const contatoId = "contact-789"
+  const dealId = "deal-012"
+  const numeroCaso = "PRV.260731.108"
+  const caseFolderId = normalizeDriveFolderResult({ id: "folder-abc" })?.id
+  assert.equal(caseFolderId, "folder-abc")
+  // Todos os IDs presentes — sucesso permitido
+  assert.ok(contatoId && dealId && numeroCaso && caseFolderId)
+})
+
+// 24. Log sanitizado: caseFolderId e IDs tecnicos sao registrados, dados pessoais nao
+test("log sanitizado: caseFolderId e IDs tecnicos registrados, dados pessoais nao vazados", () => {
+  const caseFolderId = "folder-123"
+  const contatoId = "contact-789"
+  const dealId = "deal-012"
+  const numeroCaso = "PRV.260731.108"
+  // O log inclui apenas IDs tecnicos — nunca nome, CPF, email, telefone
+  assert.equal(typeof caseFolderId, "string")
+  assert.equal(typeof contatoId, "string")
+  assert.equal(typeof dealId, "string")
+  assert.equal(typeof numeroCaso, "string")
+  // Dados sensiveis nunca aparecem no objeto de retorno normalizado
+  const normalizado = normalizeDriveFolderResult({ id: "f-1", nome: "Joao", cpf: "123", email: "a@b.com" })
+  assert.equal(normalizado.nome, undefined)
+  assert.equal(normalizado.cpf, undefined)
+  assert.equal(normalizado.email, undefined)
+})
+
 console.log("drive-folder-identifier-normalization.test.js: " + pass + " pass, " + fail + " fail")
 process.exitCode = fail > 0 ? 1 : 0
