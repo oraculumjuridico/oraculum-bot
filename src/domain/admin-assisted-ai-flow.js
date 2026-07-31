@@ -611,6 +611,15 @@ function acaoRevisaoAdminAssistido(texto = "") {
   return null
 }
 
+function acaoRevisaoEmailAdminAssistido(texto = "") {
+  const comando = normalizarComandoAdminAssistido(texto)
+  if (["1", "corrigir", "corrigir email", "corrigir e-mail", "admin_assistido_email_corrigir"].includes(comando)) return "corrigir"
+  if (["2", "omitir", "deixar sem email", "deixar sem e-mail", "admin_assistido_email_omitir"].includes(comando)) return "omitir"
+  if (["3", "depois", "informar depois", "admin_assistido_email_depois"].includes(comando)) return "depois"
+  if (["4", "revisar", "revisar dados", "admin_assistido_email_revisar"].includes(comando)) return "revisar"
+  return null
+}
+
 function acaoConfirmacaoAudioAdminAssistido(texto = "") {
   const comando = normalizarComandoAdminAssistido(texto)
   if (["confirmar", "sim", "ok", "1", "admin_assistido_audio_confirmar"].includes(comando)) return "confirmar"
@@ -1030,13 +1039,13 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
     // Detectar falha de e-mail inválido e direcionar ao campo específico.
     // Evita repetição infinita do mesmo payload: se o e-mail é inválido,
     // retorna à edição do campo em vez de oferecer "Confirmar e criar caso".
-    if (e?.operation === "hubspot_contact" && e?.code === "FINALIZATION_INTEGRATION_FAILURE") {
+     if (e?.operation === "hubspot_contact" && e?.code === "FINALIZATION_INTEGRATION_FAILURE") {
       if (!u.email || !emailValidoAdminAssistido(u.email)) {
         const novoEstado = {
           ...adminAssistido,
-          etapa: ADMIN_ASSISTIDO_ETAPA_EDITAR_CAMPO,
-          perguntaPendente: "email",
-          campoEmEdicao: "email",
+          etapa: ADMIN_ASSISTIDO_ETAPA_REVISION_EMAIL,
+          perguntaPendente: null,
+          campoEmEdicao: null,
           faltantes: ["email"],
           _ultimaFalhaIntegracao: "email_invalido"
         }
@@ -1046,19 +1055,7 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
           field: "email",
           operation: e?.operation
         })
-        return {
-          texto: [
-            "*O e-mail informado não é válido.*",
-            "",
-            "1️⃣ Corrigir e-mail",
-            "2️⃣ Deixar sem e-mail",
-            "3️⃣ Informar depois",
-            "4️⃣ Revisar dados"
-          ].join("\n"),
-          opcoes: opcoesRevisaoEmailAdminAssistido(),
-          registrarPergunta: false,
-          audio: false
-        }
+        return telaRevisaoEmailAdminAssistido()
       }
     }
 
@@ -1171,6 +1168,106 @@ function responderEstadoAtualAtendimentoAssistido(adminAssistido = {}) {
     }
   }
   return responderRevisaoCaso({ ...adminAssistido, etapa: ADMIN_ASSISTIDO_ETAPA_REVISAO })
+}
+
+const ADMIN_ASSISTIDO_ETAPA_REVISION_EMAIL = "revision_email"
+
+function telaRevisaoEmailAdminAssistido() {
+  return {
+    texto: [
+      "*Revisão de e-mail*",
+      "",
+      "O e-mail informado não é válido ou foi omitido.",
+      "",
+      "1️⃣ Corrigir e-mail",
+      "2️⃣ Deixar sem e-mail",
+      "3️⃣ Informar depois",
+      "4️⃣ Revisar dados"
+    ].join("\n"),
+    opcoes: opcoesRevisaoEmailAdminAssistido(),
+    registrarPergunta: false,
+    audio: false
+  }
+}
+
+async function acaoRevisaoEmailAdminAssistidoHandler(acao, from, chave, sessao, adminAssistido, deps) {
+  const dados = adminAssistido.dados || criarDadosVaziosAdminAssistido()
+  const area = valorCampo(dados, "areaJuridica") || adminAssistido.analise?.areaJuridica || "Outros"
+  const pendentesPosterior = Array.isArray(adminAssistido.pendentesPosterior) ? adminAssistido.pendentesPosterior : []
+
+  if (acao === "corrigir") {
+    const novoEstado = {
+      ...adminAssistido,
+      etapa: ADMIN_ASSISTIDO_ETAPA_AGUARDANDO_EDICAO,
+      campoEmEdicao: "email",
+      perguntaPendente: "email"
+    }
+    salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+    return {
+      texto: "Qual é o e-mail correto do cliente?",
+      opcoes: opcoesNavegacaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
+  if (acao === "omitir") {
+    const novoEstado = {
+      ...adminAssistido,
+      dados: {
+        ...dados,
+        email: criarCampoAdminAssistido(null, "ausente")
+      },
+      etapa: ADMIN_ASSISTIDO_ETAPA_REVISAO,
+      campoEmEdicao: null,
+      perguntaPendente: null
+    }
+    salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+    const faltantes = camposFaltantesAtivosAdminAssistido(novoEstado.dados, area, pendentesPosterior)
+    const proximoCampo = proximoCampoAtivoAdminAssistido(novoEstado.dados, area, pendentesPosterior)
+    return {
+      texto: textoResumoAnaliseAdminAssistido({ dados: novoEstado.dados, faltantes, proximoCampo }),
+      opcoes: opcoesRevisaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
+  if (acao === "depois") {
+    const novoEstado = {
+      ...adminAssistido,
+      dados: {
+        ...dados,
+        email: criarCampoAdminAssistido(null, "ausente")
+      },
+      pendentesPosterior: Array.from(new Set([...pendentesPosterior, "email"])),
+      etapa: ADMIN_ASSISTIDO_ETAPA_REVISAO,
+      campoEmEdicao: null,
+      perguntaPendente: null
+    }
+    salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+    const faltantes = camposFaltantesAtivosAdminAssistido(novoEstado.dados, area, novoEstado.pendentesPosterior)
+    const proximoCampo = proximoCampoAtivoAdminAssistido(novoEstado.dados, area, novoEstado.pendentesPosterior)
+    return {
+      texto: textoResumoAnaliseAdminAssistido({ dados: novoEstado.dados, faltantes, proximoCampo }),
+      opcoes: opcoesRevisaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
+  if (acao === "revisar") {
+    const novoEstado = {
+      ...adminAssistido,
+      etapa: ADMIN_ASSISTIDO_ETAPA_REVISAO,
+      campoEmEdicao: null,
+      perguntaPendente: null
+    }
+    salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+    return responderRevisaoCaso(novoEstado)
+  }
+
+  return telaRevisaoEmailAdminAssistido()
 }
 
 async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, deps = {}) {
@@ -1341,11 +1438,20 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
       }
     }
 
-    if (acao === "cancelar") {
+     if (acao === "cancelar") {
       return await cancelarAtendimentoAssistidoAdmin(chave, sessao, deps)
     }
 
     return responderRevisaoCaso(adminAssistido)
+  }
+
+  // Roteamento de botões de revisão de e-mail
+  if (adminAssistido.etapa === ADMIN_ASSISTIDO_ETAPA_REVISION_EMAIL) {
+    const acaoEmail = acaoRevisaoEmailAdminAssistido(entrada)
+    if (acaoEmail) {
+      return await acaoRevisaoEmailAdminAssistidoHandler(acaoEmail, from, chave, sessao, adminAssistido, deps)
+    }
+    return telaRevisaoEmailAdminAssistido()
   }
 
   if (adminAssistido.etapa === ADMIN_ASSISTIDO_ETAPA_EDITAR_CAMPO) {
@@ -1375,10 +1481,46 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
 
   if (adminAssistido.etapa === ADMIN_ASSISTIDO_ETAPA_AGUARDANDO_EDICAO) {
     const campo = adminAssistido.campoEmEdicao
-    const dadosEditados = {
+    let dadosEditados = {
       ...(adminAssistido.dados || criarDadosVaziosAdminAssistido()),
       [campo]: criarCampoAdminAssistido(entrada, "confirmado")
     }
+
+    // Validação de e-mail: se o campo for "email" e o valor for inválido,
+    // permanecer na edição sem avançar. Nunca salvar o ID do botão como e-mail.
+    if (campo === "email" && !emailValidoAdminAssistido(entrada)) {
+      const novoEstadoEmailInvalido = {
+        ...adminAssistido,
+        dados: dadosEditados,
+        etapa: ADMIN_ASSISTIDO_ETAPA_AGUARDANDO_EDICAO,
+        campoEmEdicao: "email",
+        perguntaPendente: "email"
+      }
+      salvarNovoEstadoAtendimento(chave, sessao, novoEstadoEmailInvalido, deps)
+      return {
+        texto: [
+          "*O e-mail informado não é válido.*",
+          "",
+          "1️⃣ Corrigir e-mail",
+          "2️⃣ Deixar sem e-mail",
+          "3️⃣ Informar depois",
+          "4️⃣ Revisar dados"
+        ].join("\n"),
+        opcoes: opcoesRevisaoEmailAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+
+    // Se o e-mail foi validado com sucesso, limpar estado de falha anterior
+    if (campo === "email" && emailValidoAdminAssistido(entrada)) {
+      dadosEditados = {
+        ...dadosEditados,
+        email: criarCampoAdminAssistido(entrada, "confirmado")
+      }
+      delete dadosEditados._ultimaFalhaIntegracao
+    }
+
     const areaEditada = valorCampo(dadosEditados, "areaJuridica") || adminAssistido.analise?.areaJuridica || "Outros"
     const pendentesPosteriorEdicao = Array.isArray(adminAssistido.pendentesPosterior) ? adminAssistido.pendentesPosterior : []
     const faltantesEdicao = camposFaltantesAtivosAdminAssistido(dadosEditados, areaEditada, pendentesPosteriorEdicao)
@@ -1465,6 +1607,7 @@ module.exports = {
   ADMIN_ASSISTIDO_ETAPA_AGUARDANDO_EDICAO,
   ADMIN_ASSISTIDO_ETAPA_CONFIRMAR_AUDIO,
   ADMIN_ASSISTIDO_ETAPA_COMPLETO,
+  ADMIN_ASSISTIDO_ETAPA_REVISION_EMAIL,
   criarEstadoAtendimentoAssistido,
   atendimentoAssistidoAdminAtivo,
   iniciarAtendimentoAssistidoAdmin,
@@ -1474,6 +1617,9 @@ module.exports = {
   gerarResumoAdminAssistido,
   montarUsuarioFinalizacaoAdminAssistido,
   confirmarCriarCasoAdminAssistido,
+  acaoRevisaoEmailAdminAssistido,
+  acaoRevisaoEmailAdminAssistidoHandler,
+  telaRevisaoEmailAdminAssistido,
   labelInvariante,
   criarPayloadLogAdminAssistido
 }

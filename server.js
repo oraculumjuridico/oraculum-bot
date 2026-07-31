@@ -6489,6 +6489,10 @@ async function finalizarCadastro(from, u) {
     }
 
   if (!canonicalExecuted) {
+    if (hasPartial) {
+      logErro("canonical_executor", "FALLBACK_BLOCKED_PARTIAL_WRITES", { hasPartialWrites: hasPartial, interruptedStep, partialResources: partial })
+      throw new Error("FALLBACK_BLOCKED_PARTIAL_WRITES: require admin-assisted resolution")
+    }
     const pasta = u.pastaDriveId
       ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
       : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)

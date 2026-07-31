@@ -1,11 +1,8 @@
 const assert = require("node:assert/strict")
 const { createLiveCaseFlow, buildCanonicalPlan } = require("../src/domain/live-case-executor-bridge")
-const { createCanonicalCasePlan } = require("../src/domain/canonical-case-plan")
 
 ;(async () => {
-  const calls = []
   const deps = {
-    u: {},
     HS_STAGE: { ANALISE: "presentationscheduled" },
     hsBuscarPorPhone: async () => null,
     hsCriarContato: async () => "contact-123",
@@ -16,7 +13,7 @@ const { createCanonicalCasePlan } = require("../src/domain/canonical-case-plan")
     hsAtualizarEtapaNegocio: async () => {},
     hsAssociar: async () => true,
     criarPastaCliente: async () => ({ id: "folder-789", webViewLink: "https://drive.example.com/folder-789" }),
-    montarPropsContatoHubSpot: (phone, u) => ({ phone }),
+    montarPropsContatoHubSpot: (phone, u) => ({ phone, firstname: u?.nome || "Cliente" }),
     montarPropsAusentesContatoHubSpot: (existing, props) => ({}),
     montarTituloNegocioHubSpot: (u, opts) => `Deal ${u.numeroCaso || "sem-numero"}`,
     getHubSpotDealStateProps: (u) => ({}),
@@ -29,7 +26,7 @@ const { createCanonicalCasePlan } = require("../src/domain/canonical-case-plan")
 
   const flow = createLiveCaseFlow(deps)
 
-  Object.assign(deps.u, {
+  const u = {
     nome: "Cliente Teste",
     whatsappContato: "5511999990000",
     cpf: "12345678900",
@@ -45,9 +42,7 @@ const { createCanonicalCasePlan } = require("../src/domain/canonical-case-plan")
     nomeConfirmado: true,
     _reviewRequired: false,
     _reviewBlockers: []
-  })
-
-  const u = deps.u
+  }
 
   const result = await flow.executeLiveCaseFlow(u)
   assert.equal(result.result.completed, true)

@@ -168,22 +168,23 @@ function createLiveCaseFlow(deps = {}) {
 
       let contactId = plan.contact?.id
       let action = "skipped"
+      const usuario = checkpoint.context.u || {}
 
       if (!contactId && plan.identity?.phone) {
         const existing = await hsBuscarPorPhone(plan.identity.phone)
         contactId = existing?.id || null
-        if (contactId && existing?.properties?.firstname && !deps.u?.nomeHubspot) {
-          deps.u.nomeHubspot = existing.properties.firstname
+        if (contactId && existing?.properties?.firstname && !usuario.nomeHubspot) {
+          usuario.nomeHubspot = existing.properties.firstname
         }
       }
 
       if (!contactId) {
-        const props = montarPropsContatoHubSpot(plan.identity.phone, deps.u || {})
-        contactId = await hsCriarContato(plan.identity.phone, deps.u || {})
+        const props = montarPropsContatoHubSpot(plan.identity.phone, usuario)
+        contactId = await hsCriarContato(plan.identity.phone, usuario)
         action = "created"
       } else {
         action = "verified"
-        const props = montarPropsContatoHubSpot(plan.identity.phone, deps.u || {})
+        const props = montarPropsContatoHubSpot(plan.identity.phone, usuario)
         const existing = plan.identity?.phone ? await hsBuscarPorPhone(plan.identity.phone) : null
         const missing = montarPropsAusentesContatoHubSpot(existing, props)
         if (Object.keys(missing).length) {
@@ -191,7 +192,7 @@ function createLiveCaseFlow(deps = {}) {
         }
       }
 
-      if (deps.u) deps.u.contatoId = contactId
+      usuario.contatoId = contactId
       return { id: contactId, action, verified: Boolean(contactId) }
     },
 
@@ -200,22 +201,23 @@ function createLiveCaseFlow(deps = {}) {
       if (!hsCriarNegocio) return { id: plan.deal?.id, action: "skipped" }
 
       let dealId = plan.deal?.id
-      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      const usuario = checkpoint.context.u || {}
+      const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
       let action = "skipped"
 
       if (!dealId && contactId) {
         dealId = await hsBuscarNegocioAbertoDoContato(contactId)
-        if (dealId && deps.u) deps.u.negocioId = dealId
+        if (dealId) usuario.negocioId = dealId
       }
 
       const dealname = montarTituloNegocioHubSpot(
-        { ...(deps.u || {}), numeroCaso: plan.caseNumber?.value, negocioStageId: deps.HS_STAGE?.ANALISE },
+        { ...usuario, numeroCaso: plan.caseNumber?.value, negocioStageId: deps.HS_STAGE?.ANALISE },
         { HS_STAGE: deps.HS_STAGE, stage: deps.HS_STAGE?.ANALISE }
       )
 
       if (!dealId) {
-        dealId = await hsCriarNegocio(deps.u || {}, { stage: deps.HS_STAGE?.ANALISE })
-        if (deps.u) deps.u.negocioId = dealId
+        dealId = await hsCriarNegocio(usuario, { stage: deps.HS_STAGE?.ANALISE })
+        usuario.negocioId = dealId
         action = "created"
       } else {
         action = "verified"
@@ -229,7 +231,7 @@ function createLiveCaseFlow(deps = {}) {
         })
       }
       await hsAtualizarEtapaNegocio(dealId, deps.HS_STAGE?.ANALISE)
-      if (deps.u) deps.u.negocioStageId = deps.HS_STAGE?.ANALISE
+      usuario.negocioStageId = deps.HS_STAGE?.ANALISE
 
       return { id: dealId, action, verified: Boolean(dealId) }
     },
@@ -237,8 +239,9 @@ function createLiveCaseFlow(deps = {}) {
     association: async (plan, checkpoint) => {
       const { hsAssociar } = deps
       if (!hsAssociar) return { id: null, action: "skipped" }
-      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
-      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      const usuario = checkpoint.context.u || {}
+      const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
+      const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
       if (!contactId || !dealId) return { id: null, action: "skipped" }
       const associated = await hsAssociar(contactId, dealId)
       return { id: associated ? `${contactId}-${dealId}` : null, action: associated ? "created" : "failed", verified: associated }
@@ -251,6 +254,7 @@ function createLiveCaseFlow(deps = {}) {
 
     drive: async (plan, checkpoint) => {
       const { criarPastaCliente } = deps
+      const usuario = checkpoint.context.u || {}
       const caseNumber = plan.caseNumber?.value
       if (!caseNumber) return { id: plan.drive?.canonicalFolderId, action: "skipped" }
 
@@ -258,12 +262,10 @@ function createLiveCaseFlow(deps = {}) {
       let action = "skipped"
 
       if (!folderId) {
-        const pasta = await criarPastaCliente(caseNumber, plan.identity?.name || "Cliente", deps.u?.area, deps.u?.situacao, deps.u?.tipo)
+        const pasta = await criarPastaCliente(caseNumber, plan.identity?.name || "Cliente", usuario.area, usuario.situacao, usuario.tipo)
         folderId = pasta?.id
-        if (deps.u) {
-          deps.u.pastaDriveId = folderId
-          deps.u.pastaDriveLink = pasta?.webViewLink || deps.u.pastaDriveLink || null
-        }
+        usuario.pastaDriveId = folderId
+        usuario.pastaDriveLink = pasta?.webViewLink || usuario.pastaDriveLink || null
         action = "created"
       } else {
         action = "verified"
@@ -307,12 +309,13 @@ function createLiveCaseFlow(deps = {}) {
 
     hubspot: async (plan, checkpoint) => {
       const { hsAtualizarNegocioSerializado, getHubSpotDealStateProps } = deps
-      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      const usuario = checkpoint.context.u || {}
+      const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
       if (!dealId || !hsAtualizarNegocioSerializado) return { updated: false }
 
       const props = {
         ...(plan.hubspot?.dealUpdates || {}),
-        ...(getHubSpotDealStateProps ? getHubSpotDealStateProps(deps.u || {}) : {})
+        ...(getHubSpotDealStateProps ? getHubSpotDealStateProps(usuario) : {})
       }
       await hsAtualizarNegocioSerializado(dealId, props)
       return { updated: true, dealId }
@@ -320,8 +323,9 @@ function createLiveCaseFlow(deps = {}) {
 
     tasks: async (plan, checkpoint) => {
       const { ensureTask } = taskService
-      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
-      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
+      const usuario = checkpoint.context.u || {}
+      const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
+      const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
       const results = []
 
       for (const taskSpec of (plan.tasks || [])) {
@@ -342,8 +346,9 @@ function createLiveCaseFlow(deps = {}) {
 
     internal_notifications: async (plan, checkpoint) => {
       const { enviarWhatsAppAdmin, hsCriarNota, hsCriarNotaNegocio } = deps
-      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
-      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
+      const usuario = checkpoint.context.u || {}
+      const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
+      const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
       const results = []
 
       for (const notification of (plan.notifications?.internal || [])) {
@@ -367,9 +372,10 @@ function createLiveCaseFlow(deps = {}) {
     },
 
     final_verify: async (plan, checkpoint) => {
-      const contactId = checkpoint.steps.contact?.result?.id || deps.u?.contatoId
-      const dealId = checkpoint.steps.deal?.result?.id || deps.u?.negocioId
-      const folderId = checkpoint.steps.drive?.result?.id || deps.u?.pastaDriveId
+      const usuario = checkpoint.context.u || {}
+      const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
+      const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
+      const folderId = checkpoint.steps.drive?.result?.id || usuario.pastaDriveId
 
       if (!contactId || !dealId || !folderId) {
         throw new Error("final_verify_missing_resources")
@@ -391,48 +397,64 @@ function createLiveCaseFlow(deps = {}) {
     checkpointRepository
   })
 
-  async function executeLiveCaseFlow(u, context = {}) {
-    deps.u = u
-    const plan = buildCanonicalPlan(u, context)
+   async function executeLiveCaseFlow(u, context = {}) {
+    // ISOCAÇÃO DE EXECUÇÃO: o usuário u e todas as variáveis derivadas
+    // (contatoId, negocioId, pastaDriveId, etc.) são mantidos apenas no
+    // checkpoint local de esta execução. O objeto global `deps` NÃO é
+    // mutado, evitando cross-contaminação entre execuções concorrentes.
+    const planoLocal = buildCanonicalPlan(u, context)
     try {
-      const result = await executor.execute(plan)
+      const result = await executor.execute(planoLocal, { context: { u, ...context } })
 
-      if (deps.u && result.checkpoint) {
-        deps.u._canonicalPlanHash = plan.hash
-        deps.u._canonicalCheckpoint = result.checkpoint
-        deps.u._canonicalPlanStatus = result.planStatus || plan.status
+      if (result.checkpoint) {
+        // Aplicar recursos do checkpoint ao usuário local após conclusão bem-sucedida.
+        // Cada execução opera em seu próprio objeto u — nenhum estado compartilhado.
+        const resources = result.checkpoint.resources || {}
+        if (resources.contactId) u.contatoId = u.contatoId || resources.contactId
+        if (resources.dealId) u.negocioId = u.negocioId || resources.dealId
+        if (resources.caseFolderId) u.pastaDriveId = u.pastaDriveId || resources.caseFolderId
+
+        // Propagar campos mutáveis definidos pelos adaptadores (nomeHubspot, etc.)
+        const usuarioFromCheckpoint = result.checkpoint.context.u || {}
+        if (usuarioFromCheckpoint.nomeHubspot && !u.nomeHubspot) u.nomeHubspot = usuarioFromCheckpoint.nomeHubspot
+        if (usuarioFromCheckpoint.negocioStageId && !u.negocioStageId) u.negocioStageId = usuarioFromCheckpoint.negocioStageId
+        if (usuarioFromCheckpoint.pastaDriveLink && !u.pastaDriveLink) u.pastaDriveLink = usuarioFromCheckpoint.pastaDriveLink
+
+        u._canonicalPlanHash = planoLocal.hash
+        u._canonicalCheckpoint = result.checkpoint
+        u._canonicalPlanStatus = result.planStatus || planoLocal.status
       }
 
-      return { plan, result }
+      return { plan: planoLocal, result }
     } catch (error) {
-      const partialCheckpoint = await checkpointRepository.load(plan.hash)
-      const partialResources = partialCheckpoint?.resources || {}
-      const interruptedStep = partialCheckpoint
-        ? Object.keys(partialCheckpoint.steps || {}).find(step =>
-            partialCheckpoint.steps[step].status === "failed" ||
-            partialCheckpoint.steps[step].status === "processing"
+      const checkpointStore = await checkpointRepository.load(planoLocal.hash)
+      const partialResources = checkpointStore?.resources || {}
+      const interruptedStep = checkpointStore
+        ? Object.keys(checkpointStore.steps || {}).find(step =>
+            checkpointStore.steps[step].status === "failed" ||
+            checkpointStore.steps[step].status === "processing"
           ) || null
         : null
       const hasPartialWrites = Object.keys(partialResources).length > 0
 
-      if (deps.u && partialCheckpoint) {
-        deps.u._canonicalPlanHash = plan.hash
-        deps.u._canonicalCheckpoint = partialCheckpoint
-        deps.u._canonicalPlanStatus = partialCheckpoint.status
+      if (checkpointStore) {
+        u._canonicalPlanHash = planoLocal.hash
+        u._canonicalCheckpoint = checkpointStore
+        u._canonicalPlanStatus = checkpointStore.status
       }
 
       return {
-        plan,
+        plan: planoLocal,
         result: {
           completed: false,
           error: error.message,
           code: error.code,
-          planHash: plan.hash,
-          planStatus: plan.status,
+          planHash: planoLocal.hash,
+          planStatus: planoLocal.status,
           interruptedStep,
           partialResources,
           hasPartialWrites,
-          partialCheckpoint
+          partialCheckpoint: checkpointStore
         }
       }
     }
