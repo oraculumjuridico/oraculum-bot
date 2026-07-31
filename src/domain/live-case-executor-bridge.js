@@ -1,6 +1,7 @@
 const { createCanonicalCasePlan, validateCanonicalCasePlan, PLAN_STATUS } = require("./canonical-case-plan")
 const { createCanonicalCaseExecutor } = require("./canonical-case-executor")
 const { createHubSpotTaskService } = require("./hubspot-task-service")
+const { normalizeDriveFolderResult } = require("./drive-files")
 
 function clean(value) {
   return value === null || value === undefined ? null : String(value).trim() || null
@@ -262,10 +263,11 @@ function createLiveCaseFlow(deps = {}) {
       let action = "skipped"
 
       if (!folderId) {
-        const pasta = await criarPastaCliente(caseNumber, plan.identity?.name || "Cliente", usuario.area, usuario.situacao, usuario.tipo)
-        folderId = pasta?.id
+        const pastaRaw = await criarPastaCliente(caseNumber, plan.identity?.name || "Cliente", usuario.area, usuario.situacao, usuario.tipo)
+        const pastaNormalizada = normalizeDriveFolderResult(pastaRaw)
+        folderId = pastaNormalizada ? pastaNormalizada.id : null
         usuario.pastaDriveId = folderId
-        usuario.pastaDriveLink = pasta?.webViewLink || usuario.pastaDriveLink || null
+        usuario.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || usuario.pastaDriveLink || null
         action = "created"
       } else {
         action = "verified"

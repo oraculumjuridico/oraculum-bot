@@ -344,10 +344,25 @@ async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mi
       media: { mimeType: mimeType || "audio/ogg", body: fs.createReadStream(tmp) },
       fields: "id,name,webViewLink"
     })
-    try { fs.unlinkSync(tmp) } catch {}
-    logDebug(`[DRIVE] Áudio: ${res.data.name}`)
-    return { ...res.data, folderId: pasta.data.id }
+  try { fs.unlinkSync(tmp) } catch {}
+  logDebug(`[DRIVE] Áudio: ${res.data.name}`)
+  return { ...res.data, folderId: pasta.data.id }
   } catch (e) { logErro("drive", detalhesErroDrive(e, "uploadAudio")); return null }
+}
+
+/**
+ * Normaliza o retorno de uma operação de criação/busca de pasta no Drive.
+ * Aceita id, folderId ou caseFolderId e devolve um contrato canônico { id, webViewLink }
+ * ou null quando não há identificador válido.
+ * Isso previne o caso canário em que a pasta é criada mas o campo de id
+ * varia entre provedores/contratos.
+ */
+function normalizeDriveFolderResult(result) {
+  if (!result || typeof result !== "object") return null
+  const id = result.id || result.folderId || result.caseFolderId || null
+  if (!id || typeof id !== "string" || id.trim().length === 0) return null
+  const webViewLink = typeof result.webViewLink === "string" ? result.webViewLink : null
+  return { id, webViewLink }
 }
 
 async function salvarAudioTranscritoNoCaso(u, nomeCliente, buffer, mimeType, status) {
@@ -360,6 +375,7 @@ module.exports = {
   escapeDriveQueryValue,
   getNomePastaArea,
   detalhesErroDrive,
+  normalizeDriveFolderResult,
   obterOuCriarPastaArea,
   criarPastaCliente,
   uploadDrive,
