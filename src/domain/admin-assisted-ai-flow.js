@@ -1,4 +1,9 @@
 const { sanitizarTextoEntrada } = require("../utils/text")
+const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
+const {
+  assertFinalizationInvariants,
+  collectFinalizationViolations
+} = require("./finalization-invariants")
 const {
   criarCampoAdminAssistido,
   criarDadosVaziosAdminAssistido,
@@ -665,7 +670,10 @@ const CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO = new Set([
   "etapa",
   "status",
   "reason",
-  "faltantes"
+  "faltantes",
+  "failedInvariant",
+  "stage",
+  "adapter"
 ])
 
 function criarPayloadLogAdminAssistido(evento, detalhes = {}) {
@@ -873,6 +881,18 @@ function textoSucessoCriacaoCasoAdminAssistido(u = {}, numeroCaso = "") {
   ].join("\n")
 }
 
+function labelInvariante(invariante) {
+  const labels = {
+    nome: "Nome (mínimo 3 caracteres)",
+    telefone: "Telefone/WhatsApp (com DDD e 9º dígito)",
+    cidade: "Cidade (mínimo 2 caracteres)",
+    relato: "Relato/descrição (mínimo 3 caracteres)",
+    area: "Área jurídica (mínimo 2 caracteres)",
+    identidade: "Identidade do atendimento (cliente/terceiro)"
+  }
+  return labels[invariante] || invariante
+}
+
 async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssistido, deps = {}) {
   const dados = adminAssistido.dados || criarDadosVaziosAdminAssistido()
   const area = valorCampo(dados, "areaJuridica") || adminAssistido.analise?.areaJuridica || "Outros"
@@ -908,6 +928,46 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
 
   const snapshotSessao = { ...sessao, adminAssistido }
   const u = montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido, deps)
+
+  // Pré-validação: detecta invariantes de finalização ANTES de qualquer escrita
+  // externa. Este bloco previne que campos com texto insuficiente (1-2 chars)
+  // passem em camposFaltantesAdminAssistido (que aceita length>0) e cheguem ao
+  // executor, onde assertFinalizationInvariants exige minLength=3.
+  const normFn = deps.normalizarNumeroWhatsAppEnvio || normalizarNumeroWhatsAppEnvio
+  const preViolations = collectFinalizationViolations({
+    from: u.whatsappContato || from,
+    u,
+    normalizarNumeroWhatsAppEnvio: normFn
+  })
+  if (preViolations.length > 0) {
+    registrarLogAdminAssistido(deps, "criacao_caso_bloqueada_invariantes", {
+      resultado: "bloqueado",
+      code: "FINALIZATION_INVARIANTS_VIOLATION",
+      operation: "finalizar_cadastro_assistido",
+      failedInvariant: preViolations.join(","),
+      stage: "pre_finalization"
+    })
+    if (typeof deps.logErro === "function") {
+      deps.logErro("admin_assistido", `Caso não criado: invariantes ausentes; code=FINALIZATION_INVARIANTS_VIOLATION; operation=finalizar_cadastro_assistido; stage=pre_finalization; failedInvariant=${preViolations.join(",")}`)
+    }
+    return {
+      texto: [
+        "⚠️ Não foi possível criar o caso: dados insuficientes.",
+        "",
+        "Campos que precisam ser revisados:",
+        ...preViolations.map(v => `- ${labelInvariante(v)}`),
+        "",
+        "Escolha uma opção:",
+        "",
+        "1️⃣ Editar informações",
+        "2️⃣ Cancelar atendimento"
+      ].join("\n"),
+      opcoes: opcoesRevisaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
   registrarLogAdminAssistido(deps, "criacao_caso_iniciada", {
     resultado: "iniciado",
     area: u.area
@@ -950,12 +1010,18 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
     registrarLogAdminAssistido(deps, "criacao_caso_falhou_rollback_sessao", {
       resultado: "falha",
       code: e?.code || null,
-      operation: e?.operation || null
+      operation: e?.operation || null,
+      failedInvariant: Array.isArray(e?.violations) ? e.violations.join(",") : null,
+      stage: e?.stage || "finalizacao",
+      adapter: e?.adapter || "canonical"
     })
     if (typeof deps.logErro === "function") {
       const code = sanitizarTextoEntrada(e?.code) || "CASE_CREATION_FAILURE"
       const operation = sanitizarTextoEntrada(e?.operation) || "finalizar_cadastro_assistido"
-      deps.logErro("admin_assistido", `Falha técnica ao criar caso assistido; code=${code}; operation=${operation}`)
+      const violations = Array.isArray(e?.violations) ? e.violations.join(",") : "none"
+      const stage = sanitizarTextoEntrada(e?.stage) || "finalizacao"
+      const adapter = sanitizarTextoEntrada(e?.adapter) || "canonical"
+      deps.logErro("admin_assistido", `Falha técnica ao criar caso assistido; code=${code}; operation=${operation}; stage=${stage}; adapter=${adapter}; failedInvariant=${violations}`)
     }
     return {
       texto: [
@@ -1350,5 +1416,6 @@ module.exports = {
   gerarResumoAdminAssistido,
   montarUsuarioFinalizacaoAdminAssistido,
   confirmarCriarCasoAdminAssistido,
+  labelInvariante,
   criarPayloadLogAdminAssistido
 }
