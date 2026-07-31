@@ -209,14 +209,40 @@ const {
   labelIdadeAdmin,
   resumoCasoAdmin,
   tituloOpcaoCasoAdmin,
-  opcoesAposAcaoCasoAdmin
+  opcoesAposAcaoCasoAdmin,
+  ADMIN_MENU_LABELS
 } = require("./src/domain/admin-case-ui")
+const {
+  montarBotaoAtendimentoRealizado,
+  handleAtendimentoRealizadoConfirmation,
+  isPilotCaseAllowed
+} = require("./src/domain/admin-post-human-complementation")
+const { isPostHumanComplementationEnabled } = require("./src/domain/post-human-feature-flag")
+const { PostHumanCycleRepository } = require("./src/domain/post-human-cycle-model")
+const { processPostHumanCycle } = require("./src/domain/post-human-flow")
+const { createPostHumanDispatcher, recoverPostHumanCycles } = require("./src/domain/post-human-dispatcher")
+const { createLegacyDocumentPipeline } = require("./src/domain/post-human-document-pipeline")
+const {
+  CONTACT_FIELDS: POST_HUMAN_CONTACT_FIELDS,
+  DEAL_FIELDS: POST_HUMAN_DEAL_FIELDS,
+  resolveComplementaryContext,
+  resolveComplementaryFields
+} = require("./src/domain/post-human-complementary-fields")
+const { atualizarHubSpotSeguro } = require("./src/domain/post-human-hubspot-updater")
+const { META_TEMPLATES } = require("./src/domain/meta-templates")
 const {
   montarDossieJuridicoAdminWhatsApp
 } = require("./src/domain/admin-legal-dossier-ui")
 const {
   mesclarItensAdminPorIdentidade
 } = require("./src/domain/admin-item-merge")
+const {
+  mapearNegociosHubSpotAdmin
+} = require("./src/domain/admin-hubspot-deal-mapper")
+const {
+  resolverUrgenciaAdmin,
+  persistirUrgenciaAltaAdmin
+} = require("./src/domain/admin-urgency")
 const {
   numeroPorExtenso,
   formatarSlot,
@@ -247,11 +273,14 @@ const {
   renomearArquivoDrive,
   uploadPastaAudio,
   salvarAudioTranscritoNoCaso,
-  normalizeDriveFolderResult
+  listarArquivosDriveNaPasta
 } = require("./src/domain/drive-files")
 const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
+const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
+const { createAdminAssistedMediaStaging } = require("./src/domain/admin-assisted-media")
+const { createLiveCaseFlow, buildCanonicalPlan } = require("./src/domain/live-case-executor-bridge")
 const { criarGracefulShutdown } = require("./src/infrastructure/graceful-shutdown")
 const {
   consolidarDocumentosDoCaso
@@ -322,7 +351,8 @@ const {
   initializeExternalStateRepository,
   flushExternalState,
   externalStateHealth,
-  closeExternalStateRepository
+  closeExternalStateRepository,
+  getPool
 } = require("./src/infrastructure/external-state-repository")
 const {
   dispatchConversationContext
@@ -345,7 +375,8 @@ const {
   montarPropsAusentesContatoHubSpot,
   hsAtualizarContato,
   hsCriarNota,
-  hsCriarNotaNegocio
+  hsCriarNotaNegocio,
+  hsAtualizarNegocio
 } = require("./src/domain/hubspot-core")
 const {
   configurarHubSpotSync,
@@ -385,12 +416,34 @@ const {
 const {
   atendimentoAssistidoAdminAtivo,
   iniciarAtendimentoAssistidoAdmin,
-  processarAtendimentoAssistidoAdmin
+  processarAtendimentoAssistidoAdmin,
+  criarPayloadLogAdminAssistido
 } = require("./src/domain/admin-assisted-ai-flow")
 const {
   montarTituloNegocioHubSpot,
   aplicarTituloNegocioHubSpot
 } = require("./src/domain/hubspot-deal-title")
+
+const adminAssistedMediaStaging = createAdminAssistedMediaStaging({
+  maxBytes: Number(process.env.WHATSAPP_MEDIA_MAX_BYTES || 20 * 1024 * 1024)
+})
+
+const liveCaseFlow = createLiveCaseFlow({
+  hubspotToken: process.env.HUBSPOT_TOKEN,
+  checkpointRepository: {
+    async load(hash) {
+      const key = `canonical_checkpoint:${hash}`
+      const raw = users?._canonicalCheckpoints?.[key]
+      return raw || null
+    },
+    async save(hash, checkpoint) {
+      const key = `canonical_checkpoint:${hash}`
+      if (!users._canonicalCheckpoints) users._canonicalCheckpoints = {}
+      users._canonicalCheckpoints[key] = checkpoint
+      agendarPersistenciaUsers()
+    }
+  }
+})
 
 const {
   primeiroNomeCliente,
@@ -909,6 +962,9 @@ function novoUsuario(nomeWA) {
     _proximoStageAposDescricao: null,
     _proximaPerguntaAposDescricao: null,
     _entradaPendenteTipo: null, _entradaPendenteValor: null, _entradaPendenteOrigem: null,
+    _canonicalPlanHash: null,
+    _canonicalPlanStatus: null,
+    _canonicalCheckpoints: {},
     atendente: null,
     aguardandoRetomada: false,
     temCadastroCompleto: false,
@@ -3998,6 +4054,8 @@ async function liberarAgendamentoERecalcularStage(u, motivo = "agendamento_liber
   }
 }
 
+
+let postHumanCycleRepository = null
 function labelStageAdmin(stage) {
   const mapa = {
     [HS_STAGE.LEAD]: "🟡 Lead",
@@ -4082,7 +4140,6 @@ function montarNotificacaoCancelamentoClienteAdmin({ from, u, dataHora, eventoId
 function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
   const props = negocio?.properties || {}
   const snapshot = desserializarEstado(props.estado_bot_snapshot) || {}
-  const urgenciaProps = sanitizarTextoEntrada(props.urgencia).toLowerCase()
   const telefone = normalizarNumeroWhatsAppEnvio(contato?.properties?.phone || from || snapshot._numero || snapshot.whatsappContato)
 
   const { nome: nomeResolvido } = resolverNomeUnificado({ contato, u })
@@ -4098,7 +4155,11 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     negocioStageId: negocio?.stageId || props.dealstage || snapshot.negocioStageId || u?.negocioStageId || null,
     numeroCaso: getNumeroCasoOficialDoNegocio(negocio) || snapshot.numeroCaso || u?.numeroCaso || null,
     area: snapshot.area || props.area_juridica || u?.area || null,
-    urgencia: snapshot.urgencia || ({ alta: "alta", moderada: "normal", baixa: "baixa" }[urgenciaProps]) || u?.urgencia || "normal",
+    urgencia: resolverUrgenciaAdmin({
+      hubspot: props.urgencia,
+      snapshot: snapshot.urgencia,
+      local: u?.urgencia
+    }),
     descricao: snapshot.descricao || props.description || props.descricao_completa || u?.descricao || null,
     assuntoResumo: snapshot.assuntoResumo || props.resumo_cliente || u?.assuntoResumo || null
   })
@@ -4172,12 +4233,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
           body,
           { headers: HS() }
         )
-        const deals = (res.data?.results || []).map(n => ({
-          id: n.id,
-          stageId: n.properties?.dealstage || null,
-          createdate: n.properties?.createdate || null,
-          properties: res.data?.properties || {}
-        }))
+        const deals = mapearNegociosHubSpotAdmin(res.data)
         return {
           deals,
           total: res.data?.total || 0,
@@ -4632,6 +4688,12 @@ function linhaPrioridadeAdmin(item, idx, { adminAutenticado = false } = {}) {
   const briefing = gerarBriefingCaso(u)
   const caso = briefing.numeroCaso ? `📄 Caso ${briefing.numeroCaso}` : "📄 Sem caso"
   const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
+  const statusDocumental = sanitizarTextoEntrada(u.oraculumDocumentStatus || u.oraculum_document_status)
+  const subtipo = sanitizarTextoEntrada(u.oraculumCaseSubtype || u.oraculum_case_subtype || u.subTipo)
+  const quarentena = Array.isArray(u.documentosQuarentena) ? u.documentosQuarentena.length : Number(u.documentosQuarentena || 0)
+  const divergencias = Array.isArray(u.divergenciasDocumentais) ? u.divergenciasDocumentais.length : Number(u.divergenciasDocumentais || 0)
+  const tarefasAbertas = Array.isArray(u.tarefasAbertas) ? u.tarefasAbertas.length : Number(u.tarefasAbertas || 0)
+  const consolidacao = sanitizarTextoEntrada(u.statusConsolidacao || u.consolidacaoDocumental?.status)
   return [
     `${idx}. 👤 *${briefing.nome || "Cliente"}*`,
     telefoneAdmin ? `   📱 ${telefoneAdmin}` : null,
@@ -4654,15 +4716,27 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
   const relatoCurto = relato ? relato.slice(0, 700) + (relato.length > 700 ? "..." : "") : "Sem relato consolidado."
   const dossieJuridico = montarDossieJuridicoAdminWhatsApp(item)
   const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
+  const statusDocumental = sanitizarTextoEntrada(u.oraculumDocumentStatus || u.oraculum_document_status)
+  const subtipo = sanitizarTextoEntrada(u.oraculumCaseSubtype || u.oraculum_case_subtype || u.subTipo)
+  const quarentena = Array.isArray(u.documentosQuarentena) ? u.documentosQuarentena.length : Number(u.documentosQuarentena || 0)
+  const divergencias = Array.isArray(u.divergenciasDocumentais) ? u.divergenciasDocumentais.length : Number(u.divergenciasDocumentais || 0)
+  const tarefasAbertas = Array.isArray(u.tarefasAbertas) ? u.tarefasAbertas.length : Number(u.tarefasAbertas || 0)
+  const consolidacao = sanitizarTextoEntrada(u.statusConsolidacao || u.consolidacaoDocumental?.status)
   return [
     `👤 *${briefing.nome || "Cliente"}*`,
     "",
     `📄 Caso: ${briefing.numeroCaso || "sem caso"}`,
     telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : "",
     `⚖️ Area: ${briefing.area || "nao definida"}`,
+    `🧭 Tipo/subtipo: ${[u.tipo, subtipo].filter(Boolean).join(" / ") || "nao definido"}`,
     `📌 Status: ${briefing.stageLabel}`,
     `💬 Emocional: ${briefing.scoreEmocional.nivel}/${briefing.scoreEmocional.valor}`,
     `📎 Docs: ${docs.faltantesCriticos.length ? `${docs.faltantesCriticos.length} faltante(s)` : "sem critico faltante"}`,
+    statusDocumental ? `🗃️ Status documental: ${statusDocumental}` : "",
+    quarentena ? `🛡️ Quarentena: ${quarentena}` : "",
+    divergencias ? `⚠️ Divergencias: ${divergencias}` : "",
+    tarefasAbertas ? `✅ Tarefas abertas: ${tarefasAbertas}` : "",
+    consolidacao ? `📚 Consolidação: ${consolidacao}` : "",
     `📅 Consulta: ${consulta}`,
     alerta ? `🚨 Alerta: ${alerta.texto}` : "",
     revisao ? `✅ Revisado: ate ${new Date(revisao.ate).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}` : "",
@@ -4703,11 +4777,11 @@ async function telaAdminPrincipal() {
     ].join("\n"),
     opcoes: [
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
-      { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
-      { id: ADMIN_IDS.resumo, title: "📊 Resumo" },
-      { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento Assistido por IA" }
+      { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
+      { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento com IA" }
     ],
     registrarPergunta: false
   }
@@ -4727,7 +4801,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
       return {
         texto: "📌 *Prioridades*\n\n✅ Nao encontrei casos com risco operacional relevante agora.",
         opcoes: [
-          { id: ADMIN_IDS.menu, title: "🏠 Menu admin" },
+          { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` },
           { id: ADMIN_IDS.casos, title: "📂 Casos" }
         ],
         registrarPergunta: false
@@ -4749,7 +4823,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
     // Navegação entre páginas
     if (pagina > 1) opcoes.push({ id: `admin_prioridades_pagina_${pagina - 1}`, title: "⬅️ Anterior" })
     if (pagina < totalPaginas) opcoes.push({ id: `admin_prioridades_pagina_${pagina + 1}`, title: "➡️ Próxima" })
-    opcoes.push({ id: ADMIN_IDS.menu, title: "🏠 Menu admin" })
+    opcoes.push({ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` })
 
     const inicioExibicao = totalItens === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
     const fimExibicao = Math.min(pagina * tamanhoPagina, totalItens)
@@ -4779,7 +4853,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
       texto: "📌 *Prioridades*\n\n⚠️ O HubSpot esta temporariamente ocupado.\n\nSua sessao admin permanece ativa. Tente novamente em alguns segundos.",
       opcoes: [
         { id: ADMIN_IDS.prioridades, title: "🔄 Tentar novamente" },
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
       ],
       registrarPergunta: false
     }
@@ -4803,9 +4877,10 @@ async function telaAdminCasos() {
       "Escolha uma fila."
     ].join("\n"),
     opcoes: [
-      { id: ADMIN_IDS.casosNovos, title: "🆕 Novos" },
-      { id: ADMIN_IDS.casosAnalise, title: "🔎 Analise" },
-      { id: ADMIN_IDS.casosDocs, title: "📎 Docs" }
+      { id: ADMIN_IDS.casosNovos, title: "🆕 Novos casos" },
+      { id: ADMIN_IDS.casosAnalise, title: "🔎 Casos em análise" },
+      { id: ADMIN_IDS.casosDocs, title: "📎 Documentos pendentes" },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -4836,11 +4911,12 @@ async function telaAdminAlertas() {
       "Escolha uma fila para agir."
     ].join("\n"),
     opcoes: [
-      { id: ADMIN_IDS.alertasCriticos, title: "🔥 Criticos" },
-      { id: ADMIN_IDS.alertasParados, title: "⏳ Parados" },
-      { id: ADMIN_IDS.alertasDocs, title: "📎 Docs" },
-      { id: ADMIN_IDS.alertasAgenda, title: "📅 Agenda" },
-      { id: ADMIN_IDS.resumo, title: "📊 Resumo" }
+      { id: ADMIN_IDS.alertasCriticos, title: "🔥 Casos críticos" },
+      { id: ADMIN_IDS.alertasParados, title: "⏳ Casos parados" },
+      { id: ADMIN_IDS.alertasDocs, title: "📎 Documentos pendentes" },
+      { id: ADMIN_IDS.alertasAgenda, title: "📅 Consultas futuras" },
+      { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -4854,7 +4930,7 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
       texto: `${titulo}\n\n${vazio}`,
       opcoes: [
         { id: voltar, title: "⬅️ Voltar" },
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
       ],
       registrarPergunta: false
     }
@@ -4880,7 +4956,10 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
   ]
   if (pagina > 1) opcoes.push({ id: `admin_casos_pagina_${pagina - 1}`, title: "⬅️ Página anterior" })
   if (pagina < totalPaginas) opcoes.push({ id: `admin_casos_pagina_${pagina + 1}`, title: "Próxima página ➡️" })
-  opcoes.push({ id: voltar, title: "Voltar" }, { id: ADMIN_IDS.menu, title: "Menu admin" })
+  opcoes.push(
+    { id: voltar, title: ADMIN_MENU_LABELS.voltarLista },
+    { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+  )
   const inicioExibicao = itens.length === 0 ? 0 : (pagina - 1) * tamanhoPagina + 1
   const fimExibicao = Math.min(pagina * tamanhoPagina, itens.length)
   return {
@@ -4949,7 +5028,7 @@ async function telaAdminResumoDiario() {
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -4972,18 +5051,23 @@ function telaDetalheCasoAdmin(from, idx) {
   const sessao = sessoesAdminWhatsApp.get(chaveAdmin) || {}
   const voltar = sessao.origemCasos || ADMIN_IDS.prioridades
 
+  const botaoPosAtendimento = montarBotaoAtendimentoRealizado(item.u?.negocioId, item.u?.numeroCaso, {
+    adminId: normalizarNumeroWhatsAppEnvio(from),
+    contatoId: item.u?.contatoId
+  })
   return {
     texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
     opcoes: [
-      { id: ADMIN_IDS.casoRevisado, title: "✅ Revisado" },
-      { id: ADMIN_IDS.casoMarcarUrgente, title: "🚨 Marcar urgente" },
-      { id: ADMIN_IDS.casoEnviarAnalise, title: "📝 Enviar analise" },
-      { id: ADMIN_IDS.casoPedirDocs, title: "📎 Pedir docs" },
-      { id: ADMIN_IDS.casoLembrete, title: "🔔 Lembrete" },
-      { id: ADMIN_IDS.casoLinks, title: "🔗 Links" },
-      { id: voltar, title: "⬅️ Voltar" },
-      { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      botaoPosAtendimento,
+      { id: ADMIN_IDS.casoRevisado, title: `✅ ${ADMIN_MENU_LABELS.marcarRevisado}` },
+      { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
+      { id: ADMIN_IDS.casoEnviarAnalise, title: `📝 ${ADMIN_MENU_LABELS.registrarAnalise}` },
+      { id: ADMIN_IDS.casoPedirDocs, title: `📎 ${ADMIN_MENU_LABELS.pedirDocumentos}` },
+      { id: ADMIN_IDS.casoLembrete, title: `🔔 ${ADMIN_MENU_LABELS.lembrarCliente}` },
+      { id: ADMIN_IDS.casoLinks, title: `🔗 ${ADMIN_MENU_LABELS.abrirLinksCaso}` },
+      { id: voltar, title: `⬅️ ${ADMIN_MENU_LABELS.voltarLista}` },
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5015,9 +5099,9 @@ function telaLinksCasoAdmin(from) {
       telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : ""
     ].filter(Boolean).join("\n"),
     opcoes: [
-      { id: ADMIN_IDS.casoRevisado, title: "✅ Revisado" },
+      { id: ADMIN_IDS.casoRevisado, title: `✅ ${ADMIN_MENU_LABELS.marcarRevisado}` },
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5052,7 +5136,7 @@ async function marcarCasoRevisadoAdmin(from) {
     opcoes: [
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
-      { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
@@ -5090,26 +5174,25 @@ async function pedirDocsCasoAdmin(from) {
 
   const nome = primeiroNomeCliente(u) || "cliente"
   const lista = faltantes.map(doc => `- ${doc.label}`).join("\n")
-  const enviadoCliente = await enviar(
-    destino,
-    [
+  const mensagemDocumentos = [
       `Oi, *${nome}*. Passando para lembrar dos documentos que ainda faltam no seu caso:`,
       "",
       lista,
       "",
       "Quando puder, envie por aqui no WhatsApp. Se tiver dificuldade, pode mandar foto aos poucos."
-    ].join("\n"),
-    [
-      { id: "docs_pedido_admin", title: "Enviar docs" },
-      { id: "m_inicio", title: "Menu cliente" }
-    ],
-    false
-  )
+    ].join("\n")
+  const envioDocumentos = await templateService.atualizacaoCasoSegura(destino, {
+    ultimaMsg: u.ultimaMsg,
+    texto: mensagemDocumentos,
+    resumoTemplate: `Documentos pendentes do caso ${u.numeroCaso || ""}: ${faltantes.map(doc => doc.label).join(", ")}.`,
+    usuario: u
+  })
+  const enviadoCliente = envioDocumentos.sent
 
   let notaContato = false
   let notaNegocio = false
   if (enviadoCliente) {
-    const corpo = `Pedido de documentos enviado pelo WhatsApp admin.\nCaso: ${u.numeroCaso || "-"}\nDocumentos:\n${lista}`
+    const corpo = `Pedido de documentos enviado pelo WhatsApp admin.\nCanal: ${envioDocumentos.channel}\nCaso: ${u.numeroCaso || "-"}\nDocumentos:\n${lista}`
     notaContato = u.contatoId ? await hsCriarNota(u.contatoId, "PEDIDO DE DOCUMENTOS PELO ADMIN", corpo) : false
     notaNegocio = u.negocioId ? await hsCriarNotaNegocio(u.negocioId, "PEDIDO DE DOCUMENTOS PELO ADMIN", corpo) : false
   }
@@ -5141,25 +5224,43 @@ async function marcarCasoUrgenteAdmin(from) {
   }
 
   const { u } = item
-  const anterior = u.urgencia || "normal"
-  u.urgencia = "alta"
-  const briefing = gerarBriefingCaso(u)
-  let notaContato = false
-  let notaNegocio = false
-  const corpo = `Caso marcado como urgente pelo admin.\nCaso: ${u.numeroCaso || "-"}\nUrgencia anterior: ${anterior}\nProxima acao: ${briefing.proximaAcao || "revisar com prioridade"}`
-  if (u.contatoId) notaContato = await hsCriarNota(u.contatoId, "CASO MARCADO URGENTE", corpo)
-  if (u.negocioId) notaNegocio = await hsCriarNotaNegocio(u.negocioId, "CASO MARCADO URGENTE", corpo)
+  const resultado = await persistirUrgenciaAltaAdmin({
+    item,
+    atualizarNegocio: hsAtualizarNegocioSerializado,
+    criarNotaContato: hsCriarNota,
+    criarNotaNegocio: hsCriarNotaNegocio,
+    gerarBriefing: gerarBriefingCaso
+  })
+
+  if (!resultado.persisted) {
+    return {
+      texto: [
+        "⚠️ *Não foi possível marcar o caso como urgente no HubSpot.*",
+        "",
+        `👤 Cliente: ${u.nome || u.nomeWA || "Cliente"}`,
+        `📄 Caso: ${u.numeroCaso || "-"}`,
+        "",
+        "A urgência local não foi alterada. Tente novamente."
+      ].join("\n"),
+      opcoes: [
+        { id: ADMIN_IDS.casoMarcarUrgente, title: "🔄 Tentar novamente" },
+        ...opcoesAposAcaoCasoAdmin()
+      ],
+      registrarPergunta: false
+    }
+  }
 
   return {
     texto: [
-      "🚨 *Caso marcado como urgente.*",
+      "🚨 *Caso marcado como urgente no HubSpot.*",
       "",
       `👤 Cliente: ${u.nome || u.nomeWA || "Cliente"}`,
       `📄 Caso: ${u.numeroCaso || "-"}`,
       `⚡ Urgencia: ${u.urgencia}`,
       "",
-      `👤 Nota contato: ${notaContato ? "✅ ok" : "⚠️ nao registrada"}`,
-      `📄 Nota negocio: ${notaNegocio ? "✅ ok" : "⚠️ nao registrada"}`
+      `👤 Nota contato: ${resultado.notaContato ? "✅ ok" : "⚠️ nao registrada"}`,
+      `📄 Nota negocio: ${resultado.notaNegocio ? "✅ ok" : "⚠️ nao registrada"}`,
+      resultado.notesComplete ? "" : "⚠️ A urgência foi persistida, mas uma ou mais notas não foram registradas."
     ].join("\n"),
     opcoes: opcoesAposAcaoCasoAdmin(),
     registrarPergunta: false
@@ -5235,23 +5336,25 @@ async function enviarLembreteCasoAdmin(from) {
 
   const briefing = gerarBriefingCaso(u)
   const nome = primeiroNomeCliente(u) || "cliente"
-  const enviadoCliente = await enviar(
-    destino,
-    [
+  const mensagemLembrete = [
       `Oi, *${nome}*. Passando para lembrar do andamento do seu caso *${u.numeroCaso || ""}*.`,
       "",
       briefing.proximaAcao || "Nossa equipe segue acompanhando seu atendimento.",
       "",
       "Se precisar falar com a equipe, responda por aqui mesmo."
-    ].join("\n"),
-    [{ id: "m_inicio", title: "Menu cliente" }],
-    false
-  )
+    ].join("\n")
+  const envioLembrete = await templateService.atualizacaoCasoSegura(destino, {
+    ultimaMsg: u.ultimaMsg,
+    texto: mensagemLembrete,
+    resumoTemplate: `Atualização do caso ${u.numeroCaso || ""}: ${briefing.proximaAcao || "Nossa equipe segue acompanhando o atendimento."}`,
+    usuario: u
+  })
+  const enviadoCliente = envioLembrete.sent
 
   let notaContato = false
   let notaNegocio = false
   if (enviadoCliente) {
-    const corpo = `Lembrete operacional enviado pelo WhatsApp admin.\nCaso: ${u.numeroCaso || "-"}\nProxima acao: ${briefing.proximaAcao || "-"}`
+    const corpo = `Lembrete operacional enviado pelo WhatsApp admin.\nCanal: ${envioLembrete.channel}\nCaso: ${u.numeroCaso || "-"}\nProxima acao: ${briefing.proximaAcao || "-"}`
     notaContato = u.contatoId ? await hsCriarNota(u.contatoId, "LEMBRETE PELO ADMIN", corpo) : false
     notaNegocio = u.negocioId ? await hsCriarNotaNegocio(u.negocioId, "LEMBRETE PELO ADMIN", corpo) : false
   }
@@ -5330,7 +5433,7 @@ async function telaConsultasAdmin(from) {
     return {
       texto: "📅 *Consultas futuras*\n\n✅ Nao encontrei consultas futuras ativas no HubSpot nem na memoria local.",
       opcoes: [
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" },
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` },
         { id: ADMIN_IDS.casos, title: "📂 Casos" }
       ],
       registrarPergunta: false
@@ -5346,7 +5449,7 @@ async function telaConsultasAdmin(from) {
         id: `admin_consulta_${idx}`,
         title: `${idx + 1}. ${(item.u?.nome || "Cliente").slice(0, 16)}`
       })),
-      { id: ADMIN_IDS.menu, title: "Menu admin" }
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ],
     registrarPergunta: false
   }
@@ -5371,7 +5474,10 @@ function telaDetalheConsultaAdmin(from, idx) {
   if (!item) {
     return {
       texto: "Nao encontrei essa consulta na lista atual. Envie *consultas* para atualizar.",
-      opcoes: [{ id: ADMIN_IDS.agenda, title: "Atualizar" }],
+      opcoes: [
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+      ],
       registrarPergunta: false
     }
   }
@@ -5392,12 +5498,14 @@ function telaDetalheConsultaAdmin(from, idx) {
 
   const opcoes = item.eventId
     ? [
-      { id: ADMIN_IDS.cancelarConsulta, title: "❌ Cancelar" },
-      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar" }
+      { id: ADMIN_IDS.cancelarConsulta, title: "❌ Cancelar consulta" },
+      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar consultas" },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ]
     : [
-      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar" },
-      { id: ADMIN_IDS.casos, title: "📂 Casos" }
+      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar consultas" },
+      { id: ADMIN_IDS.casos, title: "📂 Ver casos" },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ]
 
   return {
@@ -5412,7 +5520,10 @@ function telaConfirmarCancelamentoAdmin(from) {
   if (!item) {
     return {
       texto: "Nao encontrei a consulta selecionada. Envie *consultas* para atualizar.",
-      opcoes: [{ id: ADMIN_IDS.agenda, title: "Atualizar" }],
+      opcoes: [
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+      ],
       registrarPergunta: false
     }
   }
@@ -5422,8 +5533,9 @@ function telaConfirmarCancelamentoAdmin(from) {
     return {
       texto: "Essa consulta esta no HubSpot, mas nao encontrei o ID do evento Calendar para cancelar com seguranca. Abra o HubSpot ou atualize a agenda.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "Atualizar" },
-        { id: ADMIN_IDS.casos, title: "Casos" }
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.casos, title: "Ver casos" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
     }
@@ -5432,9 +5544,10 @@ function telaConfirmarCancelamentoAdmin(from) {
   return {
     texto: `❌ *Confirmar cancelamento?*\n\n👤 Cliente: *${u.nome || "Cliente"}*\n🕒 Consulta: *${dataHora}*`,
     opcoes: [
-      { id: ADMIN_IDS.cancelarSim, title: "❌ Cancelar" },
-      { id: ADMIN_IDS.cancelarNao, title: "⬅️ Voltar" },
-      { id: ADMIN_IDS.agenda, title: "📅 Consultas" }
+      { id: ADMIN_IDS.cancelarSim, title: "❌ Confirmar cancelar" },
+      { id: ADMIN_IDS.cancelarNao, title: "⬅️ Voltar à consulta" },
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ],
     registrarPergunta: false
   }
@@ -5445,7 +5558,10 @@ async function cancelarConsultaAdmin(from) {
   if (!item) {
     return {
       texto: "Nao encontrei a consulta selecionada. Envie *consultas* para atualizar.",
-      opcoes: [{ id: ADMIN_IDS.agenda, title: "Atualizar" }],
+      opcoes: [
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+      ],
       registrarPergunta: false
     }
   }
@@ -5463,8 +5579,9 @@ async function cancelarConsultaAdmin(from) {
     return {
       texto: "Nao consegui cancelar o evento no Google Calendar. Tente novamente em instantes.",
       opcoes: [
-        { id: ADMIN_IDS.cancelarSim, title: "Tentar de novo" },
-        { id: ADMIN_IDS.agenda, title: "Atualizar" }
+        { id: ADMIN_IDS.cancelarSim, title: "Tentar cancelar" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
     }
@@ -5507,7 +5624,10 @@ async function cancelarConsultaAdmin(from) {
       `📝 Nota HubSpot: ${notaHubSpotOk ? "✅ ok" : "⚠️ nao registrada"}`,
       `📨 Cliente avisado: ${clienteAvisadoOk ? "✅ ok" : "⚠️ nao enviado"}`
     ].filter(Boolean).join("\n"),
-    opcoes: [{ id: ADMIN_IDS.agenda, title: "📅 Consultas" }],
+    opcoes: [
+      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
+    ],
     registrarPergunta: false
   }
 }
@@ -5627,7 +5747,10 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     agendarPersistenciaSessoesAdminAssistidas,
     logDebug,
     logErro,
-    logAdminAssistido: evento => logDebug("[ADMIN_ASSISTIDO]", JSON.stringify(evento)),
+    logAdminAssistido: evento => {
+      const payloadSeguro = criarPayloadLogAdminAssistido(evento?.evento, evento)
+      logDebug("[ADMIN_ASSISTIDO]", JSON.stringify(payloadSeguro))
+    },
     transcreverAudioAdmin: async msg => {
       const mediaId = msg?.audio?.id || msg?.voice?.id
       if (!mediaId) return ""
@@ -5636,7 +5759,24 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       return await transcrever(midia.buffer, midia.mimeType, {
         origem: "admin_atendimento_assistido"
       })
-    }
+    },
+    processarMidiaAdminAssistida: async (msg, contexto = {}) => adminAssistedMediaStaging.stage(msg, {
+      downloadMedia: baixarMidia,
+      analyzeDocument: input => executarPipelineDocumental(input),
+      resolveIntegrity: async ({ pipeline }) => {
+        const esperado = String(contexto.adminAssistido?.dados?.cpf?.valor || "").replace(/\D/g, "")
+        const campos = pipeline?.extracao?.camposExtraidos || {}
+        const encontrado = String(campos.cpf || campos.cpf_do_cliente || "").replace(/\D/g, "")
+        if (esperado && encontrado && esperado === encontrado) {
+          return { approved: true, partyRole: "titular" }
+        }
+        return {
+          approved: false,
+          partyRole: null,
+          reason: esperado && encontrado ? "cpf_divergente" : "identidade_documental_nao_confirmada"
+        }
+      }
+    })
   }
 
   if (["admin_atendimento_assistido_ia", ADMIN_IDS.atendimentoAssistidoIa].includes(comando)) {
@@ -5654,7 +5794,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       opcoes: [
         { id: ADMIN_IDS.casos, title: "📂 Casos" },
         { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento IA" },
-        { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+        { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
       ],
       registrarPergunta: false,
       audio: false
@@ -5715,7 +5855,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
         opcoes: [
           { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
           { id: ADMIN_IDS.casos, title: "📂 Casos" },
-          { id: ADMIN_IDS.menu, title: "🏠 Menu admin" }
+          { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
         ],
         registrarPergunta: false
       }
@@ -5726,7 +5866,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return {
       texto: "⚠️ Nao ha uma lista ativa para esse numero.\n\nAbra *Agenda*, *Prioridades* ou *Casos* primeiro.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "📅 Agenda" },
+        { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
         { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
         { id: ADMIN_IDS.casos, title: "📂 Casos" }
       ],
@@ -5746,7 +5886,46 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   const matchPaginaPrioridades = comando.match(/^admin_prioridades_pagina_(\d+)$/)
   if (matchPaginaPrioridades) return await telaAdminPrioridades(from, Number(matchPaginaPrioridades[1]))
 
-  if (["admin_cancelar_consulta", ADMIN_IDS.cancelarConsulta].includes(comando)) return telaConfirmarCancelamentoAdmin(from)
+  if (comando.startsWith("admin_post_human_completed_")) {
+    const item = obterCasoAdmin(from)
+    if (!item?.u) return { texto: "Selecione novamente o caso antes de confirmar o atendimento.", opcoes: [], registrarPergunta: false }
+    const usuario = {
+      ...item.u,
+      telefoneNormalizado: normalizarNumeroWhatsAppEnvio(item.from || item.u._numero || item.u.whatsappContato)
+    }
+    const result = await handleAtendimentoRealizadoConfirmation({
+      from,
+      interactionId: comando,
+      usuario,
+      isAdmin: ehWhatsAppAdmin,
+      repository: postHumanCycleRepository,
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle,
+        usuario: currentUser,
+        repository: postHumanCycleRepository,
+        deps: {
+          resolverListaDocumental: () => getDocumentosListaCaso(currentUser),
+          listarArquivosDrive: async () => currentUser.pastaDriveId ? listarArquivosDriveNaPasta(currentUser.pastaDriveId) : [],
+          requiredSources: currentUser.pastaDriveId ? ["drive"] : [],
+          camposComplementaresPendentes: async () => {
+            const context = await carregarPendenciasComplementaresPosHumanas({
+              usuario: currentUser, cycle, repository: postHumanCycleRepository
+            })
+            return context
+          },
+          getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(currentUser._numero || currentUser.whatsappContato)]?.ultimaMsg ?? currentUser.ultimaMsg,
+          applySafeHubspotUpdates: async () => ({ humanReviewRequired: false, divergences: [] }),
+          sendFree: (to, text) => enviar(to, text),
+          sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
+          templateConfig: META_TEMPLATES.casoAtualizacao,
+          buildTemplateParams: solicitacao => [solicitacao.texto]
+        }
+      })
+    })
+    return { texto: result.text, opcoes: opcoesAposAcaoCasoAdmin(), registrarPergunta: false }
+  }
+
+    if (["admin_cancelar_consulta", ADMIN_IDS.cancelarConsulta].includes(comando)) return telaConfirmarCancelamentoAdmin(from)
   if (["admin_cancelar_nao", ADMIN_IDS.cancelarNao].includes(comando)) return telaDetalheConsultaAdmin(from)
   if (["admin_cancelar_sim", ADMIN_IDS.cancelarSim].includes(comando)) return await cancelarConsultaAdmin(from)
   if (["admin_caso_links", ADMIN_IDS.casoLinks].includes(comando)) return telaLinksCasoAdmin(from)
@@ -6109,6 +6288,28 @@ async function prepararFluxoResumoOutro(from, u) {
   return await telaConfirmacaoComImagem(from, u)
 }
 
+async function uploadDocumentoCano(u, pastaId, nome, buffer, mimeType, contexto = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return null
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex")
+  if (!u._canonicalDocuments) u._canonicalDocuments = {}
+  if (u._canonicalDocuments[sha256]?.fileId) {
+    return { id: u._canonicalDocuments[sha256].fileId, sha256, webViewLink: u._canonicalDocuments[sha256].webViewLink || null }
+  }
+  const arquivo = await uploadDrive(pastaId, nome, buffer, mimeType)
+  if (!arquivo?.id) return null
+  u._canonicalDocuments[sha256] = {
+    fileId: arquivo.id,
+    sha256,
+    name: nome,
+    mimeType,
+    status: "uploaded",
+    uploadedAt: new Date().toISOString(),
+    webViewLink: arquivo.webViewLink || null,
+    contexto: contexto || {}
+  }
+  return arquivo
+}
+
 async function detectarEncerramentoPorAudio(from, u, msgObj, tipo) {
   const mediaId = msgObj?.[tipo]?.id
   if (!mediaId) return null
@@ -6196,110 +6397,173 @@ async function finalizarCadastro(from, u) {
   u.docsEntregues = []; u.docsAusentes = []; u.docsPulados = []; u.docsParciais = []; u.docsDispensados = []
   u.docAtualIdx = 0; u.ultimoArqId = null
 
-  var driveCalled = true
-  var pastaRaw = await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
-  var pastaNormalizada = normalizeDriveFolderResult(pastaRaw)
-  var caseFolderId = pastaNormalizada ? pastaNormalizada.id : null
-  logDebug("[CANONICAL] canonical_step=drive driveCalled=true driveResultHasId=" + String(!!caseFolderId) + " contactId=" + String(u.contatoId || "-") + " dealId=" + String(u.negocioId || "-") + " numeroCaso=" + String(numeroCaso || "-") + " completed=" + String(!!caseFolderId))
-  assertFinalizationOperation("drive_folder", caseFolderId)
-  u.pastaDriveId = caseFolderId
-  u.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || null
-  persistirUsersAgora({ propagarErro: true })
-
-  const existente = await hsBuscarPorPhone(telefoneContato)
-  if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
-  let contatoId = u.contatoId || existente?.id || null
-
-  const nomeExistenteHS = existente?.properties?.firstname || ""
-  const nomeTerceiro = (u.nome || "").trim()
-  // Se o telefone informado para terceiro já existe com outro nome, preserva o contato.
-  // O nome divergente fica registrado no negócio/nota, sem sobrescrever nem duplicar contato.
-  const telefoneJaEhDeOutro = ehTerceiro && contatoId &&
-    nomeExistenteHS &&
-    normalizarNomeComparacao(nomeExistenteHS) !== normalizarNomeComparacao(nomeTerceiro)
-
-  if (telefoneJaEhDeOutro) {
-    logDebug("[HUBSPOT] Telefone do terceiro ja existe com outro nome. Preservando contato e registrando divergencia no negocio.")
-  } else if (!contatoId) {
-    contatoId = await hsCriarContato(telefoneContato, u)
-  } else {
-    logDebug("Contato encontrado no HubSpot:", contatoId)
-    const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
-    const propsAusentes = montarPropsAusentesContatoHubSpot(existente, propsContato)
-    // Para caso próprio do cliente: nome confirmado sobrepõe o anterior no HubSpot.
-    // Os demais campos só completam lacunas, sem apagar informação já existente.
-    if (u.nomeConfirmado && u.nome && !ehTerceiro) propsAusentes.firstname = u.nome
-    if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
-  }
-  assertFinalizationOperation("hubspot_contact", contatoId)
-  u.contatoId = contatoId
-  if (contatoId) u._hubspotSemContato = false
-  persistirUsersAgora({ propagarErro: true })
-
-  let negocioId = u.negocioId || null
-  if (!negocioId && contatoId && !ehNovoCasoCliente) {
-    const negocioExistente = await hsBuscarNegocioAbertoDoContato(contatoId)
-    if (negocioExistente) {
-      negocioId = negocioExistente
-      u.negocioId = negocioId
-      logDebug("Negócio existente encontrado:", negocioId)
+  let canonicalExecuted = false
+    const canonicalContext = {
+      source: "live_finalize_cadastro",
+      contactProperties: montarPropsContatoHubSpot(telefoneContato, u),
+      dealProperties: { ...getHubSpotDealStateProps(u), numero_de_caso: numeroCaso },
+      tasks: [
+        {
+          key: `case-created-${numeroCaso}`,
+          subject: `Caso ${numeroCaso} criado`,
+          body: `Contato e negócio criados para o caso ${numeroCaso}.`,
+          status: "NOT_STARTED",
+          priority: "MEDIUM",
+          type: "TODO",
+          ownerId: u.ownerId || null
+        }
+      ],
+      internalNotifications: [
+        {
+          type: "hubspot_note",
+          subject: "CADASTRO COMPLETO",
+          message: resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`
+        }
+      ]
     }
-  }
-
-  const dealnameFinal = montarTituloNegocioHubSpot(
-    { ...u, numeroCaso, negocioStageId: HS_STAGE.ANALISE },
-    { HS_STAGE, stage: HS_STAGE.ANALISE }
-  )
-
-  if (!negocioId) {
-    logDebug("Nenhum negócio encontrado, criando novo")
-    negocioId = await hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
-    u.negocioId = negocioId
-  } else {
-    logDebug("Negócio já existe, atualizando dealname:", negocioId)
-    u.negocioId = negocioId
-    await hsAtualizarNegocioSerializado(u.negocioId, {
-      dealname: dealnameFinal
-    })
-  }
-  assertFinalizationOperation("hubspot_deal", negocioId)
-  u.negocioId = negocioId
-  persistirUsersAgora({ propagarErro: true })
-
-  if (u.negocioId && u.numeroCaso) {
-    const casoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, {
-      numero_de_caso: u.numeroCaso,
-      dealname: dealnameFinal
-    })
-    assertFinalizationOperation("hubspot_case_number", casoAtualizado)
-    const etapaAtualizada = await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
-    assertFinalizationOperation("hubspot_stage", etapaAtualizada)
-    u.negocioStageId = HS_STAGE.ANALISE
-  }
-  if (contatoId) {
-    const propsContatoPosCaso = montarPropsAusentesContatoHubSpot(existente, montarPropsContatoHubSpot(telefoneContato, u))
-    if (Object.keys(propsContatoPosCaso).length) await hsAtualizarContato(contatoId, propsContatoPosCaso)
-  }
-  const associado = await hsAssociar(contatoId, negocioId)
-  assertFinalizationOperation("hubspot_association", associado)
-  const estadoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
-  assertFinalizationOperation("hubspot_state", estadoAtualizado)
-
-  if (contatoId) {
-    await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
-    if (u.negocioId) {
-      await hsCriarNotaNegocio(u.negocioId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
+    if (ehTerceiro) {
+      canonicalContext.internalNotifications.push({
+        type: "hubspot_note",
+        subject: "DIVERGENCIA DE NOME - CASO PARA TERCEIRO",
+        message: [
+          "Caso para terceiro com telefone ja existente no HubSpot.",
+          `Nome atual do contato: ${existente?.properties?.firstname || "nao informado"}`,
+          `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
+          `Telefone informado: ${telefoneContato}`,
+          "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
+        ].join("\n")
+      })
     }
+
+    const canonicalResult = await liveCaseFlow.executeLiveCaseFlow(u, canonicalContext)
+    if (canonicalResult?.result?.completed) {
+      canonicalExecuted = true
+      if (!u.pastaDriveId && u._canonicalCheckpoint?.steps?.drive?.result?.id) {
+        u.pastaDriveId = u._canonicalCheckpoint.steps.drive.result.id
+      }
+    } else if (canonicalResult?.result?.error) {
+      const partial = canonicalResult.result.partialResources || {}
+      const hasPartial = canonicalResult.result.hasPartialWrites
+      const interruptedStep = canonicalResult.result.interruptedStep
+      logErro("canonical_executor", `fallback para legado: ${canonicalResult.result.error}`, {
+        canonicalError: canonicalResult.result.error,
+        canonicalErrorCode: canonicalResult.result.code,
+        interruptedStep,
+        hasPartialWrites: hasPartial,
+        partialResources: partial,
+        planHash: canonicalResult.result.planHash
+      })
+      if (hasPartial) {
+        if (partial.contactId) u.contatoId = u.contatoId || partial.contactId
+        if (partial.dealId) u.negocioId = u.negocioId || partial.dealId
+        if (partial.caseFolderId && !u.pastaDriveId) {
+          u.pastaDriveId = partial.caseFolderId
+        }
+      }
+      canonicalExecuted = false
+    }
+
+  if (!canonicalExecuted) {
+    var driveCalled = true
+    var pastaRaw = await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
+    var pastaNormalizada = normalizeDriveFolderResult(pastaRaw)
+    var caseFolderId = pastaNormalizada ? pastaNormalizada.id : null
+    logDebug("[CANONICAL] canonical_step=drive driveCalled=true driveResultHasId=" + String(!!caseFolderId) + " contactId=" + String(u.contatoId || "-") + " dealId=" + String(u.negocioId || "-") + " numeroCaso=" + String(numeroCaso || "-") + " completed=" + String(!!caseFolderId))
+    assertFinalizationOperation("drive_folder", caseFolderId)
+    u.pastaDriveId = caseFolderId
+    u.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || null
+    persistirUsersAgora({ propagarErro: true })
+
+    const existente = await hsBuscarPorPhone(telefoneContato)
+    if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
+    let contatoId = u.contatoId || existente?.id || null
+
+    const nomeExistenteHS = existente?.properties?.firstname || ""
+    const telefoneJaEhDeOutro = ehTerceiro && contatoId &&
+      nomeExistenteHS &&
+      normalizarNomeComparacao(nomeExistenteHS) !== normalizarNomeComparacao(nomeTerceiro)
+
     if (telefoneJaEhDeOutro) {
-      const notaDivergencia = [
-        "Caso para terceiro com telefone ja existente no HubSpot.",
-        `Nome atual do contato: ${nomeExistenteHS || "nao informado"}`,
-        `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
-        `Telefone informado: ${telefoneContato}`,
-        "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
-      ].join("\n")
-      await hsCriarNota(contatoId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
-      if (u.negocioId) await hsCriarNotaNegocio(u.negocioId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
+      logDebug("[HUBSPOT] Telefone do terceiro ja existe com outro nome. Preservando contato e registrando divergencia no negocio.")
+    } else if (!contatoId) {
+      contatoId = await hsCriarContato(telefoneContato, u)
+    } else {
+      logDebug("Contato encontrado no HubSpot:", contatoId)
+      const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
+      const propsAusentes = montarPropsAusentesContatoHubSpot(existente, propsContato)
+      if (u.nomeConfirmado && u.nome && !ehTerceiro) propsAusentes.firstname = u.nome
+      if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
+    }
+    assertFinalizationOperation("hubspot_contact", contatoId)
+    u.contatoId = contatoId
+    if (contatoId) u._hubspotSemContato = false
+    persistirUsersAgora({ propagarErro: true })
+
+    let negocioId = u.negocioId || null
+    if (!negocioId && contatoId && !ehNovoCasoCliente) {
+      const negocioExistente = await hsBuscarNegocioAbertoDoContato(contatoId)
+      if (negocioExistente) {
+        negocioId = negocioExistente
+        u.negocioId = negocioId
+        logDebug("Negócio existente encontrado:", negocioId)
+      }
+    }
+
+    const dealnameFinal = montarTituloNegocioHubSpot(
+      { ...u, numeroCaso, negocioStageId: HS_STAGE.ANALISE },
+      { HS_STAGE, stage: HS_STAGE.ANALISE }
+    )
+
+    if (!negocioId) {
+      logDebug("Nenhum negócio encontrado, criando novo")
+      negocioId = await hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
+      u.negocioId = negocioId
+    } else {
+      logDebug("Negócio já existe, atualizando dealname:", negocioId)
+      u.negocioId = negocioId
+      await hsAtualizarNegocioSerializado(u.negocioId, {
+        dealname: dealnameFinal
+      })
+    }
+    assertFinalizationOperation("hubspot_deal", negocioId)
+    u.negocioId = negocioId
+    persistirUsersAgora({ propagarErro: true })
+
+    if (u.negocioId && u.numeroCaso) {
+      const casoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, {
+        numero_de_caso: u.numeroCaso,
+        dealname: dealnameFinal
+      })
+      assertFinalizationOperation("hubspot_case_number", casoAtualizado)
+      const etapaAtualizada = await hsAtualizarEtapaNegocio(u.negocioId, HS_STAGE.ANALISE)
+      assertFinalizationOperation("hubspot_stage", etapaAtualizada)
+      u.negocioStageId = HS_STAGE.ANALISE
+    }
+    if (u.contatoId) {
+      const propsContatoPosCaso = montarPropsAusentesContatoHubSpot(existente, montarPropsContatoHubSpot(telefoneContato, u))
+      if (Object.keys(propsContatoPosCaso).length) await hsAtualizarContato(contatoId, propsContatoPosCaso)
+    }
+    const associado = await hsAssociar(contatoId, negocioId)
+    assertFinalizationOperation("hubspot_association", associado)
+    const estadoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
+    assertFinalizationOperation("hubspot_state", estadoAtualizado)
+
+    if (contatoId) {
+      await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
+      if (u.negocioId) {
+        await hsCriarNotaNegocio(u.negocioId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
+      }
+      if (telefoneJaEhDeOutro) {
+        const notaDivergencia = [
+          "Caso para terceiro com telefone ja existente no HubSpot.",
+          `Nome atual do contato: ${nomeExistenteHS || "nao informado"}`,
+          `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
+          `Telefone informado: ${telefoneContato}`,
+          "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
+        ].join("\n")
+        await hsCriarNota(contatoId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
+        if (u.negocioId) await hsCriarNotaNegocio(u.negocioId, "DIVERGENCIA DE NOME - CASO PARA TERCEIRO", notaDivergencia)
+      }
     }
   }
 
@@ -9278,6 +9542,27 @@ async function consolidarDocumentosDoCasoSeguro({ u, contexto = {} }) {
   }
 }
 
+async function registrarDocumentoNoCicloPosHumano(u, metadata = {}) {
+  const handoff = u?._postHumanDocumentHandoff
+  if (!handoff || !postHumanCycleRepository ||
+      String(handoff.contatoId || "") !== String(u.contatoId || "") ||
+      String(handoff.negocioId || "") !== String(u.negocioId || "") ||
+      String(handoff.numeroCaso || "").toUpperCase() !== String(u.numeroCaso || "").toUpperCase()) return false
+  try {
+    await postHumanCycleRepository.updateStatus(handoff.cycleId, "awaiting_response", {
+      documentoRecebidoEm: new Date().toISOString(),
+      documentoMetadados: {
+        mediaType: sanitizarTextoEntrada(metadata.mediaType || "document").slice(0, 30),
+        fluxo: sanitizarTextoEntrada(metadata.fluxo || "legacy_document_pipeline_v1").slice(0, 80)
+      }
+    })
+    handoff.persisted = true
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (!(ehAudio || ehDoc)) return null
   if (![STAGES.CLIENTE, STAGES.AGUARDANDO_URGENTE, STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) return null
@@ -9393,7 +9678,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     const nCli = ulN && ulN !== prN ? `${prN} ${ulN}` : prN
     const ext = (nomeArq || "").split(".").pop()
     const nomeFinal = `Aguardando classificacao - ${nCli}${ext && ext.length <= 4 ? "." + ext : ".jpg"}`
-    const arquivo = await uploadDrive(u.pastaDriveId, nomeFinal, midia.buffer, midia.mimeType)
+    const arquivo = await uploadDocumentoCano(u, u.pastaDriveId, nomeFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "avulso_pendente", nomeSalvo: nomeFinal })
     if (!arquivo) {
       return responderTelaDocumento(from, u, criarTela({
         id: "documento_avulso_upload_falhou",
@@ -9417,6 +9702,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         nomeSalvo: nomeFinal
       }
     })
+    await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "avulso_pendente" })
     u._docClientePendenteArquivo = arquivo.webViewLink || null
     u._docClientePendenteId = arquivo.id || null
     u._docClientePendenteNome = nomeFinal
@@ -9458,7 +9744,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const nArqFinal = `${lblD} - ${folha} - ${nCli}${ext2 && ext2.length <= 4 ? "."+ext2 : ".jpg"}`
   const arquivoEhPdf = /pdf/i.test(midia.mimeType || mimeType || "") || /\.pdf$/i.test(nomeArq || "")
 
-  const arquivo = await uploadDrive(u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType)
+  const arquivo = await uploadDocumentoCano(u, u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "guiado", documentoId: docAtual?.id || null, documentoLabel: lblD, folha, nomeSalvo: nArqFinal })
   if (!arquivo) {
     return responderTelaDocumento(from, u, criarTela({
       id: "documento_guiado_upload_falhou",
@@ -9487,6 +9773,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       nomeSalvo: nArqFinal
     }
   })
+  await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "guiado" })
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
@@ -15370,6 +15657,141 @@ async function drenaFilaUsuario(from) {
   filasMensagens.delete(from)
 }
 
+async function carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository }) {
+  if (!usuario?.contatoId || !usuario?.negocioId ||
+      String(usuario.negocioId) !== String(cycle?.negocioId) ||
+      String(usuario.contatoId) !== String(cycle?.contatoId)) {
+    return { camposPendentes: [], humanReviewRequired: true, reviewReason: "contexto_contato_negocio_invalido" }
+  }
+  const contactProperties = [...new Set(Object.values(POST_HUMAN_CONTACT_FIELDS).flat())]
+  const dealProperties = [...new Set(Object.values(POST_HUMAN_DEAL_FIELDS).flat())]
+  const [contactResponse, dealResponse, associationResponse, persistedCycle] = await Promise.all([
+    axios.get(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(usuario.contatoId)}?properties=${encodeURIComponent(contactProperties.join(","))}`,
+      { headers: HS() }
+    ),
+    axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(usuario.negocioId)}?properties=${encodeURIComponent(dealProperties.join(","))}`,
+      { headers: HS() }
+    ),
+    axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(usuario.negocioId)}/associations/contacts`,
+      { headers: HS() }
+    ),
+    repository.getCycle(cycle.cycleId)
+  ])
+  const associatedIds = (associationResponse.data?.results || []).map(item => String(item.id))
+  const context = resolveComplementaryContext({
+    usuario,
+    contact: {
+      id: String(contactResponse.data?.id || ""),
+      loaded: true,
+      dealIds: associatedIds.includes(String(usuario.contatoId)) ? [String(usuario.negocioId)] : [],
+      properties: contactResponse.data?.properties || {}
+    },
+    deal: {
+      id: String(dealResponse.data?.id || ""),
+      loaded: true,
+      properties: dealResponse.data?.properties || {}
+    },
+    answered: persistedCycle?.payload?.respostas || {},
+    previousPending: persistedCycle?.payload?.camposPendentes || [],
+    documents: {
+      recebidos: usuario.docsEntregues || [],
+      ausentes: usuario.docsAusentes || [],
+      parciais: usuario.docsParciais || []
+    },
+    expectedContactId: usuario.contatoId,
+    expectedDealId: usuario.negocioId
+  })
+  return context
+}
+
+function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
+  return createPostHumanDispatcher({
+    isEnabled: isPostHumanComplementationEnabled,
+    repository: postHumanCycleRepository,
+    normalizePhone: normalizarNumeroWhatsAppEnvio,
+    resolveValidatedContactByPhone: async telefoneNormalizado => {
+      const found = await hsBuscarPorPhone(telefoneNormalizado)
+      const foundPhone = normalizarNumeroWhatsAppEnvio(found?.properties?.phone || found?.properties?.mobilephone)
+      return found?.id && foundPhone === telefoneNormalizado
+        ? { validated: true, contatoId: String(found.id), telefoneNormalizado: foundPhone }
+        : null
+    },
+    resolveBusiness: async ({ usuario: current, contexto, numeroCaso }) => {
+      const negocioId = contexto?.negocioId || current?.negocioId
+      const caso = numeroCaso || contexto?.numeroCaso || current?.numeroCaso
+      return negocioId && caso ? { validated: true, negocioId, numeroCaso: caso } : null
+    },
+    saveInformation: async ({ cycle, content }) => {
+      const current = await postHumanCycleRepository.getCycle(cycle.cycleId)
+      const field = current?.payload?.campoPendente || current?.campoPendente
+      if (!field) return { persisted: true }
+      const contactFields = {
+        nomeCompleto: "firstname", cpf: "cpf_do_cliente", dataNascimento: "date_of_birth",
+        telefone: "phone", email: "email", cidade: "city", uf: "state"
+      }
+      const dealFields = {
+        areaJuridica: "area_juridica", tipoCaso: "tipo_de_caso",
+        descricao: "description", beneficio: "beneficio", motivo: "motivo",
+        situacao: "situacao_caso", nb: "nb"
+      }
+      const property = contactFields[field] || dealFields[field]
+      const objectType = contactFields[field] ? "contact" : dealFields[field] ? "deal" : null
+      const objectId = objectType === "contact" ? cycle.contatoId : cycle.negocioId
+      if (!property || !objectId || !cycle.contatoId || !cycle.negocioId) {
+        return { persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" }
+      }
+      let currentProperties = {}
+      if (objectType === "contact") {
+        const existingContact = await hsBuscarPorPhone(from)
+        currentProperties = existingContact?.properties || {}
+      } else {
+        const response = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(objectId)}?properties=${encodeURIComponent(property)}`,
+          { headers: HS() }
+        )
+        currentProperties = response.data?.properties || {}
+      }
+      return {
+        persisted: true,
+        hubspot: {
+          objectType, objectId, contactId: cycle.contatoId, expectedDealId: cycle.negocioId,
+          current: currentProperties, incoming: { [property]: sanitizarTextoEntrada(content) }
+        }
+      }
+    },
+    applySafeHubspotUpdates: async ({ cycle, objectType, objectId, contactId, expectedDealId, current, incoming }) =>
+      atualizarHubSpotSeguro({
+        objectType, objectId, current: current || {}, incoming: incoming || {},
+        contactId: contactId || cycle.contatoId,
+        expectedDealId: expectedDealId || cycle.negocioId,
+        cycleId: cycle.cycleId,
+        deps: {
+          isAssociated: async (validatedContactId, validatedDealId) => {
+            const assoc = await axios.get(
+              `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(validatedDealId)}/associations/contacts`,
+              { headers: HS() }
+            )
+            const ids = (assoc.data?.results || []).map(item => String(item.id))
+            return ids.length === 1 && ids[0] === String(validatedContactId)
+          },
+          update: async (type, id, properties) => type === "contact"
+            ? hsAtualizarContato(id, properties) : hsAtualizarNegocio(id, properties),
+          createReviewNote: async (_type, _id, note) =>
+            hsCriarNotaNegocio(cycle.negocioId, "REVISÃO PÓS-ATENDIMENTO", `Ciclo: ${note.cycleId}\nCampos divergentes: ${note.fields.join(", ")}`)
+        }
+      }),
+    legacyDocumentPipeline: createLegacyDocumentPipeline({
+      processMedia: ({ context, tipo, ehAudio, ehDoc }) =>
+        processarMidia(from, nomeWA, usuario, context.rawMessage, tipo, ehAudio, ehDoc),
+      persistDocument: ({ handoff }) => Boolean(handoff.persisted)
+    }),
+    safeLogger: (event, error) => logErro("post_human", `${event}: ${error}`)
+  })
+}
+
 async function processarComLock(from, nomeWA, text, msgObj) {
   const textoSanitizado = sanitizarTextoEntrada(text)
   let u = users[from] || null
@@ -15387,7 +15809,29 @@ async function processarComLock(from, nomeWA, text, msgObj) {
     }
     const estadoHubSpotAntes = serializarEstado(u)
 
-    cancelarReengajamentosPendentes({
+    if (postHumanCycleRepository) {
+      const postHumanDispatch = await criarDispatcherPosHumano({ from, nomeWA: nomeWAEfetivo, usuario: u })({
+        from,
+        msgType: msgObj?.type,
+        content: ["image", "document", "pdf", "audio"].includes(String(msgObj?.type || "").toLowerCase()) ? msgObj : (msgObj?.text?.body || text),
+        rawMessage: msgObj,
+        usuario: u,
+        contexto: u.contextoConversa
+      })
+      if (postHumanDispatch.handled) {
+        const postHumanResponse = postHumanDispatch.response
+        if (postHumanDispatch.requiresCaseSelection) {
+          return { texto: "Há mais de um caso aguardando complemento. Selecione o caso no Menu do Cliente para continuar.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        }
+        if (postHumanResponse.deferred) return { texto: "Tudo bem. Seu progresso foi salvo e você pode responder depois.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanResponse.pipelineResponse) return postHumanResponse.pipelineResponse
+        if (postHumanDispatch.humanReviewRequired) return { texto: "Recebi sua informação. Ela seguirá para revisão segura antes de qualquer atualização.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanResponse.partial) return { texto: "Informação recebida e vinculada ao seu caso. Você pode continuar enviando os itens pendentes.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (!postHumanResponse.partial) return { texto: "Informação recebida e vinculada ao seu caso.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+      }
+    }
+
+        cancelarReengajamentosPendentes({
       phone: normalizarNumeroWhatsAppEnvio(from),
       dealId: u.negocioId,
       contactId: u.contatoId,
@@ -16354,6 +16798,40 @@ async function iniciarServidor() {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
     console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)
     carregarUsersPersistidos()
+    if (isPostHumanComplementationEnabled()) {
+      postHumanCycleRepository = new PostHumanCycleRepository({
+        pool: getPool(),
+        mode: process.env.NODE_ENV === "production" ? "postgres" : (getPool() ? "postgres" : "local")
+      })
+      await recoverPostHumanCycles({
+        isEnabled: isPostHumanComplementationEnabled,
+        repository: postHumanCycleRepository,
+        isCaseAllowed: isPilotCaseAllowed,
+        findUser: cycle => Object.values(users).find(item =>
+          String(item?.negocioId) === String(cycle.negocioId) &&
+          String(item?.numeroCaso).toUpperCase() === String(cycle.numeroCaso).toUpperCase()),
+        processCycle: (cycle, usuario) => processPostHumanCycle({
+          cycle, usuario, repository: postHumanCycleRepository,
+          deps: {
+            resolverListaDocumental: () => getDocumentosListaCaso(usuario),
+            listarArquivosDrive: async () => usuario.pastaDriveId ? listarArquivosDriveNaPasta(usuario.pastaDriveId) : [],
+            requiredSources: usuario.pastaDriveId ? ["drive"] : [],
+            camposComplementaresPendentes: async () => {
+              const context = await carregarPendenciasComplementaresPosHumanas({
+                usuario, cycle, repository: postHumanCycleRepository
+              })
+              return context
+            },
+            getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
+            sendFree: (to, message) => enviar(to, message),
+            sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
+            templateConfig: META_TEMPLATES.casoAtualizacao,
+            buildTemplateParams: solicitacao => [solicitacao.texto]
+          }
+        }),
+        safeLogger: (event, error) => logErro("post_human", `${event}: ${error}`)
+      })
+    }
     carregarWebhookInbox()
     carregarSessoesAdminAssistidasPersistidas(sessoesAdminWhatsApp)
     restaurarTimersPersistidos()
@@ -16391,4 +16869,13 @@ const encerrarServidor = criarGracefulShutdown({
 })
 for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { encerrarServidor(signal) })
 
-iniciarServidor()
+module.exports = {
+  app,
+  iniciarServidor,
+  encerrarServidor,
+  telaDetalheCasoAdmin,
+  sessoesAdminWhatsApp,
+  users
+}
+
+if (require.main === module) iniciarServidor()

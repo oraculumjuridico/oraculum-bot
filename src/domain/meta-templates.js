@@ -15,11 +15,20 @@ const META_TEMPLATES = {
     critico: false
   },
   casoAtualizacao: {
-    nome: "caso_atualizacao",
-    idioma: process.env.WHATSAPP_TEMPLATE_LANG || "pt_BR",
-    headerImageUrl: process.env.WHATSAPP_TEMPLATE_TERCEIRO_IMAGEM_URL || "",
-    parametrosEsperados: null,
-    critico: false
+    nome: "caso_atualizacao_v3",
+    idioma: "pt_BR",
+    status: "APPROVED",
+    categoria: "UTILITY",
+    headerImageUrl: process.env.POST_HUMAN_TEMPLATE_IMAGE_URL || process.env.WHATSAPP_TEMPLATE_CASO_ATUALIZACAO_IMAGEM_URL || "",
+    parametrosEsperados: 1,
+    componentes: [
+      { tipo: "HEADER", formato: "IMAGE", parametros: [{ tipo: "image" }] },
+      { tipo: "BODY", parametros: [{ tipo: "text", ordem: 1 }] },
+      { tipo: "FOOTER", parametros: [] }
+    ],
+    exigeContratoComponentes: true,
+    contratoVerificado: true,
+    critico: true
   },
   retomadaAtendimento: {
     nome: "retomada_atendimento",

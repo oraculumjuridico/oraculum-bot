@@ -20,6 +20,7 @@ const {
 const { mapearTipoCaso } = require("../src/domain/lead-temperature")
 const {
   CONTACT_WRITE_PROPERTIES,
+  MANAGED_CONTACT_PROPERTIES,
   DEAL_WRITE_PROPERTIES,
   MANAGED_DEAL_PROPERTIES,
   validateHubSpotProperties
@@ -103,7 +104,7 @@ async function executar() {
   const contatosExportados = propriedadesExportadasHubSpot("hubspot-properties-export-contacts-2026-06-26.csv")
   const negociosExportados = propriedadesExportadasHubSpot("hubspot-properties-export-deals-2026-06-27.csv")
   for (const property of CONTACT_WRITE_PROPERTIES) {
-    assert.equal(contatosExportados.has(property), true, `propriedade de contato ausente no export HubSpot: ${property}`)
+    assert.equal(contatosExportados.has(property) || MANAGED_CONTACT_PROPERTIES.has(property), true, `propriedade de contato sem fonte oficial: ${property}`)
   }
   for (const property of DEAL_WRITE_PROPERTIES) {
     assert.equal(negociosExportados.has(property) || MANAGED_DEAL_PROPERTIES.has(property), true, `propriedade de negocio sem fonte oficial: ${property}`)
@@ -203,6 +204,7 @@ async function executar() {
   assert.deepEqual(criacaoContato.body.properties, {
     firstname: "Maria",
     phone: "5511999999999",
+    mobilephone: "5511999999999",
     city: "São Paulo"
   })
 
@@ -221,10 +223,12 @@ async function executar() {
     pastaDriveLink: "https://drive.example/folder"
   })
   assert.deepEqual(propsContatoCompleto, {
-    firstname: "Ana Cliente",
+    firstname: "Ana",
+    lastname: "Cliente",
     email: "ana@example.com",
     work_email: "ana@example.com",
     phone: "558199990000",
+    mobilephone: "558199990000",
     city: "Recife",
     state: "PE",
     area_juridica: "Trabalhista",
@@ -232,8 +236,6 @@ async function executar() {
     beneficio_de_interesse: "Rescisao",
     cpf_do_cliente: "123.456.789-00",
     date_of_birth: "1990-01-02",
-    numero_caso: "CLT.260708.001",
-    numero_do_caso: "CLT.260708.001",
     origem_lead: "Bot Whatsapp",
     pasta_drive: "https://drive.example/folder",
     situacao_caso: "Verbas rescisorias",
@@ -250,15 +252,15 @@ async function executar() {
       }
     }, propsContatoCompleto),
     {
+      lastname: "Cliente",
       work_email: "ana@example.com",
+      mobilephone: "558199990000",
       state: "PE",
       area_juridica: "Trabalhista",
       beneficio: "Rescisao",
       beneficio_de_interesse: "Rescisao",
       cpf_do_cliente: "123.456.789-00",
       date_of_birth: "1990-01-02",
-      numero_caso: "CLT.260708.001",
-      numero_do_caso: "CLT.260708.001",
       origem_lead: "Bot Whatsapp",
       pasta_drive: "https://drive.example/folder",
       situacao_caso: "Verbas rescisorias",

@@ -10,7 +10,103 @@ const AREAS_JURIDICAS_ADMIN_ASSISTIDO = [
   "Outros"
 ]
 
+const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
+
 const STATUS_CAMPO_ADMIN_ASSISTIDO = new Set(["confirmado", "inferido", "ausente"])
+
+// Alinhado com assertFinalizationInvariants (finalization-invariants.js):
+// nomeCompleto->nome (minLength 3), cidade->cidade (minLength 2),
+// descricao->relato (minLength 3), areaJuridica->area (minLength 2).
+// Campos não listados usam minLength=1 (comportamento anterior).
+const MIN_LENGTH_POR_CAMPO = {
+  nomeCompleto: 3,
+  cidade: 2,
+  descricao: 3,
+  areaJuridica: 2
+}
+
+// Placeholders literais que a IA pode extrair incorretamente.
+// Estes valores devem ser rejeitados como se fossem dados reais.
+const PLACEHOLDERS_INVALIDOS = new Set([
+  "nome do cliente",
+  "cpf do cliente",
+  "data de nascimento do cliente",
+  "telefone do cliente",
+  "email do cliente",
+  "cidade do cliente",
+  "uf do cliente",
+  "descricao do caso",
+  "beneficio solicitado",
+  "situacao atual",
+  "motivo do pedido",
+  "area juridica",
+  "tipo de caso",
+  "cliente principal",
+  "nao informado",
+  "nao sei",
+  "sem informacao"
+])
+
+// Regex para detectar placeholders no formato "X do cliente" / "X do caso"
+const REGEX_PLACEHOLDER_CAMPO = /^(nome|cpf|telefone|email|cidade|uf|descricao|beneficio|situacao|motivo|area|tipo|data de nascimento)(\s+(do|da|do caso|do cliente|juridica|cliente))?$/
+
+function valorENormalizadoInvalido(valor, campoNome) {
+  if (typeof valor !== "string") return true
+  const normalizado = valor.trim().toLowerCase()
+  if (!normalizado) return true
+
+  // Rejeitar placeholders literais exatos
+  if (PLACEHOLDERS_INVALIDOS.has(normalizado)) return true
+
+  // Rejeitar variações de placeholder (ex: "telefone do cliente", "cpf do cliente")
+  if (REGEX_PLACEHOLDER_CAMPO.test(normalizado)) return true
+
+  // Validação de minLength
+  const minLength = MIN_LENGTH_POR_CAMPO[campoNome] || 1
+  if (normalizado.length < minLength) return true
+
+  // Validação específica por tipo
+  switch (campoNome) {
+    case "telefone": {
+      const num = normalizarNumeroWhatsAppEnvio(valor)
+      const digitos = String(num || "").replace(/\D/g, "")
+      if (!digitos.startsWith("55") || digitos.length < 12 || digitos.length > 13) return true
+      break
+    }
+    case "cpf": {
+      const digitos = valor.replace(/\D/g, "")
+      if (digitos.length !== 11) return true
+      break
+    }
+    case "dataNascimento": {
+      const ddmmaaaa = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+      const yyyymmdd = valor.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      if (ddmmaaaa) {
+        const [, d, m, a] = ddmmaaaa.map(Number)
+        if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31 && a >= 1900 && a <= new Date().getFullYear())) return true
+      } else if (yyyymmdd) {
+        const [, a, m, d] = yyyymmdd.map(Number)
+        if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31 && a >= 1900 && a <= new Date().getFullYear())) return true
+      } else {
+        return true
+      }
+      break
+    }
+    case "uf": {
+      if (!/^[A-Z]{2}$/i.test(valor.trim())) return true
+      break
+    }
+  }
+
+  return false
+}
+
+function campoAdminAssistidoPreenchido(campo, campoNome) {
+  if (!campo || campo.status === "ausente") return false
+  const valor = campo.valor
+  if (valor === null || valor === undefined) return false
+  return !valorENormalizadoInvalido(String(valor), campoNome)
+}
 
 const CAMPOS_ADMIN_ASSISTIDO = {
   nomeCompleto: {
@@ -255,18 +351,11 @@ function obterCamposRevisaoEspecificosAdminAssistido(area) {
   return CAMPOS_REVISAO_ESPECIFICOS_POR_AREA[areaNormalizada] || CAMPOS_REVISAO_ESPECIFICOS_POR_AREA.Outros
 }
 
-function campoAdminAssistidoPreenchido(campo) {
-  if (!campo || campo.status === "ausente") return false
-  const valor = campo.valor
-  if (valor === null || valor === undefined) return false
-  return String(valor).trim().length > 0
-}
-
 function camposFaltantesAdminAssistido(dados = {}, area = "") {
   const areaNormalizada = normalizarAreaJuridicaAdminAssistido(area || dados.areaJuridica?.valor)
   const obrigatorios = obterCamposObrigatoriosAdminAssistido(areaNormalizada)
   return obrigatorios
-    .filter(campo => !campoAdminAssistidoPreenchido(dados[campo]))
+    .filter(campo => !campoAdminAssistidoPreenchido(dados[campo], campo))
     .sort((a, b) =>
       PRIORIDADE_CAMPOS_ADMIN_ASSISTIDO.indexOf(a) - PRIORIDADE_CAMPOS_ADMIN_ASSISTIDO.indexOf(b)
     )
@@ -298,6 +387,7 @@ module.exports = {
   obterCamposRevisaoEspecificosAdminAssistido,
   campoAdminAssistidoPreenchido,
   camposFaltantesAdminAssistido,
+  valorENormalizadoInvalido,
   proximoCampoObrigatorioAdminAssistido,
   perguntaCampoAdminAssistido,
   labelCampoAdminAssistido

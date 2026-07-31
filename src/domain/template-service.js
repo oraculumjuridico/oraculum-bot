@@ -33,6 +33,9 @@ function persistirContextoConversaAposTemplate(usuario, contextoConversa) {
 
 async function enviarTemplateCatalogado(to, template, params = [], options = {}) {
   if (!template?.nome || !to) return false
+  if (template.exigeContratoComponentes &&
+      (!Number.isInteger(template.parametrosEsperados) || !Array.isArray(template.componentes))) return false
+  if (Number.isInteger(template.parametrosEsperados) && params.length !== template.parametrosEsperados) return false
   const opts = options && typeof options === "object" ? options : {}
   let contextoPersistidoAntesDoEnvio = false
   let contextoAnterior = null
@@ -80,11 +83,38 @@ async function consultaLembrete(to, tipo, params = [], options = {}) {
 }
 
 async function retomadaAtendimento(to, { ultimaMsg, texto, params = [] } = {}, options = {}) {
-  if (!options?.forceTemplate && conversaDentroJanela24h(ultimaMsg)) {
+  const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
+  if (!options?.forceTemplate && conversaDentroJanela24h(ultimaMsg, agora)) {
     return enviar(to, texto || "Podemos retomar seu atendimento por aqui.")
   }
 
   return enviarTemplateCatalogado(to, META_TEMPLATES.retomadaAtendimento, params, options)
+}
+
+async function atualizacaoCasoSegura(to, {
+  ultimaMsg,
+  texto,
+  resumoTemplate,
+  usuario
+} = {}, options = {}) {
+  const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
+  if (conversaDentroJanela24h(ultimaMsg, agora)) {
+    return {
+      sent: Boolean(await enviar(to, texto)),
+      channel: "freeform"
+    }
+  }
+  const resumo = String(resumoTemplate || texto || "").trim()
+  if (!resumo) return { sent: false, channel: "template", reason: "template_param_missing" }
+  const sent = await casoAtualizacao(to, [resumo], {
+    ...options,
+    usuario
+  })
+  return {
+    sent: Boolean(sent),
+    channel: "template",
+    reason: sent ? null : "template_send_failed"
+  }
 }
 
 module.exports = {
@@ -92,6 +122,7 @@ module.exports = {
   casoAtualizacao,
   consultaLembrete,
   retomadaAtendimento,
+  atualizacaoCasoSegura,
   primeiroNomeTemplate,
   conversaDentroJanela24h,
   persistirContextoConversaAposTemplate,

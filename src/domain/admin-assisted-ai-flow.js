@@ -1,4 +1,9 @@
 const { sanitizarTextoEntrada } = require("../utils/text")
+const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
+const {
+  assertFinalizationInvariants,
+  collectFinalizationViolations
+} = require("./finalization-invariants")
 const {
   criarCampoAdminAssistido,
   criarDadosVaziosAdminAssistido,
@@ -653,12 +658,50 @@ function atualizarAnaliseAdminAssistido(analise, dados, origemAtual = null) {
   }
 }
 
-function registrarLogAdminAssistido(deps = {}, evento, detalhes = {}) {
+const CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO = new Set([
+  "resultado",
+  "code",
+  "operation",
+  "numeroCaso",
+  "contatoId",
+  "negocioId",
+  "pastaDriveId",
+  "area",
+  "etapa",
+  "status",
+  "reason",
+  "faltantes",
+  "failedInvariant",
+  "stage",
+  "adapter"
+])
+
+function criarPayloadLogAdminAssistido(evento, detalhes = {}) {
   const payload = {
-    evento,
-    origem: ADMIN_ASSISTIDO_ORIGEM,
-    ...detalhes
+    evento: sanitizarTextoEntrada(evento),
+    origem: ADMIN_ASSISTIDO_ORIGEM
   }
+  if (!detalhes || typeof detalhes !== "object" || Array.isArray(detalhes)) return payload
+
+  for (const [campo, valor] of Object.entries(detalhes)) {
+    if (!CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO.has(campo)) continue
+    if (Array.isArray(valor)) {
+      payload[campo] = valor
+        .filter(item => typeof item === "string")
+        .map(item => sanitizarTextoEntrada(item).slice(0, 80))
+        .filter(Boolean)
+      continue
+    }
+    if (!["string", "number", "boolean"].includes(typeof valor)) continue
+    payload[campo] = typeof valor === "string"
+      ? sanitizarTextoEntrada(valor).slice(0, 160)
+      : valor
+  }
+  return payload
+}
+
+function registrarLogAdminAssistido(deps = {}, evento, detalhes = {}) {
+  const payload = criarPayloadLogAdminAssistido(evento, detalhes)
   if (typeof deps.logAdminAssistido === "function") {
     deps.logAdminAssistido(payload)
     return
@@ -838,6 +881,18 @@ function textoSucessoCriacaoCasoAdminAssistido(u = {}, numeroCaso = "") {
   ].join("\n")
 }
 
+function labelInvariante(invariante) {
+  const labels = {
+    nome: "Nome (mínimo 3 caracteres)",
+    telefone: "Telefone/WhatsApp (com DDD e 9º dígito)",
+    cidade: "Cidade (mínimo 2 caracteres)",
+    relato: "Relato/descrição (mínimo 3 caracteres)",
+    area: "Área jurídica (mínimo 2 caracteres)",
+    identidade: "Identidade do atendimento (cliente/terceiro)"
+  }
+  return labels[invariante] || invariante
+}
+
 async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssistido, deps = {}) {
   const dados = adminAssistido.dados || criarDadosVaziosAdminAssistido()
   const area = valorCampo(dados, "areaJuridica") || adminAssistido.analise?.areaJuridica || "Outros"
@@ -855,7 +910,10 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       pendentesPosterior
     }
     salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
-    registrarLogAdminAssistido(deps, "confirmacao_bloqueada_campos_faltantes", { faltantes: faltantesCriticos })
+    registrarLogAdminAssistido(deps, "confirmacao_bloqueada_campos_faltantes", {
+      resultado: "bloqueado",
+      faltantes: faltantesCriticos
+    })
     return {
       texto: textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo }),
       opcoes: opcoesNavegacaoAdminAssistido(),
@@ -870,10 +928,49 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
 
   const snapshotSessao = { ...sessao, adminAssistido }
   const u = montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido, deps)
+
+  // Pré-validação: detecta invariantes de finalização ANTES de qualquer escrita
+  // externa. Este bloco previne que campos com texto insuficiente (1-2 chars)
+  // passem em camposFaltantesAdminAssistido (que aceita length>0) e cheguem ao
+  // executor, onde assertFinalizationInvariants exige minLength=3.
+  const normFn = deps.normalizarNumeroWhatsAppEnvio || normalizarNumeroWhatsAppEnvio
+  const preViolations = collectFinalizationViolations({
+    from: u.whatsappContato || from,
+    u,
+    normalizarNumeroWhatsAppEnvio: normFn
+  })
+  if (preViolations.length > 0) {
+    registrarLogAdminAssistido(deps, "criacao_caso_bloqueada_invariantes", {
+      resultado: "bloqueado",
+      code: "FINALIZATION_INVARIANTS_VIOLATION",
+      operation: "finalizar_cadastro_assistido",
+      failedInvariant: preViolations.join(","),
+      stage: "pre_finalization"
+    })
+    if (typeof deps.logErro === "function") {
+      deps.logErro("admin_assistido", `Caso não criado: invariantes ausentes; code=FINALIZATION_INVARIANTS_VIOLATION; operation=finalizar_cadastro_assistido; stage=pre_finalization; failedInvariant=${preViolations.join(",")}`)
+    }
+    return {
+      texto: [
+        "⚠️ Não foi possível criar o caso: dados insuficientes.",
+        "",
+        "Campos que precisam ser revisados:",
+        ...preViolations.map(v => `- ${labelInvariante(v)}`),
+        "",
+        "Escolha uma opção:",
+        "",
+        "1️⃣ Editar informações",
+        "2️⃣ Cancelar atendimento"
+      ].join("\n"),
+      opcoes: opcoesRevisaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
+  }
+
   registrarLogAdminAssistido(deps, "criacao_caso_iniciada", {
-    nome: u.nome,
-    area: u.area,
-    telefone: u.whatsappContato
+    resultado: "iniciado",
+    area: u.area
   })
 
   try {
@@ -895,7 +992,10 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       listaAtiva: null,
       adminAssistido: novoEstado
     }, deps)
-    registrarLogAdminAssistido(deps, "criacao_caso_concluida", novoEstado.casoCriado)
+    registrarLogAdminAssistido(deps, "criacao_caso_concluida", {
+      resultado: "sucesso",
+      ...novoEstado.casoCriado
+    })
     return {
       texto: textoSucessoCriacaoCasoAdminAssistido(u, numeroCaso),
       opcoes: opcoesNavegacaoAdminAssistido({ voltar: false, cancelar: false }),
@@ -908,12 +1008,20 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       await deps.rollbackCriacaoCasoAssistido({ erro: e, usuario: u, sessao: snapshotSessao })
     }
     registrarLogAdminAssistido(deps, "criacao_caso_falhou_rollback_sessao", {
+      resultado: "falha",
       code: e?.code || null,
       operation: e?.operation || null,
-      message: e?.message || "erro desconhecido"
+      failedInvariant: Array.isArray(e?.violations) ? e.violations.join(",") : null,
+      stage: e?.stage || "finalizacao",
+      adapter: e?.adapter || "canonical"
     })
     if (typeof deps.logErro === "function") {
-      deps.logErro("admin_assistido", `Falha ao criar caso assistido: ${e.message}`, e)
+      const code = sanitizarTextoEntrada(e?.code) || "CASE_CREATION_FAILURE"
+      const operation = sanitizarTextoEntrada(e?.operation) || "finalizar_cadastro_assistido"
+      const violations = Array.isArray(e?.violations) ? e.violations.join(",") : "none"
+      const stage = sanitizarTextoEntrada(e?.stage) || "finalizacao"
+      const adapter = sanitizarTextoEntrada(e?.adapter) || "canonical"
+      deps.logErro("admin_assistido", `Falha técnica ao criar caso assistido; code=${code}; operation=${operation}; stage=${stage}; adapter=${adapter}; failedInvariant=${violations}`)
     }
     return {
       texto: [
@@ -1042,6 +1150,51 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
     }
     salvarNovoEstadoAtendimento(chave, sessao, adminAssistido, deps)
     return responderEstadoAtualAtendimentoAssistido(adminAssistido)
+  }
+
+  const tipoMidia = tipoEntradaAdminAssistido(msgObj)
+  if (["image", "document"].includes(tipoMidia)) {
+    if (typeof deps.processarMidiaAdminAssistida !== "function") {
+      return {
+        texto: "A mídia não pôde ser preparada com segurança. Tente novamente ou envie após selecionar o caso.",
+        opcoes: opcoesNavegacaoAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+    const resultadoMidia = await deps.processarMidiaAdminAssistida(msgObj, {
+      from,
+      adminAssistido
+    })
+    if (!resultadoMidia?.ok) {
+      return {
+        texto: "Não consegui validar esse arquivo. Ele não foi anexado ao caso.",
+        opcoes: opcoesNavegacaoAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+    const documentos = Array.isArray(adminAssistido.documentos) ? adminAssistido.documentos : []
+    const documento = resultadoMidia.document
+    const novoEstado = {
+      ...adminAssistido,
+      documentos: documentos.some(item => item.sha256 === documento.sha256)
+        ? documentos
+        : [...documentos, documento],
+      revisaoDocumentalNecessaria: documento.status !== "approved"
+    }
+    salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+    return {
+      texto: [
+        resultadoMidia.duplicate ? "Arquivo já recebido anteriormente." : "Arquivo recebido e analisado.",
+        `Status: ${documento.status === "approved" ? "aprovado" : "em quarentena para revisão"}.`,
+        documento.type ? `Tipo: ${documento.type}.` : null,
+        "Você pode enviar outros arquivos ou continuar o atendimento."
+      ].filter(Boolean).join("\n"),
+      opcoes: opcoesNavegacaoAdminAssistido(),
+      registrarPergunta: false,
+      audio: false
+    }
   }
 
   const entradaCapturada = await capturarEntradaAtendimentoAssistido(text, msgObj, deps)
@@ -1262,5 +1415,7 @@ module.exports = {
   registrarEntradaAtendimentoAssistidoAdmin,
   gerarResumoAdminAssistido,
   montarUsuarioFinalizacaoAdminAssistido,
-  confirmarCriarCasoAdminAssistido
+  confirmarCriarCasoAdminAssistido,
+  labelInvariante,
+  criarPayloadLogAdminAssistido
 }

@@ -136,13 +136,15 @@ async function consolidarDocumentosDoCaso(input = {}, deps = {}) {
   resumo.pdfsSalvos = pdfs.length
   const pdfsEsperados = (composicao.pdfsGerados || []).map(pdf => pdf.arquivo).filter(Boolean).sort()
   const todosPdfsSalvos = resumo.pdfsGerados > 0 && pdfs.length === resumo.pdfsGerados
-  const consolidacaoMaterialCompleta = todosDocumentosPreparados && todosPdfsSalvos
+  const possuiOriginalForaDoConsolidado = (composicao.originaisPreservados || []).length > 0
+  const consolidacaoMaterialCompleta = todosDocumentosPreparados && todosPdfsSalvos && !possuiOriginalForaDoConsolidado
 
   let registry = estado.registry?.versao
     ? d.atualizarDocumentRegistry(estado.registry, { analises, agrupamentos, pdfs, documentosEsperados: input.documentosEsperados })
     : d.criarDocumentRegistry({ numeroCaso: input.numeroCaso, pastaDriveId: input.pastaDriveId, analises, agrupamentos, pdfs, documentosEsperados: input.documentosEsperados })
   registry = {
     ...registry,
+    originaisPreservados: removerBuffers(composicao.originaisPreservados || []),
     metadados: {
       ...(registry.metadados || {}),
       assinaturaConsolidacao: consolidacaoMaterialCompleta ? assinatura : null,

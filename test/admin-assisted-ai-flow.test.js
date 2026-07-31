@@ -11,7 +11,8 @@ const {
   atendimentoAssistidoAdminAtivo,
   iniciarAtendimentoAssistidoAdmin,
   processarAtendimentoAssistidoAdmin,
-  gerarResumoAdminAssistido
+  gerarResumoAdminAssistido,
+  criarPayloadLogAdminAssistido
 } = require("../src/domain/admin-assisted-ai-flow")
 
 const {
@@ -34,7 +35,7 @@ function criarDeps(sessoesAdminWhatsApp = new Map()) {
       return digitos
     },
     logAdminAssistido: evento => logs.push(evento),
-    logErro: (tipo, msg) => logs.push({ tipo, msg }),
+    logErro: (...args) => logs.push({ logErroArgs: args }),
     telaAdminPrincipal: async () => ({
       texto: "Menu Admin",
       opcoes: [{ id: "adm_menu", title: "Menu" }],
@@ -75,6 +76,23 @@ async function completarFluxoTrabalhista(from, deps) {
 }
 
 async function main() {
+  const payloadRedigido = criarPayloadLogAdminAssistido("evento_teste", {
+    resultado: "sucesso",
+    negocioId: "deal-test",
+    nome: "Pessoa Ficticia Completa",
+    telefone: "5511999999999",
+    relato: "Relato pessoal completo",
+    documentos: [{ cpf: "123.456.789-00" }],
+    objetoIntegral: { nome: "Pessoa Ficticia Completa" }
+  })
+  assert.deepEqual(payloadRedigido, {
+    evento: "evento_teste",
+    origem: "admin_assistido_ia",
+    resultado: "sucesso",
+    negocioId: "deal-test"
+  })
+  assert.doesNotMatch(JSON.stringify(payloadRedigido), /Pessoa Ficticia|5511999999999|Relato pessoal|123\.456\.789-00/)
+
   const sessoesAdminWhatsApp = new Map()
   const deps = criarDeps(sessoesAdminWhatsApp)
 
@@ -232,6 +250,15 @@ async function main() {
   assert.equal(sessaoAtual.adminAssistido.etapa, "cadastro_completo")
   assert.equal(sessaoAtual.adminAssistido.casoCriado.negocioId, "deal-456")
   assert.ok(deps.logs.some(log => log.evento === "criacao_caso_concluida"))
+  const logsTecnicos = deps.logs.filter(log => log?.evento)
+  const logsSerializados = JSON.stringify(logsTecnicos)
+  assert.ok(logsTecnicos.some(log => log.evento === "criacao_caso_iniciada" && log.resultado === "iniciado"))
+  assert.ok(logsTecnicos.some(log => log.evento === "criacao_caso_concluida" && log.resultado === "sucesso"))
+  assert.ok(logsTecnicos.some(log => log.negocioId === "deal-456" && log.contatoId === "contact-123"))
+  assert.doesNotMatch(logsSerializados, /Maria Silva/)
+  assert.doesNotMatch(logsSerializados, /5581999990000|99999-0000/)
+  assert.doesNotMatch(logsSerializados, /Demiss|rescis|Acme|Nova Empresa|123\.456\.789-00/)
+  assert.doesNotMatch(logsSerializados, /"nome"|"telefone"|"relato"|"documentos"/)
 
   iniciarAtendimentoAssistidoAdmin(from, deps)
   sessoesAdminWhatsApp.set(chave, {
@@ -301,9 +328,14 @@ async function main() {
   const depsRollback = criarDeps(sessoesRollback)
   depsRollback.finalizarCadastroAssistido = async (telefone, u) => {
     u.contatoId = "contact-parcial"
-    throw Object.assign(new Error("falha parcial"), {
+    throw Object.assign(new Error("Pessoa Sigilosa 5511987654321 123.456.789-00 relato íntimo documento secreto"), {
       code: "FINALIZATION_INTEGRATION_FAILURE",
-      operation: "hubspot_deal"
+      operation: "hubspot_deal",
+      nome: "Pessoa Sigilosa",
+      telefone: "5511987654321",
+      cpf: "123.456.789-00",
+      relato: "relato íntimo",
+      documentos: ["documento secreto"]
     })
   }
   let rollbackChamado = false
@@ -328,7 +360,16 @@ async function main() {
   assert.equal(rollbackChamado, true)
   assert.equal(sessoesRollback.get(chave).adminAssistido.etapa, ADMIN_ASSISTIDO_ETAPA_REVISAO)
   assert.equal(sessoesRollback.get(chave).adminAssistido.ativo, true)
-  assert.ok(depsRollback.logs.some(log => log.evento === "criacao_caso_falhou_rollback_sessao"))
+  const logAdminFalha = depsRollback.logs.find(log => log.evento === "criacao_caso_falhou_rollback_sessao")
+  const logErroFalha = depsRollback.logs.find(log => log.logErroArgs)
+  assert.equal(logAdminFalha.resultado, "falha")
+  assert.equal(logAdminFalha.code, "FINALIZATION_INTEGRATION_FAILURE")
+  assert.equal(logAdminFalha.operation, "hubspot_deal")
+  assert.equal(logErroFalha.logErroArgs.length, 2)
+  assert.match(logErroFalha.logErroArgs[1], /code=FINALIZATION_INTEGRATION_FAILURE/)
+  assert.match(logErroFalha.logErroArgs[1], /operation=hubspot_deal/)
+  const logsFalhaSerializados = JSON.stringify([logAdminFalha, logErroFalha])
+  assert.doesNotMatch(logsFalhaSerializados, /Pessoa Sigilosa|5511987654321|123\.456\.789-00|relato íntimo|documento secreto/)
 
   const sessoesAudio = new Map()
   const depsAudio = criarDeps(sessoesAudio)

@@ -35,9 +35,13 @@ const CONTACT_SEARCH_PROPERTIES = [
   "beneficio_de_interesse",
   "cpf_do_cliente",
   "date_of_birth",
-  "numero_caso",
-  "numero_do_caso",
   "origem_lead",
+  "mobilephone",
+  "address",
+  "zip",
+  "oraculum_referrer",
+  "oraculum_identity_provenance",
+  "hubspot_owner_id",
   "pasta_drive",
   "situacao_caso",
   "tipo_de_caso",
@@ -83,24 +87,32 @@ function montarPropsContatoHubSpot(from, u = {}) {
     "Lead WhatsApp"
   const beneficio = sanitizarTextoEntrada(u.beneficio || u.beneficioInteresse || u.situacao)
   const areaJuridica = normalizarAreaContatoHubSpot(u.area)
+  const partesNome = nomeContato.split(/\s+/).filter(Boolean)
+  const firstname = partesNome.shift() || nomeContato
+  const lastname = partesNome.join(" ")
 
   return validateHubSpotProperties(
     "contacts",
     filtrarPropsHubSpot({
-      firstname: nomeContato,
+      firstname,
+      lastname,
       email: u.email || "",
       work_email: u.email || "",
       phone: telefone,
+      mobilephone: telefone,
+      address: u.address || u.endereco || "",
       city: u.cidade || "",
       state: u.uf || "",
+      zip: u.zip || u.cep || "",
       area_juridica: areaJuridica,
       beneficio,
       beneficio_de_interesse: beneficio,
       cpf_do_cliente: u.cpf || "",
       date_of_birth: u.dataNascimento || u.data_nascimento || "",
-      numero_caso: u.numeroCaso || "",
-      numero_do_caso: u.numeroCaso || "",
       origem_lead: sanitizarTextoEntrada(u?.origemCaptacao) ? "Bot Whatsapp" : "",
+      oraculum_referrer: u.oraculumReferrer || u.indicador || "",
+      oraculum_identity_provenance: u.oraculumIdentityProvenance || u.provenienciaIdentidade || "",
+      hubspot_owner_id: u.hubspotOwnerId || "",
       pasta_drive: u.pastaDriveLink || "",
       situacao_caso: u.situacao || u.tipo || "",
       tipo_de_caso: normalizarTipoContatoHubSpot(u)
