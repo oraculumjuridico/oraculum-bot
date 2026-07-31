@@ -1,15 +1,18 @@
-{
+﻿{
   "name": "oraculum-bot",
   "version": "1.0.0",
   "description": "Bot Oraculum",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "pretest": "node test/single-case-apply.test.js && node test/single-case-authorization-postgres.test.js && node test/single-case-coordination-postgres.test.js && node test/case-number.service.test.js && node test/graceful-shutdown.test.js && node test/external-state-repository.test.js && node test/migrate-state-dry-run.test.js && node test/media-download-security.test.js && node test/public-image-delivery.test.js && node test/image-validation.test.js && node test/import-todo-cases.test.js && node test/drive-files-security.test.js && node test/document-registry.test.js && node test/document-grouper.test.js && node test/document-pdf-composer.test.js && node test/document-analysis-integration.test.js && node test/document-consolidation.test.js && node test/document-consolidation-server-static.test.js && node test/client-document-integrity.test.js && node test/client-document-intent-priority.test.js",
+    "pretest": "node test/single-case-apply.test.js && node test/single-case-authorization-postgres.test.js && node test/single-case-coordination-postgres.test.js && node test/case-number.service.test.js && node test/graceful-shutdown.test.js && node test/external-state-repository.test.js && node test/migrate-state-dry-run.test.js && node test/media-download-security.test.js && node test/public-image-delivery.test.js && node test/image-validation.test.js && node test/import-todo-cases.test.js && node test/drive-folder-identifier-normalization.test.js && node test/drive-files-security.test.js && node test/document-registry.test.js && node test/document-grouper.test.js && node test/document-pdf-composer.test.js && node test/document-analysis-integration.test.js && node test/document-consolidation.test.js && node test/document-consolidation-server-static.test.js && node test/client-document-integrity.test.js && node test/client-document-intent-priority.test.js",
     "test:case-analysis": "node test/local-case-document-analysis.test.js && node test/human-document-review.test.js && node test/document-content-inventory.test.js && node test/pdf-technical-review-fallback.test.js && node test/post-review-blocker-recalculation.test.js && node test/human-primary-identity-confirmation.test.js",
     "smoke": "node smoke.js",
+    "test:post-human:postgres-required": "set POST_HUMAN_POSTGRES_REQUIRED=true&& node test/post-human-postgres-real.test.js",
+    "test:post-human:release-gate": "set POST_HUMAN_POSTGRES_REQUIRED=true&& node test/post-human-postgres-real.test.js && node test/post-human-dispatcher-integration.test.js",
     "verify": "npm test && node test/hubspot-logging.test.js && node test/hubspot-smoke.test.js && npm run smoke",
-    "test": "node test/parser.test.js && node test/import-pilot-selection.test.js && node test/dry-run-no-reserve.test.js && node test/import-real-cases.test.js && node test/case-number.service.test.js && node test/local-case-document-analysis.test.js && node test/external-state-ci-smoke.test.js && node test/legal-assistant-engine.test.js && node test/legal-copilot.test.js && node test/admin-assisted-ai-static.test.js && node test/admin-assisted-ai-flow.test.js && node test/admin-assisted-ai-hardening.test.js && node test/audio-url-security.test.js && node test/http-security.test.js && node test/template-service-context.test.js && node test/callback-idempotency.test.js && node test/reengagement-engine.test.js && node test/reengagement-planner.test.js && node test/reengagement-routes.test.js && node test/finalization-invariants.test.js && node test/storage-backup-restore.test.js && node test/consultation-state.test.js && node test/consultation-flows.test.js && node test/consultation-idempotency.test.js && node test/consultation-reconcile.test.js && node test/consultation-audit-operational.test.js && node test/consultation-operational-baseline.test.js && node test/consultation-integrity-metrics.test.js && node test/crm-identity-impact-analysis.test.js && node test/crm-case-party.test.js && node test/crm-case-party-decision-audit.test.js && node test/crm-case-party-multi-resolver.test.js && node test/crm-case-party-resolution-stability.test.js && node test/consultation-events.test.js && node test/consultation-read-model.test.js && node test/consultation-enforcement.test.js && node test/consultation-architecture-audit.test.js && node test/consultation-architecture-hard-lock.test.js && node test/consultation-architecture-snapshot.test.js && node test/consultation-immutability.test.js && node test/consultation-replay-consistency.test.js && node test/consultation-legal-proof.test.js && node test/consultation-integrity-hash.test.js && node test/consultation-self-verification-engine.test.js && node test/consultation-drift-detector.test.js && node test/consultation-integrity-drift-detected.test.js && node test/consultation-auto-repair-engine.test.js && node test/consultation-session-recovery.test.js && node test/consultation-self-healed-event.test.js && node test/hubspot-contract.test.js",
+    "test": "node test/parser.test.js && node test/import-pilot-selection.test.js && node test/dry-run-no-reserve.test.js && node test/import-real-cases.test.js && node test/case-number.service.test.js && node test/local-case-document-analysis.test.js && node test/external-state-ci-smoke.test.js && node test/legal-assistant-engine.test.js && node test/legal-copilot.test.js && node test/admin-assisted-ai-static.test.js && node test/admin-assisted-ai-flow.test.js && node test/admin-assisted-ai-hardening.test.js && node test/audio-url-security.test.js && node test/http-security.test.js && node test/template-service-context.test.js && node test/callback-idempotency.test.js && node test/reengagement-engine.test.js && node test/reengagement-planner.test.js && node test/reengagement-routes.test.js && node test/finalization-invariants.test.js && node test/storage-backup-restore.test.js && node test/consultation-state.test.js && node test/consultation-flows.test.js && node test/consultation-idempotency.test.js && node test/consultation-reconcile.test.js && node test/consultation-audit-operational.test.js && node test/consultation-operational-baseline.test.js && node test/consultation-integrity-metrics.test.js && node test/crm-identity-impact-analysis.test.js && node test/crm-case-party.test.js && node test/crm-case-party-decision-audit.test.js && node test/crm-case-party-multi-resolver.test.js && node test/crm-case-party-resolution-stability.test.js && node test/consultation-events.test.js && node test/consultation-read-model.test.js && node test/consultation-enforcement.test.js && node test/consultation-architecture-audit.test.js && node test/consultation-architecture-hard-lock.test.js && node test/consultation-architecture-snapshot.test.js && node test/consultation-immutability.test.js && node test/consultation-replay-consistency.test.js && node test/consultation-legal-proof.test.js && node test/consultation-integrity-hash.test.js && node test/consultation-self-verification-engine.test.js && node test/consultation-drift-detector.test.js && node test/consultation-integrity-drift-detected.test.js && node test/consultation-auto-repair-engine.test.js && node test/consultation-session-recovery.test.js && node test/consultation-self-healed-event.test.js && node test/hubspot-contract.test.js && npm run test:post-human",
+    "posttest": "node test/template-service-legacy-third-party.test.js",
     "storage:backup": "node scripts/storage-snapshot.js backup",
     "storage:verify": "node scripts/storage-snapshot.js verify",
     "storage:restore": "node scripts/storage-snapshot.js restore",
@@ -34,24 +37,25 @@
     "cases:dry-run": "node scripts/import-real-cases.js dry-run",
     "cases:apply": "node scripts/import-real-cases.js apply --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
     "cases:resume": "node scripts/import-real-cases.js resume --confirm-live-import=I_UNDERSTAND_THIS_WRITES_TO_HUBSPOT",
-    "cases:report": "node scripts/import-real-cases.js report"
-    ,"state:migrate:postgres": "node scripts/migrate-state-to-postgres.js"
-    ,"state:migrate:postgres:force": "node scripts/migrate-state-to-postgres.js --force"
-    ,"state:migrate:postgres:dry": "node scripts/migrate-state-to-postgres.js --dry-run"
-    ,"case-number:migrate": "node scripts/migrate-case-number-reservations.js"
-    ,"case-number:migrate:verify": "node scripts/migrate-case-number-reservations.js --verify"
-    ,"case-number:migrate:reconcile": "node scripts/migrate-case-number-reservations.js --reconcile"
-    ,"single-case:rebind-audit:migrate": "node scripts/migrate-single-case-rebind-audit.js"
-    ,"single-case:rebind-audit:migrate:verify": "node scripts/migrate-single-case-rebind-audit.js --verify"
-    ,"case-number:reserve": "node scripts/reserve-case-number.js"
-    ,"case-number:sync-plan": "node scripts/sync-case-number-reservation-to-plan.js"
-    ,"cases:apply-one": "node scripts/apply-single-case.js"
-    ,"cases:authorize": "node scripts/emit-single-case-authorization.js"
-    ,"test:single-case-apply": "node test/single-case-apply.test.js"
-    ,"test:single-case-authorizations": "node test/single-case-authorization-postgres.test.js"
-    ,"test:single-case-coordination": "node test/single-case-coordination-postgres.test.js"
-    ,"case-number:test": "node test/case-number.service.test.js && node test/case-number-postgres-infrastructure.test.js && node test/case-number-reservation-reconciliation.test.js && node test/case-number-plan-sync.test.js"
-    ,"cases:reconcile-all": "node scripts/reconcile-all-inss-cases.js --apply --confirm=RECONCILE_EXISTING_55_INSS_CASES"
+    "cases:report": "node scripts/import-real-cases.js report",
+    "state:migrate:postgres": "node scripts/migrate-state-to-postgres.js",
+    "state:migrate:postgres:force": "node scripts/migrate-state-to-postgres.js --force",
+    "state:migrate:postgres:dry": "node scripts/migrate-state-to-postgres.js --dry-run",
+    "case-number:migrate": "node scripts/migrate-case-number-reservations.js",
+    "case-number:migrate:verify": "node scripts/migrate-case-number-reservations.js --verify",
+    "case-number:migrate:reconcile": "node scripts/migrate-case-number-reservations.js --reconcile",
+    "single-case:rebind-audit:migrate": "node scripts/migrate-single-case-rebind-audit.js",
+    "single-case:rebind-audit:migrate:verify": "node scripts/migrate-single-case-rebind-audit.js --verify",
+    "case-number:reserve": "node scripts/reserve-case-number.js",
+    "case-number:sync-plan": "node scripts/sync-case-number-reservation-to-plan.js",
+    "cases:apply-one": "node scripts/apply-single-case.js",
+    "cases:authorize": "node scripts/emit-single-case-authorization.js",
+    "test:single-case-apply": "node test/single-case-apply.test.js",
+    "test:single-case-authorizations": "node test/single-case-authorization-postgres.test.js",
+    "test:single-case-coordination": "node test/single-case-coordination-postgres.test.js",
+    "case-number:test": "node test/case-number.service.test.js && node test/case-number-postgres-infrastructure.test.js && node test/case-number-reservation-reconciliation.test.js && node test/case-number-plan-sync.test.js",
+    "cases:reconcile-all": "node scripts/reconcile-all-inss-cases.js --apply --confirm=RECONCILE_EXISTING_55_INSS_CASES",
+    "test:post-human": "node test/post-human-dispatcher-integration.test.js && node test/post-human-document-pipeline.test.js && node test/post-human-joint-reader-updater.test.js && node test/post-human-flow.test.js && node test/post-human-feature-flag.test.js && node test/post-human-meta-contract.test.js && node test/post-human-hardening.test.js && node test/post-human-isolation-token-document.test.js && node test/post-human-pilot-simulation.test.js && node test/post-human-server-flag-off.test.js && node test/post-human-logger-failsafe.test.js"
   },
   "license": "ISC",
   "type": "commonjs",
