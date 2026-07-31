@@ -246,7 +246,8 @@ const {
   marcarArquivoDriveSubstituido,
   renomearArquivoDrive,
   uploadPastaAudio,
-  salvarAudioTranscritoNoCaso
+  salvarAudioTranscritoNoCaso,
+  normalizeDriveFolderResult
 } = require("./src/domain/drive-files")
 const {
   processarAnaliseDocumentalPosUpload
@@ -6195,12 +6196,16 @@ async function finalizarCadastro(from, u) {
   u.docsEntregues = []; u.docsAusentes = []; u.docsPulados = []; u.docsParciais = []; u.docsDispensados = []
   u.docAtualIdx = 0; u.ultimoArqId = null
 
-  const pasta = u.pastaDriveId
-    ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
-    : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
-  assertFinalizationOperation("drive_folder", pasta?.id)
-  u.pastaDriveId = pasta.id
-  u.pastaDriveLink = pasta.webViewLink || u.pastaDriveLink || null
+  var driveCalled = !u.pastaDriveId
+  var pastaRaw = driveCalled
+    ? await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
+    : { id: u.pastaDriveId, webViewLink: u.pastaDriveLink }
+  var pastaNormalizada = normalizeDriveFolderResult(pastaRaw)
+  var caseFolderId = pastaNormalizada ? pastaNormalizada.id : null
+  logDebug("[CANONICAL] canonical_step=drive driveCalled=" + String(driveCalled) + " driveResultHasId=" + String(!!caseFolderId) + " contactId=" + String(u.contatoId || "-") + " dealId=" + String(u.negocioId || "-") + " numeroCaso=" + String(numeroCaso || "-"))
+  assertFinalizationOperation("drive_folder", caseFolderId)
+  u.pastaDriveId = caseFolderId
+  u.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || u.pastaDriveLink || null
   persistirUsersAgora({ propagarErro: true })
 
   const existente = await hsBuscarPorPhone(telefoneContato)
@@ -9314,10 +9319,11 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   }
   if (!u.pastaDriveId && ![STAGES.COLETA_DESC_AUDIO, "trab_out_desc", "out_desc"].includes(u.stage)) {
     if (u.numeroCaso) {
-      const pasta = await criarPastaCliente(u.numeroCaso, u.nome || nomeWA || "Cliente", u.area, u.situacao, u.tipo)
-      if (pasta?.id) {
-        u.pastaDriveId = pasta.id
-        u.pastaDriveLink = pasta.webViewLink || u.pastaDriveLink || null
+      const pastaRaw2 = await criarPastaCliente(u.numeroCaso, u.nome || nomeWA || "Cliente", u.area, u.situacao, u.tipo)
+      const pastaNormalizada2 = normalizeDriveFolderResult(pastaRaw2)
+      if (pastaNormalizada2) {
+        u.pastaDriveId = pastaNormalizada2.id
+        u.pastaDriveLink = pastaNormalizada2.webViewLink || u.pastaDriveLink || null
       }
     }
     if (!u.pastaDriveId) {
