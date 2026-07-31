@@ -12,7 +12,8 @@ const {
   perguntaCampoAdminAssistido,
   labelCampoAdminAssistido,
   obterCamposObrigatoriosAdminAssistido,
-  obterCamposRevisaoEspecificosAdminAssistido
+  obterCamposRevisaoEspecificosAdminAssistido,
+  PLACEHOLDERS_INVALIDOS
 } = require("./admin-assisted-ai-schema")
 const {
   extrairDadosAtendimentoAssistidoIA
@@ -200,6 +201,15 @@ function textoCampo(dados = {}, campo = "") {
   const valor = valorCampo(dados, campo)
   if (valor === null || valor === undefined) return ""
   return sanitizarTextoEntrada(valor)
+}
+
+function emailValidoAdminAssistido(email) {
+  if (!email || typeof email !== "string") return false
+  const trimmed = email.trim().toLowerCase()
+  if (!trimmed) return false
+  if (PLACEHOLDERS_INVALIDOS.has(trimmed)) return false
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  return emailRegex.test(trimmed)
 }
 
 function textoCurto(valor = "", limite = 160) {
@@ -461,6 +471,15 @@ function opcoesRevisaoAdminAssistido() {
     { id: "admin_assistido_confirmar", title: "✅ Confirmar" },
     { id: "admin_assistido_editar", title: "✏️ Editar" },
     { id: "admin_assistido_cancelar", title: "❌ Cancelar" }
+  ]
+}
+
+function opcoesRevisaoEmailAdminAssistido() {
+  return [
+    { id: "admin_assistido_email_corrigir", title: "1️⃣ Corrigir e-mail" },
+    { id: "admin_assistido_email_omitir", title: "2️⃣ Deixar sem e-mail" },
+    { id: "admin_assistido_email_depois", title: "3️⃣ Informar depois" },
+    { id: "admin_assistido_email_revisar", title: "4️⃣ Revisar dados" }
   ]
 }
 
@@ -802,7 +821,10 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     nome,
     cpf: textoCampo(dados, "cpf"),
     dataNascimento: textoCampo(dados, "dataNascimento"),
-    email: textoCampo(dados, "email"),
+    email: (function() {
+      const emailRaw = textoCampo(dados, "email")
+      return emailRaw && emailValidoAdminAssistido(emailRaw) ? emailRaw : null
+    })(),
     beneficio: textoCampo(dados, "beneficio"),
     beneficioInteresse: textoCampo(dados, "beneficio"),
     nomeConfirmado: Boolean(nome),
@@ -1004,6 +1026,42 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
     }
   } catch (e) {
     salvarSessaoAdmin(chave, snapshotSessao, deps)
+
+    // Detectar falha de e-mail inválido e direcionar ao campo específico.
+    // Evita repetição infinita do mesmo payload: se o e-mail é inválido,
+    // retorna à edição do campo em vez de oferecer "Confirmar e criar caso".
+    if (e?.operation === "hubspot_contact" && e?.code === "FINALIZATION_INTEGRATION_FAILURE") {
+      if (!u.email || !emailValidoAdminAssistido(u.email)) {
+        const novoEstado = {
+          ...adminAssistido,
+          etapa: ADMIN_ASSISTIDO_ETAPA_EDITAR_CAMPO,
+          perguntaPendente: "email",
+          campoEmEdicao: "email",
+          faltantes: ["email"],
+          _ultimaFalhaIntegracao: "email_invalido"
+        }
+        salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
+        registrarLogAdminAssistido(deps, "integracao_falhou_email_invalido", {
+          resultado: "bloqueado",
+          field: "email",
+          operation: e?.operation
+        })
+        return {
+          texto: [
+            "*O e-mail informado não é válido.*",
+            "",
+            "1️⃣ Corrigir e-mail",
+            "2️⃣ Deixar sem e-mail",
+            "3️⃣ Informar depois",
+            "4️⃣ Revisar dados"
+          ].join("\n"),
+          opcoes: opcoesRevisaoEmailAdminAssistido(),
+          registrarPergunta: false,
+          audio: false
+        }
+      }
+    }
+
     if (typeof deps.rollbackCriacaoCasoAssistido === "function") {
       await deps.rollbackCriacaoCasoAssistido({ erro: e, usuario: u, sessao: snapshotSessao })
     }

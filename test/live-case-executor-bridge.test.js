@@ -55,7 +55,7 @@ const { createCanonicalCasePlan } = require("../src/domain/canonical-case-plan")
   assert.equal(u.negocioId, "deal-456")
   assert.equal(u.pastaDriveId, "folder-789")
   assert.equal(u.numeroCaso, "CASE.TEST.001")
-  assert.equal(result.plan.status, "applied")
+  assert.equal(result.result.planStatus, "applied")
   assert.ok(result.plan.hash)
 
   const plan2 = buildCanonicalPlan(u, { source: "test" })

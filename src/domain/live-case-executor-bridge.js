@@ -392,6 +392,7 @@ function createLiveCaseFlow(deps = {}) {
   })
 
   async function executeLiveCaseFlow(u, context = {}) {
+    deps.u = u
     const plan = buildCanonicalPlan(u, context)
     try {
       const result = await executor.execute(plan)
