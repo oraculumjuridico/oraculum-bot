@@ -173,7 +173,7 @@ async function main() {
     }
   })
   assert.match(resumoCompleto, /Área jurídica:\* Trabalhista/)
-  assert.match(resumoCompleto, /Nome:\* Maria Silva/)
+  assert.match(resumoCompleto, /Nome completo:\* Maria Silva/)
   assert.match(resumoCompleto, /Empresa:\* Acme Ltda/)
   assert.match(resumoCompleto, /Cargo:\* Vendedora/)
   assert.match(resumoCompleto, /Motivo:\* Verbas rescisórias/)

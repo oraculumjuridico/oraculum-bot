@@ -74,6 +74,11 @@ function valorENormalizadoInvalido(valor, campoNome) {
 
   // Validação específica por tipo
   switch (campoNome) {
+    case "nomeCompleto": {
+      const partes = valor.trim().split(/\s+/).filter(Boolean)
+      if (partes.length < 2 || partes.some(parte => parte.length < 2)) return true
+      break
+    }
     case "telefone": {
       const num = normalizarNumeroWhatsAppEnvio(valor)
       const digitos = String(num || "").replace(/\D/g, "")
@@ -126,7 +131,7 @@ function campoAdminAssistidoPreenchido(campo, campoNome) {
 
 const CAMPOS_ADMIN_ASSISTIDO = {
   nomeCompleto: {
-    label: "Nome",
+    label: "Nome completo",
     pergunta: "Qual é o nome completo do cliente principal?"
   },
   cpf: {
