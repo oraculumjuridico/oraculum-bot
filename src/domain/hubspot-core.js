@@ -2,7 +2,7 @@ const axios = require("axios")
 const { logErroHubSpot } = require("../utils/logging")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio, normalizarTelefoneHubSpot } = require("./phone-name")
-const { validateHubSpotProperties, isPlaceholderValue } = require("./hubspot-contract")
+const { validateHubSpotProperties, isPlaceholderValue, normalizeCpfHubSpot } = require("./hubspot-contract")
 const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
 
 let deps = {
@@ -112,6 +112,12 @@ function montarPropsContatoHubSpot(from, u = {}) {
   const lastname = partesNome.join(" ")
 
   const emailValido = emailValidoHubSpot(u.email)
+  const enderecoCompleto = [
+    u.address || u.endereco,
+    u.numeroEndereco,
+    u.complementoEndereco,
+    u.bairro
+  ].map(sanitizarTextoEntrada).filter(Boolean).join(", ")
 
   return validateHubSpotProperties(
     "contacts",
@@ -122,7 +128,7 @@ function montarPropsContatoHubSpot(from, u = {}) {
       work_email: emailValido ? u.email : null,
       phone: telefone,
       mobilephone: telefone,
-      address: u.address || u.endereco || "",
+      address: enderecoCompleto,
       city: u.cidade || "",
       state: u.uf || "",
       zip: u.zip || u.cep || "",
@@ -170,6 +176,33 @@ async function hsBuscarPorPhone(phone) {
     return res.data.results?.[0] || null
   } catch (e) {
     logErroHubSpot(e, { operation: "buscarPorPhone" })
+    throw e
+  }
+}
+
+async function hsBuscarPorCpf(cpf) {
+  const canonico = normalizeCpfHubSpot(cpf)
+  if (!canonico) return null
+  const legado = canonico.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4")
+  try {
+    const resultados = []
+    for (const value of [canonico, legado]) {
+      const res = await axios.post(
+        "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        {
+          filterGroups: [{ filters: [{ propertyName: "cpf_do_cliente", operator: "EQ", value }] }],
+          properties: CONTACT_SEARCH_PROPERTIES,
+          limit: 100
+        },
+        { headers: HS() }
+      )
+      resultados.push(...(res.data?.results || []))
+    }
+    const unicos = [...new Map(resultados.filter(item => item?.id).map(item => [String(item.id), item])).values()]
+    if (unicos.length > 1) throw Object.assign(new Error("CPF corresponde a múltiplos contatos"), { code: "HUBSPOT_CONTACT_CPF_AMBIGUOUS" })
+    return unicos[0] || null
+  } catch (e) {
+    logErroHubSpot(e, { operation: "buscarPorCpf" })
     throw e
   }
 }
@@ -347,6 +380,7 @@ async function hsCriarNotaNegocio(nId, tipo, corpo) {
 module.exports = {
   configurarHubSpotCore,
   HS,
+  hsBuscarPorCpf,
   hsBuscarPorPhone,
   hsCriarContato,
   hsCriarNegocio,

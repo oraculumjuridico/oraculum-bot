@@ -11,8 +11,15 @@ const AREAS_JURIDICAS_ADMIN_ASSISTIDO = [
 ]
 
 const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
+const { normalizeCpfHubSpot } = require("./hubspot-contract")
 
-const STATUS_CAMPO_ADMIN_ASSISTIDO = new Set(["confirmado", "inferido", "ausente"])
+const STATUS_CAMPO_ADMIN_ASSISTIDO = new Set(["confirmado", "inferido", "ausente", "invalido", "precisa_conferir"])
+const CPF_VERIFICATION = Object.freeze({
+  NAO_INFORMADO: "NAO_INFORMADO",
+  FORMATO_INVALIDO: "FORMATO_INVALIDO",
+  FORMATO_VALIDO_NAO_CONFERIDO: "FORMATO_VALIDO_NAO_CONFERIDO",
+  CONFERIDO_COM_DOCUMENTO: "CONFERIDO_COM_DOCUMENTO"
+})
 
 // Alinhado com assertFinalizationInvariants (finalization-invariants.js):
 // nomeCompleto->nome (minLength 3), cidade->cidade (minLength 2),
@@ -74,8 +81,12 @@ function valorENormalizadoInvalido(valor, campoNome) {
       break
     }
     case "cpf": {
-      const digitos = valor.replace(/\D/g, "")
-      if (digitos.length !== 11) return true
+      if (!normalizeCpfHubSpot(valor)) return true
+      break
+    }
+    case "idade": {
+      const idade = Number(String(valor).replace(/\D/g, ""))
+      if (!Number.isInteger(idade) || idade < 0 || idade > 130) return true
       break
     }
     case "dataNascimento": {
@@ -107,7 +118,7 @@ function valorENormalizadoInvalido(valor, campoNome) {
 }
 
 function campoAdminAssistidoPreenchido(campo, campoNome) {
-  if (!campo || campo.status === "ausente") return false
+  if (!campo || ["ausente", "invalido"].includes(campo.status)) return false
   const valor = campo.valor
   if (valor === null || valor === undefined) return false
   return !valorENormalizadoInvalido(String(valor), campoNome)
@@ -125,6 +136,10 @@ const CAMPOS_ADMIN_ASSISTIDO = {
   dataNascimento: {
     label: "Data de nascimento",
     pergunta: "Qual é a data de nascimento do cliente principal?"
+  },
+  idade: {
+    label: "Idade",
+    pergunta: "Qual é a idade informada? Não estime a data de nascimento."
   },
   telefone: {
     label: "Telefone",
@@ -206,6 +221,28 @@ const CAMPOS_ADMIN_ASSISTIDO = {
     label: "Objetivo",
     pergunta: "Qual é o objetivo principal do cliente?"
   },
+  estadoCivil: { label: "Estado civil", pergunta: "Qual é o estado civil informado?" },
+  profissao: { label: "Profissão", pergunta: "Qual é a profissão informada?" },
+  situacaoProfissional: { label: "Situação profissional", pergunta: "Qual é a situação profissional atual?" },
+  endereco: { label: "Endereço", pergunta: "Qual é o endereço atual?" },
+  numeroEndereco: { label: "Número", pergunta: "Qual é o número do endereço?" },
+  complementoEndereco: { label: "Complemento", pergunta: "Há complemento no endereço?" },
+  bairro: { label: "Bairro", pergunta: "Qual é o bairro?" },
+  cep: { label: "CEP", pergunta: "Qual é o CEP?" },
+  apelido: { label: "Apelido", pergunta: "Há nome social ou apelido relevante?" },
+  conflitoInteresses: { label: "Conflito de interesses", pergunta: "Existe conflito de interesses conhecido?" },
+  acidenteTrabalho: { label: "Acidente de trabalho", pergunta: "Houve acidente de trabalho?" },
+  limitacoesAtuais: { label: "Limitações atuais", pergunta: "Quais limitações atuais foram informadas?" },
+  atividadeHabitual: { label: "Atividade habitual", pergunta: "Qual era a atividade profissional habitual?" },
+  composicaoFamiliar: { label: "Composição familiar", pergunta: "Qual é a composição familiar informada?" },
+  rendaAtual: { label: "Renda atual", pergunta: "Qual é a renda atual informada?" },
+  beneficioAnterior: { label: "Benefício anterior", pergunta: "Houve benefício anterior?" },
+  dataRequerimento: { label: "Data do requerimento", pergunta: "Qual é a data exata do requerimento?" },
+  resultadoPericia: { label: "Resultado da perícia", pergunta: "Qual foi o resultado informado da perícia?" },
+  documentosMedicos: { label: "Documentos médicos", pergunta: "Quais documentos médicos estão disponíveis?" },
+  motivoEncerramentoVinculo: { label: "Encerramento do vínculo", pergunta: "Qual foi o motivo do encerramento do vínculo?" },
+  naturezaDemanda: { label: "Natureza da demanda", pergunta: "Qual é a natureza específica da demanda?" },
+  orgao: { label: "Órgão", pergunta: "Qual órgão ou entidade está envolvido?" },
   fornecedor: {
     label: "Fornecedor",
     pergunta: "Qual empresa, banco ou fornecedor está envolvido?"
@@ -271,7 +308,7 @@ const CAMPOS_OBRIGATORIOS_POR_AREA = {
   Penal: [...OBRIGATORIOS_BASE, "cpf", "posicaoPenal"],
   Civil: [...OBRIGATORIOS_BASE, "cpf", "parteContraria", "contratoOuFato"],
   Imobiliário: [...OBRIGATORIOS_BASE, "cpf", "imovel", "parteContraria"],
-  Outros: [...OBRIGATORIOS_BASE, "cpf"]
+  Outros: [...OBRIGATORIOS_BASE]
 }
 
 const PRIORIDADE_CAMPOS_ADMIN_ASSISTIDO = [
@@ -340,9 +377,36 @@ function criarCampoAdminAssistido(valor = null, status = "ausente") {
   }
 }
 
+function criarCampoCpfAdminAssistido(valor = null, status = "ausente", verificacao = null) {
+  const informado = valor !== null && valor !== undefined && String(valor).trim() !== ""
+  if (!informado) return { valor: null, status: "ausente", verificacao: CPF_VERIFICATION.NAO_INFORMADO }
+  const canonico = normalizeCpfHubSpot(String(valor))
+  if (!canonico) return { valor: String(valor).trim(), status: "invalido", verificacao: CPF_VERIFICATION.FORMATO_INVALIDO }
+  const conferido = verificacao === CPF_VERIFICATION.CONFERIDO_COM_DOCUMENTO
+  return {
+    valor: canonico,
+    status: conferido ? "confirmado" : normalizarStatusCampoAdminAssistido(status, canonico),
+    verificacao: conferido ? CPF_VERIFICATION.CONFERIDO_COM_DOCUMENTO : CPF_VERIFICATION.FORMATO_VALIDO_NAO_CONFERIDO
+  }
+}
+
+function normalizarCampoAdminAssistido(campo, valor, status = "inferido") {
+  if (campo === "cpf") return criarCampoCpfAdminAssistido(valor, status)
+  if (campo === "idade" && valor !== null && valor !== undefined) {
+    const idade = Number(String(valor).replace(/\D/g, ""))
+    return Number.isInteger(idade) && idade >= 0 && idade <= 130
+      ? criarCampoAdminAssistido(idade, status)
+      : { valor, status: "invalido" }
+  }
+  return criarCampoAdminAssistido(valor, status)
+}
+
 function criarDadosVaziosAdminAssistido() {
   return Object.fromEntries(
-    Object.keys(CAMPOS_ADMIN_ASSISTIDO).map(campo => [campo, criarCampoAdminAssistido()])
+    Object.keys(CAMPOS_ADMIN_ASSISTIDO).map(campo => [
+      campo,
+      campo === "cpf" ? criarCampoCpfAdminAssistido() : criarCampoAdminAssistido()
+    ])
   )
 }
 
@@ -396,5 +460,8 @@ module.exports = {
   proximoCampoObrigatorioAdminAssistido,
   perguntaCampoAdminAssistido,
   labelCampoAdminAssistido,
-  PLACEHOLDERS_INVALIDOS
+  PLACEHOLDERS_INVALIDOS,
+  CPF_VERIFICATION,
+  criarCampoCpfAdminAssistido,
+  normalizarCampoAdminAssistido
 }

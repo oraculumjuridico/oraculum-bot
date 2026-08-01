@@ -237,6 +237,12 @@ const {
   mesclarItensAdminPorIdentidade
 } = require("./src/domain/admin-item-merge")
 const {
+  searchAdminCases,
+  buildCaseComplement,
+  applyComplementLocally,
+  scheduleAdminCase
+} = require("./src/domain/admin-case-operations")
+const {
   mapearNegociosHubSpotAdmin
 } = require("./src/domain/admin-hubspot-deal-mapper")
 const {
@@ -279,7 +285,7 @@ const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
 const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
-const { createAdminAssistedMediaStaging } = require("./src/domain/admin-assisted-media")
+const { createAdminAssistedMediaStaging, processExistingCaseAdminMedia } = require("./src/domain/admin-assisted-media")
 const { createLiveCaseFlow, buildCanonicalPlan } = require("./src/domain/live-case-executor-bridge")
 const { criarGracefulShutdown } = require("./src/infrastructure/graceful-shutdown")
 const {
@@ -366,6 +372,7 @@ const {
 const {
   configurarHubSpotCore,
   HS,
+  hsBuscarPorCpf,
   hsBuscarPorPhone,
   hsCriarContato,
   hsCriarNegocio,
@@ -454,6 +461,7 @@ const liveCaseFlow = createLiveCaseFlow({
       agendarPersistenciaUsers()
     }
   },
+  hsBuscarPorCpf,
   hsBuscarPorPhone,
   hsCriarContato,
   hsAtualizarContato,
@@ -4113,6 +4121,12 @@ const ADMIN_IDS = {
   alertasSemResposta: "adm_alertas_sem_resposta",
   resumo: "adm_resumo_diario",
   atendimentoAssistidoIa: "adm_atendimento_assistido_ia",
+  consultarCaso: "adm_consultar_caso",
+  completarInformacoes: "adm_completar_informacoes",
+  enviarDocumentos: "adm_enviar_documentos",
+  casoCompletar: "adm_caso_completar",
+  casoEnviarDocumento: "adm_caso_enviar_documento",
+  casoAgendar: "adm_caso_agendar",
   casoLinks: "adm_caso_links",
   casoPedirDocs: "adm_caso_pedir_docs",
   casoLembrete: "adm_caso_lembrete",
@@ -4802,14 +4816,211 @@ async function telaAdminPrincipal() {
     ].join("\n"),
     opcoes: [
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
-      { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
+      { id: ADMIN_IDS.agenda, title: "📅 Agendar/consultas" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
+      { id: ADMIN_IDS.consultarCaso, title: "🔎 Consultar caso" },
+      { id: ADMIN_IDS.completarInformacoes, title: "✏️ Completar dados" },
+      { id: ADMIN_IDS.enviarDocumentos, title: "📎 Enviar documentos" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
       { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
       { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Atendimento com IA" }
     ],
     registrarPergunta: false
   }
+}
+
+function iniciarConsultaCasoAdmin(from) {
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
+  return {
+    texto: "🔎 *Consultar caso*\n\nInforme o protocolo, nome, CPF ou telefone. Identificadores serão exibidos de forma mascarada.",
+    opcoes: [
+      { id: ADMIN_IDS.casos, title: "📂 Ver todos os casos" },
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
+    ],
+    registrarPergunta: false
+  }
+}
+
+async function executarConsultaCasoAdmin(from, query) {
+  const resumo = await adminResumoOperacional()
+  const encontrados = searchAdminCases(resumo.todos || [], query)
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  if (!encontrados.length) {
+    sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
+    return {
+      texto: "Nenhum caso encontrado. Confira o dado e tente novamente.",
+      opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+      registrarPergunta: false
+    }
+  }
+  const limitados = encontrados.slice(0, 8)
+  salvarListaCasosAdmin(from, limitados.map(result => result.item), ADMIN_IDS.consultarCaso, 1, 8, encontrados.length, Math.ceil(encontrados.length / 8), null)
+  const atual = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...atual, acaoCasoPendente: null, ts: Date.now() })
+  return {
+    texto: [
+      "🔎 *Resultados da consulta*",
+      "",
+      ...limitados.map((result, index) => `${index + 1}. ${result.numeroCaso || "Sem protocolo"} · ${result.nomeMascarado} · CPF ${result.cpfMascarado} · Tel. ${result.telefoneMascarado}`),
+      encontrados.length > limitados.length ? "\nRefine a busca para ver os demais resultados." : "",
+      "",
+      "Selecione o caso correto."
+    ].filter(Boolean).join("\n"),
+    opcoes: [
+      ...limitados.map((result, index) => ({ id: `admin_caso_${index}`, title: `${index + 1}. ${result.numeroCaso || result.nomeMascarado}`.slice(0, 24) })),
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
+    ],
+    registrarPergunta: false
+  }
+}
+
+function iniciarComplementacaoCasoAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.contatoId || !item?.u?.negocioId) return { texto: "Selecione novamente um caso com Contato e Negócio confirmados.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "completar", ts: Date.now() })
+  return {
+    texto: "✏️ *Completar informações*\n\nEnvie somente um campo no formato `campo: valor`. Exemplo: `cidade: Recife`. Os demais dados serão preservados.",
+    opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+    registrarPergunta: false
+  }
+}
+
+async function executarComplementacaoCasoAdmin(from, text) {
+  const item = obterCasoAdmin(from)
+  const match = sanitizarTextoEntrada(text).match(/^([\p{L}][\p{L}\d_]*)\s*:\s*(.+)$/u)
+  if (!item?.u || !match) return { texto: "Use o formato `campo: valor`, alterando somente um campo.", opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+  try {
+    const operation = buildCaseComplement({ usuario: item.u, campo: match[1], valor: match[2], adminId: chaveAdminWhatsApp(from) })
+    const atualizado = { ...item.u, ...operation.localPatch }
+    if (Object.keys(operation.contactPatch).length) {
+      const propriedades = montarPropsContatoHubSpot(atualizado.whatsappContato || item.from, atualizado)
+      const aliases = { nome: ["firstname", "lastname"], telefone: ["phone", "mobilephone"], email: ["email", "work_email"], cpf: ["cpf_do_cliente"], dataNascimento: ["date_of_birth"], endereco: ["address"], numeroEndereco: ["address"], complementoEndereco: ["address"], bairro: ["address"], cidade: ["city"], uf: ["state"], cep: ["zip"] }
+      const permitidas = aliases[match[1]] || []
+      if (permitidas.length) {
+        const patch = Object.fromEntries(Object.entries(propriedades).filter(([key]) => permitidas.includes(key)))
+        if (!Object.keys(patch).length || !await hsAtualizarContato(item.u.contatoId, patch)) throw new Error("contact_update_not_confirmed")
+      } else {
+        const label = match[1].replace(/([a-z])([A-Z])/g, "$1 $2")
+        atualizado.descricao = [sanitizarTextoEntrada(item.u.descricao), `${label}: ${sanitizarTextoEntrada(match[2])}`].filter(Boolean).join("\n")
+        operation.localPatch.descricao = atualizado.descricao
+        if (!await hsAtualizarNegocioSerializado(item.u.negocioId, getHubSpotDealStateProps(atualizado))) throw new Error("fallback_summary_update_not_confirmed")
+      }
+    }
+    if (Object.keys(operation.dealPatch).length) {
+      const dealProps = getHubSpotDealStateProps(atualizado)
+      if (!await hsAtualizarNegocioSerializado(item.u.negocioId, dealProps)) throw new Error("deal_update_not_confirmed")
+    }
+    applyComplementLocally(item.u, operation)
+    agendarPersistenciaUsers()
+    const chave = normalizarNumeroWhatsAppEnvio(from)
+    const sessao = sessoesAdminWhatsApp.get(chave) || {}
+    sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: null, ts: Date.now() })
+    return { texto: `✅ Campo *${match[1]}* atualizado. Os demais dados foram preservados.`, opcoes: [{ id: ADMIN_IDS.casoCompletar, title: "✏️ Alterar outro campo" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+  } catch {
+    return { texto: "Não foi possível confirmar a atualização. Nenhum dado foi apagado.", opcoes: [{ id: ADMIN_IDS.casoCompletar, title: "✏️ Tentar novamente" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+  }
+}
+
+function iniciarEnvioDocumentoCasoAdmin(from) {
+  const item = obterCasoAdmin(from)
+  const folderId = item?.u?.pastaDriveId || item?.u?.caseFolderId
+  if (!item?.u?.numeroCaso || !folderId) return { texto: "Selecione um caso com pasta confirmada antes de enviar o documento.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "enviar_documento", ts: Date.now() })
+  return {
+    texto: `📤 *Anexar documento*\n\nCaso: ${item.u.numeroCaso}\nEnvie um PDF, JPEG ou PNG. O sucesso só será informado após confirmação do Drive.`,
+    opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+    registrarPergunta: false
+  }
+}
+
+async function executarDocumentoCasoSelecionadoAdmin(from, msgObj) {
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  const item = ["enviar_documento", "completar"].includes(sessao.acaoCasoPendente) ? obterCasoAdmin(from) : null
+  if (!item?.u) return null
+  try {
+    const esperado = String(item.u.cpf || item.u._cpf || "").replace(/\D/g, "")
+    const result = await processExistingCaseAdminMedia({
+      staging: adminAssistedMediaStaging,
+      message: msgObj,
+      caseRecord: {
+        numeroCaso: item.u.numeroCaso,
+        caseFolderId: item.u.pastaDriveId || item.u.caseFolderId,
+        cpf: esperado,
+        receivedDocuments: item.u._canonicalDocuments || {}
+      },
+      deps: {
+        downloadMedia: baixarMidia,
+        analyzeDocument: input => executarPipelineDocumental(input),
+        resolveIntegrity: async ({ pipeline }) => {
+          const campos = pipeline?.extracao?.camposExtraidos || {}
+          const encontrado = String(campos.cpf || campos.cpf_do_cliente || "").replace(/\D/g, "")
+          return esperado && encontrado && esperado === encontrado
+            ? { approved: true, partyRole: "titular" }
+            : { approved: false, partyRole: null, reason: esperado && encontrado ? "cpf_divergente" : "identidade_documental_nao_confirmada" }
+        },
+        uploadVerified: async ({ folderId, name, buffer, mimeType, sha256 }) => {
+          const arquivo = await uploadDrive(folderId, name, buffer, mimeType)
+          return arquivo?.id ? { id: arquivo.id, sha256, webViewLink: arquivo.webViewLink || null } : null
+        }
+      }
+    })
+    if (!result.ok) {
+      return {
+        texto: result.reviewRequired
+          ? "⚠️ Documento recebido em quarentena. A identidade precisa ser conferida antes do envio ao caso."
+          : "Não foi possível validar o arquivo. Nenhum documento foi confirmado.",
+        opcoes: [{ id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Tentar novamente" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+    item.u._canonicalDocuments = item.u._canonicalDocuments || {}
+    item.u._canonicalDocuments[result.sha256] = { fileId: result.fileId, sha256: result.sha256, status: "uploaded", uploadedAt: new Date().toISOString() }
+    item.u.documentosEnviados = true
+    agendarPersistenciaUsers()
+    sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: sessao.acaoCasoPendente === "completar" ? "completar" : null, ts: Date.now() })
+    return { texto: `✅ Documento confirmado no caso ${item.u.numeroCaso}.`, opcoes: [{ id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Enviar outro" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false, audio: false }
+  } catch (error) {
+    logErro("admin_document_upload", `Falha técnica; code=${sanitizarTextoEntrada(error?.code) || "ADMIN_MEDIA_UPLOAD_FAILED"}`)
+    return { texto: "Não foi possível confirmar o documento no Drive. Nenhum sucesso foi registrado; você pode tentar novamente.", opcoes: [{ id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Tentar novamente" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false, audio: false }
+  }
+}
+
+function iniciarAgendamentoCasoAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.negocioId) return { texto: "Selecione um caso com Negócio confirmado antes de agendar.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "agendar", ts: Date.now() })
+  return { texto: "📅 *Agendar atendimento*\n\nInforme data e hora em formato ISO, por exemplo: `2026-08-10T13:00:00-03:00`.", opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+}
+
+async function executarAgendamentoCasoAdmin(from, text) {
+  const item = obterCasoAdmin(from)
+  const dataHora = sanitizarTextoEntrada(text)
+  if (!item?.u || !dataHora || Number.isNaN(new Date(dataHora).getTime())) return { texto: "Data ou hora inválida. Use o formato ISO informado.", opcoes: [{ id: ADMIN_IDS.casoAgendar, title: "📅 Tentar novamente" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+  const calendarConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN)
+  const result = await scheduleAdminCase({ usuario: item.u, dataHora, duracaoMin: 60, createEvent: calendarConfigured ? criarEventoConsulta : undefined })
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: null, ts: Date.now() })
+  if (!result.ok) {
+    item.u.adminSchedulingPending = { requestedAt: new Date().toISOString(), dataHora, status: "pending_human" }
+    agendarPersistenciaUsers()
+    return { texto: "Solicitação registrada, aguardando confirmação", opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+  }
+  item.u.consultaEventoId = result.eventId
+  item.u.consultaStatus = "agendada"
+  agendarPersistenciaUsers()
+  return { texto: `✅ Agendamento confirmado. Evento: ${result.eventId}`, opcoes: [{ id: ADMIN_IDS.agenda, title: "📅 Ver consultas" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
 }
 
 async function telaAdminPrioridades(from, pagina = 1) {
@@ -5084,12 +5295,12 @@ function telaDetalheCasoAdmin(from, idx) {
     texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
     opcoes: [
       botaoPosAtendimento,
-      { id: ADMIN_IDS.casoRevisado, title: `✅ ${ADMIN_MENU_LABELS.marcarRevisado}` },
       { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
       { id: ADMIN_IDS.casoEnviarAnalise, title: `📝 ${ADMIN_MENU_LABELS.registrarAnalise}` },
       { id: ADMIN_IDS.casoPedirDocs, title: `📎 ${ADMIN_MENU_LABELS.pedirDocumentos}` },
-      { id: ADMIN_IDS.casoLembrete, title: `🔔 ${ADMIN_MENU_LABELS.lembrarCliente}` },
-      { id: ADMIN_IDS.casoLinks, title: `🔗 ${ADMIN_MENU_LABELS.abrirLinksCaso}` },
+      { id: ADMIN_IDS.casoCompletar, title: "✏️ Completar dados" },
+      { id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Anexar documento" },
+      { id: ADMIN_IDS.casoAgendar, title: "📅 Agendar atendimento" },
       { id: voltar, title: `⬅️ ${ADMIN_MENU_LABELS.voltarLista}` },
       { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
@@ -5801,6 +6012,12 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
           reason: esperado && encontrado ? "cpf_divergente" : "identidade_documental_nao_confirmada"
         }
       }
+    }),
+    promoverMidiaAdminAssistida: async (sha256, destination) => adminAssistedMediaStaging.promote(sha256, destination, {
+      uploadVerified: async ({ folderId, name, buffer, mimeType, sha256: expectedSha }) => {
+        const arquivo = await uploadDrive(folderId, name, buffer, mimeType)
+        return arquivo?.id ? { id: arquivo.id, sha256: expectedSha, webViewLink: arquivo.webViewLink || null } : null
+      }
     })
   }
 
@@ -5814,6 +6031,8 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
 
   const tipoMidiaAdminSemContexto = sanitizarTextoEntrada(msgObj?.type).toLowerCase()
   if (["image", "document", "video"].includes(tipoMidiaAdminSemContexto)) {
+    const respostaCasoSelecionado = await executarDocumentoCasoSelecionadoAdmin(from, msgObj)
+    if (respostaCasoSelecionado) return respostaCasoSelecionado
     return {
       texto: "Recebi a midia, mas preciso de um contexto para usa-la. Abra *Casos* para escolher um caso ou *Atendimento Assistido* para iniciar um atendimento.",
       opcoes: [
@@ -5824,6 +6043,18 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       registrarPergunta: false,
       audio: false
     }
+  }
+
+  const sessaoAcaoAdmin = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}
+  const navegacaoAdmin = new Set(["menu", "inicio", "admin", "admin_menu", ADMIN_IDS.menu, "voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"])
+  if (sessaoAcaoAdmin.acaoCasoPendente === "consultar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
+    return executarConsultaCasoAdmin(from, text)
+  }
+  if (sessaoAcaoAdmin.acaoCasoPendente === "completar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
+    return executarComplementacaoCasoAdmin(from, text)
+  }
+  if (sessaoAcaoAdmin.acaoCasoPendente === "agendar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
+    return executarAgendamentoCasoAdmin(from, text)
   }
 
   if (["voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"].includes(comando)) {
@@ -5852,7 +6083,14 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return await telaConsultasAdmin(from)
   }
 
+  if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) return iniciarConsultaCasoAdmin(from)
+
   if (["admin_casos", ADMIN_IDS.casos].includes(comando)) return await telaAdminCasos()
+  if (["completar informacoes", "completar informações", ADMIN_IDS.completarInformacoes].includes(comando)) return await telaAdminCasos()
+  if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
+  if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
+  if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
+  if (["agendar atendimento", ADMIN_IDS.casoAgendar].includes(comando)) return iniciarAgendamentoCasoAdmin(from)
   if (["admin_casos_novos", ADMIN_IDS.casosNovos].includes(comando)) return await telaAdminCasosNovos(from)
   if (["admin_casos_analise", ADMIN_IDS.casosAnalise].includes(comando)) return await telaAdminCasosAnalise(from)
   if (["admin_casos_docs", ADMIN_IDS.casosDocs].includes(comando)) return await telaAdminCasosDocumentos(from)
@@ -6493,8 +6731,10 @@ async function finalizarCadastro(from, u) {
       logErro("canonical_executor", "FALLBACK_BLOCKED_PARTIAL_WRITES", { hasPartialWrites: hasPartial, interruptedStep, partialResources: partial })
       throw new Error("FALLBACK_BLOCKED_PARTIAL_WRITES: require admin-assisted resolution")
     }
-    var driveCalled = true
-    var pastaRaw = await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
+    var driveCalled = !u.pastaDriveId
+    var pastaRaw = u.pastaDriveId
+      ? { id: u.pastaDriveId, webViewLink: u.pastaDriveLink || null }
+      : await criarPastaCliente(numeroCaso, u.nome, u.area, u.situacao, u.tipo)
     var pastaNormalizada = normalizeDriveFolderResult(pastaRaw)
     var caseFolderId = pastaNormalizada ? pastaNormalizada.id : null
     logDebug("[CANONICAL] canonical_step=drive driveCalled=true driveResultHasId=" + String(!!caseFolderId) + " contactId=" + String(u.contatoId || "-") + " dealId=" + String(u.negocioId || "-") + " numeroCaso=" + String(numeroCaso || "-"))
@@ -6503,7 +6743,12 @@ async function finalizarCadastro(from, u) {
     u.pastaDriveLink = (pastaNormalizada ? pastaNormalizada.webViewLink : null) || null
     persistirUsersAgora({ propagarErro: true })
 
-    const existente = await hsBuscarPorPhone(telefoneContato)
+    const existenteCpf = u.cpf ? await hsBuscarPorCpf(u.cpf) : null
+    const existente = existenteCpf || await hsBuscarPorPhone(telefoneContato)
+    const nomeExistenteCompleto = [existente?.properties?.firstname, existente?.properties?.lastname].filter(Boolean).join(" ")
+    if (!existenteCpf && existente?.id && nomeExistenteCompleto && u.nome && normalizarNomeComparacao(nomeExistenteCompleto) !== normalizarNomeComparacao(u.nome)) {
+      throw Object.assign(new Error("telefone pertence a contato incompatível"), { code: "HUBSPOT_PHONE_IDENTITY_CONFLICT" })
+    }
     if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
     let contatoId = u.contatoId || existente?.id || null
 

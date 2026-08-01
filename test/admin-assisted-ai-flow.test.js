@@ -52,7 +52,7 @@ function dadosTrabalhistasCompletos() {
     tipoCaso: criarCampoAdminAssistido("Verbas rescisórias", "inferido"),
     descricao: criarCampoAdminAssistido("Demissão sem pagamento de rescisão.", "confirmado"),
     nomeCompleto: criarCampoAdminAssistido("Maria Silva", "confirmado"),
-    cpf: criarCampoAdminAssistido("123.456.789-00", "confirmado"),
+    cpf: criarCampoAdminAssistido("52998224725", "confirmado"),
     telefone: criarCampoAdminAssistido("(81) 99999-0000", "confirmado"),
     cidade: criarCampoAdminAssistido("Recife", "confirmado"),
     uf: criarCampoAdminAssistido("PE", "confirmado"),
@@ -72,7 +72,7 @@ async function completarFluxoTrabalhista(from, deps) {
   await processarAtendimentoAssistidoAdmin(from, "(81) 99999-0000", { type: "text" }, deps)
   await processarAtendimentoAssistidoAdmin(from, "Recife", { type: "text" }, deps)
   await processarAtendimentoAssistidoAdmin(from, "PE", { type: "text" }, deps)
-  return await processarAtendimentoAssistidoAdmin(from, "123.456.789-00", { type: "text" }, deps)
+  return await processarAtendimentoAssistidoAdmin(from, "52998224725", { type: "text" }, deps)
 }
 
 async function main() {
@@ -152,7 +152,7 @@ async function main() {
   await processarAtendimentoAssistidoAdmin(from, "PE", { type: "text" }, deps)
   const respostaRevisao = await processarAtendimentoAssistidoAdmin(
     from,
-    "123.456.789-00",
+    "529.982.247-25",
     { type: "text" },
     deps
   )
@@ -223,11 +223,11 @@ async function main() {
     finalizacoes.push({ telefone, u: { ...u } })
     assert.equal(telefone, "5581999990000")
     assert.equal(u.nome, "Maria Silva")
-    assert.equal(u.cpf, "123.456.789-00")
+    assert.equal(u.cpf, "52998224725")
     assert.equal(u.area, "Trabalhista")
     assert.equal(u.tipo, "Verbas rescisórias")
     assert.match(u.descricao, /Nova Empresa S\.A\./)
-    assert.match(u.descricao, /CPF: 123\.456\.789-00/)
+    assert.doesNotMatch(u.descricao, /52998224725/)
     assert.equal(u.whatsappVerificado, true)
     assert.equal(u._novoCasoDeCliente, true)
     u.contatoId = "contact-123"
