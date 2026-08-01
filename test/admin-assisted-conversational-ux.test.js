@@ -5,7 +5,7 @@ const assert = require("node:assert/strict")
 
 delete process.env.GROQ_KEY
 
-const { criarAnaliseFallback } = require("../src/domain/admin-assisted-ai-intelligence")
+const { criarAnaliseFallback, normalizarAnaliseIA } = require("../src/domain/admin-assisted-ai-intelligence")
 const {
   criarCampoAdminAssistido,
   criarDadosVaziosAdminAssistido
@@ -144,4 +144,63 @@ test("áudio confirmado converge para o mesmo estado canônico do texto", async 
     assert.deepEqual(estadoAudio.dados[campo], estadoTexto.dados[campo])
   }
   assert.equal(estadoAudio.perguntaPendente, estadoTexto.perguntaPendente)
+})
+
+test("primeiro nome exige nome completo e nome completo informado não é repetido", async () => {
+  const deps = depsComSessoes()
+  const from = "5581555550000"
+  iniciarAtendimentoAssistidoAdmin(from, deps)
+  const parcial = await processarAtendimentoAssistidoAdmin(from, "Caso trabalhista de Jesaías, demitido sem receber rescisão.", { type: "text" }, deps)
+  assert.match(parcial.texto, /nome completo do cliente/i)
+  assert.equal(deps.sessoesAdminWhatsApp.get(from).adminAssistido.perguntaPendente, "nomeCompleto")
+
+  const completa = criarAnaliseFallback("Caso trabalhista de Jesaías Mendes da Silva, demitido sem receber rescisão.")
+  const proxima = proximaPerguntaAdminAssistido({ questionario: criarQuestionarioAdminAssistido("Trabalhista"), dados: completa.dados })
+  assert.notEqual(proxima?.campo, "nomeCompleto")
+})
+
+test("documentação genérica não é transformada em documentos específicos", () => {
+  const fallback = criarAnaliseFallback("A cliente trouxe alguns documentos para o atendimento.")
+  assert.equal(fallback.dados.documentosMencionados.valor, "Documentos existentes, ainda não identificados")
+  assert.equal(fallback.dados.documentosMencionados.status, "precisa_conferir")
+  assert.doesNotMatch(String(fallback.dados.documentosMencionados.valor), /CNIS|contracheque|recibo/i)
+
+  const groq = normalizarAnaliseIA({
+    confianca: 0.9,
+    dados: { documentosMencionados: { valor: "CNIS, contracheques e recibos de autônomo", status: "confirmado" } }
+  }, "A cliente trouxe alguns documentos para o atendimento.")
+  assert.equal(groq.dados.documentosMencionados.valor, "Documentos existentes, ainda não identificados")
+  assert.equal(groq.dados.documentosMencionados.status, "precisa_conferir")
+})
+
+test("somente documentos nominalmente mencionados aparecem como específicos", () => {
+  const analise = criarAnaliseFallback("A cliente trouxe CNIS, contracheques e a carta de indeferimento do INSS.")
+  assert.match(analise.dados.documentosMencionados.valor, /CNIS/)
+  assert.match(analise.dados.documentosMencionados.valor, /Holerites/)
+  assert.match(analise.dados.documentosMencionados.valor, /Carta de indeferimento/)
+})
+
+test("telefone, cidade, UF, CPF e nascimento não repetem interpretação completa", async () => {
+  const deps = depsComSessoes()
+  const from = "5581444440000"
+  iniciarAtendimentoAssistidoAdmin(from, deps)
+  const inicial = await processarAtendimentoAssistidoAdmin(from, "Caso de Maria de Souza. O INSS negou benefício por incapacidade.", { type: "text" }, deps)
+  assert.match(inicial.texto, /Entendi o caso/)
+  assert.match(inicial.texto, /Maria de Souza/)
+
+  for (const resposta of ["(81) 99999-0000", "Recife", "PE", "52998224725", "01/01/1980"]) {
+    const tela = await processarAtendimentoAssistidoAdmin(from, resposta, { type: "text" }, deps)
+    assert.doesNotMatch(tela.texto, /Entendi o caso|Informações encontradas|Síntese:/)
+    assert.ok((tela.texto.match(/\?/g) || []).length <= 1)
+  }
+})
+
+test("revisão mantém nome incompleto e documentos não identificados como pendências", () => {
+  const dados = dadosBase()
+  dados.nomeCompleto = criarCampoAdminAssistido("Jesaías", "confirmado")
+  dados.documentosMencionados = criarCampoAdminAssistido("Documentos existentes, ainda não identificados", "precisa_conferir")
+  const revisao = gerarRevisaoCurtaAdminAssistido({ dados, faltantes: [] })
+  assert.match(revisao, /Nome completo/)
+  assert.match(revisao, /Documentos/)
+  assert.doesNotMatch(revisao, /Nenhuma crítica/)
 })

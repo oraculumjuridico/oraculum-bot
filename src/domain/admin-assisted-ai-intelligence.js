@@ -18,7 +18,7 @@ function textoTemSobrenome(texto = "") {
 
 function extrairNomeFallback(texto = "") {
   const entrada = sanitizarTextoEntrada(texto)
-  const match = entrada.match(/\b(?:o\s+cliente\s+(?:é|e)|a\s+cliente\s+(?:é|e)|cliente\s*[:\-]|atendi(?:\s+hoje)?|caso\s+(?:de|para)|para)\s+([^,.;\n]+)/iu)
+  const match = entrada.match(/\b(?:o\s+cliente\s+(?:é|e)|a\s+cliente\s+(?:é|e)|cliente\s*[:\-]|atendi(?:\s+hoje)?|caso(?:\s+[\p{L}-]+){0,3}?\s+(?:de|para)|para)\s+([^,.;\n]+)/iu)
   const candidato = match?.[1]?.trim() || ""
   const partes = candidato.split(/\s+/).filter(Boolean).slice(0, 7)
   if (partes.length < 2) return null
@@ -226,6 +226,20 @@ function extrairDocumentosMencionadosFallback(texto = "") {
   return docs.filter(([regex]) => regex.test(t)).map(([, label]) => label).join(", ") || null
 }
 
+function relatoIndicaDocumentosGenericos(texto = "") {
+  const t = normalizarTextoAnalise(texto)
+  return /\b(alguns documentos|documentacao|documentos|levou documentos|trouxe documentos)\b/.test(t)
+}
+
+function campoDocumentosDoRelato(texto = "") {
+  const especificos = extrairDocumentosMencionadosFallback(texto)
+  if (especificos) return criarCampoAdminAssistido(especificos, "confirmado")
+  if (relatoIndicaDocumentosGenericos(texto)) {
+    return criarCampoAdminAssistido("Documentos existentes, ainda não identificados", "precisa_conferir")
+  }
+  return criarCampoAdminAssistido(null, "ausente")
+}
+
 function detectarUrgenciaFallback(texto = "") {
   const t = normalizarTextoAnalise(texto)
   if (/\b(hoje|amanha|prazo|audiencia|intimacao|liminar|despejo|prisao|sem renda|sem receber|cortou|cortado|suspenso)\b/.test(t)) return "Alta"
@@ -267,7 +281,6 @@ function criarAnaliseFallback(texto = "") {
   const profissao = extrairAposMarcador(texto, ["profissao", "profissão", "trabalha como", "cargo"])
   const orgao = extrairAposMarcador(texto, ["orgao", "órgão", "entidade"])
   const apelido = extrairAposMarcador(texto, ["nome social", "apelido"])
-  const documentosMencionados = extrairDocumentosMencionadosFallback(texto)
   const urgencia = detectarUrgenciaFallback(texto)
 
   dados.areaJuridica = criarCampoAdminAssistido(area, areasProvaveis.length ? "precisa_conferir" : "inferido")
@@ -290,7 +303,7 @@ function criarAnaliseFallback(texto = "") {
   dados.profissao = criarCampoAdminAssistido(profissao, profissao ? "confirmado" : "ausente")
   dados.orgao = criarCampoAdminAssistido(orgao, orgao ? "confirmado" : "ausente")
   dados.apelido = criarCampoAdminAssistido(apelido, apelido ? "confirmado" : "ausente")
-  dados.documentosMencionados = criarCampoAdminAssistido(documentosMencionados, documentosMencionados ? "inferido" : "ausente")
+  dados.documentosMencionados = campoDocumentosDoRelato(texto)
   dados.urgencia = criarCampoAdminAssistido(urgencia, urgencia ? "inferido" : "ausente")
 
   if (nome) {
@@ -348,6 +361,9 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
   if (!dados.descricao?.valor && textoOriginal) {
     dados.descricao = criarCampoAdminAssistido(sanitizarTextoEntrada(textoOriginal), "confirmado")
   }
+  if (relatoIndicaDocumentosGenericos(textoOriginal) && !extrairDocumentosMencionadosFallback(textoOriginal)) {
+    dados.documentosMencionados = campoDocumentosDoRelato(textoOriginal)
+  }
   if (!dados.resumoJuridico?.valor && parsed.resumoJuridico) {
     dados.resumoJuridico = criarCampoAdminAssistido(parsed.resumoJuridico, "inferido")
   }
@@ -388,6 +404,7 @@ Use "confirmado" somente para dado dito explicitamente pelo administrador.
 Use "inferido" para conclusão razoável a partir do texto, como área jurídica ou tipo do caso.
 Use "ausente" quando não houver informação. Use "precisa_conferir" para inferência relevante que depende de confirmação e "contraditorio" quando o relato trouxer valores incompatíveis.
 Separe cliente principal, administrador, representante, familiar, empregador, testemunha, órgão e parte contrária. Nunca use o administrador como cliente quando o texto identificar outra pessoa como cliente.
+Em documentosMencionados, liste exclusivamente documentos nominalmente citados no texto. Expressões genéricas como "alguns documentos" ou "documentação" significam documentos ainda não identificados; nunca complete com documentos prováveis da área.
 
 Áreas permitidas: ${AREAS_JURIDICAS_ADMIN_ASSISTIDO.join(", ")}.
 
