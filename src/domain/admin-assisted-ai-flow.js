@@ -1,3 +1,4 @@
+const crypto = require("node:crypto")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
 const {
@@ -13,6 +14,7 @@ const {
   labelCampoAdminAssistido,
   obterCamposObrigatoriosAdminAssistido,
   obterCamposRevisaoEspecificosAdminAssistido,
+  normalizarCampoAdminAssistido,
   PLACEHOLDERS_INVALIDOS
 } = require("./admin-assisted-ai-schema")
 const {
@@ -230,7 +232,7 @@ function camposCriticosFinalizacaoAdminAssistido() {
   return new Set(["nomeCompleto", "telefone", "cidade", "areaJuridica", "descricao"])
 }
 
-function campoPodeFicarPendenteAdminAssistido(campo) {
+function campoPodeFicarPendenteAdminAssistido(campo, area = "Outros") {
   return campo && !camposCriticosFinalizacaoAdminAssistido().has(campo)
 }
 
@@ -251,12 +253,14 @@ function mergeDadosAdminAssistido(dadosAtuais = {}, novosDados = {}) {
     const statusNovo = novo?.status
     if (valorNovo === null || valorNovo === undefined || String(valorNovo).trim() === "") continue
     if (base[campo]?.status === "confirmado" && statusNovo !== "confirmado") continue
-    base[campo] = criarCampoAdminAssistido(valorNovo, statusNovo || "inferido")
+    base[campo] = normalizarCampoAdminAssistido(campo, valorNovo, statusNovo || "inferido")
   }
   return base
 }
 
 function indicadorCampoAdminAssistido(info = criarCampoAdminAssistido()) {
+  if (info.status === "invalido") return "❌ Inválido"
+  if (info.status === "precisa_conferir") return "⚠️ Precisa conferir"
   if (info.status === "confirmado") return "✅ Confirmado"
   if (info.status === "inferido") return "🟡 Inferido"
   return "❌ Não informado"
@@ -565,7 +569,8 @@ function atualizarCampoPendente(adminAssistido = {}, texto = "") {
   const campo = adminAssistido.perguntaPendente
   if (!campo) return adminAssistido.dados || criarDadosVaziosAdminAssistido()
   if (entradaPedeInformarDepois(texto)) {
-    if (campoPodeFicarPendenteAdminAssistido(campo)) {
+    const area = valorCampo(adminAssistido.dados || {}, "areaJuridica") || "Outros"
+    if (campoPodeFicarPendenteAdminAssistido(campo, area)) {
       return {
         ...(adminAssistido.dados || criarDadosVaziosAdminAssistido()),
         [campo]: criarCampoAdminAssistido(null, "ausente")
@@ -575,7 +580,7 @@ function atualizarCampoPendente(adminAssistido = {}, texto = "") {
   }
   return {
     ...(adminAssistido.dados || criarDadosVaziosAdminAssistido()),
-    [campo]: criarCampoAdminAssistido(texto, "confirmado")
+    [campo]: normalizarCampoAdminAssistido(campo, texto, "confirmado")
   }
 }
 
@@ -701,7 +706,14 @@ const CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO = new Set([
   "faltantes",
   "failedInvariant",
   "stage",
-  "adapter"
+  "adapter",
+  "executionId",
+  "contactId",
+  "dealId",
+  "caseFolderId",
+  "durationMs",
+  "created",
+  "reused"
 ])
 
 function criarPayloadLogAdminAssistido(evento, detalhes = {}) {
@@ -711,16 +723,8 @@ function criarPayloadLogAdminAssistido(evento, detalhes = {}) {
   }
   if (!detalhes || typeof detalhes !== "object" || Array.isArray(detalhes)) return payload
 
-  const aliasMap = {
-    contatoId: ["contatoId", "contactId"],
-    negocioId: ["negocioId", "dealId"],
-    pastaDriveId: ["pastaDriveId", "caseFolderId"],
-    numeroCaso: ["numeroCaso", "caseNumber"]
-  }
-
   for (const [campo, valor] of Object.entries(detalhes)) {
-    const targetField = Object.entries(aliasMap).find(([, aliases]) => aliases.includes(campo))?.[0]
-    const campoLog = targetField || campo
+    const campoLog = campo
     if (!CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO.has(campoLog)) continue
     if (Array.isArray(valor)) {
       payload[campoLog] = valor
@@ -775,7 +779,7 @@ function normalizarPrioridadeAdminAssistido(dados = {}) {
 
 function resumoDadosComplementaresAdminAssistido(dados = {}) {
   const campos = [
-    "cpf",
+    "idade",
     "dataNascimento",
     "email",
     "beneficio",
@@ -790,6 +794,28 @@ function resumoDadosComplementaresAdminAssistido(dados = {}) {
     "vinculoFamiliar",
     "filhos",
     "objetivo",
+    "estadoCivil",
+    "profissao",
+    "situacaoProfissional",
+    "endereco",
+    "numeroEndereco",
+    "complementoEndereco",
+    "bairro",
+    "cep",
+    "apelido",
+    "conflitoInteresses",
+    "acidenteTrabalho",
+    "limitacoesAtuais",
+    "atividadeHabitual",
+    "composicaoFamiliar",
+    "rendaAtual",
+    "beneficioAnterior",
+    "dataRequerimento",
+    "resultadoPericia",
+    "documentosMedicos",
+    "motivoEncerramentoVinculo",
+    "naturezaDemanda",
+    "orgao",
     "fornecedor",
     "produtoServico",
     "problema",
@@ -802,7 +828,9 @@ function resumoDadosComplementaresAdminAssistido(dados = {}) {
     .map(campo => {
       const valor = textoCampo(dados, campo)
       if (!valor) return null
-      return `${labelCampoAdminAssistido(campo)}: ${valor}`
+      return campo === "idade"
+        ? `Idade informada: ${valor}`
+        : `${labelCampoAdminAssistido(campo)}: ${valor}`
     })
     .filter(Boolean)
     .join("\n")
@@ -838,11 +866,21 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     origemCaptacao: ADMIN_ASSISTIDO_ORIGEM,
     nome,
     cpf: textoCampo(dados, "cpf"),
+    idade: Number.isInteger(Number(valorCampo(dados, "idade"))) ? Number(valorCampo(dados, "idade")) : null,
     dataNascimento: textoCampo(dados, "dataNascimento"),
     email: (function() {
       const emailRaw = textoCampo(dados, "email")
       return emailRaw && emailValidoAdminAssistido(emailRaw) ? emailRaw : null
     })(),
+    estadoCivil: textoCampo(dados, "estadoCivil") || null,
+    profissao: textoCampo(dados, "profissao") || null,
+    situacaoProfissional: textoCampo(dados, "situacaoProfissional") || null,
+    endereco: textoCampo(dados, "endereco") || null,
+    numeroEndereco: textoCampo(dados, "numeroEndereco") || null,
+    complementoEndereco: textoCampo(dados, "complementoEndereco") || null,
+    bairro: textoCampo(dados, "bairro") || null,
+    cep: textoCampo(dados, "cep") || null,
+    apelido: textoCampo(dados, "apelido") || null,
     beneficio: textoCampo(dados, "beneficio"),
     beneficioInteresse: textoCampo(dados, "beneficio"),
     nomeConfirmado: Boolean(nome),
@@ -855,6 +893,19 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     situacao: textoCampo(dados, "situacao") || tipo,
     subTipo: textoCampo(dados, "motivo") || null,
     detalhe: textoCampo(dados, "problema") || textoCampo(dados, "objetivo") || null,
+    objetivo: textoCampo(dados, "objetivo") || null,
+    acidenteTrabalho: valorCampo(dados, "acidenteTrabalho"),
+    limitacoesAtuais: textoCampo(dados, "limitacoesAtuais") || null,
+    motivoEncerramentoVinculo: textoCampo(dados, "motivoEncerramentoVinculo") || null,
+    composicaoFamiliar: textoCampo(dados, "composicaoFamiliar") || null,
+    rendaAtual: textoCampo(dados, "rendaAtual") || null,
+    dataRequerimento: textoCampo(dados, "dataRequerimento") || null,
+    dataNegativa: textoCampo(dados, "dataNegativa") || null,
+    resultadoPericia: textoCampo(dados, "resultadoPericia") || null,
+    conflitoInteresses: textoCampo(dados, "conflitoInteresses") || null,
+    naturezaDemanda: textoCampo(dados, "naturezaDemanda") || textoCampo(dados, "motivo") || null,
+    orgao: textoCampo(dados, "orgao") || null,
+    dataAtendimento: adminAssistido.iniciadoEm || new Date().toISOString(),
     _docKey: null,
     urgencia: normalizarPrioridadeAdminAssistido(dados),
     semReceber: false,
@@ -934,12 +985,18 @@ function labelInvariante(invariante) {
 }
 
 async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssistido, deps = {}) {
+  const executionId = crypto.randomUUID()
+  const startedAt = Date.now()
   const dados = adminAssistido.dados || criarDadosVaziosAdminAssistido()
   const area = valorCampo(dados, "areaJuridica") || adminAssistido.analise?.areaJuridica || "Outros"
   const pendentesPosterior = Array.isArray(adminAssistido.pendentesPosterior) ? adminAssistido.pendentesPosterior : []
   const faltantes = camposFaltantesAdminAssistido(dados, area)
+  const invalidos = Object.entries(dados)
+    .filter(([, info]) => info?.status === "invalido")
+    .map(([campo]) => campo)
   const faltantesCriticos = faltantes.filter(campo => camposCriticosFinalizacaoAdminAssistido().has(campo))
-  const proximoCampo = faltantesCriticos[0] || null
+  const bloqueios = [...new Set([...invalidos, ...faltantesCriticos])]
+  const proximoCampo = bloqueios[0] || null
 
   if (proximoCampo) {
     const novoEstado = {
@@ -952,10 +1009,12 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
     salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
     registrarLogAdminAssistido(deps, "confirmacao_bloqueada_campos_faltantes", {
       resultado: "bloqueado",
-      faltantes: faltantesCriticos
+      faltantes: bloqueios
     })
     return {
-      texto: textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo }),
+      texto: invalidos.length
+        ? `${invalidos.map(campo => `${labelCampoAdminAssistido(campo)} inválido`).join(", ")}. Corrija o dado antes de confirmar.`
+        : textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo }),
       opcoes: opcoesNavegacaoAdminAssistido(),
       registrarPergunta: false,
       audio: false
@@ -1047,6 +1106,29 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
       }
     }
 
+    const documentosAprovados = (Array.isArray(adminAssistido.documentos) ? adminAssistido.documentos : [])
+      .filter(documento => documento?.status === "approved" && documento?.sha256)
+    const documentosPromovidos = []
+    if (documentosAprovados.length && typeof deps.promoverMidiaAdminAssistida !== "function") {
+      throw Object.assign(new Error("promotor de mídia administrativa não configurado"), {
+        code: "ADMIN_MEDIA_PROMOTER_MISSING",
+        operation: "drive_document_upload"
+      })
+    }
+    for (const documento of documentosAprovados) {
+      const promovido = await deps.promoverMidiaAdminAssistida(documento.sha256, {
+        folderId: pastaDriveId,
+        caseNumber: numeroCaso
+      })
+      if (!promovido?.fileId) {
+        throw Object.assign(new Error("upload administrativo sem confirmação"), {
+          code: "ADMIN_MEDIA_UPLOAD_VERIFY_FAILED",
+          operation: "drive_document_upload"
+        })
+      }
+      documentosPromovidos.push(promovido)
+    }
+
     const novoEstado = {
       ...adminAssistido,
       ativo: false,
@@ -1056,7 +1138,12 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
         contatoId,
         negocioId,
         pastaDriveId,
-        pastaDriveLink: u.pastaDriveLink || null
+        pastaDriveLink: u.pastaDriveLink || null,
+        documentos: documentosPromovidos.map(documento => ({
+          fileId: documento.fileId,
+          sha256: documento.sha256,
+          category: documento.category || null
+        }))
       }
     }
     salvarSessaoAdmin(chave, {
@@ -1066,7 +1153,26 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
     }, deps)
     registrarLogAdminAssistido(deps, "criacao_caso_concluida", {
       resultado: "sucesso",
-      ...novoEstado.casoCriado
+      status: "success",
+      etapa: "final_verify",
+      executionId,
+      contactId: contatoId,
+      dealId: negocioId,
+      numeroCaso,
+      caseFolderId: pastaDriveId,
+      contatoId,
+      negocioId,
+      pastaDriveId,
+      created: [
+        u._canonicalCheckpoint?.steps?.contact?.result?.action === "created" ? "contact" : null,
+        u._canonicalCheckpoint?.steps?.deal?.result?.action === "created" ? "deal" : null,
+        u._canonicalCheckpoint?.steps?.drive?.result?.action === "created" ? "drive" : null
+      ].filter(Boolean),
+      reused: [
+        u._canonicalCheckpoint?.steps?.contact?.result?.action === "verified" ? "contact" : null,
+        u._canonicalCheckpoint?.steps?.deal?.result?.action === "verified" ? "deal" : null
+      ].filter(Boolean),
+      durationMs: Date.now() - startedAt
     })
     return {
       texto: textoSucessoCriacaoCasoAdminAssistido(u, numeroCaso),
@@ -1524,7 +1630,7 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
     const campo = adminAssistido.campoEmEdicao
     let dadosEditados = {
       ...(adminAssistido.dados || criarDadosVaziosAdminAssistido()),
-      [campo]: criarCampoAdminAssistido(entrada, "confirmado")
+      [campo]: normalizarCampoAdminAssistido(campo, entrada, "confirmado")
     }
 
     // Validação de e-mail: se o campo for "email" e o valor for inválido,
@@ -1658,6 +1764,7 @@ module.exports = {
   gerarResumoAdminAssistido,
   montarUsuarioFinalizacaoAdminAssistido,
   confirmarCriarCasoAdminAssistido,
+  acaoRevisaoAdminAssistido,
   acaoRevisaoEmailAdminAssistido,
   acaoRevisaoEmailAdminAssistidoHandler,
   telaRevisaoEmailAdminAssistido,

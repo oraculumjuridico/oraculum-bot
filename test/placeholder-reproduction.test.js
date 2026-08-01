@@ -70,7 +70,7 @@ function adminAssistidoComDados(dados) {
 
 const dadosReais = {
   nomeCompleto: { valor: "Maria da Silva", status: "confirmado" },
-  cpf: { valor: "123.456.789-09", status: "confirmado" },
+  cpf: { valor: "52998224725", status: "confirmado" },
   dataNascimento: { valor: "15/03/1990", status: "confirmado" },
   telefone: { valor: "5581999999999", status: "confirmado" },
   email: { valor: "maria@example.com", status: "confirmado" },
@@ -118,7 +118,7 @@ const dadosReais = {
   // ============================================================
 
   assert.equal(campoAdminAssistidoPreenchido({ valor: "cpf do cliente", status: "confirmado" }, "cpf"), false)
-  assert.equal(campoAdminAssistidoPreenchido({ valor: "123.456.789-09", status: "confirmado" }, "cpf"), true)
+  assert.equal(campoAdminAssistidoPreenchido({ valor: "52998224725", status: "confirmado" }, "cpf"), true)
   assert.equal(campoAdminAssistidoPreenchido({ valor: "123", status: "confirmado" }, "cpf"), false)
 
   // ============================================================

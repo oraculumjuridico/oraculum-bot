@@ -1,6 +1,23 @@
 const crypto = require("node:crypto")
 
 const SUPPORTED_ADMIN_MEDIA = new Set(["image", "document"])
+const ALLOWED_MEDIA_TYPES = new Map([
+  ["application/pdf", new Set(["pdf"])],
+  ["image/jpeg", new Set(["jpg", "jpeg"])],
+  ["image/png", new Set(["png"])]
+])
+
+function sanitizeMediaName(name = "documento", mimeType = "application/octet-stream") {
+  const original = String(name || "documento").trim()
+  const extension = original.includes(".") ? original.split(".").pop().toLowerCase() : ""
+  const allowed = ALLOWED_MEDIA_TYPES.get(String(mimeType).toLowerCase())
+  if (!allowed || !allowed.has(extension)) return null
+  const stem = original.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._ -]/g, "_").replace(/\.{2,}/g, ".").trim()
+    .slice(0, 100) || "documento"
+  return `${stem}.${extension}`
+}
 
 function mediaType(message = {}) {
   return String(message.type || "").trim().toLowerCase()
@@ -29,6 +46,9 @@ function createAdminAssistedMediaStaging(options = {}) {
     const buffer = downloaded?.buffer
     if (!Buffer.isBuffer(buffer) || !buffer.length) return { handled: true, ok: false, reason: "media_download_failed" }
     if (buffer.length > maxBytes) return { handled: true, ok: false, reason: "media_too_large" }
+    const mimeType = String(downloaded.mimeType || descriptor.mimeType).toLowerCase()
+    const safeName = sanitizeMediaName(descriptor.fileName, mimeType)
+    if (!safeName) return { handled: true, ok: false, reason: "media_type_not_allowed" }
     const sha256 = crypto.createHash("sha256").update(buffer).digest("hex")
     if (staged.has(sha256)) return { handled: true, ok: true, duplicate: true, document: staged.get(sha256).metadata }
 
@@ -39,8 +59,12 @@ function createAdminAssistedMediaStaging(options = {}) {
     const approved = integrity.approved === true && integrity.partyRole
     const metadata = {
       sha256,
-      name: descriptor.fileName,
-      mimeType: downloaded.mimeType || descriptor.mimeType,
+      name: safeName,
+      originalName: descriptor.fileName,
+      mediaId: descriptor.mediaId,
+      size: buffer.length,
+      receivedAt: new Date().toISOString(),
+      mimeType,
       type: classification.tipoDocumento || null,
       category: classification.categoria || null,
       confidence: classification.confianca ?? null,
@@ -66,7 +90,7 @@ function createAdminAssistedMediaStaging(options = {}) {
       idempotencyKey: `admin-media:${destination.caseNumber}:${item.metadata.sha256}`
     })
     if (!uploaded?.id || uploaded.sha256 && uploaded.sha256 !== item.metadata.sha256) {
-      throw Object.assign(new Error("admin media upload verification failed"), { code: "ADMIN_MEDIA_UPLOAD_VERIFY_FAILED" })
+      throw Object.assign(new Error("ADMIN_MEDIA_UPLOAD_VERIFY_FAILED: admin media upload verification failed"), { code: "ADMIN_MEDIA_UPLOAD_VERIFY_FAILED" })
     }
     item.metadata.fileId = String(uploaded.id)
     item.metadata.status = "promoted"
@@ -95,4 +119,22 @@ function createAdminAssistedMediaStaging(options = {}) {
   return { stage, promote, review, list }
 }
 
-module.exports = { SUPPORTED_ADMIN_MEDIA, mediaType, mediaDescriptor, createAdminAssistedMediaStaging }
+async function processExistingCaseAdminMedia({ staging, message, caseRecord, deps = {} } = {}) {
+  if (!caseRecord?.numeroCaso || !caseRecord?.caseFolderId) {
+    throw Object.assign(new Error("ADMIN_MEDIA_CASE_REQUIRED: selecione um caso com pasta confirmada"), { code: "ADMIN_MEDIA_CASE_REQUIRED" })
+  }
+  if (!staging?.stage || !staging?.promote) throw Object.assign(new Error("ADMIN_MEDIA_STAGING_REQUIRED"), { code: "ADMIN_MEDIA_STAGING_REQUIRED" })
+  const staged = await staging.stage(message, deps)
+  if (!staged?.handled || !staged?.ok) return { ok: false, reason: staged?.reason || "media_not_staged" }
+  const existing = caseRecord.receivedDocuments?.[staged.document?.sha256]
+  if (existing?.fileId) return { ok: true, duplicate: true, fileId: existing.fileId, sha256: staged.document.sha256, document: existing }
+  if (staged.document?.status !== "approved") return { ok: false, reviewRequired: true, document: staged.document }
+  const promoted = await staging.promote(staged.document.sha256, {
+    folderId: caseRecord.caseFolderId,
+    caseNumber: caseRecord.numeroCaso
+  }, { uploadVerified: deps.uploadVerified })
+  if (!promoted?.fileId) throw Object.assign(new Error("ADMIN_MEDIA_UPLOAD_VERIFY_FAILED"), { code: "ADMIN_MEDIA_UPLOAD_VERIFY_FAILED" })
+  return { ok: true, fileId: promoted.fileId, sha256: promoted.sha256, document: promoted }
+}
+
+module.exports = { SUPPORTED_ADMIN_MEDIA, ALLOWED_MEDIA_TYPES, mediaType, mediaDescriptor, sanitizeMediaName, createAdminAssistedMediaStaging, processExistingCaseAdminMedia }

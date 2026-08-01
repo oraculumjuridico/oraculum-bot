@@ -6,7 +6,8 @@ const {
   criarCampoAdminAssistido,
   criarDadosVaziosAdminAssistido,
   normalizarAreaJuridicaAdminAssistido,
-  normalizarStatusCampoAdminAssistido
+  normalizarStatusCampoAdminAssistido,
+  normalizarCampoAdminAssistido
 } = require("./admin-assisted-ai-schema")
 
 const { GROQ_KEY } = process.env
@@ -24,6 +25,12 @@ function extrairNomeFallback(texto = "") {
 function extrairCpfFallback(texto = "") {
   const match = sanitizarTextoEntrada(texto).match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/)
   return match?.[0] || null
+}
+
+function extrairIdadeFallback(texto = "") {
+  const match = sanitizarTextoEntrada(texto).match(/\b(?:idade\s*[:=-]?\s*|tem\s+)(\d{1,3})\s*(?:anos?)?\b/i)
+  const idade = Number(match?.[1])
+  return Number.isInteger(idade) && idade >= 0 && idade <= 130 ? idade : null
 }
 
 function extrairTelefoneFallback(texto = "") {
@@ -231,6 +238,7 @@ function criarAnaliseFallback(texto = "") {
   const area = detectarAreaPorIntencaoFallback(texto)
   const nome = extrairNomeFallback(texto)
   const cpf = extrairCpfFallback(texto)
+  const idade = extrairIdadeFallback(texto)
   const telefone = extrairTelefoneFallback(texto)
   const email = extrairEmailFallback(texto)
   const { cidade, uf } = extrairCidadeUfFallback(texto)
@@ -249,7 +257,8 @@ function criarAnaliseFallback(texto = "") {
   dados.descricao = criarCampoAdminAssistido(sanitizarTextoEntrada(texto) || null, texto ? "confirmado" : "ausente")
   dados.resumoJuridico = criarCampoAdminAssistido(montarResumoCurtoAdminAssistido({ area, tipoCaso, texto, urgencia }), texto ? "inferido" : "ausente")
   dados.existeTerceiro = criarCampoAdminAssistido(existeTerceiro, existeTerceiro === null ? "ausente" : "inferido")
-  dados.cpf = criarCampoAdminAssistido(cpf, cpf ? "confirmado" : "ausente")
+  dados.cpf = normalizarCampoAdminAssistido("cpf", cpf, cpf ? "confirmado" : "ausente")
+  dados.idade = normalizarCampoAdminAssistido("idade", idade, idade !== null ? "confirmado" : "ausente")
   dados.telefone = criarCampoAdminAssistido(telefone, telefone ? "confirmado" : "ausente")
   dados.email = criarCampoAdminAssistido(email, email ? "confirmado" : "ausente")
   dados.cidade = criarCampoAdminAssistido(cidade, cidade ? "confirmado" : "ausente")
@@ -278,14 +287,15 @@ function criarAnaliseFallback(texto = "") {
   }
 }
 
-function normalizarCampoExtraido(valorCampo) {
+function normalizarCampoExtraido(campo, valorCampo) {
   if (valorCampo && typeof valorCampo === "object" && !Array.isArray(valorCampo)) {
-    return criarCampoAdminAssistido(
+    return normalizarCampoAdminAssistido(
+      campo,
       valorCampo.valor ?? null,
       normalizarStatusCampoAdminAssistido(valorCampo.status, valorCampo.valor)
     )
   }
-  return criarCampoAdminAssistido(valorCampo ?? null, valorCampo ? "inferido" : "ausente")
+  return normalizarCampoAdminAssistido(campo, valorCampo ?? null, valorCampo ? "inferido" : "ausente")
 }
 
 function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
@@ -296,7 +306,7 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
 
   for (const campo of Object.keys(dados)) {
     if (Object.prototype.hasOwnProperty.call(entradaDados, campo)) {
-      dados[campo] = normalizarCampoExtraido(entradaDados[campo])
+      dados[campo] = normalizarCampoExtraido(campo, entradaDados[campo])
     }
   }
 
@@ -355,12 +365,12 @@ Use "ausente" quando não houver informação.
 Áreas permitidas: ${AREAS_JURIDICAS_ADMIN_ASSISTIDO.join(", ")}.
 
 Campos obrigatórios no objeto "dados":
-nomeCompleto, cpf, dataNascimento, telefone, email, cidade, uf,
+nomeCompleto, cpf, dataNascimento, idade, telefone, email, cidade, uf,
 areaJuridica, tipoCaso, descricao, clientePrincipal, existeTerceiro, resumoJuridico,
 empresa, motivo, beneficio, parteContraria, vinculoFamiliar, fornecedor,
 produtoServico, posicaoPenal, contratoOuFato, imovel, nb, dataNegativa,
 situacao, cargo, dataAdmissao, dataDemissao, filhos, objetivo, problema.
-documentosMencionados, urgencia.
+documentosMencionados, urgencia, naturezaDemanda, orgao.
 
 Também retorne no topo:
 areaJuridica, tipoCaso, clientePrincipal, existeTerceiro, resumoJuridico.`

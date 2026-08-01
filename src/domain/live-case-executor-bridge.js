@@ -7,6 +7,10 @@ function clean(value) {
   return value === null || value === undefined ? null : String(value).trim() || null
 }
 
+function comparableName(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim().toLowerCase()
+}
+
 function buildCanonicalPlan(u, context = {}) {
   const documents = (u.documents || []).map(doc => ({
     sha256: clean(doc.sha256),
@@ -164,15 +168,25 @@ function createLiveCaseFlow(deps = {}) {
     },
 
     contact: async (plan, checkpoint) => {
-      const { hsBuscarPorPhone, hsCriarContato, hsAtualizarContato, montarPropsContatoHubSpot, montarPropsAusentesContatoHubSpot } = deps
+      const { hsBuscarPorCpf, hsBuscarPorPhone, hsCriarContato, hsAtualizarContato, montarPropsContatoHubSpot, montarPropsAusentesContatoHubSpot } = deps
       if (!hsCriarContato) return { id: plan.contact?.id, action: "skipped" }
 
       let contactId = plan.contact?.id
       let action = "skipped"
       const usuario = checkpoint.context.u || {}
 
+      let existing = null
+      if (!contactId && plan.identity?.cpf && typeof hsBuscarPorCpf === "function") {
+        existing = await hsBuscarPorCpf(plan.identity.cpf)
+        contactId = existing?.id || null
+      }
       if (!contactId && plan.identity?.phone) {
-        const existing = await hsBuscarPorPhone(plan.identity.phone)
+        existing = await hsBuscarPorPhone(plan.identity.phone)
+        const existingName = comparableName([existing?.properties?.firstname, existing?.properties?.lastname].filter(Boolean).join(" "))
+        const expectedName = comparableName(plan.identity?.name)
+        if (existing?.id && existingName && expectedName && existingName !== expectedName) {
+          throw Object.assign(new Error("telefone pertence a contato incompatível"), { code: "HUBSPOT_PHONE_IDENTITY_CONFLICT" })
+        }
         contactId = existing?.id || null
         if (contactId && existing?.properties?.firstname && !usuario.nomeHubspot) {
           usuario.nomeHubspot = existing.properties.firstname
@@ -186,7 +200,7 @@ function createLiveCaseFlow(deps = {}) {
       } else {
         action = "verified"
         const props = montarPropsContatoHubSpot(plan.identity.phone, usuario)
-        const existing = plan.identity?.phone ? await hsBuscarPorPhone(plan.identity.phone) : null
+        existing = existing || (plan.identity?.phone ? await hsBuscarPorPhone(plan.identity.phone) : null)
         const missing = montarPropsAusentesContatoHubSpot(existing, props)
         if (Object.keys(missing).length) {
           await hsAtualizarContato(contactId, missing)
@@ -206,7 +220,7 @@ function createLiveCaseFlow(deps = {}) {
       const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
       let action = "skipped"
 
-      if (!dealId && contactId) {
+      if (!dealId && contactId && !usuario._novoCasoDeCliente) {
         dealId = await hsBuscarNegocioAbertoDoContato(contactId)
         if (dealId) usuario.negocioId = dealId
       }
@@ -406,7 +420,7 @@ function createLiveCaseFlow(deps = {}) {
     // mutado, evitando cross-contaminação entre execuções concorrentes.
     const planoLocal = buildCanonicalPlan(u, context)
     try {
-      const result = await executor.execute(planoLocal, { context: { u, ...context } })
+      const result = await executor.execute(planoLocal, { u, ...context })
 
       if (result.checkpoint) {
         // Aplicar recursos do checkpoint ao usuário local após conclusão bem-sucedida.
