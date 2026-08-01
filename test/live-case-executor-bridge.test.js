@@ -6,7 +6,7 @@ const { createLiveCaseFlow, buildCanonicalPlan } = require("../src/domain/live-c
     HS_STAGE: { ANALISE: "presentationscheduled" },
     hsBuscarPorPhone: async () => null,
     hsCriarContato: async () => "contact-123",
-    hsAtualizarContato: async () => {},
+    hsAtualizarContato: async () => true,
     hsBuscarNegocioAbertoDoContato: async () => null,
     hsCriarNegocio: async () => "deal-456",
     hsAtualizarNegocioSerializado: async () => {},

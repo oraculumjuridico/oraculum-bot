@@ -7,6 +7,28 @@ const ALLOWED_MEDIA_TYPES = new Map([
   ["image/png", new Set(["png"])]
 ])
 
+const ADMIN_DOCUMENT_STORAGE_CATEGORIES = Object.freeze([
+  "Identificação",
+  "Médicos",
+  "Administrativos ou INSS",
+  "Contratos e procurações",
+  "Outros"
+])
+
+function normalizeCategoryText(value = "") {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
+}
+
+function resolveAdminDocumentStorageCategory(category = "", type = "") {
+  const categoryText = normalizeCategoryText(category)
+  const typeText = normalizeCategoryText(type)
+  if (["documentos_pessoais", "pessoal", "identificacao", "identidade"].includes(categoryText)) return "Identificação"
+  if (["medico", "medicos", "saude"].includes(categoryText)) return "Médicos"
+  if (["previdenciario", "inss", "administrativo"].includes(categoryText)) return "Administrativos ou INSS"
+  if (/\b(contrato|procuracao)\b/.test(typeText) || ["contratos", "procuracoes"].includes(categoryText)) return "Contratos e procurações"
+  return "Outros"
+}
+
 function sanitizeMediaName(name = "documento", mimeType = "application/octet-stream") {
   const original = String(name || "documento").trim()
   const extension = original.includes(".") ? original.split(".").pop().toLowerCase() : ""
@@ -67,6 +89,7 @@ function createAdminAssistedMediaStaging(options = {}) {
       mimeType,
       type: classification.tipoDocumento || null,
       category: classification.categoria || null,
+      storageCategory: resolveAdminDocumentStorageCategory(classification.categoria, classification.tipoDocumento),
       confidence: classification.confianca ?? null,
       partyRole: integrity.partyRole || null,
       status: approved ? "approved" : "quarantined",
@@ -137,4 +160,14 @@ async function processExistingCaseAdminMedia({ staging, message, caseRecord, dep
   return { ok: true, fileId: promoted.fileId, sha256: promoted.sha256, document: promoted }
 }
 
-module.exports = { SUPPORTED_ADMIN_MEDIA, ALLOWED_MEDIA_TYPES, mediaType, mediaDescriptor, sanitizeMediaName, createAdminAssistedMediaStaging, processExistingCaseAdminMedia }
+module.exports = {
+  SUPPORTED_ADMIN_MEDIA,
+  ALLOWED_MEDIA_TYPES,
+  ADMIN_DOCUMENT_STORAGE_CATEGORIES,
+  resolveAdminDocumentStorageCategory,
+  mediaType,
+  mediaDescriptor,
+  sanitizeMediaName,
+  createAdminAssistedMediaStaging,
+  processExistingCaseAdminMedia
+}

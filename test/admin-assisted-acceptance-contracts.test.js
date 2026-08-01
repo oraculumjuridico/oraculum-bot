@@ -100,6 +100,44 @@ test("novo caso cria outro Negócio para o mesmo Contato", async () => {
   assert.ok(deps.calls.includes("associate:contact-existing:deal-new"))
 })
 
+test("etapa HubSpot posterior ao Drive grava a pasta confirmada no Contato", async () => {
+  const contactUpdates = []
+  const deps = canonicalDeps({
+    hsAtualizarContato: async (contactId, properties) => {
+      contactUpdates.push({ contactId, properties })
+      return true
+    },
+    montarPropsContatoHubSpot: (_phone, usuario) => ({
+      firstname: usuario.nome,
+      pasta_drive: usuario.pastaDriveLink || ""
+    }),
+    montarPropsAusentesContatoHubSpot: (_existing, properties) => Object.fromEntries(
+      Object.entries(properties).filter(([, value]) => value !== null && value !== undefined && String(value).trim())
+    ),
+    criarPastaCliente: async () => ({
+      id: "folder-confirmed",
+      webViewLink: "https://drive.example.test/folder-confirmed"
+    })
+  })
+
+  const result = await createLiveCaseFlow(deps).executeLiveCaseFlow(canonicalUser())
+
+  assert.equal(result.result.completed, true)
+  assert.ok(contactUpdates.some(update =>
+    update.contactId === "contact-1" &&
+    update.properties.pasta_drive === "https://drive.example.test/folder-confirmed"
+  ))
+})
+
+test("contrato canônico não conclui sem associação confirmada", async () => {
+  const deps = canonicalDeps({ hsAssociar: async () => false })
+  const result = await createLiveCaseFlow(deps).executeLiveCaseFlow(canonicalUser())
+
+  assert.equal(result.result.completed, false)
+  assert.notEqual(result.result.interruptedStep, "final_verify")
+  assert.ok(result.result.error)
+})
+
 test("Contato genérico incompatível encontrado por telefone não é reutilizado", async () => {
   const deps = canonicalDeps({
     hsBuscarPorCpf: async () => null,

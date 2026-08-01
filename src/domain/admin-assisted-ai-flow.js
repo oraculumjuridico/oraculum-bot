@@ -1142,7 +1142,8 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
         documentos: documentosPromovidos.map(documento => ({
           fileId: documento.fileId,
           sha256: documento.sha256,
-          category: documento.category || null
+          category: documento.category || null,
+          storageCategory: documento.storageCategory || "Outros"
         }))
       }
     }
