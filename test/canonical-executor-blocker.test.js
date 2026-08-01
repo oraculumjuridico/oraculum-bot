@@ -29,7 +29,7 @@ const { PLAN_STATUS } = require("../src/domain/canonical-case-plan")
       HS_STAGE: { ANALISE: "presentationscheduled", LEAD: "lead" },
       hsBuscarPorPhone: async () => null,
       hsCriarContato: async (...args) => { calls.hsCriarContato++; return "contact-123" },
-      hsAtualizarContato: async () => {},
+      hsAtualizarContato: async () => true,
       hsBuscarNegocioAbertoDoContato: async () => null,
       hsCriarNegocio: async (...args) => { calls.hsCriarNegocio++; return "deal-456" },
       hsAtualizarNegocioSerializado: async () => {},

@@ -336,7 +336,7 @@ function sha256(buffer) {
     },
     hsBuscarPorPhone: async () => null,
     hsCriarContato: async () => "contact-live-007",
-    hsAtualizarContato: async () => {},
+    hsAtualizarContato: async () => true,
     hsBuscarNegocioAbertoDoContato: async () => null,
     hsCriarNegocio: async () => "deal-live-007",
     hsAtualizarNegocioSerializado: async () => { throw new Error("hubspot_update_unavailable") },

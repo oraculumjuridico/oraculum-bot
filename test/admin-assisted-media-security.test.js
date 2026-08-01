@@ -2,13 +2,26 @@
 
 const test = require("node:test")
 const assert = require("node:assert/strict")
-const { createAdminAssistedMediaStaging, processExistingCaseAdminMedia } = require("../src/domain/admin-assisted-media")
+const {
+  createAdminAssistedMediaStaging,
+  processExistingCaseAdminMedia,
+  resolveAdminDocumentStorageCategory
+} = require("../src/domain/admin-assisted-media")
 
 const baseDeps = {
   downloadMedia: async () => ({ buffer: Buffer.from("synthetic-pdf"), mimeType: "application/pdf" }),
   analyzeDocument: async () => ({ classificacao: { tipoDocumento: "Documento sintético", categoria: "identificacao", confianca: 0.9 }, extracao: {} }),
   resolveIntegrity: async () => ({ approved: true, partyRole: "titular" })
 }
+
+test("categoria de armazenamento usa somente a organização mínima controlada", () => {
+  assert.equal(resolveAdminDocumentStorageCategory("documentos_pessoais", "RG frente"), "Identificação")
+  assert.equal(resolveAdminDocumentStorageCategory("medico", "Laudo"), "Médicos")
+  assert.equal(resolveAdminDocumentStorageCategory("previdenciario", "Carta do INSS"), "Administrativos ou INSS")
+  assert.equal(resolveAdminDocumentStorageCategory("processual", "Contrato social"), "Contratos e procurações")
+  assert.equal(resolveAdminDocumentStorageCategory("trabalhista", "Holerite"), "Outros")
+  assert.equal(resolveAdminDocumentStorageCategory("categoria inventada", "Documento desconhecido"), "Outros")
+})
 
 test("mídia admin rejeita extensão incompatível e sanitiza nome", async () => {
   const staging = createAdminAssistedMediaStaging()
@@ -21,6 +34,7 @@ test("mídia admin rejeita extensão incompatível e sanitiza nome", async () =>
   assert.equal(aceito.document.name.includes(".."), false)
   assert.match(aceito.document.name, /\.pdf$/)
   assert.equal(aceito.document.originalName, "../Documento estranho?.pdf")
+  assert.equal(aceito.document.storageCategory, "Identificação")
 })
 
 test("upload só confirma após id válido do Drive", async () => {

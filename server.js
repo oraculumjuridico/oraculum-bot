@@ -4983,7 +4983,14 @@ async function executarDocumentoCasoSelecionadoAdmin(from, msgObj) {
       }
     }
     item.u._canonicalDocuments = item.u._canonicalDocuments || {}
-    item.u._canonicalDocuments[result.sha256] = { fileId: result.fileId, sha256: result.sha256, status: "uploaded", uploadedAt: new Date().toISOString() }
+    item.u._canonicalDocuments[result.sha256] = {
+      fileId: result.fileId,
+      sha256: result.sha256,
+      category: result.document?.category || null,
+      storageCategory: result.document?.storageCategory || "Outros",
+      status: "uploaded",
+      uploadedAt: new Date().toISOString()
+    }
     item.u.documentosEnviados = true
     agendarPersistenciaUsers()
     sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: sessao.acaoCasoPendente === "completar" ? "completar" : null, ts: Date.now() })

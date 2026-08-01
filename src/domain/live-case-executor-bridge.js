@@ -174,6 +174,7 @@ function createLiveCaseFlow(deps = {}) {
       let contactId = plan.contact?.id
       let action = "skipped"
       const usuario = checkpoint.context.u || {}
+      let pastaDriveMissing = false
 
       let existing = null
       if (!contactId && plan.identity?.cpf && typeof hsBuscarPorCpf === "function") {
@@ -197,10 +198,12 @@ function createLiveCaseFlow(deps = {}) {
         const props = montarPropsContatoHubSpot(plan.identity.phone, usuario)
         contactId = await hsCriarContato(plan.identity.phone, usuario)
         action = "created"
+        pastaDriveMissing = true
       } else {
         action = "verified"
         const props = montarPropsContatoHubSpot(plan.identity.phone, usuario)
         existing = existing || (plan.identity?.phone ? await hsBuscarPorPhone(plan.identity.phone) : null)
+        pastaDriveMissing = !String(existing?.properties?.pasta_drive || "").trim()
         const missing = montarPropsAusentesContatoHubSpot(existing, props)
         if (Object.keys(missing).length) {
           await hsAtualizarContato(contactId, missing)
@@ -208,7 +211,7 @@ function createLiveCaseFlow(deps = {}) {
       }
 
       usuario.contatoId = contactId
-      return { id: contactId, action, verified: Boolean(contactId) }
+      return { id: contactId, action, verified: Boolean(contactId), pastaDriveMissing }
     },
 
     deal: async (plan, checkpoint) => {
@@ -324,17 +327,24 @@ function createLiveCaseFlow(deps = {}) {
     },
 
     hubspot: async (plan, checkpoint) => {
-      const { hsAtualizarNegocioSerializado, getHubSpotDealStateProps } = deps
+      const { hsAtualizarContato, hsAtualizarNegocioSerializado, getHubSpotDealStateProps } = deps
       const usuario = checkpoint.context.u || {}
+      const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
       const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
       if (!dealId || !hsAtualizarNegocioSerializado) return { updated: false }
+
+      const pastaDriveMissing = checkpoint.steps.contact?.result?.pastaDriveMissing === true
+      if (contactId && pastaDriveMissing && usuario.pastaDriveLink && typeof hsAtualizarContato === "function") {
+        const contatoAtualizado = await hsAtualizarContato(contactId, { pasta_drive: usuario.pastaDriveLink })
+        if (!contatoAtualizado) throw new Error("hubspot_contact_drive_folder_update_failed")
+      }
 
       const props = {
         ...(plan.hubspot?.dealUpdates || {}),
         ...(getHubSpotDealStateProps ? getHubSpotDealStateProps(usuario) : {})
       }
       await hsAtualizarNegocioSerializado(dealId, props)
-      return { updated: true, dealId }
+      return { updated: true, contactId, dealId }
     },
 
     tasks: async (plan, checkpoint) => {
@@ -392,8 +402,9 @@ function createLiveCaseFlow(deps = {}) {
       const contactId = checkpoint.steps.contact?.result?.id || usuario.contatoId
       const dealId = checkpoint.steps.deal?.result?.id || usuario.negocioId
       const folderId = checkpoint.steps.drive?.result?.id || usuario.pastaDriveId
+      const association = checkpoint.steps.association?.result
 
-      if (!contactId || !dealId || !folderId) {
+      if (!contactId || !dealId || !folderId || !association?.id || association.verified !== true) {
         throw new Error("final_verify_missing_resources")
       }
 
@@ -402,6 +413,7 @@ function createLiveCaseFlow(deps = {}) {
         contactId,
         dealId,
         folderId,
+        associationId: association.id,
         documentsCount: (plan.documents?.received || []).length,
         tasksCount: (plan.tasks || []).length
       }
