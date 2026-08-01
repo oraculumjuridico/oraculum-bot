@@ -193,7 +193,13 @@ const dadosReais = {
 
   {
     let finalizarChamado = false
-    const { deps } = makeDepsMock(() => { finalizarChamado = true; return "CASO-123" })
+    const { deps } = makeDepsMock((telefone, u) => {
+      finalizarChamado = true
+      u.contatoId = "contact-test"
+      u.negocioId = "deal-test"
+      u.pastaDriveId = "folder-test"
+      return "CASO-123"
+    })
     const adminComPlaceholder = adminAssistidoComDados(dadosComPlaceholders())
     const sessao1 = { adminAssistido: adminComPlaceholder }
     const result1 = await confirmarCriarCasoAdminAssistido("5581999999999", "chave-teste", sessao1, adminComPlaceholder, deps)
@@ -229,9 +235,12 @@ const dadosReais = {
 
   {
     let chamadas = 0
-    const { deps } = makeDepsMock(() => {
+    const { deps } = makeDepsMock((telefone, u) => {
       chamadas++
       if (chamadas < 3) throw new Error("simulado")
+      u.contatoId = "contact-test"
+      u.negocioId = "deal-test"
+      u.pastaDriveId = "folder-test"
       return "CASO-OK"
     })
     const adminAssistido = adminAssistidoComDados(dadosReais)

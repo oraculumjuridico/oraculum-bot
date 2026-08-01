@@ -396,6 +396,57 @@ async function main() {
   assert.match(respostaAudioConfirmado.texto, /Área identificada:/)
   assert.equal(sessoesAudio.get(chave).adminAssistido.dados.areaJuridica.valor, "INSS")
 
+  const sessaoSucessoContrato = new Map()
+  const depsSucessoContrato = criarDeps(sessaoSucessoContrato)
+  depsSucessoContrato.finalizarCadastroAssistido = async (telefone, u) => {
+    u.contatoId = "contact-123"
+    u.negocioId = "deal-456"
+    u.pastaDriveId = "drive-789"
+    u.pastaDriveLink = "https://drive.example/folder"
+    u.numeroCaso = "CLI.2026.001"
+    return u.numeroCaso
+  }
+  iniciarAtendimentoAssistidoAdmin(from, depsSucessoContrato)
+  sessaoSucessoContrato.set(chave, {
+    listaAtiva: "admin_assistido",
+    adminAssistido: {
+      ativo: true,
+      etapa: ADMIN_ASSISTIDO_ETAPA_REVISAO,
+      dados: dadosTrabalhistasCompletos(),
+      historico: [],
+      analise: null
+    }
+  })
+  const respostaContratoSucesso = await processarAtendimentoAssistidoAdmin(from, "1", { type: "text" }, depsSucessoContrato)
+  assert.match(respostaContratoSucesso.texto, /✅ Caso criado com sucesso\./)
+  assert.match(respostaContratoSucesso.texto, /CLI\.2026\.001/)
+  const logSucesso = depsSucessoContrato.logs.find(log => log.evento === "criacao_caso_concluida")
+  assert.equal(logSucesso.contatoId, "contact-123")
+  assert.equal(logSucesso.negocioId, "deal-456")
+  assert.equal(logSucesso.pastaDriveId, "drive-789")
+
+  const sessaoSucessoBloqueado = new Map()
+  const depsSucessoBloqueado = criarDeps(sessaoSucessoBloqueado)
+  depsSucessoBloqueado.finalizarCadastroAssistido = async () => "CLI.2026.002"
+  iniciarAtendimentoAssistidoAdmin(from, depsSucessoBloqueado)
+  sessaoSucessoBloqueado.set(chave, {
+    listaAtiva: "admin_assistido",
+    adminAssistido: {
+      ativo: true,
+      etapa: ADMIN_ASSISTIDO_ETAPA_REVISAO,
+      dados: {
+        ...dadosTrabalhistasCompletos(),
+        nomeCompleto: criarCampoAdminAssistido("Maria Silva", "confirmado")
+      },
+      historico: [],
+      analise: null
+    }
+  })
+  const respostaSucessoBloqueado = await processarAtendimentoAssistidoAdmin(from, "1", { type: "text" }, depsSucessoBloqueado)
+  assert.match(respostaSucessoBloqueado.texto, /Não foi possível criar o caso: dados insuficientes\./)
+  const logsBloqueio = depsSucessoBloqueado.logs.filter(log => log.evento === "criacao_caso_bloqueada_invariantes")
+  assert.ok(logsBloqueio.length >= 1)
+
   console.log("admin-assisted-ai-flow.test.js ok")
 }
 

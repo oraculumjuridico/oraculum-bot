@@ -58,6 +58,20 @@ function normalizarTelefone(texto) {
   return normalizarNumeroWhatsAppEnvio(digitos)
 }
 
+function normalizarTelefoneHubSpot(telefone) {
+  const texto = String(telefone || "").trim()
+  if (!texto) return ""
+  const digitos = texto.replace(/\D/g, "")
+  if (!digitos) return ""
+  if (digitos.startsWith("55")) {
+    if ([12, 13].includes(digitos.length)) return digitos
+    return digitos
+  }
+  if (digitos.length === 10 || digitos.length === 11) return `55${digitos}`
+  if ([12, 13].includes(digitos.length)) return digitos
+  return digitos
+}
+
 function primeiroEUltimoNome(nome) {
   const partes = formatarNome(nome || "").split(/\s+/).filter(Boolean)
   if (!partes.length) return ""
@@ -292,6 +306,7 @@ module.exports = {
   getTelefoneContato,
   normalizarNumeroWhatsAppEnvio,
   normalizarTelefone,
+  normalizarTelefoneHubSpot,
   primeiroEUltimoNome,
   normalizarNomeComparacao,
   formatarTelefoneExibicao,

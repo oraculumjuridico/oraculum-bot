@@ -45,14 +45,53 @@ test('contacts.findContactsByCpf: not found, single, multiple', async () => {
   // single
   client = makeClient({ searchResults: [{ id: 'c1' }] })
   adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock(), timeoutMs: 1000 })
-  res = await adapters.contacts.findContactsByCpf('111')
+  res = await adapters.contacts.findContactsByCpf('52998224725')
   assert.deepEqual(res, [{ id: 'c1' }])
 
   // multiple
   client = makeClient({ searchResults: [{ id: 'c1' }, { id: 'c2' }] })
   adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock(), timeoutMs: 1000 })
-  res = await adapters.contacts.findContactsByCpf('222')
+  res = await adapters.contacts.findContactsByCpf('52998224725')
   assert.deepEqual(res, [{ id: 'c1' }, { id: 'c2' }])
+})
+
+test('contacts.findContactsByCpf: busca formato canonico e legado e deduplica por id', async () => {
+  const buscas = []
+  const client = makeClient()
+  client.contacts.search = async opts => {
+    buscas.push(opts.value)
+    return opts.value === '52998224725'
+      ? { results: [{ id: 'contact-legacy' }] }
+      : { results: [{ id: 'contact-legacy' }] }
+  }
+  const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
+  const encontrados = await adapters.contacts.findContactsByCpf('529.982.247-25')
+  assert.deepEqual(buscas, ['52998224725', '529.982.247-25'])
+  assert.deepEqual(encontrados, [{ id: 'contact-legacy' }])
+})
+
+test('contacts.findContactsByCpf: encontra isoladamente formato canonico ou legado', async () => {
+  for (const formatoEncontrado of ['52998224725', '529.982.247-25']) {
+    const client = makeClient()
+    client.contacts.search = async opts => ({ results: opts.value === formatoEncontrado ? [{ id: 'contact-existing' }] : [] })
+    const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
+    assert.deepEqual(await adapters.contacts.findContactsByCpf('52998224725'), [{ id: 'contact-existing' }])
+  }
+})
+
+test('contacts.findContactsByCpf: ids diferentes entre formatos permanecem ambiguos', async () => {
+  const client = makeClient()
+  client.contacts.search = async opts => ({ results: [{ id: opts.value.includes('.') ? 'contact-legacy' : 'contact-canonical' }] })
+  const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
+  const encontrados = await adapters.contacts.findContactsByCpf('52998224725')
+  assert.deepEqual(encontrados, [{ id: 'contact-canonical' }, { id: 'contact-legacy' }])
+})
+
+test('contacts.findContactsByCpf: nao busca cpf vazio invalido ou placeholder', async () => {
+  const client = makeClient()
+  const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
+  for (const cpf of ['', '11111111111', 'cpf do cliente']) assert.deepEqual(await adapters.contacts.findContactsByCpf(cpf), [])
+  assert.equal(client.__calls.searchCpf, 0)
 })
 
 test('contacts.findContactsByPhone: not found, single, multiple', async () => {
@@ -75,7 +114,7 @@ test('contacts.findContactsByPhone: not found, single, multiple', async () => {
 test('contacts.search pagination detection returns two results when present', async () => {
   const client = makeClient({ searchResults: [{ id: 'x1' }, { id: 'x2' }, { id: 'x3' }] })
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock(), timeoutMs: 1000 })
-  const res = await adapters.contacts.findContactsByCpf('any')
+  const res = await adapters.contacts.findContactsByCpf('52998224725')
   // adapter limits to 2
   assert.equal(res.length, 2)
 })
@@ -85,33 +124,33 @@ test('contacts.search pagination detection returns two results when present', as
 test('contacts.find: one item but paging.next indicates more -> ambiguous', async () => {
   const client = makeClient({ search: { results: [{ id: 'a1' }], paging: { next: { after: 't' } } } })
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
-  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('x'), /ADAPTER_AMBIGUOUS_RESULT/)
+  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('52998224725'), /ADAPTER_AMBIGUOUS_RESULT/)
 })
 
 test('contacts.find: total>1 but results length is 1 -> ambiguous', async () => {
   const client = makeClient({ search: { results: [{ id: 'a1' }], total: 2 } })
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
-  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('x'), /ADAPTER_AMBIGUOUS_RESULT/)
+  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('52998224725'), /ADAPTER_AMBIGUOUS_RESULT/)
 })
 
 test('contacts.find: response without results handled as empty', async () => {
   const client = makeClient({ search: { foo: 'bar' } })
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
-  const res = await adapters.contacts.findContactsByCpf('x')
+  const res = await adapters.contacts.findContactsByCpf('52998224725')
   assert.deepEqual(res, [])
 })
 
 test('contacts.find: invalid/missing ids cause INVALID_RESULT_ID', async () => {
   const client = makeClient({ searchResults: [{ id: null }, { id: 'ok' }] })
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
-  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('x'), /INVALID_RESULT_ID/)
+  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('52998224725'), /INVALID_RESULT_ID/)
 })
 
 // deterministic ordering: adapter returns results in API order trimmed to 2
 test('contacts.find: deterministic order preserved', async () => {
   const client = makeClient({ searchResults: [{ id: 'first' }, { id: 'second' }, { id: 'third' }] })
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
-  const res = await adapters.contacts.findContactsByCpf('x')
+  const res = await adapters.contacts.findContactsByCpf('52998224725')
   assert.equal(res[0].id, 'first')
   assert.equal(res[1].id, 'second')
 })
@@ -293,7 +332,7 @@ test('errors with PII are sanitized and not leaked', async () => {
   client.contacts.search = async () => { throw new Error('bad payload {"cpf_do_cliente":"12345678900"}') }
   const adapters = createHubSpotSingleCaseAdapters({ client, clock: makeClock() })
   // should not throw original error with PII content; adapter maps to generic
-  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('123'), /HUBSPOT_EXTERNAL_ERROR|HUBSPOT_TIMEOUT|HUBSPOT_EXTERNAL_ERROR/)
+  await assert.rejects(async () => await adapters.contacts.findContactsByCpf('52998224725'), /HUBSPOT_EXTERNAL_ERROR|HUBSPOT_TIMEOUT|HUBSPOT_EXTERNAL_ERROR/)
 })
 
 

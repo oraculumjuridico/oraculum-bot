@@ -1,7 +1,7 @@
 "use strict"
 
 const { canonicalize, sha256, contactVerificationHash } = require("../domain/single-case-apply-contracts")
-const { validateHubSpotProperties } = require("../domain/hubspot-contract")
+const { validateHubSpotProperties, normalizeCpfHubSpot } = require("../domain/hubspot-contract")
 const { ASSOCIATION } = require("./hubspot-http-client")
 
 const CONTACT_SEARCH_PROPERTIES = [
@@ -63,22 +63,27 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
 
   const contacts = {
     findContactsByCpf: async (cpf) => {
-      if (!cpf || typeof cpf !== "string") return []
+      const cpfCanonico = normalizeCpfHubSpot(cpf)
+      if (!cpfCanonico) return []
+      const cpfLegado = `${cpfCanonico.slice(0, 3)}.${cpfCanonico.slice(3, 6)}.${cpfCanonico.slice(6, 9)}-${cpfCanonico.slice(9)}`
       try {
-        const res = await withTimeout(
-          client.contacts.search({ propertyName: "cpf_do_cliente", value: String(cpf).trim(), properties: CONTACT_SEARCH_PROPERTIES, limit: 2 }),
-          "findContactsByCpf"
-        )
-        const results = res?.results || []
-        if (!Array.isArray(results)) return []
-
-        // detect additional pages / total indicating ambiguity
-        const hasMore = (typeof res.total === 'number' && res.total > results.length) || Boolean(res?.paging?.next)
-        if (hasMore) throw new Error('ADAPTER_AMBIGUOUS_RESULT')
-
-        const ids = results.map(r => String(r?.id || ''))
+        const responses = []
+        for (const value of [cpfCanonico, cpfLegado]) {
+          responses.push(await withTimeout(
+            client.contacts.search({ propertyName: "cpf_do_cliente", value, properties: CONTACT_SEARCH_PROPERTIES, limit: 2 }),
+            "findContactsByCpf"
+          ))
+        }
+        const results = responses.flatMap(res => {
+          const items = res?.results || []
+          if (!Array.isArray(items)) return []
+          const hasMore = (typeof res.total === "number" && res.total > items.length) || Boolean(res?.paging?.next)
+          if (hasMore) throw new Error("ADAPTER_AMBIGUOUS_RESULT")
+          return items
+        })
+        const ids = results.map(result => String(result?.id || ""))
         if (ids.some(id => id.length === 0)) throw new Error('INVALID_RESULT_ID')
-        return ids.slice(0, 2).map(id => ({ id }))
+        return [...new Set(ids)].slice(0, 2).map(id => ({ id }))
       } catch (e) {
         // Preserve internal adapter errors
         if (/ADAPTER_AMBIGUOUS_RESULT|INVALID_RESULT_ID/.test(String(e.message || ''))) throw e
