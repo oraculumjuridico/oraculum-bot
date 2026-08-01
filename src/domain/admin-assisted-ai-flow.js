@@ -23,6 +23,9 @@ const {
 const {
   analisarCasoJuridico
 } = require("./legal-copilot")
+const {
+  criarQuestionarioAdminAssistido
+} = require("./admin-assisted-questionnaire")
 
 const ADMIN_ASSISTIDO_ORIGEM = "admin_assistido_ia"
 const ADMIN_ASSISTIDO_ETAPA_INICIAL = "aguardando_relato"
@@ -242,7 +245,11 @@ function camposFaltantesAtivosAdminAssistido(dados = {}, area = "", pendentesPos
 }
 
 function proximoCampoAtivoAdminAssistido(dados = {}, area = "", pendentesPosterior = []) {
-  return camposFaltantesAtivosAdminAssistido(dados, area, pendentesPosterior)[0] || null
+  const faltantes = camposFaltantesAtivosAdminAssistido(dados, area, pendentesPosterior)
+  const prioridades = new Map(
+    criarQuestionarioAdminAssistido(area).map(item => [item.campo, item.prioridade ?? 999])
+  )
+  return faltantes.sort((a, b) => (prioridades.get(a) ?? 999) - (prioridades.get(b) ?? 999))[0] || null
 }
 
 function mergeDadosAdminAssistido(dadosAtuais = {}, novosDados = {}) {
@@ -258,9 +265,24 @@ function mergeDadosAdminAssistido(dadosAtuais = {}, novosDados = {}) {
   return base
 }
 
+function mergeComplementoAdminAssistido(dadosAtuais = {}, novosDados = {}) {
+  const base = { ...criarDadosVaziosAdminAssistido(), ...dadosAtuais }
+  for (const [campo, novo] of Object.entries(novosDados || {})) {
+    if (!Object.prototype.hasOwnProperty.call(base, campo)) continue
+    const atual = base[campo]
+    const atualPreenchido = atual?.valor !== null && atual?.valor !== undefined && String(atual.valor).trim() !== ""
+    const novoPreenchido = novo?.valor !== null && novo?.valor !== undefined && String(novo.valor).trim() !== ""
+    if (!atualPreenchido && novoPreenchido) {
+      base[campo] = normalizarCampoAdminAssistido(campo, novo.valor, novo.status || "inferido")
+    }
+  }
+  return base
+}
+
 function indicadorCampoAdminAssistido(info = criarCampoAdminAssistido()) {
   if (info.status === "invalido") return "❌ Inválido"
   if (info.status === "precisa_conferir") return "⚠️ Precisa conferir"
+  if (info.status === "contraditorio") return "⚠️ Contraditório"
   if (info.status === "confirmado") return "✅ Confirmado"
   if (info.status === "inferido") return "🟡 Inferido"
   return "❌ Não informado"
@@ -372,37 +394,35 @@ function textoResumoAnaliseAdminAssistidoLegado({ dados, faltantes, proximoCampo
   ].filter(linha => linha !== "").join("\n")
 }
 
-function textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo }) {
+function textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo, areasProvaveis = [] }) {
   const area = valorCampo(dados, "areaJuridica") || "Outros"
   const tipoCaso = valorCampo(dados, "tipoCaso")
   const resumo = valorCampo(dados, "resumoJuridico") || valorCampo(dados, "descricao")
-  const objetivo = valorCampo(dados, "objetivo") || valorCampo(dados, "motivo") || tipoCaso || "Complementar objetivo"
-  const pendencias = Array.isArray(faltantes) && faltantes.length
-    ? faltantes.map(labelCampoAdminAssistido).join(", ")
-    : "Sem pendências críticas"
-  const linhasCampos = camposResumoAdminAssistido(area, dados, faltantes)
-    .map(campo => formatarLinhaColetaAdminAssistido(dados, campo))
+  const identificados = [
+    valorCampo(dados, "nomeCompleto") ? "cliente" : null,
+    area !== "Outros" ? "área jurídica provável" : null,
+    tipoCaso ? "problema principal" : null,
+    valorCampo(dados, "objetivo") || valorCampo(dados, "motivo") ? "objetivo" : null,
+    valorCampo(dados, "documentosMencionados") ? "documentos mencionados" : null
+  ].filter(Boolean).slice(0, 4)
+  const pergunta = proximoCampo === "areaJuridica"
+    ? `${areasProvaveis.length > 1 ? `Pelo relato, o caso pode envolver ${areasProvaveis.join(" e ")}. ` : ""}Qual área representa melhor o atendimento principal?`
+    : perguntaCampoAdminAssistido(proximoCampo)
 
   return [
-    "Área identificada:",
-    area,
-    tipoCaso ? `\nTipo do caso:\n${tipoCaso}` : "",
+    "*Entendi o caso*",
     "",
-    "Resumo curto",
-    `Área: ${area}`,
-    `Subárea: ${tipoCaso || "Baixa confiança"}`,
-    `Situação: ${textoCurto(resumo || valorCampo(dados, "descricao") || "Não informada", 140)}`,
-    `Objetivo do cliente: ${textoCurto(objetivo, 100)}`,
-    `Pendências: ${pendencias}`,
+    area === "Outros"
+      ? "Ainda preciso confirmar a área jurídica antes de classificar o caso."
+      : `Área identificada: *${area}*. Pelo relato, o caso parece estar relacionado a ${tipoCaso || "essa área"}.`,
     "",
-    "Informações encontradas",
+    identificados.length ? "*Informações encontradas:*" : "Vou organizar o relato e confirmar somente o necessário.",
+    ...identificados.map(item => `• ${item}`),
+    resumo ? `\n*Síntese:* ${textoCurto(resumo, 180)}` : "",
     "",
-    ...linhasCampos,
-    resumo ? `\nResumo jurídico:\n${textoCurto(resumo, 220)}` : "",
-    "",
-    perguntaCampoAdminAssistido(proximoCampo),
+    `*${pergunta}*`,
     campoPodeFicarPendenteAdminAssistido(proximoCampo)
-      ? "\nSe não tiver esse dado agora, responda: Informar depois."
+      ? "Se não tiver esse dado agora, pode responder “informar depois”."
       : ""
   ].filter(linha => linha !== "").join("\n")
 }
@@ -433,47 +453,66 @@ function gerarResumoAdminAssistido(sessao = {}) {
   }
   const area = valorCampo(dados, "areaJuridica") || adminAssistido.analise?.areaJuridica || "Outros"
   const especificos = obterCamposRevisaoEspecificosAdminAssistido(area)
-  const secaoCopiloto = gerarSecaoCopilotoJuridicoAdminAssistido(adminAssistido, dados, area, especificos)
   const pendentesPosterior = Array.isArray(adminAssistido.pendentesPosterior) ? adminAssistido.pendentesPosterior : []
-  const linhasPendentesPosterior = pendentesPosterior.length
-    ? pendentesPosterior.map(campo => `- ${labelCampoAdminAssistido(campo)}`)
-    : ["- Nenhuma"]
+  const linhaSePreenchido = campo => {
+    const info = dados[campo]
+    if (!info || info.valor === null || info.valor === undefined || String(info.valor).trim() === "") return null
+    const alerta = info.status === "invalido"
+      ? "❌ Inválido — "
+      : ["precisa_conferir", "contraditorio"].includes(info.status) ? "⚠️ Confirmar — " : ""
+    return `• *${labelCampoAdminAssistido(campo)}:* ${alerta}${valorResumoCampoAdminAssistido(info)}`
+  }
+  const secao = (titulo, campos) => {
+    const linhas = campos.map(linhaSePreenchido).filter(Boolean)
+    return linhas.length ? [`*${titulo}*`, ...linhas, ""] : []
+  }
+  const pendencias = Array.from(new Set([...(adminAssistido.faltantes || []), ...pendentesPosterior]))
+  const observacoes = ["resumoJuridico", "existeTerceiro", "clientePrincipal", "conflitoInteresses"]
+    .map(linhaSePreenchido)
+    .filter(Boolean)
 
   return [
-    "*Revisão do Caso*",
+    "*Ficha completa do atendimento*",
     "",
-    "1. Área jurídica",
-    formatarLinhaStatusAdminAssistido(dados, "areaJuridica"),
+    ...secao("Identificação", ["nomeCompleto", "apelido", "cpf", "dataNascimento", "idade", "estadoCivil"]),
+    ...secao("Contato", ["telefone", "email", "endereco", "numeroEndereco", "complementoEndereco", "bairro", "cidade", "uf", "cep"]),
+    ...secao("Caso", ["areaJuridica", "tipoCaso", "descricao", "objetivo", "urgencia", ...especificos]),
+    ...secao("Documentos", ["documentosMencionados", "documentosMedicos"]),
+    "*Pendências*",
+    ...(pendencias.length ? pendencias.map(campo => `• ${labelCampoAdminAssistido(campo)}`) : ["• Nenhuma pendência crítica"]),
     "",
-    "2. Tipo do caso",
-    formatarLinhaStatusAdminAssistido(dados, "tipoCaso"),
+    "*Observações*",
+    ...(observacoes.length ? observacoes : ["• Nenhuma observação adicional"])
+  ].join("\n").trim()
+}
+
+function gerarRevisaoCurtaAdminAssistido(sessao = {}) {
+  const adminAssistido = obterAdminAssistidoDaSessao(sessao)
+  const dados = { ...criarDadosVaziosAdminAssistido(), ...(adminAssistido.dados || {}) }
+  const area = valorCampo(dados, "areaJuridica") || "A confirmar"
+  const demanda = valorCampo(dados, "tipoCaso") || valorCampo(dados, "problema") || "A confirmar"
+  const objetivo = valorCampo(dados, "objetivo") || valorCampo(dados, "motivo") || "A confirmar"
+  const documentos = valorCampo(dados, "documentosMencionados") || "Nenhum mencionado"
+  const pendencias = Array.from(new Set([...(adminAssistido.faltantes || []), ...(adminAssistido.pendentesPosterior || [])]))
+  const resumo = valorCampo(dados, "resumoJuridico") || valorCampo(dados, "descricao")
+  return [
+    "*Revisão do caso*",
     "",
-    "3. Resumo do problema",
-    formatarLinhaStatusAdminAssistido(dados, "descricao"),
-    "",
-    "4. Dados do cliente",
-    ...CAMPOS_DADOS_CLIENTE_REVISAO.map(campo => formatarLinhaStatusAdminAssistido(dados, campo)),
-    "",
-    "5. Informações específicas da área jurídica",
-    ...especificos.map(campo => formatarLinhaStatusAdminAssistido(dados, campo)),
-    "",
-    "6. Pendencias para complementar depois",
-    ...linhasPendentesPosterior,
-    "",
-    secaoCopiloto,
-    "",
-    "Escolha uma opção:",
-    "",
-    "1️⃣ Confirmar e criar caso",
-    "2️⃣ Editar informações",
-    "3️⃣ Cancelar atendimento"
-  ].join("\n")
+    `👤 *Cliente:* ${valorCampo(dados, "nomeCompleto") || "A confirmar"}`,
+    `⚖️ *Área:* ${area}`,
+    `📌 *Demanda:* ${demanda}`,
+    `🎯 *Objetivo:* ${objetivo}`,
+    `📄 *Documentos:* ${documentos}`,
+    `⚠️ *Pendências:* ${pendencias.length ? pendencias.map(labelCampoAdminAssistido).join(", ") : "Nenhuma crítica"}`,
+    resumo ? `\n*Resumo*\n${textoCurto(resumo, 260)}` : ""
+  ].filter(Boolean).join("\n")
 }
 
 function opcoesRevisaoAdminAssistido() {
   return [
     { id: "admin_assistido_confirmar", title: "✅ Confirmar" },
-    { id: "admin_assistido_editar", title: "✏️ Editar" },
+    { id: "admin_assistido_editar", title: "✏️ Corrigir informação" },
+    { id: "admin_assistido_ficha_completa", title: "📋 Ver ficha completa" },
     { id: "admin_assistido_cancelar", title: "❌ Cancelar" }
   ]
 }
@@ -489,7 +528,7 @@ function opcoesRevisaoEmailAdminAssistido() {
 
 function responderRevisaoCaso(adminAssistido = {}) {
   return {
-    texto: gerarResumoAdminAssistido(adminAssistido),
+    texto: gerarRevisaoCurtaAdminAssistido(adminAssistido),
     opcoes: opcoesRevisaoAdminAssistido(),
     registrarPergunta: false,
     audio: false
@@ -565,21 +604,22 @@ function telaErroAudioAdminAssistido(mensagem) {
   }
 }
 
-function atualizarCampoPendente(adminAssistido = {}, texto = "") {
+function atualizarCampoPendente(adminAssistido = {}, texto = "", dadosBase = null) {
   const campo = adminAssistido.perguntaPendente
-  if (!campo) return adminAssistido.dados || criarDadosVaziosAdminAssistido()
+  const dadosAtuais = dadosBase || adminAssistido.dados || criarDadosVaziosAdminAssistido()
+  if (!campo) return dadosAtuais
   if (entradaPedeInformarDepois(texto)) {
     const area = valorCampo(adminAssistido.dados || {}, "areaJuridica") || "Outros"
     if (campoPodeFicarPendenteAdminAssistido(campo, area)) {
       return {
-        ...(adminAssistido.dados || criarDadosVaziosAdminAssistido()),
+        ...dadosAtuais,
         [campo]: criarCampoAdminAssistido(null, "ausente")
       }
     }
-    return adminAssistido.dados || criarDadosVaziosAdminAssistido()
+    return dadosAtuais
   }
   return {
-    ...(adminAssistido.dados || criarDadosVaziosAdminAssistido()),
+    ...dadosAtuais,
     [campo]: normalizarCampoAdminAssistido(campo, texto, "confirmado")
   }
 }
@@ -612,7 +652,8 @@ function acaoRevisaoAdminAssistido(texto = "") {
   const comando = normalizarComandoAdminAssistido(texto)
   if (["1", "confirmar", "confirmar e criar caso", "admin_assistido_confirmar"].includes(comando)) return "confirmar"
   if (["2", "editar", "editar informacoes", "editar informações", "admin_assistido_editar"].includes(comando)) return "editar"
-  if (["3", "cancelar", "cancelar atendimento", "admin_assistido_cancelar"].includes(comando)) return "cancelar"
+  if (["ficha", "ficha completa", "ver ficha completa", "admin_assistido_ficha_completa"].includes(comando)) return "ficha_completa"
+  if (["3", "4", "cancelar", "cancelar atendimento", "admin_assistido_cancelar"].includes(comando)) return "cancelar"
   return null
 }
 
@@ -1586,6 +1627,15 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
       }
     }
 
+    if (acao === "ficha_completa") {
+      return {
+        texto: gerarResumoAdminAssistido(adminAssistido),
+        opcoes: opcoesRevisaoAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+
      if (acao === "cancelar") {
       return await cancelarAtendimentoAssistidoAdmin(chave, sessao, deps)
     }
@@ -1704,7 +1754,9 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
     analise = await extrairDadosAtendimentoAssistidoIA(entrada)
     dados = mergeDadosAdminAssistido(dados, analise.dados)
   } else if (entrada) {
-    dados = atualizarCampoPendente(adminAssistido, entrada)
+    const complemento = await extrairDadosAtendimentoAssistidoIA(entrada)
+    dados = mergeComplementoAdminAssistido(dados, complemento.dados)
+    dados = atualizarCampoPendente(adminAssistido, entrada, dados)
   }
 
   const area = valorCampo(dados, "areaJuridica") || analise?.areaJuridica || "Outros"
@@ -1740,7 +1792,7 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
   if (!proximoCampo) return responderRevisaoCaso(novoEstado)
 
   return {
-    texto: textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo }),
+    texto: textoResumoAnaliseAdminAssistido({ dados, faltantes, proximoCampo, areasProvaveis: analise?.areasProvaveis }),
     opcoes: opcoesNavegacaoAdminAssistido(),
     registrarPergunta: false,
     audio: false
@@ -1763,6 +1815,8 @@ module.exports = {
   telaInicioAtendimentoAssistidoAdmin,
   registrarEntradaAtendimentoAssistidoAdmin,
   gerarResumoAdminAssistido,
+  gerarRevisaoCurtaAdminAssistido,
+  textoResumoAnaliseAdminAssistido,
   montarUsuarioFinalizacaoAdminAssistido,
   confirmarCriarCasoAdminAssistido,
   acaoRevisaoAdminAssistido,

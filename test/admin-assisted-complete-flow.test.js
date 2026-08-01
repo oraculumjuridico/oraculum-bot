@@ -93,7 +93,7 @@ test("questionário declarativo não repete respondidos e informa progresso", ()
   const proxima = proximaPerguntaAdminAssistido({ questionario, dados, perguntados: ["email"] })
   assert.ok(proxima)
   assert.notEqual(proxima.campo, "nomeCompleto")
-  assert.match(proxima.texto, /Etapa \d+ de \d+/)
+  assert.match(proxima.texto, /Próxima informação/)
 })
 
 test("CPF é opcional somente em atendimento Outros e inválido nunca vira ausência", () => {
