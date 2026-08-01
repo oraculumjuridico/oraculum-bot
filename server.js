@@ -20,6 +20,7 @@ require("dotenv").config()
 const express    = require("express")
 const axios      = require("axios")
 const { google } = require("googleapis")
+const { privacyPolicyPage, dataDeletionPage } = require("./src/domain/public-lgpd-pages")
 const { INSTITUTIONAL_CALENDAR_ID: CALENDAR_ID } = require("./src/config/institutional-calendar")
 const path       = require("path")
 const fs         = require("fs")
@@ -16242,6 +16243,8 @@ function montarHealthInternoOperacional() {
 }
 
 app.get("/", (_, res) => res.send("Oraculum v6.4"))
+app.get("/politica-de-privacidade", (_, res) => res.status(200).type("html").send(privacyPolicyPage()))
+app.get("/exclusao-de-dados", (_, res) => res.status(200).type("html").send(dataDeletionPage()))
 app.get("/health", async (_, res) => {
   const persistence = await externalStateHealth({ probe: true })
   const healthy = !persistence.required || persistence.database === "ok"
