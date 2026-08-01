@@ -13,7 +13,7 @@ const AREAS_JURIDICAS_ADMIN_ASSISTIDO = [
 const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
 const { normalizeCpfHubSpot } = require("./hubspot-contract")
 
-const STATUS_CAMPO_ADMIN_ASSISTIDO = new Set(["confirmado", "inferido", "ausente", "invalido", "precisa_conferir"])
+const STATUS_CAMPO_ADMIN_ASSISTIDO = new Set(["confirmado", "inferido", "ausente", "invalido", "precisa_conferir", "contraditorio"])
 const CPF_VERIFICATION = Object.freeze({
   NAO_INFORMADO: "NAO_INFORMADO",
   FORMATO_INVALIDO: "FORMATO_INVALIDO",
@@ -118,7 +118,7 @@ function valorENormalizadoInvalido(valor, campoNome) {
 }
 
 function campoAdminAssistidoPreenchido(campo, campoNome) {
-  if (!campo || ["ausente", "invalido"].includes(campo.status)) return false
+  if (!campo || ["ausente", "invalido", "precisa_conferir", "contraditorio"].includes(campo.status)) return false
   const valor = campo.valor
   if (valor === null || valor === undefined) return false
   return !valorENormalizadoInvalido(String(valor), campoNome)

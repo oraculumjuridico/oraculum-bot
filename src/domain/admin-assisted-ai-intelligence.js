@@ -18,8 +18,20 @@ function textoTemSobrenome(texto = "") {
 
 function extrairNomeFallback(texto = "") {
   const entrada = sanitizarTextoEntrada(texto)
-  const match = entrada.match(/\b(?:para|cliente|caso de|caso para)\s+([A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ]+){0,3})/)
-  return match?.[1] || null
+  const match = entrada.match(/\b(?:o\s+cliente\s+(?:é|e)|a\s+cliente\s+(?:é|e)|cliente\s*[:\-]|atendi(?:\s+hoje)?|caso\s+(?:de|para)|para)\s+([^,.;\n]+)/iu)
+  const candidato = match?.[1]?.trim() || ""
+  const partes = candidato.split(/\s+/).filter(Boolean).slice(0, 7)
+  if (partes.length < 2) return null
+  const conectivos = new Set(["da", "de", "do", "das", "dos", "e"])
+  if (!partes.every(parte => conectivos.has(parte.toLowerCase()) || /^\p{Lu}[\p{L}'-]+$/u.test(parte))) return null
+  return partes.join(" ")
+}
+
+function detectarAreasAmbiguasFallback(texto = "") {
+  const t = normalizarTextoAnalise(texto)
+  const previdenciario = /\b(inss|previdenci|beneficio|aposentadoria|auxilio|bpc|loas|incapacidade)\b/.test(t)
+  const pretensaoTrabalhista = /\b(rescis\w*|fgts|verbas|hora extra|salario atrasado)\b/.test(t)
+  return previdenciario && pretensaoTrabalhista ? ["Trabalhista", "INSS"] : []
 }
 
 function extrairCpfFallback(texto = "") {
@@ -142,6 +154,7 @@ function detectarTipoCasoFallback(texto = "", area = "Outros") {
 
 function detectarTerceiroFallback(texto = "") {
   const t = sanitizarTextoEntrada(texto).toLowerCase()
+  if (/\b(administrador|administradora|atendente)\b/.test(t) && /\b(?:o|a)\s+cliente\b/.test(t)) return true
   if (/\b(terceir|representante|para outra pessoa|em nome de|filho de|filha de|m[aã]e de|pai de)\b/.test(t)) return true
   if (/\b(cliente direto|para ele mesmo|para ela mesma|proprio cliente|pr[oó]prio cliente)\b/.test(t)) return false
   return null
@@ -235,7 +248,8 @@ function montarResumoCurtoAdminAssistido({ area = "", tipoCaso = "", texto = "",
 
 function criarAnaliseFallback(texto = "") {
   const dados = criarDadosVaziosAdminAssistido()
-  const area = detectarAreaPorIntencaoFallback(texto)
+  const areasProvaveis = detectarAreasAmbiguasFallback(texto)
+  const area = areasProvaveis.length ? null : detectarAreaPorIntencaoFallback(texto)
   const nome = extrairNomeFallback(texto)
   const cpf = extrairCpfFallback(texto)
   const idade = extrairIdadeFallback(texto)
@@ -249,10 +263,14 @@ function criarAnaliseFallback(texto = "") {
   const beneficio = extrairAposMarcador(texto, ["beneficio", "benefício"])
   const parteContraria = extrairAposMarcador(texto, ["parte contraria", "parte contrária", "contra"])
   const fornecedor = extrairAposMarcador(texto, ["fornecedor", "banco", "loja"])
+  const objetivo = extrairAposMarcador(texto, ["objetivo", "pretende", "quer", "precisa"])
+  const profissao = extrairAposMarcador(texto, ["profissao", "profissão", "trabalha como", "cargo"])
+  const orgao = extrairAposMarcador(texto, ["orgao", "órgão", "entidade"])
+  const apelido = extrairAposMarcador(texto, ["nome social", "apelido"])
   const documentosMencionados = extrairDocumentosMencionadosFallback(texto)
   const urgencia = detectarUrgenciaFallback(texto)
 
-  dados.areaJuridica = criarCampoAdminAssistido(area, "inferido")
+  dados.areaJuridica = criarCampoAdminAssistido(area, areasProvaveis.length ? "precisa_conferir" : "inferido")
   dados.tipoCaso = criarCampoAdminAssistido(tipoCaso || (area === "Outros" ? "Baixa confiança" : null), tipoCaso || area === "Outros" ? "inferido" : "ausente")
   dados.descricao = criarCampoAdminAssistido(sanitizarTextoEntrada(texto) || null, texto ? "confirmado" : "ausente")
   dados.resumoJuridico = criarCampoAdminAssistido(montarResumoCurtoAdminAssistido({ area, tipoCaso, texto, urgencia }), texto ? "inferido" : "ausente")
@@ -268,6 +286,10 @@ function criarAnaliseFallback(texto = "") {
   dados.beneficio = criarCampoAdminAssistido(beneficio, beneficio ? "confirmado" : "ausente")
   dados.parteContraria = criarCampoAdminAssistido(parteContraria, parteContraria ? "confirmado" : "ausente")
   dados.fornecedor = criarCampoAdminAssistido(fornecedor, fornecedor ? "confirmado" : "ausente")
+  dados.objetivo = criarCampoAdminAssistido(objetivo, objetivo ? "confirmado" : "ausente")
+  dados.profissao = criarCampoAdminAssistido(profissao, profissao ? "confirmado" : "ausente")
+  dados.orgao = criarCampoAdminAssistido(orgao, orgao ? "confirmado" : "ausente")
+  dados.apelido = criarCampoAdminAssistido(apelido, apelido ? "confirmado" : "ausente")
   dados.documentosMencionados = criarCampoAdminAssistido(documentosMencionados, documentosMencionados ? "inferido" : "ausente")
   dados.urgencia = criarCampoAdminAssistido(urgencia, urgencia ? "inferido" : "ausente")
 
@@ -278,6 +300,7 @@ function criarAnaliseFallback(texto = "") {
 
   return {
     areaJuridica: area,
+    areasProvaveis,
     tipoCaso: dados.tipoCaso.valor,
     clientePrincipal: nome,
     existeTerceiro,
@@ -316,8 +339,10 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
     dados.areaJuridica?.valor || parsed.areaJuridica || parsed.area || "Outros"
   )
   dados.areaJuridica = criarCampoAdminAssistido(
-    area,
-    dados.areaJuridica?.status && dados.areaJuridica.status !== "ausente" ? dados.areaJuridica.status : "inferido"
+    baixaConfianca ? null : area,
+    baixaConfianca
+      ? "precisa_conferir"
+      : dados.areaJuridica?.status && dados.areaJuridica.status !== "ausente" ? dados.areaJuridica.status : "inferido"
   )
 
   if (!dados.descricao?.valor && textoOriginal) {
@@ -341,6 +366,7 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
 
   return {
     areaJuridica: area,
+    areasProvaveis: Array.isArray(parsed.areasProvaveis) ? parsed.areasProvaveis.slice(0, 3) : [],
     tipoCaso: dados.tipoCaso?.valor || null,
     clientePrincipal: dados.clientePrincipal?.valor || dados.nomeCompleto?.valor || null,
     existeTerceiro: dados.existeTerceiro?.valor ?? null,
@@ -357,10 +383,11 @@ async function extrairDadosAtendimentoAssistidoIA(texto = "") {
   try {
     let system = `Você extrai dados de um atendimento jurídico administrativo.
 Responda APENAS JSON válido. Nunca invente informações.
-Cada campo em "dados" deve ter exatamente o formato {"valor": valor ou null, "status": "confirmado"|"inferido"|"ausente"}.
+Cada campo em "dados" deve ter exatamente o formato {"valor": valor ou null, "status": "confirmado"|"inferido"|"ausente"|"precisa_conferir"|"contraditorio"|"invalido"}.
 Use "confirmado" somente para dado dito explicitamente pelo administrador.
 Use "inferido" para conclusão razoável a partir do texto, como área jurídica ou tipo do caso.
-Use "ausente" quando não houver informação.
+Use "ausente" quando não houver informação. Use "precisa_conferir" para inferência relevante que depende de confirmação e "contraditorio" quando o relato trouxer valores incompatíveis.
+Separe cliente principal, administrador, representante, familiar, empregador, testemunha, órgão e parte contrária. Nunca use o administrador como cliente quando o texto identificar outra pessoa como cliente.
 
 Áreas permitidas: ${AREAS_JURIDICAS_ADMIN_ASSISTIDO.join(", ")}.
 
@@ -369,11 +396,13 @@ nomeCompleto, cpf, dataNascimento, idade, telefone, email, cidade, uf,
 areaJuridica, tipoCaso, descricao, clientePrincipal, existeTerceiro, resumoJuridico,
 empresa, motivo, beneficio, parteContraria, vinculoFamiliar, fornecedor,
 produtoServico, posicaoPenal, contratoOuFato, imovel, nb, dataNegativa,
-situacao, cargo, dataAdmissao, dataDemissao, filhos, objetivo, problema.
-documentosMencionados, urgencia, naturezaDemanda, orgao.
+situacao, cargo, dataAdmissao, dataDemissao, filhos, objetivo, problema,
+documentosMencionados, urgencia, naturezaDemanda, orgao, apelido, profissao,
+situacaoProfissional, estadoCivil, endereco, cep, acidenteTrabalho,
+limitacoesAtuais, rendaAtual e composicaoFamiliar.
 
 Também retorne no topo:
-areaJuridica, tipoCaso, clientePrincipal, existeTerceiro, resumoJuridico.`
+areaJuridica, areasProvaveis, tipoCaso, clientePrincipal, existeTerceiro, resumoJuridico.`
     system += `
 
 Classifique pela INTENCAO PRINCIPAL do cliente, nao por palavras isoladas.

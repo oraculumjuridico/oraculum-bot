@@ -157,16 +157,17 @@ async function main() {
       dados: dadosCompletos()
     }
   })
-  assert.match(resumo, /🧠 Copiloto Jurídico/)
-  assert.doesNotMatch(resumo, /COPILOTO JUR/)
-  assert.ok(contarItensDaSecao(resumo, "Possíveis riscos", "Documentos recomendados") <= 5)
-  assert.ok(contarItensDaSecao(resumo, "Documentos recomendados", "Perguntas sugeridas") <= 5)
-  assert.ok(contarItensDaSecao(resumo, "Perguntas sugeridas") <= 5)
+  assert.match(resumo, /Ficha completa do atendimento/)
+  assert.match(resumo, /Identificação/)
+  assert.match(resumo, /Contato/)
+  assert.match(resumo, /Caso/)
+  assert.match(resumo, /Pendências/)
+  assert.doesNotMatch(resumo, /Copiloto Jurídico|COPILOTO JUR|Não informado/)
 
   const textosUtf8 = [audio.texto, respostaFalhaAudio.texto, resumo].join("\n")
   assert.doesNotMatch(textosUtf8, padraoMojibake())
   assert.match(textosUtf8, /Área jurídica/)
-  assert.match(textosUtf8, /Informações específicas/)
+  assert.match(textosUtf8, /Ficha completa/)
 
   fs.rmSync(tempDir, { recursive: true, force: true })
   console.log("admin-assisted-ai-hardening.test.js ok")

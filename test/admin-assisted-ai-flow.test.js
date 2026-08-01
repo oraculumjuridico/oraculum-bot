@@ -138,7 +138,7 @@ async function main() {
   assert.match(respostaInicial.texto, /Área identificada:/)
   assert.match(respostaInicial.texto, /Trabalhista/)
   assert.match(respostaInicial.texto, /Informações encontradas/)
-  assert.match(respostaInicial.texto, /Telefone/)
+  assert.match(respostaInicial.texto, /telefone ou WhatsApp/)
 
   let sessaoAtual = sessoesAdminWhatsApp.get(chave)
   assert.equal(sessaoAtual.adminAssistido.etapa, ADMIN_ASSISTIDO_ETAPA_COLETA)
@@ -157,10 +157,10 @@ async function main() {
     deps
   )
 
-  assert.match(respostaRevisao.texto, /Revisão do Caso/)
-  assert.match(respostaRevisao.texto, /Escolha uma opção:/)
-  assert.match(respostaRevisao.texto, /1️⃣ Confirmar e criar caso/)
-  assert.equal(respostaRevisao.opcoes.length, 3)
+  assert.match(respostaRevisao.texto, /Revisão do caso/)
+  assert.doesNotMatch(respostaRevisao.texto, /Não informado|Copiloto Jurídico/)
+  assert.equal(respostaRevisao.opcoes.length, 4)
+  assert.ok(respostaRevisao.opcoes.some(opcao => opcao.id === "admin_assistido_ficha_completa"))
 
   sessaoAtual = sessoesAdminWhatsApp.get(chave)
   assert.equal(sessaoAtual.adminAssistido.etapa, ADMIN_ASSISTIDO_ETAPA_REVISAO)
@@ -172,11 +172,11 @@ async function main() {
       dados: dadosTrabalhistasCompletos()
     }
   })
-  assert.match(resumoCompleto, /Área jurídica: 🟡 Inferido - Trabalhista/)
-  assert.match(resumoCompleto, /Nome: ✅ Confirmado - Maria Silva/)
-  assert.match(resumoCompleto, /Empresa: ✅ Confirmado - Acme Ltda/)
-  assert.match(resumoCompleto, /Cargo: ✅ Confirmado - Vendedora/)
-  assert.match(resumoCompleto, /Motivo: 🟡 Inferido - Verbas rescisórias/)
+  assert.match(resumoCompleto, /Área jurídica:\* Trabalhista/)
+  assert.match(resumoCompleto, /Nome:\* Maria Silva/)
+  assert.match(resumoCompleto, /Empresa:\* Acme Ltda/)
+  assert.match(resumoCompleto, /Cargo:\* Vendedora/)
+  assert.match(resumoCompleto, /Motivo:\* Verbas rescisórias/)
 
   const resumoParcial = gerarResumoAdminAssistido({
     adminAssistido: {
@@ -187,8 +187,7 @@ async function main() {
       }
     }
   })
-  assert.match(resumoParcial, /E-mail: ❌ Não informado - Não informado/)
-  assert.match(resumoParcial, /Data demissão: ❌ Não informado - Não informado/)
+  assert.doesNotMatch(resumoParcial, /E-mail|Data demissão|Não informado/)
 
   const resumoComPendenciaPosterior = gerarResumoAdminAssistido({
     adminAssistido: {
@@ -196,7 +195,7 @@ async function main() {
       pendentesPosterior: ["cpf"]
     }
   })
-  assert.match(resumoComPendenciaPosterior, /Pendencias para complementar depois/)
+  assert.match(resumoComPendenciaPosterior, /Pendências/)
   assert.match(resumoComPendenciaPosterior, /CPF/)
 
   const respostaEditar = await processarAtendimentoAssistidoAdmin(from, "2", { type: "text" }, deps)
@@ -212,8 +211,8 @@ async function main() {
   assert.equal(sessaoAtual.adminAssistido.campoEmEdicao, "empresa")
 
   const respostaEditada = await processarAtendimentoAssistidoAdmin(from, "Nova Empresa S.A.", { type: "text" }, deps)
-  assert.match(respostaEditada.texto, /Revisão do Caso/)
-  assert.match(respostaEditada.texto, /Empresa: ✅ Confirmado - Nova Empresa S.A./)
+  assert.match(respostaEditada.texto, /Revisão do caso/)
+  assert.doesNotMatch(respostaEditada.texto, /Confirmado|Inferido|Não informado/)
   sessaoAtual = sessoesAdminWhatsApp.get(chave)
   assert.equal(sessaoAtual.adminAssistido.etapa, ADMIN_ASSISTIDO_ETAPA_REVISAO)
   assert.equal(sessaoAtual.adminAssistido.dados.empresa.valor, "Nova Empresa S.A.")
