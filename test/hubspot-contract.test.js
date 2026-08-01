@@ -23,8 +23,13 @@ const {
   MANAGED_CONTACT_PROPERTIES,
   DEAL_WRITE_PROPERTIES,
   MANAGED_DEAL_PROPERTIES,
-  validateHubSpotProperties
+  validateHubSpotProperties,
+  normalizeCpfHubSpot
 } = require("../src/domain/hubspot-contract")
+const {
+  normalizarNumeroWhatsAppEnvio,
+  normalizarTelefoneHubSpot
+} = require("../src/domain/phone-name")
 
 const axiosOriginal = {
   get: axios.get,
@@ -209,9 +214,9 @@ async function executar() {
   })
 
   const propsContatoCompleto = montarPropsContatoHubSpot("5581999990000", {
-    nome: "Ana Cliente",
+    nome: "Ana Souza",
     email: "ana@example.com",
-    cpf: "123.456.789-00",
+    cpf: "529.982.247-25",
     dataNascimento: "1990-01-02",
     cidade: "Recife",
     uf: "PE",
@@ -224,17 +229,17 @@ async function executar() {
   })
   assert.deepEqual(propsContatoCompleto, {
     firstname: "Ana",
-    lastname: "Cliente",
+    lastname: "Souza",
     email: "ana@example.com",
     work_email: "ana@example.com",
-    phone: "558199990000",
-    mobilephone: "558199990000",
+    phone: "5581999990000",
+    mobilephone: "5581999990000",
     city: "Recife",
     state: "PE",
     area_juridica: "Trabalhista",
     beneficio: "Rescisao",
     beneficio_de_interesse: "Rescisao",
-    cpf_do_cliente: "123.456.789-00",
+    cpf_do_cliente: "52998224725",
     date_of_birth: "1990-01-02",
     origem_lead: "Bot Whatsapp",
     pasta_drive: "https://drive.example/folder",
@@ -252,14 +257,14 @@ async function executar() {
       }
     }, propsContatoCompleto),
     {
-      lastname: "Cliente",
+      lastname: "Souza",
       work_email: "ana@example.com",
-      mobilephone: "558199990000",
+      mobilephone: "5581999990000",
       state: "PE",
       area_juridica: "Trabalhista",
       beneficio: "Rescisao",
       beneficio_de_interesse: "Rescisao",
-      cpf_do_cliente: "123.456.789-00",
+      cpf_do_cliente: "52998224725",
       date_of_birth: "1990-01-02",
       origem_lead: "Bot Whatsapp",
       pasta_drive: "https://drive.example/folder",
@@ -267,6 +272,48 @@ async function executar() {
       tipo_de_caso: "Direito trabalhista"
     }
   )
+
+  const propsPlaceholder = montarPropsContatoHubSpot("5581999990000", {
+    nome: "Bia Placeholder",
+    telefone: "informar depois",
+    email: "email do cliente",
+    cpf: "11111111111",
+    cidade: "Recife",
+    uf: "PE"
+  })
+  assert.equal(propsPlaceholder.phone, undefined)
+  assert.equal(propsPlaceholder.mobilephone, undefined)
+  assert.equal(propsPlaceholder.email, undefined)
+  assert.equal(propsPlaceholder.work_email, undefined)
+  assert.equal(propsPlaceholder.cpf_do_cliente, undefined)
+  assert.deepEqual(propsPlaceholder.city, "Recife")
+  assert.deepEqual(propsPlaceholder.state, "PE")
+
+  const propsPreservaExistente = montarPropsContatoHubSpot("5581999990000", {
+    nome: "Carlos",
+    telefone: "",
+    cpf: "",
+    cidade: "Recife",
+    uf: "PE"
+  })
+  assert.equal(propsPreservaExistente.phone, undefined)
+  assert.equal(propsPreservaExistente.mobilephone, undefined)
+  assert.equal(propsPreservaExistente.cpf_do_cliente, undefined)
+
+  assert.equal(normalizeCpfHubSpot("529.982.247-25"), "52998224725")
+  assert.equal(normalizeCpfHubSpot("52998224725"), "52998224725")
+  assert.equal(montarPropsContatoHubSpot("5581999990000", { nome: "Maria Souza", cpf: "529.982.247-25" }).cpf_do_cliente, "52998224725")
+  assert.equal(montarPropsContatoHubSpot("5581999990000", { nome: "Maria Souza", cpf: "" }).cpf_do_cliente, undefined)
+  assert.equal(montarPropsContatoHubSpot("5581999990000", { nome: "Maria Souza", cpf: "11111111111" }).cpf_do_cliente, undefined)
+  assert.equal(montarPropsContatoHubSpot("5581999990000", { nome: "Maria Souza", cpf: "cpf do cliente" }).cpf_do_cliente, undefined)
+
+  assert.equal(normalizarTelefoneHubSpot("(81) 99999-0000"), "5581999990000")
+  assert.equal(normalizarTelefoneHubSpot("55 (81) 99999-0000"), "5581999990000")
+  assert.equal(normalizarTelefoneHubSpot("(81) 3333-0000"), "558133330000")
+  assert.equal(normalizarTelefoneHubSpot("55 (81) 3333-0000"), "558133330000")
+  assert.equal(normalizarNumeroWhatsAppEnvio("5581999990000"), "558199990000")
+  assert.equal(montarPropsContatoHubSpot("5581999990000", { nome: "Nome da cliente" }).firstname, undefined)
+  assert.equal(montarPropsContatoHubSpot("5581999990000", { nome: "Maria Souza", cidade: "cidade da cliente" }).city, undefined)
 
   const propsContatoPrevidenciario = montarPropsContatoHubSpot("5581999990001", {
     nome: "Pessoa Fictícia",

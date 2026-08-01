@@ -2,6 +2,13 @@ function textoPreenchido(value, minLength = 1) {
   return typeof value === "string" && value.trim().length >= minLength
 }
 
+function isPlaceholderValue(value) {
+  if (typeof value !== "string") return false
+  const normalized = value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  return ["", "informar depois", "nao informado", "nao sei", "sem informacao", "cliente", "voce", "placeholder"].includes(normalized) ||
+    /^(nome|cpf|telefone|email|cidade|uf|descricao|beneficio|situacao|motivo|area|tipo|data de nascimento)\s+(do|da)\s+(cliente|caso)$/.test(normalized)
+}
+
 function collectFinalizationViolations({
   from,
   u,
@@ -39,6 +46,10 @@ function collectFinalizationViolations({
 
   if (!textoPreenchido(state.area, 2)) {
     violations.push("area")
+  }
+
+  if (isPlaceholderValue(state.nome) || isPlaceholderValue(state.whatsappContato) || isPlaceholderValue(state.cidade) || isPlaceholderValue(state.area) || isPlaceholderValue(state.descricao)) {
+    violations.push("placeholder")
   }
 
   const identidadeInvalida =

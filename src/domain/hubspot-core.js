@@ -1,8 +1,8 @@
 const axios = require("axios")
 const { logErroHubSpot } = require("../utils/logging")
 const { sanitizarTextoEntrada } = require("../utils/text")
-const { normalizarNumeroWhatsAppEnvio } = require("./phone-name")
-const { validateHubSpotProperties } = require("./hubspot-contract")
+const { normalizarNumeroWhatsAppEnvio, normalizarTelefoneHubSpot } = require("./phone-name")
+const { validateHubSpotProperties, isPlaceholderValue } = require("./hubspot-contract")
 const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
 
 let deps = {
@@ -95,7 +95,10 @@ function emailValidoHubSpot(email) {
 }
 
 function montarPropsContatoHubSpot(from, u = {}) {
-  const telefone = normalizarNumeroWhatsAppEnvio(u.whatsappContato || from)
+  const telefoneInformado = Object.hasOwn(u, "whatsappContato")
+    ? u.whatsappContato
+    : (Object.hasOwn(u, "telefone") ? u.telefone : from)
+  const telefone = normalizarTelefoneHubSpot(telefoneInformado)
   const nomeContato =
     (u?.nome && String(u.nome).trim()) ||
     (u?.nomePerfilWhatsApp && String(u.nomePerfilWhatsApp).trim()) ||
@@ -103,8 +106,9 @@ function montarPropsContatoHubSpot(from, u = {}) {
     "Lead WhatsApp"
   const beneficio = sanitizarTextoEntrada(u.beneficio || u.beneficioInteresse || u.situacao)
   const areaJuridica = normalizarAreaContatoHubSpot(u.area)
-  const partesNome = nomeContato.split(/\s+/).filter(Boolean)
-  const firstname = partesNome.shift() || nomeContato
+  const nomeValido = isPlaceholderValue(nomeContato) ? "" : nomeContato
+  const partesNome = nomeValido.split(/\s+/).filter(Boolean)
+  const firstname = partesNome.shift() || nomeValido
   const lastname = partesNome.join(" ")
 
   const emailValido = emailValidoHubSpot(u.email)
@@ -154,7 +158,7 @@ function montarPropsAusentesContatoHubSpot(contatoExistente = {}, props = {}) {
 
 async function hsBuscarPorPhone(phone) {
   try {
-    const phoneNormalizado = normalizarNumeroWhatsAppEnvio(phone)
+    const phoneNormalizado = normalizarTelefoneHubSpot(phone)
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/contacts/search",
       {

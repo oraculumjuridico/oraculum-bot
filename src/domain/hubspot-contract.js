@@ -1,3 +1,84 @@
+const PLACEHOLDER_VALUES = new Set([
+  "",
+  "nome do cliente",
+  "nome da cliente",
+  "cpf do cliente",
+  "cpf da cliente",
+  "telefone do cliente",
+  "telefone da cliente",
+  "email do cliente",
+  "email da cliente",
+  "cidade do cliente",
+  "cidade da cliente",
+  "nao informado",
+  "não informado",
+  "nao sei",
+  "não sei",
+  "sem informacao",
+  "sem informação",
+  "informar depois",
+  "sem esse dado",
+  "pular",
+  "cliente",
+  "você",
+  "voce",
+  "placeholder"
+])
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+}
+
+function isPlaceholderValue(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value !== "string") return false
+  const normalized = normalizeText(value)
+  return !normalized ||
+    PLACEHOLDER_VALUES.has(normalized) ||
+    normalized.includes("informar depois") ||
+    normalized.includes("nao sei") ||
+    normalized.includes("sem informacao") ||
+    /^(nome|cpf|telefone|email|cidade|uf|descricao|beneficio|situacao|motivo|area|tipo|data de nascimento)\s+(do|da)\s+(cliente|caso)$/.test(normalized)
+}
+
+function isValidCpf(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value !== "string") return false
+  const raw = value.trim()
+  if (!raw || isPlaceholderValue(raw)) return false
+  const digits = raw.replace(/\D/g, "")
+  if (digits.length !== 11 || /^(\d)\1{10}$/.test(digits)) return false
+  let sum = 0
+  for (let i = 0; i < 9; i += 1) sum += Number(digits[i]) * (10 - i)
+  let remainder = (sum * 10) % 11
+  if (remainder === 10) remainder = 0
+  if (remainder !== Number(digits[9])) return false
+  sum = 0
+  for (let i = 0; i < 10; i += 1) sum += Number(digits[i]) * (11 - i)
+  remainder = (sum * 10) % 11
+  if (remainder === 10) remainder = 0
+  return remainder === Number(digits[10])
+}
+
+function normalizeCpfHubSpot(value) {
+  if (!isValidCpf(value)) return null
+  return String(value).replace(/\D/g, "")
+}
+
+function normalizeEmailHubSpot(value) {
+  if (value === null || value === undefined) return null
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed || isPlaceholderValue(trimmed)) return null
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed.toLowerCase()) ? trimmed : null
+}
+
+const { normalizarTelefoneHubSpot } = require("./phone-name")
+
 const CONTACT_WRITE_PROPERTIES = new Set([
   "firstname",
   "lastname",
@@ -147,6 +228,27 @@ function validateHubSpotProperties(objectType, properties = {}, onWarning = () =
       unknownProperties.push(property)
       continue
     }
+    if (value === null || value === undefined) continue
+    if (typeof value === "string" && !value.trim()) continue
+    if (isPlaceholderValue(value)) continue
+    if (property === "cpf_do_cliente") {
+      const cpfNormalizado = normalizeCpfHubSpot(value)
+      if (cpfNormalizado === null) continue
+      validProperties[property] = cpfNormalizado
+      continue
+    }
+    if (property === "email" || property === "work_email") {
+      const emailNormalizado = normalizeEmailHubSpot(value)
+      if (emailNormalizado === null) continue
+      validProperties[property] = emailNormalizado
+      continue
+    }
+    if (property === "phone" || property === "mobilephone") {
+      const phoneNormalizado = normalizarTelefoneHubSpot(value)
+      if (!phoneNormalizado) continue
+      validProperties[property] = phoneNormalizado
+      continue
+    }
     if (enumValues[property] && !enumValues[property].has(value)) {
       invalidEnums.push(property)
       continue
@@ -173,5 +275,8 @@ module.exports = {
   MANAGED_DEAL_PROPERTIES,
   CONTACT_ENUM_VALUES,
   DEAL_ENUM_VALUES,
-  validateHubSpotProperties
+  validateHubSpotProperties,
+  isPlaceholderValue,
+  isValidCpf,
+  normalizeCpfHubSpot
 }

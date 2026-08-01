@@ -711,17 +711,26 @@ function criarPayloadLogAdminAssistido(evento, detalhes = {}) {
   }
   if (!detalhes || typeof detalhes !== "object" || Array.isArray(detalhes)) return payload
 
+  const aliasMap = {
+    contatoId: ["contatoId", "contactId"],
+    negocioId: ["negocioId", "dealId"],
+    pastaDriveId: ["pastaDriveId", "caseFolderId"],
+    numeroCaso: ["numeroCaso", "caseNumber"]
+  }
+
   for (const [campo, valor] of Object.entries(detalhes)) {
-    if (!CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO.has(campo)) continue
+    const targetField = Object.entries(aliasMap).find(([, aliases]) => aliases.includes(campo))?.[0]
+    const campoLog = targetField || campo
+    if (!CAMPOS_LOG_TECNICO_ADMIN_ASSISTIDO.has(campoLog)) continue
     if (Array.isArray(valor)) {
-      payload[campo] = valor
+      payload[campoLog] = valor
         .filter(item => typeof item === "string")
         .map(item => sanitizarTextoEntrada(item).slice(0, 80))
         .filter(Boolean)
       continue
     }
     if (!["string", "number", "boolean"].includes(typeof valor)) continue
-    payload[campo] = typeof valor === "string"
+    payload[campoLog] = typeof valor === "string"
       ? sanitizarTextoEntrada(valor).slice(0, 160)
       : valor
   }
@@ -1006,15 +1015,47 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
 
   try {
     const numeroCaso = await deps.finalizarCadastroAssistido(u.whatsappContato || from, u)
+    const contatoId = u.contatoId || u.contactId || null
+    const negocioId = u.negocioId || u.dealId || null
+    const pastaDriveId = u.pastaDriveId || u.caseFolderId || null
+    const sucessoContratoValido = Boolean(numeroCaso && contatoId && negocioId && pastaDriveId)
+    if (!sucessoContratoValido) {
+      registrarLogAdminAssistido(deps, "criacao_caso_bloqueada_invariantes", {
+        resultado: "bloqueado",
+        code: "SUCCESS_CONTRACT_VIOLATION",
+        operation: "finalizar_cadastro_assistido",
+        failedInvariant: "success_contract",
+        stage: "post_finalization"
+      })
+      if (typeof deps.logErro === "function") {
+        deps.logErro("admin_assistido", `Caso não criado: contrato de sucesso incompleto; code=SUCCESS_CONTRACT_VIOLATION; operation=finalizar_cadastro_assistido; stage=post_finalization; failedInvariant=success_contract`)
+      }
+      return {
+        texto: [
+          "⚠️ Não foi possível criar o caso: dados insuficientes.",
+          "",
+          "Os identificadores obrigatórios não foram retornados pelo fluxo de finalização.",
+          "",
+          "Escolha uma opção:",
+          "",
+          "1️⃣ Editar informações",
+          "2️⃣ Cancelar atendimento"
+        ].join("\n"),
+        opcoes: opcoesRevisaoAdminAssistido(),
+        registrarPergunta: false,
+        audio: false
+      }
+    }
+
     const novoEstado = {
       ...adminAssistido,
       ativo: false,
       etapa: ADMIN_ASSISTIDO_ETAPA_COMPLETO,
       casoCriado: {
         numeroCaso,
-        contatoId: u.contatoId || null,
-        negocioId: u.negocioId || null,
-        pastaDriveId: u.pastaDriveId || null,
+        contatoId,
+        negocioId,
+        pastaDriveId,
         pastaDriveLink: u.pastaDriveLink || null
       }
     }
