@@ -169,6 +169,81 @@ async function main() {
   assert.match(textosUtf8, /Área jurídica/)
   assert.match(textosUtf8, /Ficha completa/)
 
+  // Teste: retomada após reinício — clicar "Atendimento com IA" não deve sobrescrever sessão restaurada
+  const sessoesRetomada = new Map()
+  const depsRetomada = criarDeps(sessoesRetomada)
+  iniciarAtendimentoAssistidoAdmin(from, depsRetomada)
+  const relato = await processarAtendimentoAssistidoAdmin(
+    from,
+    "Caso trabalhista para Maria Silva. Empresa Acme Ltda. Demissão sem pagamento de rescisão.",
+    { type: "text" },
+    depsRetomada
+  )
+  persistirSessoesAdminAssistidasAgora(sessoesRetomada, { propagarErro: true })
+
+  const sessoesRestauradasRetomada = new Map()
+  const resultadoCargaRetomada = carregarSessoesAdminAssistidasPersistidas(sessoesRestauradasRetomada)
+  assert.equal(resultadoCargaRetomada.restauradas, 1)
+  assert.equal(sessoesRestauradasRetomada.get(chave).adminAssistido.aguardandoConfirmacaoRetomada, true)
+
+  const etapaAntes = sessoesRestauradasRetomada.get(chave).adminAssistido.etapa
+  const perguntaAntes = sessoesRestauradasRetomada.get(chave).adminAssistido.perguntaPendente
+  const camposAntes = sessoesRestauradasRetomada.get(chave).adminAssistido.camposPerguntados
+  const historicoAntes = sessoesRestauradasRetomada.get(chave).adminAssistido.historico.length
+
+  const telaRetomada = iniciarAtendimentoAssistidoAdmin(from, criarDeps(sessoesRestauradasRetomada))
+  assert.match(telaRetomada.texto, /Foi encontrado um atendimento em andamento\./)
+  assert.match(telaRetomada.texto, /Deseja continuar\?/)
+  assert.ok(telaRetomada.opcoes.some(o => o.id === "admin_assistido_retomar_continuar"))
+  assert.ok(telaRetomada.opcoes.some(o => o.id === "admin_assistido_retomar_cancelar"))
+
+  const sessoesAposRetomada = sessoesRestauradasRetomada
+  assert.equal(sessoesAposRetomada.get(chave).adminAssistido.etapa, etapaAntes)
+  assert.equal(sessoesAposRetomada.get(chave).adminAssistido.perguntaPendente, perguntaAntes)
+  assert.deepEqual(sessoesAposRetomada.get(chave).adminAssistido.camposPerguntados, camposAntes)
+  assert.equal(sessoesAposRetomada.get(chave).adminAssistido.historico.length, historicoAntes)
+  assert.equal(sessoesAposRetomada.get(chave).adminAssistido.aguardandoConfirmacaoRetomada, true)
+
+  const continuacaoRetomada = await processarAtendimentoAssistidoAdmin(
+    from,
+    "admin_assistido_retomar_continuar",
+    { type: "text" },
+    criarDeps(sessoesAposRetomada)
+  )
+  assert.doesNotMatch(continuacaoRetomada.texto, /Foi encontrado/)
+  assert.equal(sessoesAposRetomada.get(chave).adminAssistido.aguardandoConfirmacaoRetomada, false)
+  assert.equal(sessoesAposRetomada.get(chave).adminAssistido.etapa, etapaAntes)
+
+  // Teste: iniciar novo atendimento após cancelar retomada deve criar estado limpo
+  const sessoesNovo = new Map()
+  const depsNovo = criarDeps(sessoesNovo)
+  iniciarAtendimentoAssistidoAdmin(from, depsNovo)
+  await processarAtendimentoAssistidoAdmin(
+    from,
+    "Caso trabalhista para Maria Silva. Empresa Acme Ltda. Demissão sem pagamento de rescisão.",
+    { type: "text" },
+    depsNovo
+  )
+  persistirSessoesAdminAssistidasAgora(sessoesNovo, { propagarErro: true })
+
+  const sessoesRestauradasNovo = new Map()
+  carregarSessoesAdminAssistidasPersistidas(sessoesRestauradasNovo)
+  assert.equal(sessoesRestauradasNovo.get(chave).adminAssistido.aguardandoConfirmacaoRetomada, true)
+
+  const cancelarRetomada = await processarAtendimentoAssistidoAdmin(
+    from,
+    "admin_assistido_retomar_cancelar",
+    { type: "text" },
+    criarDeps(sessoesRestauradasNovo)
+  )
+  assert.equal(sessoesRestauradasNovo.get(chave).adminAssistido, null)
+
+  const novoInicio = iniciarAtendimentoAssistidoAdmin(from, criarDeps(sessoesRestauradasNovo))
+  assert.match(novoInicio.texto, /Atendimento Assistido por IA/)
+  assert.match(novoInicio.texto, /Descreva o caso livremente/)
+  assert.equal(sessoesRestauradasNovo.get(chave).adminAssistido.etapa, "aguardando_relato")
+  assert.equal(sessoesRestauradasNovo.get(chave).adminAssistido.camposPerguntados.length, 0)
+
   fs.rmSync(tempDir, { recursive: true, force: true })
   console.log("admin-assisted-ai-hardening.test.js ok")
 }
