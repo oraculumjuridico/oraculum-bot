@@ -292,6 +292,7 @@ async function buscarCidadePorNome(nomeCidade) {
 }
 
 module.exports = {
+  ESTADOS_EXTENSO,
   estadoPorExtenso,
   mapearRegiaoPorUF,
   extrairFiltroUFEstado,

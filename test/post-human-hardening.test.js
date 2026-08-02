@@ -59,7 +59,7 @@ async function test(name, fn) {
     process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "true"
     process.env.POST_HUMAN_PILOT_CASES = "CASE-1"
     _clearActionContextsForTests()
-    const button = montarBotaoAtendimentoRealizado("D", "case-1", { adminId: "admin", contatoId: "P1" })
+    const button = montarBotaoAtendimentoRealizado("D", "case-1", { adminId: "admin", contatoId: "P1", customerPhone: "5511999999999", customerPhoneConfirmed: true })
     assert.match(button.id, /^admin_post_human_completed_[A-Za-z0-9_-]{24}$/)
     let created = 0
     const deps = {

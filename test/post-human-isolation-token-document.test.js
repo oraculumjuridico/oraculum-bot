@@ -147,7 +147,7 @@ async function awaiting(repository, input) {
   await test("token exige admin contato e vinculos completos", async () => {
     _clearActionContextsForTests()
     assert.equal(montarBotaoAtendimentoRealizado("D", "A-1", { adminId: "admin" }), null)
-    const button = montarBotaoAtendimentoRealizado("D", "A-1", { adminId: " admin ", contatoId: "A" })
+    const button = montarBotaoAtendimentoRealizado("D", "A-1", { adminId: " admin ", contatoId: "A", customerPhone: "5511999999999", customerPhoneConfirmed: true })
     let created = 0
     const base = {
       interactionId: button.id,
@@ -166,8 +166,8 @@ async function awaiting(repository, input) {
     _clearActionContextsForTests()
     process.env.POST_HUMAN_ACTION_MAX_CONTEXTS = "2"
     process.env.POST_HUMAN_ACTION_TTL_MS = "1000"
-    assert.ok(montarBotaoAtendimentoRealizado("D1", "A-1", { adminId: "A", contatoId: "A" }))
-    assert.ok(montarBotaoAtendimentoRealizado("D2", "A-2", { adminId: "A", contatoId: "A" }))
+    assert.ok(montarBotaoAtendimentoRealizado("D1", "A-1", { adminId: "A", contatoId: "A", customerPhone: "5511999999999", customerPhoneConfirmed: true }))
+    assert.ok(montarBotaoAtendimentoRealizado("D2", "A-2", { adminId: "A", contatoId: "A", customerPhone: "5511999999999", customerPhoneConfirmed: true }))
     assert.equal(montarBotaoAtendimentoRealizado("D3", "B-1", { adminId: "A", contatoId: "A" }), null)
     assert.equal(_actionContextCountForTests(), 2)
     _pruneActionContextsForTests(Date.now() + 1001)

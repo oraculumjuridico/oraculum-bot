@@ -66,7 +66,8 @@ async function toAwaiting(repository, input) {
       listaDocumental: ["RG"], docsEntregues: []
     }
     const button = montarBotaoAtendimentoRealizado(usuario.negocioId, usuario.numeroCaso, {
-      adminId: "ADMIN-1", contatoId: usuario.contatoId
+      adminId: "ADMIN-1", contatoId: usuario.contatoId,
+      customerPhone: usuario.telefoneNormalizado, customerPhoneConfirmed: true
     })
     assert.match(button.id, /^admin_post_human_completed_/)
     const confirmation = await handleAtendimentoRealizadoConfirmation({

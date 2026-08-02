@@ -44,6 +44,8 @@ function createPostHumanDispatcher({
   resolveBusiness,
   saveInformation,
   applySafeHubspotUpdates,
+  updateCanonicalState,
+  continueCycle,
   legacyDocumentPipeline,
   isComplete,
   responseHandler = tratarRespostaClientePosAtendimento,
@@ -76,6 +78,8 @@ function createPostHumanDispatcher({
           resolveValidatedContactByPhone,
           saveInformation,
           applySafeHubspotUpdates,
+          updateCanonicalState,
+          continueCycle,
           isComplete,
           saveDocument: typeof legacyDocumentPipeline === "function"
             ? context => legacyDocumentPipeline({ ...context, from, usuario: safeUser, rawMessage })

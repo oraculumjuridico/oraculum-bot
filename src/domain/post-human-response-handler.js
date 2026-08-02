@@ -78,16 +78,30 @@ async function tratarRespostaClientePosAtendimento({
         })
       }
     }
+    if (saveResult?.canonicalPatch && typeof deps.updateCanonicalState === "function") {
+      await deps.updateCanonicalState({ cycle, patch: saveResult.canonicalPatch })
+    }
   } else return { handled: true, ignored: true, cycle }
-  const complete = await Promise.resolve(deps.isComplete?.(cycle) || false)
+  const refreshedBeforeCompletion = await repository.getCycle(cycle.cycleId) || cycle
+  const complete = await Promise.resolve(deps.isComplete?.(refreshedBeforeCompletion) || false)
   const status = complete ? "completed" : "awaiting_response"
-  const campo = cycle.payload?.campoPendente || cycle.campoPendente || null
-  const camposRespondidos = campo ? [...new Set([...(cycle.payload?.camposRespondidos || cycle.camposRespondidos || []), campo])] : []
+  const campo = refreshedBeforeCompletion.payload?.campoPendente || refreshedBeforeCompletion.campoPendente || null
+  const camposRespondidos = campo ? [...new Set([...(refreshedBeforeCompletion.payload?.camposRespondidos || refreshedBeforeCompletion.camposRespondidos || []), campo])] : []
+  const canonicalAnswers = kind === "information" && campo
+    ? { ...(refreshedBeforeCompletion.payload?.respostas || {}), [campo]: { valor: String(content?.text || content || "").trim(), status: "confirmado", origem: "cliente" } }
+    : null
+  const updated = await repository.updateStatus(cycle.cycleId, status, {
+    respondidoEm: new Date().toISOString(),
+    ...(camposRespondidos.length ? { camposRespondidos } : {}),
+    ...(canonicalAnswers ? { respostas: canonicalAnswers } : {})
+  })
+  if (!complete && typeof deps.continueCycle === "function") {
+    const continuation = await deps.continueCycle({ cycle: updated, usuario: identidade })
+    return { handled: true, partial: continuation?.cycle?.status !== "completed", pipelineResponse: documentSaveResult?.pipelineResponse || null, cycle: continuation?.cycle || continuation || updated, continuation }
+  }
   return {
     handled: true, partial: !complete, pipelineResponse: documentSaveResult?.pipelineResponse || null,
-    cycle: await repository.updateStatus(cycle.cycleId, status, {
-      respondidoEm: new Date().toISOString(), ...(camposRespondidos.length ? { camposRespondidos } : {})
-    })
+    cycle: updated
   }
 }
 

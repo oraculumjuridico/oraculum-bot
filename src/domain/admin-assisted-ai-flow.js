@@ -27,6 +27,7 @@ const {
 const {
   criarQuestionarioAdminAssistido
 } = require("./admin-assisted-questionnaire")
+const { normalizeUf, classifyInssDemand, reconcileDocuments, registrationStatus } = require("./admin-assisted-intake-catalog")
 
 const ADMIN_ASSISTIDO_ORIGEM = "admin_assistido_ia"
 const ADMIN_ASSISTIDO_ETAPA_INICIAL = "aguardando_relato"
@@ -537,7 +538,7 @@ function gerarRevisaoCurtaAdminAssistido(sessao = {}) {
 
 function opcoesRevisaoAdminAssistido() {
   return [
-    { id: "admin_assistido_confirmar", title: "✅ Confirmar" },
+    { id: "admin_assistido_confirmar", title: "Criar caso com dados atuais" },
     { id: "admin_assistido_editar", title: "✏️ Corrigir informação" },
     { id: "admin_assistido_ficha_completa", title: "📋 Ver ficha completa" },
     { id: "admin_assistido_cancelar", title: "❌ Cancelar" }
@@ -631,7 +632,7 @@ function telaErroAudioAdminAssistido(mensagem) {
   }
 }
 
-function atualizarCampoPendente(adminAssistido = {}, texto = "", dadosBase = null) {
+async function atualizarCampoPendente(adminAssistido = {}, texto = "", dadosBase = null, deps = {}) {
   const campo = adminAssistido.perguntaPendente
   const dadosAtuais = dadosBase || adminAssistido.dados || criarDadosVaziosAdminAssistido()
   if (!campo) return dadosAtuais
@@ -644,6 +645,20 @@ function atualizarCampoPendente(adminAssistido = {}, texto = "", dadosBase = nul
       }
     }
     return dadosAtuais
+  }
+  if (campo === "uf") {
+    const uf = normalizeUf(texto)
+    return { ...dadosAtuais, uf: uf ? criarCampoAdminAssistido(uf, "confirmado") : criarCampoAdminAssistido(texto, "invalido") }
+  }
+  if (campo === "cidade" && typeof deps.resolverLocalizacaoAdminAssistido === "function") {
+    const localizacao = await deps.resolverLocalizacaoAdminAssistido(texto)
+    if (!localizacao || localizacao.multiplos) return { ...dadosAtuais, cidade: criarCampoAdminAssistido(texto, "precisa_conferir") }
+    return {
+      ...dadosAtuais,
+      cidade: localizacao.cidade ? criarCampoAdminAssistido(localizacao.cidade, "confirmado") : dadosAtuais.cidade,
+      uf: localizacao.uf ? criarCampoAdminAssistido(localizacao.uf, "confirmado") : dadosAtuais.uf,
+      ...(localizacao.cep ? { cep: criarCampoAdminAssistido(localizacao.cep, "confirmado") } : {})
+    }
   }
   return {
     ...dadosAtuais,
@@ -974,6 +989,9 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     naturezaDemanda: textoCampo(dados, "naturezaDemanda") || textoCampo(dados, "motivo") || null,
     orgao: textoCampo(dados, "orgao") || null,
     dataAtendimento: adminAssistido.iniciadoEm || new Date().toISOString(),
+    statusCadastro: adminAssistido.statusCadastro || "cadastro_inicial",
+    faltantesCadastro: Array.isArray(adminAssistido.faltantes) ? [...adminAssistido.faltantes] : [],
+    estadoDocumental: adminAssistido.estadoDocumental || reconcileDocuments({}),
     _docKey: null,
     urgencia: normalizarPrioridadeAdminAssistido(dados),
     semReceber: false,
@@ -1095,6 +1113,11 @@ async function confirmarCriarCasoAdminAssistido(from, chave, sessao, adminAssist
 
   const snapshotSessao = { ...sessao, adminAssistido }
   const u = montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido, deps)
+  u.statusCadastro = registrationStatus({
+    pending: faltantes,
+    documents: u.estadoDocumental,
+    materialDivergence: adminAssistido.revisaoDocumentalNecessaria === true
+  })
 
   // Pré-validação: detecta invariantes de finalização ANTES de qualquer escrita
   // externa. Este bloco previne que campos com texto insuficiente (1-2 chars)
@@ -1547,11 +1570,24 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
     }
     const documentos = Array.isArray(adminAssistido.documentos) ? adminAssistido.documentos : []
     const documento = resultadoMidia.document
+    const estadoDocumental = reconcileDocuments({
+      required: adminAssistido.estadoDocumental?.required || [],
+      mentioned: adminAssistido.estadoDocumental?.mentioned || [],
+      received: documento.status === "approved"
+        ? [...(adminAssistido.estadoDocumental?.received || []), documento.type || documento.name]
+        : adminAssistido.estadoDocumental?.received || [],
+      quarantined: documento.status === "approved"
+        ? adminAssistido.estadoDocumental?.quarantined || []
+        : [...(adminAssistido.estadoDocumental?.quarantined || []), documento.type || documento.name],
+      unidentified: adminAssistido.estadoDocumental?.unidentified
+    })
     const novoEstado = {
       ...adminAssistido,
       documentos: documentos.some(item => item.sha256 === documento.sha256)
         ? documentos
         : [...documentos, documento],
+      estadoDocumental,
+      statusCadastro: registrationStatus({ pending: adminAssistido.faltantes || [], documents: estadoDocumental, materialDivergence: documento.status !== "approved" }),
       revisaoDocumentalNecessaria: documento.status !== "approved"
     }
     salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
@@ -1781,10 +1817,12 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
   } else if (entrada) {
     const complemento = await extrairDadosAtendimentoAssistidoIA(entrada)
     dados = mergeComplementoAdminAssistido(dados, complemento.dados)
-    dados = atualizarCampoPendente(adminAssistido, entrada, dados)
+    dados = await atualizarCampoPendente(adminAssistido, entrada, dados, deps)
   }
 
   const area = valorCampo(dados, "areaJuridica") || analise?.areaJuridica || "Outros"
+  const classificacaoInss = area === "INSS" ? classifyInssDemand(entrada) : null
+  if (classificacaoInss) dados = { ...dados, tipoCaso: criarCampoAdminAssistido(classificacaoInss, "confirmado") }
   const pendentesPosteriorAtuais = Array.isArray(adminAssistido.pendentesPosterior) ? adminAssistido.pendentesPosterior : []
   const campoPendentePulou = entradaPedeInformarDepois(entrada) && campoPodeFicarPendenteAdminAssistido(adminAssistido.perguntaPendente)
     ? adminAssistido.perguntaPendente
@@ -1811,6 +1849,12 @@ async function processarAtendimentoAssistidoAdmin(from, text, msgObj = null, dep
       : camposPerguntados,
     faltantes
   }
+  novoEstado.statusCadastro = registrationStatus({
+    pending: faltantes,
+    documents: novoEstado.estadoDocumental || {},
+    materialDivergence: novoEstado.revisaoDocumentalNecessaria === true,
+    resources: { contatoId: novoEstado.contatoId, negocioId: novoEstado.negocioId, numeroCaso: novoEstado.numeroCaso, pastaDriveId: novoEstado.pastaDriveId, associated: novoEstado.associacaoConfirmada }
+  })
 
   salvarNovoEstadoAtendimento(chave, sessao, novoEstado, deps)
 

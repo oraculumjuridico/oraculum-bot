@@ -1,5 +1,7 @@
 "use strict"
 
+const { questionCatalog } = require("./admin-assisted-intake-catalog")
+
 const GENERAL_FIELDS = Object.freeze([
   { campo: "nomeCompleto", grupo: "Identificação", obrigatorio: true, prioridade: 10 },
   { campo: "telefone", grupo: "Contato", obrigatorio: true, prioridade: 20 },
@@ -37,6 +39,21 @@ function criarQuestionarioAdminAssistido(area = "Outros") {
   }))]
 }
 
+// A definição canônica fica no catálogo compartilhado por Admin e pós-humano.
+function criarQuestionarioCatalogadoAdminAssistido(area = "Outros") {
+  return questionCatalog(area).map(item => ({
+    campo: item.id,
+    grupo: item.group,
+    obrigatorio: Boolean(item.required),
+    prioridade: item.priority,
+    perguntaAdmin: item.admin,
+    perguntaCliente: item.client,
+    destino: item.target,
+    podeInformarDepois: Boolean(item.skippable),
+    extraivelDocumento: Boolean(item.documentExtractable)
+  }))
+}
+
 function respondido(dados, campo) {
   const info = dados?.[campo]
   return Boolean(
@@ -62,4 +79,4 @@ function proximaPerguntaAdminAssistido({ questionario = [], dados = {}, pergunta
   }
 }
 
-module.exports = { GENERAL_FIELDS, AREA_FIELDS, criarQuestionarioAdminAssistido, proximaPerguntaAdminAssistido }
+module.exports = { GENERAL_FIELDS, AREA_FIELDS, criarQuestionarioAdminAssistido: criarQuestionarioCatalogadoAdminAssistido, proximaPerguntaAdminAssistido }
