@@ -352,19 +352,19 @@ const CAMPOS_REVISAO_ESPECIFICOS_POR_AREA = {
 }
 
 function normalizarAreaJuridicaAdminAssistido(area) {
-  const texto = String(area || "").trim().toLowerCase()
-  const encontrada = AREAS_JURIDICAS_ADMIN_ASSISTIDO.find(item => item.toLowerCase() === texto)
-  if (encontrada) return encontrada
-  if (texto.includes("trabalh")) return "Trabalhista"
-  if (texto.includes("fam")) return "Família"
-  if (texto.includes("banc") || texto.includes("financ") || texto.includes("emprest")) return "Bancário"
-  if (texto.includes("consum")) return "Consumidor"
-  if (texto.includes("penal") || texto.includes("criminal")) return "Penal"
-  if (texto.includes("civil")) return "Civil"
-  if (texto.includes("imob") || texto.includes("imóv") || texto.includes("imov")) return "Imobiliário"
-  if (texto.includes("inss") || texto.includes("previd")) return "INSS"
-  return "Outros"
-}
+   const texto = String(area || "").trim().toLowerCase()
+   const encontrada = AREAS_JURIDICAS_ADMIN_ASSISTIDO.find(item => item.toLowerCase() === texto)
+   if (encontrada) return encontrada
+   if (texto.includes("inss") || texto.includes("previd")) return "INSS"
+   if (texto.includes("trabalh")) return "Trabalhista"
+   if (texto.includes("fam")) return "Família"
+   if (texto.includes("banc") || texto.includes("financ") || texto.includes("emprest")) return "Bancário"
+   if (texto.includes("consum")) return "Consumidor"
+   if (texto.includes("penal") || texto.includes("criminal")) return "Penal"
+   if (texto.includes("civil")) return "Civil"
+   if (texto.includes("imob") || texto.includes("imóv") || texto.includes("imov")) return "Imobiliário"
+   return "Outros"
+ }
 
 function normalizarStatusCampoAdminAssistido(status, valor) {
   const s = String(status || "").trim().toLowerCase()
