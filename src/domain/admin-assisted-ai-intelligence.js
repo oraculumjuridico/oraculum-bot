@@ -7,7 +7,11 @@ const {
   criarDadosVaziosAdminAssistido,
   normalizarAreaJuridicaAdminAssistido,
   normalizarStatusCampoAdminAssistido,
-  normalizarCampoAdminAssistido
+  normalizarCampoAdminAssistido,
+  documentoPossuiEvidenciaNoRelato,
+  isDocumentoGenericoRelato,
+  calcularDocumentosPendentes,
+  obterDocumentosRecomendadosPorArea
 } = require("./admin-assisted-ai-schema")
 
 const { GROQ_KEY } = process.env
@@ -342,7 +346,41 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
 
   for (const campo of Object.keys(dados)) {
     if (Object.prototype.hasOwnProperty.call(entradaDados, campo)) {
-      dados[campo] = normalizarCampoExtraido(campo, entradaDados[campo])
+      const valorIA = normalizarCampoExtraido(campo, entradaDados[campo])
+      // Proveniência documental: preservar documentos explicitamente encontrados no relato.
+      // A IA não pode incluir documentos sem correspondência textual no relato original.
+      if (campo === "documentosMencionados") {
+        const doRelato = campoDocumentosDoRelato(textoOriginal)
+        const daIA = valorIA?.valor || null
+        const relatoValor = doRelato?.valor || null
+        if (relatoValor) {
+          // Se o relato tem documentos genéricos, não permite que a IA adicione específicos
+          if (isDocumentoGenericoRelato(relatoValor)) {
+            dados[campo] = criarCampoAdminAssistido(relatoValor, "precisa_conferir")
+          } else {
+            // União, normalização e remoção de duplicatas
+            const itensRelato = relatoValor.split(",").map(s => s.trim()).filter(Boolean)
+            const itensIA = daIA ? daIA.split(",").map(s => s.trim()).filter(Boolean) : []
+            // Filtrar documentos da IA que não possuem evidência no texto original
+            const itensIAComProva = itensIA.filter(item => documentoPossuiEvidenciaNoRelato(item, textoOriginal))
+            const unificado = [...new Set([...itensRelato, ...itensIAComProva])]
+            dados[campo] = criarCampoAdminAssistido(
+              unificado.length ? unificado.join(", ") : null,
+              relatoValor ? "confirmado" : "inferido"
+            )
+          }
+        } else {
+          // Sem documentos no relato: aceitar apenas documentos da IA com evidência textual
+          const itensIA = daIA ? daIA.split(",").map(s => s.trim()).filter(Boolean) : []
+          const itensIAComProva = itensIA.filter(item => documentoPossuiEvidenciaNoRelato(item, textoOriginal))
+          dados[campo] = criarCampoAdminAssistido(
+            itensIAComProva.length ? itensIAComProva.join(", ") : null,
+            itensIAComProva.length ? "inferido" : "ausente"
+          )
+        }
+      } else {
+        dados[campo] = valorIA
+      }
     }
   }
 
@@ -380,6 +418,24 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
     dados.clientePrincipal = criarCampoAdminAssistido(dados.nomeCompleto.valor, "inferido")
   }
 
+  // Documentos recomendados e pendentes por área
+  const recomendados = obterDocumentosRecomendadosPorArea(area)
+  dados.documentosRecomendados = criarCampoAdminAssistido(
+    recomendados.length ? recomendados.join(", ") : null,
+    "inferido"
+  )
+  dados.documentosPendentes = criarCampoAdminAssistido(
+    (() => {
+      const pendentes = calcularDocumentosPendentes(
+        area,
+        dados.documentosMencionados?.valor || "",
+        []
+      )
+      return pendentes.length ? pendentes.join(", ") : null
+    })(),
+    "inferido"
+  )
+
   return {
     areaJuridica: area,
     areasProvaveis: Array.isArray(parsed.areasProvaveis) ? parsed.areasProvaveis.slice(0, 3) : [],
@@ -397,14 +453,14 @@ async function extrairDadosAtendimentoAssistidoIA(texto = "") {
   if (!GROQ_KEY || !entrada) return criarAnaliseFallback(entrada)
 
   try {
-    let system = `Você extrai dados de um atendimento jurídico administrativo.
+    let     system = `Você extrai dados de um atendimento jurídico administrativo.
 Responda APENAS JSON válido. Nunca invente informações.
 Cada campo em "dados" deve ter exatamente o formato {"valor": valor ou null, "status": "confirmado"|"inferido"|"ausente"|"precisa_conferir"|"contraditorio"|"invalido"}.
 Use "confirmado" somente para dado dito explicitamente pelo administrador.
 Use "inferido" para conclusão razoável a partir do texto, como área jurídica ou tipo do caso.
 Use "ausente" quando não houver informação. Use "precisa_conferir" para inferência relevante que depende de confirmação e "contraditorio" quando o relato trouxer valores incompatíveis.
 Separe cliente principal, administrador, representante, familiar, empregador, testemunha, órgão e parte contrária. Nunca use o administrador como cliente quando o texto identificar outra pessoa como cliente.
-Em documentosMencionados, liste exclusivamente documentos nominalmente citados no texto. Expressões genéricas como "alguns documentos" ou "documentação" significam documentos ainda não identificados; nunca complete com documentos prováveis da área.
+Em documentosMencionados, liste exclusivamente documentos nominalmente citados no texto. Expressões genéricas como "alguns documentos" ou "documentação" significam documentos ainda não identificados; nunca complete com documentos prováveis da área. Se o relato mencionar "laudo médico" ou "laudo", inclua "Laudo médico/documento médico" apenas se houver essa referência explícita.
 
 Áreas permitidas: ${AREAS_JURIDICAS_ADMIN_ASSISTIDO.join(", ")}.
 
@@ -440,6 +496,7 @@ Objetivo do cliente:
 Pendencias:
 Tambem retorne confianca no topo.`
 
+
     const res = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
       {
@@ -465,5 +522,9 @@ Tambem retorne confianca no topo.`
 module.exports = {
   criarAnaliseFallback,
   normalizarAnaliseIA,
-  extrairDadosAtendimentoAssistidoIA
+  extrairDadosAtendimentoAssistidoIA,
+  documentoPossuiEvidenciaNoRelato,
+  isDocumentoGenericoRelato,
+  calcularDocumentosPendentes,
+  obterDocumentosRecomendadosPorArea
 }
