@@ -12,7 +12,8 @@ const {
 } = require("../src/domain/admin-assisted-ai-flow")
 const {
   criarCampoAdminAssistido,
-  criarDadosVaziosAdminAssistido
+  criarDadosVaziosAdminAssistido,
+  normalizarAreaJuridicaAdminAssistido
 } = require("../src/domain/admin-assisted-ai-schema")
 const {
   configurarStatePersistence,
@@ -243,6 +244,38 @@ async function main() {
   assert.match(novoInicio.texto, /Descreva o caso livremente/)
   assert.equal(sessoesRestauradasNovo.get(chave).adminAssistido.etapa, "aguardando_relato")
   assert.equal(sessoesRestauradasNovo.get(chave).adminAssistido.camposPerguntados.length, 0)
+
+  // Regression: INSS area precedence over Trabalhista
+  assert.equal(
+    normalizarAreaJuridicaAdminAssistido("Auxílio-doença negado pelo INSS. Trabalho na empresa X."),
+    "INSS",
+    "INSS prevalece sobre Trabalhista quando ambos os termos estão presentes"
+  )
+  assert.equal(
+    normalizarAreaJuridicaAdminAssistido("Requerimento previdenciário de auxílio com empresa."),
+    "INSS",
+    "Previdência prevalece sobre Trabalhista quando ambos os termos estão presentes"
+  )
+  assert.equal(
+    normalizarAreaJuridicaAdminAssistido("Trabalhista: empresa não pagou verbas rescisórias e FGTS."),
+    "Trabalhista",
+    "Trabalhista mantido quando não há termos previdenciários"
+  )
+  assert.equal(
+    normalizarAreaJuridicaAdminAssistido("Divórcio e guarda familiar em litígio."),
+    "Família",
+    "Família continua classificada corretamente"
+  )
+  assert.equal(
+    normalizarAreaJuridicaAdminAssistido("INSS"),
+    "INSS",
+    "INSS puro mantém classificação"
+  )
+  assert.equal(
+    normalizarAreaJuridicaAdminAssistido("Previdência"),
+    "INSS",
+    "Previdência mapeia para INSS"
+  )
 
   fs.rmSync(tempDir, { recursive: true, force: true })
   console.log("admin-assisted-ai-hardening.test.js ok")
