@@ -508,7 +508,7 @@ const { PLAN_STATUS } = require("../src/domain/canonical-case-plan")
   } catch (e) { bad("concorrencia dois usuarios",e) }
 
   try {
-    var saved=[];var repo={load:async()=>null,save:async function(h,ck){saved.push(ck)}};var d=Object.assign(baseDeps(),{checkpointRepository:repo});var flow=createLiveCaseFlow(d);var u=baseU();await flow.executeLiveCaseFlow(u);var persisted=saved[saved.length-1];assert.equal(persisted.context.u,undefined, String.fromCharCode(99,111,110,116,101,120,116,46,117,32,110,97,111,32,100,101,118,101,32,112,101,114,115,105,115,116,105,100,111));ok(String.fromCharCode(99,104,101,99,107,112,111,105,110,116,32,112,101,114,115,105,115,116,105,100,111,32,101,120,99,108,117,105));
+    var saved=[];var repo={load:async()=>null,save:async function(h,ck){saved.push(ck)}};var d=Object.assign(baseDeps(),{checkpointRepository:repo});var flow=createLiveCaseFlow(d);var u=baseU();await flow.executeLiveCaseFlow(u);var persisted=saved[saved.length-1];assert.equal(persisted.context,undefined, String.fromCharCode(99,111,110,116,101,120,116,32,110,97,111,32,100,101,118,101,32,112,101,114,115,105,115,116,105,100,111));assert.equal(u._canonicalCheckpoint.context,undefined);assert.doesNotThrow(()=>JSON.stringify(u));ok(String.fromCharCode(99,104,101,99,107,112,111,105,110,116,32,112,101,114,115,105,115,116,105,100,111,32,101,120,99,108,117,105));
   } catch (e) { bad(String.fromCharCode(99,104,101,99,107,112,111,105,110,116), e) }
   console.log(`\ncanonical-executor-blocker.test.js: ${pass} pass, ${fail} fail`)
   if (fail > 0) process.exitCode = 1
