@@ -19,9 +19,21 @@ async function processPostHumanCycle({ cycle, usuario, repository, deps }) {
     }
   }
   const solicitation = construirSolicitacao(analysis, usuario)
+  const cadastroCompleto = await Promise.resolve(deps.isComplete?.({ cycle, usuario, analysis }) || false)
+  if (solicitation.tipo === "nenhuma" && cadastroCompleto) {
+    return repository.updateStatus(cycle.cycleId, "completed", {
+      estadoDocumental: analysis.estado,
+      statusCadastro: "cadastro_completo",
+      camposPendentes: [],
+      ultimaPerguntaCliente: null
+    })
+  }
   const ready = await repository.updateStatus(cycle.cycleId, "ready_to_send", {
     estadoDocumental: analysis.estado, tipoSolicitacao: solicitation.tipo,
-    campoPendente: solicitation.campo || null
+    campoPendente: solicitation.campo || null,
+    camposPendentes: analysis.camposPendentes || [],
+    ultimaPerguntaCliente: solicitation.texto,
+    statusCadastro: solicitation.tipo === "documentos" ? "aguardando_documentos" : "aguardando_complementacao"
   })
   const sent = await enviarSolicitacaoAdaptativa({ telefone: usuario.telefoneNormalizado, solicitacao: solicitation, usuario, cycle: ready, repository, deps })
   if (sent?.cycle?.status === "message_sent") {

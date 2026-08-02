@@ -270,6 +270,7 @@ const {
   estadoPorExtenso,
   mapearRegiaoPorUF,
   buscarCidadePorNome,
+  buscarCidadePorNomeInteligente,
   buscarPorCEP,
   abreviarCidadeBotao
 } = require("./src/domain/geo-search")
@@ -645,6 +646,8 @@ const GMAIL_PASS       = process.env.GMAIL_PASS       || ""
 const AUTO_REENGAJAMENTO = String(process.env.AUTO_REENGAJAMENTO || "").toLowerCase() === "true"
 const REENGAGEMENT_SCHEDULE_TOLERANCE_MS = 300000
 const REENGAGEMENT_MAX_DELAY_HOURS = 24
+const REENGAGEMENT_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000
+const REENGAGEMENT_MAX_ATTEMPTS = 3
 
 // Parceiros por área — adicione aqui quando fechar parceria
 // Exemplo: { whatsapp: "5581999999999", email: "parceiro@email.com" }
@@ -1838,6 +1841,8 @@ function getHubSpotDescricaoCompleta(u) {
     `Urgencia: ${ { alta: "Alta", normal: "Moderada", baixa: "Baixa" }[u?.urgencia] || "Moderada" }`,
     `Risco emocional: ${briefing.scoreEmocional.nivel} (${briefing.scoreEmocional.valor}/10)`,
     `Documentos: ${briefing.documentos.recebidos}/${briefing.documentos.total || 0} recebidos; faltantes criticos: ${documentosFaltantes}`,
+    `Status do cadastro: ${sanitizarTextoEntrada(u.statusCadastro) || "cadastro_inicial"}`,
+    Array.isArray(u.faltantesCadastro) && u.faltantesCadastro.length ? `Pendencias do cadastro: ${u.faltantesCadastro.join(", ")}` : null,
     `Consulta ativa: ${briefing.consultaAtiva ? "sim" : "nao"}`,
     briefing.drive ? `Drive: ${briefing.drive}` : null,
     briefing.hubspot ? `HubSpot: ${briefing.hubspot}` : null,
@@ -3954,10 +3959,31 @@ async function enviarJobReengajamento(numero, usuario, job, contextoConversa) {
   }
 
   if (job.template === "caso_atualizacao") {
-    return templateService.casoAtualizacao(numero, [], options)
+    const resumo = job.tipoEvento === "documentos_pendentes"
+      ? `Há documentos pendentes no caso ${usuario.numeroCaso || "em atendimento"}. Responda por aqui para continuar.`
+      : `Há uma atualização pendente no caso ${usuario.numeroCaso || "em atendimento"}. Responda por aqui para continuar.`
+    return templateService.casoAtualizacao(numero, [resumo], options)
   }
 
   return false
+}
+
+function validarCadenciaReengajamento(usuario = {}, job = {}, agora = Date.now()) {
+  const history = usuario._reengagementHistory && typeof usuario._reengagementHistory === "object"
+    ? usuario._reengagementHistory : {}
+  const record = history[job.id] || {}
+  if (Number(record.attempts || 0) >= REENGAGEMENT_MAX_ATTEMPTS) return { ok: false, motivo: "limite_tentativas" }
+  const lastSentAt = Date.parse(record.lastSentAt || "")
+  if (Number.isFinite(lastSentAt) && agora - lastSentAt < REENGAGEMENT_MIN_INTERVAL_MS) return { ok: false, motivo: "cadencia_minima" }
+  return { ok: true, history, record }
+}
+
+function registrarEnvioReengajamento(usuario = {}, job = {}, agora = Date.now()) {
+  const validacao = validarCadenciaReengajamento(usuario, job, agora)
+  const history = { ...(validacao.history || usuario._reengagementHistory || {}) }
+  const previous = history[job.id] || {}
+  history[job.id] = { attempts: Number(previous.attempts || 0) + 1, lastSentAt: new Date(agora).toISOString() }
+  usuario._reengagementHistory = history
 }
 
 function tipoLembreteConsultaValido(tipo) {
@@ -5297,7 +5323,9 @@ function telaDetalheCasoAdmin(from, idx) {
 
   const botaoPosAtendimento = montarBotaoAtendimentoRealizado(item.u?.negocioId, item.u?.numeroCaso, {
     adminId: normalizarNumeroWhatsAppEnvio(from),
-    contatoId: item.u?.contatoId
+    contatoId: item.u?.contatoId,
+    customerPhone: normalizarNumeroWhatsAppEnvio(item.from || item.u?._numero || item.u?.whatsappContato),
+    customerPhoneConfirmed: item.u?.telefoneEhDoCliente === true
   })
   return {
     texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
@@ -5991,6 +6019,11 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     agendarPersistenciaSessoesAdminAssistidas,
     logDebug,
     logErro,
+    resolverLocalizacaoAdminAssistido: async entrada => {
+      const texto = sanitizarTextoEntrada(entrada)
+      const cep = texto.replace(/\D/g, "")
+      return cep.length === 8 ? buscarPorCEP(cep) : buscarCidadePorNomeInteligente(texto)
+    },
     logAdminAssistido: evento => {
       const payloadSeguro = criarPayloadLogAdminAssistido(evento?.evento, evento)
       logDebug("[ADMIN_ASSISTIDO]", JSON.stringify(payloadSeguro))
@@ -16038,6 +16071,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       }
       return {
         persisted: true,
+        canonicalPatch: { field, value: sanitizarTextoEntrada(content) },
         hubspot: {
           objectType, objectId, contactId: cycle.contatoId, expectedDealId: cycle.negocioId,
           current: currentProperties, incoming: { [property]: sanitizarTextoEntrada(content) }
@@ -16065,6 +16099,45 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
             hsCriarNotaNegocio(cycle.negocioId, "REVISÃO PÓS-ATENDIMENTO", `Ciclo: ${note.cycleId}\nCampos divergentes: ${note.fields.join(", ")}`)
         }
       }),
+    updateCanonicalState: async ({ patch }) => {
+      const field = patch?.field
+      const value = sanitizarTextoEntrada(patch?.value)
+      const userFields = {
+        nomeCompleto: "nome", cpf: "cpf", dataNascimento: "dataNascimento", telefone: "whatsappContato",
+        email: "email", cidade: "cidade", uf: "uf", areaJuridica: "area", tipoCaso: "tipoCaso",
+        descricao: "descricao", beneficio: "beneficio", motivo: "motivo", situacao: "situacao", nb: "nb"
+      }
+      const target = userFields[field]
+      if (!target || !value) return false
+      if (!sanitizarTextoEntrada(usuario[target])) usuario[target] = value
+      agendarPersistenciaUsers()
+      return true
+    },
+    isComplete: async currentCycle => {
+      const cycle = currentCycle?.cycle || currentCycle
+      if (!cycle?.cycleId || !usuario?.contatoId || !usuario?.negocioId || !usuario?.numeroCaso || !usuario?.pastaDriveId) return false
+      const context = await carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository: postHumanCycleRepository })
+      return !context.humanReviewRequired && context.camposPendentes.length === 0 &&
+        !(usuario.docsAusentes || []).length && !(usuario.docsParciais || []).length && !usuario.revisaoDocumentalNecessaria
+    },
+    continueCycle: async ({ cycle }) => processPostHumanCycle({
+      cycle,
+      usuario,
+      repository: postHumanCycleRepository,
+      deps: {
+        resolverListaDocumental: () => getDocumentosListaCaso(usuario),
+        listarArquivosDrive: async () => usuario.pastaDriveId ? listarArquivosDriveNaPasta(usuario.pastaDriveId) : [],
+        requiredSources: usuario.pastaDriveId ? ["drive"] : [],
+        camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository: postHumanCycleRepository }),
+        getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
+        sendFree: (to, message) => enviar(to, message),
+        sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
+        templateConfig: META_TEMPLATES.casoAtualizacao,
+        buildTemplateParams: solicitation => [solicitation.texto],
+        isComplete: async ({ analysis }) => !(analysis.camposPendentes || []).length && analysis.estado === "DOCUMENTOS_COMPLETOS" &&
+          Boolean(usuario.contatoId && usuario.negocioId && usuario.numeroCaso && usuario.pastaDriveId)
+      }
+    }),
     legacyDocumentPipeline: createLegacyDocumentPipeline({
       processMedia: ({ context, tipo, ehAudio, ehDoc }) =>
         processarMidia(from, nomeWA, usuario, context.rawMessage, tipo, ehAudio, ehDoc),
@@ -16692,6 +16765,7 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
 // ------------------------------------------------------------------
 app.post("/reengagement-candidates", validarWebhookInterno, async (_req, res) => {
   try {
+    if (!AUTO_REENGAJAMENTO) return res.json({ status: "disabled", candidates: [] })
     return res.json({ candidates: descobrirCandidatosReengajamento() })
   } catch (e) {
     logErro("reengagement-candidates", e.message, e)
@@ -16706,6 +16780,7 @@ app.post("/reengagement-candidates", validarWebhookInterno, async (_req, res) =>
 // ------------------------------------------------------------------
 app.post("/reengajamento-dados", validarWebhookInterno, async (req, res) => {
   try {
+    if (!AUTO_REENGAJAMENTO) return res.json({ status: "disabled", jobs: [] })
     const { phone, dealId } = req.body || {}
     if (!phone && !dealId) return res.status(400).json({ erro: "phone ou dealId obrigatorio" })
 
@@ -16758,6 +16833,7 @@ app.post("/reengajamento-dados", validarWebhookInterno, async (req, res) => {
 // ------------------------------------------------------------------
 app.post("/reengajamento", validarWebhookInterno, async (req, res) => {
   try {
+    if (!AUTO_REENGAJAMENTO) return res.json({ status: "skipped", reason: "feature_disabled" })
     const { phone, tipoEvento, jobId, dealId, scheduledFor } = req.body || {}
     if (!phone || !tipoEvento || !jobId || !scheduledFor) {
       return res.status(400).json({ status: "skipped", reason: "payload_invalido" })
@@ -16856,6 +16932,12 @@ app.post("/reengajamento", validarWebhookInterno, async (req, res) => {
       return res.json({ status: "skipped", reason: "duplicado" })
     }
 
+    const cadencia = validarCadenciaReengajamento(localizado.u, job)
+    if (!cadencia.ok) {
+      abandonCallbackExecution(callbackKey)
+      return res.json({ status: "skipped", reason: cadencia.motivo })
+    }
+
     const contextoConversa = criarContextoReengajamentoTemplate({
       tipoEvento,
       jobId,
@@ -16870,6 +16952,7 @@ app.post("/reengajamento", validarWebhookInterno, async (req, res) => {
       return res.status(502).json({ status: "skipped", reason: "falha_envio_template" })
     }
 
+    registrarEnvioReengajamento(localizado.u, job)
     agendarPersistenciaUsers()
     completeCallbackExecution(callbackKey)
     await flushExternalState()

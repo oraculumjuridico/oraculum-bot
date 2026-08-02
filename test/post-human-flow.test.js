@@ -235,7 +235,7 @@ async function makeRepo() {
     process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "true"
     process.env.POST_HUMAN_PILOT_CASES = "C"
     assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["OTHER"] }), null)
-    assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["C"], adminId: "A", contatoId: "P" }).title, "✅ Atendimento realizado")
+    assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["C"], adminId: "A", contatoId: "P", customerPhone: "5511999999999", customerPhoneConfirmed: true }).title, "Enviar ao cliente")
     const repo = await makeRepo()
     const unauthorized = await handleAtendimentoRealizadoConfirmation({ from: "x", interactionId: "admin_post_human_completed:D:C", usuario: { negocioId: "D", numeroCaso: "C" }, isAdmin: () => false, repository: repo })
     assert.match(unauthorized.text, /administrador/)

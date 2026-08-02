@@ -17,8 +17,8 @@ const { PostHumanPostgresMock } = require("./mocks/post-human-postgres-mock")
   process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "true"
   const authorized = "PILOT-001"
   process.env.POST_HUMAN_PILOT_CASES = authorized
-  const button = montarBotaoAtendimentoRealizado("D-PILOT", authorized, { allowedCases: [authorized], adminId: "ADMIN", contatoId: "CONTACT-PILOT" })
-  assert.equal(button?.title, "✅ Atendimento realizado")
+  const button = montarBotaoAtendimentoRealizado("D-PILOT", authorized, { allowedCases: [authorized], adminId: "ADMIN", contatoId: "CONTACT-PILOT", customerPhone: "5511999999999", customerPhoneConfirmed: true })
+  assert.equal(button?.title, "Enviar ao cliente")
   assert.equal(montarBotaoAtendimentoRealizado("D-OTHER", "OTHER", { allowedCases: [authorized] }), null)
 
   const externalCalls = { metaMock: 0, hubspotMock: 0, driveMock: 0, postgresMock: 0, real: 0 }

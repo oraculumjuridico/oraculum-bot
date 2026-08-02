@@ -12,8 +12,21 @@ function normalizeAdminId(value) { return String(value || "").normalize("NFKC").
 function normalizeCaseNumber(value) {
   return String(value || "").normalize("NFKC").trim().toUpperCase().replace(/\s+/g, "")
 }
+function normalizePhone(value) { return String(value || "").replace(/\D/g, "") }
 
-function getAllowedPilotCases(raw = process.env.POST_HUMAN_PILOT_CASES) {
+let legacyAllowlistWarningEmitted = false
+function configuredPilotCases() {
+  const canonical = String(process.env.POST_HUMAN_PILOT_CASES || "").trim()
+  if (canonical) return canonical
+  const legacy = String(process.env.POST_HUMAN_COMPLEMENTATION_ALLOWLIST || "").trim()
+  if (legacy && !legacyAllowlistWarningEmitted) {
+    legacyAllowlistWarningEmitted = true
+    console.warn("[POST_HUMAN] alias legado de allowlist em uso; configure POST_HUMAN_PILOT_CASES")
+  }
+  return legacy
+}
+
+function getAllowedPilotCases(raw = configuredPilotCases()) {
   const source = String(raw ?? "").trim()
   if (!source) return new Set()
   const values = source.split(",").map(normalizeCaseNumber)
@@ -34,8 +47,10 @@ function pruneActionContexts(now = Date.now()) {
 
 function montarBotaoAtendimentoRealizado(negocioId, numeroCaso, options = {}) {
   const adminId = normalizeAdminId(options.adminId)
-  if (!isPostHumanComplementationEnabled() || !negocioId || !numeroCaso || !adminId || !options.contatoId) return null
-  const rawAllowlist = options.allowedCases ? options.allowedCases.join(",") : process.env.POST_HUMAN_PILOT_CASES
+  const customerPhone = normalizePhone(options.customerPhone)
+  if (!isPostHumanComplementationEnabled() || !negocioId || !numeroCaso || !adminId || !options.contatoId ||
+      options.customerPhoneConfirmed !== true || customerPhone.length < 12 || customerPhone === normalizePhone(options.adminId)) return null
+  const rawAllowlist = options.allowedCases ? options.allowedCases.join(",") : configuredPilotCases()
   if (!isPilotCaseAllowed(numeroCaso, rawAllowlist)) return null
   pruneActionContexts()
   if (actionContexts.size >= actionMaxContexts()) return null
@@ -45,9 +60,10 @@ function montarBotaoAtendimentoRealizado(negocioId, numeroCaso, options = {}) {
     numeroCaso: normalizeCaseNumber(numeroCaso),
     adminId,
     contatoId: String(options.contatoId),
+    customerPhone,
     createdAt: Date.now()
   })
-  return { id: `${ACTION_ID}_${token}`, title: "✅ Atendimento realizado" }
+  return { id: `${ACTION_ID}_${token}`, title: "Enviar ao cliente" }
 }
 
 function consumeAction(id, from) {
@@ -72,6 +88,7 @@ async function handleAtendimentoRealizadoConfirmation({ from, interactionId, usu
     return { handled: true, text: "Não foi possível confirmar o Negócio com segurança." }
   }
   try {
+    usuario.telefoneNormalizado = context.customerPhone
     const cycle = await repository.createCycle({
       negocioId: context.negocioId, numeroCaso: context.numeroCaso, contatoId: usuario.contatoId
     })
@@ -86,8 +103,10 @@ async function handleAtendimentoRealizadoConfirmation({ from, interactionId, usu
 module.exports = {
   ACTION_ID, normalizeCaseNumber, getAllowedPilotCases, isPilotCaseAllowed,
   normalizeAdminId,
+  configuredPilotCases,
   montarBotaoAtendimentoRealizado, handleAtendimentoRealizadoConfirmation,
   _clearActionContextsForTests: () => actionContexts.clear(),
   _actionContextCountForTests: () => actionContexts.size,
-  _pruneActionContextsForTests: pruneActionContexts
+  _pruneActionContextsForTests: pruneActionContexts,
+  _resetLegacyAllowlistWarningForTests: () => { legacyAllowlistWarningEmitted = false }
 }

@@ -10,7 +10,7 @@ const TERMINAL = new Set(["completed", "failed_terminal", "cancelled"])
 const RECOVERABLE = new Set(["pending", "analyzing", "ready_to_send", "awaiting_response", "human_review_required", "failed_transient"])
 const TRANSITIONS = {
   pending: ["analyzing", "cancelled", "failed_transient", "failed_terminal"],
-  analyzing: ["analyzing", "ready_to_send", "human_review_required", "failed_transient", "failed_terminal"],
+  analyzing: ["analyzing", "ready_to_send", "human_review_required", "completed", "failed_transient", "failed_terminal"],
   ready_to_send: ["sending", "analyzing", "cancelled", "failed_transient", "failed_terminal"],
   sending: ["message_sent", "failed_transient", "failed_terminal"],
   message_sent: ["awaiting_response", "completed", "failed_transient", "failed_terminal"],

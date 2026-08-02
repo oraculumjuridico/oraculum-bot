@@ -11,6 +11,7 @@ const realRequire = createRequire(path.join(root, "server.js"))
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "oraculum-reengagement-routes-"))
 
 process.env.INTERNAL_WEBHOOK_SECRET = "test-secret"
+process.env.AUTO_REENGAJAMENTO = "true"
 process.env.CALLBACK_IDEMPOTENCY_FILE = path.join(tempDir, "callback-idempotency.json")
 process.env.DEBUG_LOGS = "false"
 
@@ -416,6 +417,24 @@ function totalCallbacksRegistrados() {
       assert.equal(segunda.body.status, "skipped")
       assert.equal(segunda.body.reason, "duplicado")
       assert.equal(templateCalls.length, chamadasDepoisPrimeira)
+    }
+
+    {
+      process.env.AUTO_REENGAJAMENTO = "false"
+      const disabledLoaded = carregarServerParaTeste()
+      const disabledServer = await listen(disabledLoaded.app)
+      try {
+        disabledLoaded.users[phone] = usuario({ _numero: phone, phone })
+        const candidates = await postJson(disabledServer, "/reengagement-candidates", {})
+        const data = await postJson(disabledServer, "/reengajamento-dados", { phone })
+        const send = await postJson(disabledServer, "/reengajamento", { phone, tipoEvento: "abandono_2h", jobId: "x", scheduledFor: new Date().toISOString() })
+        assert.equal(candidates.body.status, "disabled"); assert.deepEqual(candidates.body.candidates, [])
+        assert.equal(data.body.status, "disabled"); assert.deepEqual(data.body.jobs, [])
+        assert.equal(send.body.reason, "feature_disabled")
+      } finally {
+        await fechar(disabledServer)
+        process.env.AUTO_REENGAJAMENTO = "true"
+      }
     }
 
     console.log("reengagement-routes.test.js: ok")
