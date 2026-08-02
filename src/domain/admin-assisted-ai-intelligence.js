@@ -348,7 +348,7 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
 
   const confianca = Number(parsed.confianca ?? parsed.confidence ?? parsed.classificationConfidence ?? 0)
   const baixaConfianca = Number.isFinite(confianca) && confianca > 0 && confianca < 0.65
-  const area = baixaConfianca ? "Outros" : normalizarAreaJuridicaAdminAssistido(
+  let area = baixaConfianca ? "Outros" : normalizarAreaJuridicaAdminAssistido(
     dados.areaJuridica?.valor || parsed.areaJuridica || parsed.area || "Outros"
   )
   dados.areaJuridica = criarCampoAdminAssistido(
@@ -357,6 +357,16 @@ function normalizarAnaliseIA(parsed = {}, textoOriginal = "") {
       ? "precisa_conferir"
       : dados.areaJuridica?.status && dados.areaJuridica.status !== "ausente" ? dados.areaJuridica.status : "inferido"
   )
+
+  if (area === "Trabalhista" && !baixaConfianca) {
+    const areaFallback = detectarAreaPorIntencaoFallback(textoOriginal)
+    const textoLower = String(textoOriginal || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    const inssIncidental = /(nao\s+recolheu\s+o?\s*inss|nao\s+depositou\s+o?\s*inss|inss\s+da\s+empresa|contribuicao\s+ao\s+inss|recolhimento\s+do\s+inss)/.test(textoLower)
+    if (areaFallback === "INSS" && !inssIncidental) {
+      area = "INSS"
+      dados.areaJuridica = criarCampoAdminAssistido("INSS", "precisa_conferir")
+    }
+  }
 
   if (!dados.descricao?.valor && textoOriginal) {
     dados.descricao = criarCampoAdminAssistido(sanitizarTextoEntrada(textoOriginal), "confirmado")
