@@ -151,6 +151,10 @@ function iniciarAtendimentoAssistidoAdmin(from, deps = {}) {
   const { chave, sessao } = obterSessaoAdmin(from, deps)
   if (!chave) return telaInicioAtendimentoAssistidoAdmin()
 
+  if (sessao?.adminAssistido?.ativo && sessao.adminAssistido.aguardandoConfirmacaoRetomada) {
+    return telaRetomadaAtendimentoAssistidoAdmin()
+  }
+
   salvarSessaoAdmin(chave, {
     ...sessao,
     listaAtiva: "admin_assistido",
