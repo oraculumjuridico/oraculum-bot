@@ -6,6 +6,7 @@ const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
 const { normalizarContextoConversa } = require("./conversation-context")
 const { mirrorStateFile } = require("../infrastructure/external-state-repository")
+const { projectCanonicalCheckpointForPersistence } = require("./canonical-case-executor")
 
 let persistUsersTimeout = null
 let persistUsersMaxTimeout = null
@@ -445,6 +446,16 @@ function serializarUsers() {
     delete usuarioSerializado._casosMenuCliente
     delete usuarioSerializado._acaoPendente
     delete usuarioSerializado._mostrarPainelCasosCliente
+    delete usuarioSerializado.context
+    delete usuarioSerializado.session
+    delete usuarioSerializado.sessao
+    delete usuarioSerializado.adapters
+    delete usuarioSerializado.dependencies
+    delete usuarioSerializado.request
+    delete usuarioSerializado.response
+    delete usuarioSerializado.req
+    delete usuarioSerializado.res
+    usuarioSerializado._canonicalCheckpoint = projectCanonicalCheckpointForPersistence(u._canonicalCheckpoint)
     saida[from] = usuarioSerializado
   }
   return saida

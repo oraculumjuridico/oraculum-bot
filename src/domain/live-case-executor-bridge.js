@@ -1,5 +1,5 @@
 const { createCanonicalCasePlan, validateCanonicalCasePlan, PLAN_STATUS } = require("./canonical-case-plan")
-const { createCanonicalCaseExecutor } = require("./canonical-case-executor")
+const { createCanonicalCaseExecutor, projectCanonicalCheckpointForPersistence } = require("./canonical-case-executor")
 const { createHubSpotTaskService } = require("./hubspot-task-service")
 const { normalizeDriveFolderResult } = require("./drive-files")
 
@@ -449,7 +449,7 @@ function createLiveCaseFlow(deps = {}) {
         if (usuarioFromCheckpoint.pastaDriveLink && !u.pastaDriveLink) u.pastaDriveLink = usuarioFromCheckpoint.pastaDriveLink
 
         u._canonicalPlanHash = planoLocal.hash
-        u._canonicalCheckpoint = result.checkpoint
+        u._canonicalCheckpoint = projectCanonicalCheckpointForPersistence(result.checkpoint)
         u._canonicalPlanStatus = result.planStatus || planoLocal.status
       }
 
@@ -467,7 +467,7 @@ function createLiveCaseFlow(deps = {}) {
 
       if (checkpointStore) {
         u._canonicalPlanHash = planoLocal.hash
-        u._canonicalCheckpoint = checkpointStore
+        u._canonicalCheckpoint = projectCanonicalCheckpointForPersistence(checkpointStore)
         u._canonicalPlanStatus = checkpointStore.status
       }
 

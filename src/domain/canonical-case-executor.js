@@ -33,6 +33,68 @@ function createCheckpoint(plan) {
   }
 }
 
+const RESULT_FIELDS_BY_STEP = Object.freeze({
+  identity: ["verified", "name", "cpf", "phone", "email"],
+  contact: ["id", "action", "verified", "pastaDriveMissing"],
+  deal: ["id", "action", "verified"],
+  association: ["id", "action", "verified", "contactId", "dealId", "relation"],
+  case_number: ["id", "value", "action", "verified", "evidenceId"],
+  drive: ["id", "action", "verified", "parentId"],
+  hubspot: ["updated", "contactId", "dealId"],
+  final_verify: ["verified", "contactId", "dealId", "folderId", "associationId", "documentsCount", "tasksCount"]
+})
+
+function projectScalarFields(source, fields) {
+  if (!source || typeof source !== "object") return source ?? null
+  const projected = {}
+  for (const field of fields) {
+    const value = source[field]
+    if (["string", "number", "boolean"].includes(typeof value) || value === null) projected[field] = value
+  }
+  return projected
+}
+
+function projectList(items, fields) {
+  if (!Array.isArray(items)) return []
+  return items.map(item => projectScalarFields(item, fields))
+}
+
+function projectStepResult(step, result) {
+  if (!result || typeof result !== "object") return result ?? null
+  if (step === "documents") return {
+    count: Number.isFinite(result.count) ? result.count : 0,
+    documents: projectList(result.documents, ["sha256", "fileId", "action", "reason", "error"])
+  }
+  if (step === "tasks") return {
+    created: Number.isFinite(result.created) ? result.created : 0,
+    tasks: projectList(result.tasks, ["id", "key", "action", "error", "verified"])
+  }
+  if (step === "internal_notifications") return {
+    sent: Number.isFinite(result.sent) ? result.sent : 0,
+    notifications: projectList(result.notifications, ["type", "sent", "error"])
+  }
+  return projectScalarFields(result, RESULT_FIELDS_BY_STEP[step] || ["id", "action", "verified"])
+}
+
+function projectCanonicalCheckpointForPersistence(checkpoint) {
+  if (!checkpoint || typeof checkpoint !== "object") return null
+  const steps = {}
+  for (const step of STEPS) {
+    const source = checkpoint.steps?.[step]
+    if (!source || typeof source !== "object") continue
+    steps[step] = projectScalarFields(source, ["status", "startedAt", "completedAt", "code"])
+    if (Object.prototype.hasOwnProperty.call(source, "result")) steps[step].result = projectStepResult(step, source.result)
+  }
+  return {
+    schemaVersion: Number.isInteger(checkpoint.schemaVersion) ? checkpoint.schemaVersion : 1,
+    planHash: typeof checkpoint.planHash === "string" ? checkpoint.planHash : null,
+    status: typeof checkpoint.status === "string" ? checkpoint.status : "pending",
+    ...(typeof checkpoint.completedAt === "string" ? { completedAt: checkpoint.completedAt } : {}),
+    steps,
+    resources: projectScalarFields(checkpoint.resources, ["contactId", "dealId", "associationId", "caseFolderId", "caseNumber"])
+  }
+}
+
 function createCanonicalCaseExecutor({ adapters = {}, checkpointRepository } = {}) {
   if (!checkpointRepository?.load || !checkpointRepository?.save) throw new Error("checkpoint repository required")
 
@@ -77,15 +139,10 @@ function createCanonicalCaseExecutor({ adapters = {}, checkpointRepository } = {
   }
 
   function buildPersistedCheckpoint(checkpoint) {
-    // Remover contexto runtime (u) antes da persistência para evitar vazamento de dados pessoais.
-    // Recursos técnicos (contactId, dealId, caseFolderId, status) são preservados em checkpoint.resources e steps.
-    if (checkpoint.context && checkpoint.context.u) {
-      return { ...checkpoint, context: { ...checkpoint.context, u: undefined } }
-    }
-    return checkpoint
+    return projectCanonicalCheckpointForPersistence(checkpoint)
   }
 
   return { execute }
 }
 
-module.exports = { STEPS, createCheckpoint, createCanonicalCaseExecutor }
+module.exports = { STEPS, createCheckpoint, createCanonicalCaseExecutor, projectCanonicalCheckpointForPersistence }
