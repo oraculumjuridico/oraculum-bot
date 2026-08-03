@@ -2411,6 +2411,50 @@ function usuarioTemRelatoParaRetomada(u) {
   )
 }
 
+function usuarioTemProgressoParaRetomada(u) {
+  if (!u) return false
+
+  const stageSalvo = obterStageRetomadaOriginal(u)
+  const stageNormalizado = normalizarStageKey(stageSalvo)
+  const stageValido = etapaValida(stageSalvo) && !ETAPAS_NAO_RETOMAVEIS.has(stageNormalizado)
+
+  const nomeConfirmado = Boolean(u.nomeConfirmado)
+  const cidadeExplicita = Boolean(sanitizarTextoEntrada(u.cidade))
+  const modoEscolhido = Boolean(u.modoTexto === true || u.modoTexto === false)
+  const temTerceiro = Boolean(u._casoAnteriorCliente || u.atendimentoParaTerceiro)
+  const areaColetada = Boolean(sanitizarTextoEntrada(u.area))
+  const situacaoColetada = Boolean(sanitizarTextoEntrada(u.situacao))
+  const urgenciaColetada = Boolean(sanitizarTextoEntrada(u.urgencia) && u.urgencia !== "normal")
+  const relatoColetado = usuarioTemRelatoParaRetomada(u)
+
+  if (stageValido) {
+    const stageInicialSemDados = [
+      STAGES.AUDIO_AGUARDANDO,
+      STAGES.ACOLHIMENTO_MODO,
+      STAGES.ACOLHIMENTO_PARA_QUEM,
+      STAGES.ACOLHIMENTO_NOME_CONTATO,
+      STAGES.ACOLHIMENTO_CONFIRMA_NOME_CONTATO,
+      STAGES.ACOLHIMENTO_CONFIRMA_TITULAR_NOME,
+      STAGES.ACOLHIMENTO_CONFIRMA_WHATSAPP,
+      STAGES.ACOLHIMENTO_CONFIRMA_WHATSAPP_OUTRO
+    ].includes(stageNormalizado)
+    if (stageInicialSemDados && !nomeConfirmado && !cidadeExplicita && !modoEscolhido && !temTerceiro) {
+      return false
+    }
+    return true
+  }
+
+  if (nomeConfirmado) return true
+  if (cidadeExplicita) return true
+  if (modoEscolhido) return true
+  if (temTerceiro) return true
+  if (areaColetada || situacaoColetada || urgenciaColetada) return true
+  if (relatoColetado) return true
+
+  return false
+}
+
+
 function identificarEtapaAtual(u, payload) {
   const origem = payload?.perguntaId || u?.stage || ""
 
@@ -11577,7 +11621,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       if (temNoHS && !u.contatoId) u.contatoId = contatoHS.id
       u._fluxoEncerrado = false
       u.jaOfereceuRetomada = false
-      if (!usuarioTemRelatoParaRetomada(u)) {
+      if (!usuarioTemProgressoParaRetomada(u)) {
         u.aguardandoRetomada = false
         u._retomadaEhLeadFrio = false
         u._stageRetomadaOriginal = null
@@ -11869,7 +11913,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     if (u.lastPerguntaPayload) return u.lastPerguntaPayload
     const flowFn = flowMap[u.stage]
     if (flowFn) {
-      const resultado = flowFn(u, ctx)
+      const resultado = await flowFn(u, ctx)
       if (resultado) return resultado
     }
     return null
@@ -17242,7 +17286,14 @@ module.exports = {
   encerrarServidor,
   telaDetalheCasoAdmin,
   sessoesAdminWhatsApp,
-  users
+  users,
+  usuarioTemProgressoParaRetomada,
+  usuarioTemRelatoParaRetomada,
+  processarInterno,
+  flowRetomadaMenu,
+  processarRetomadaOuReinicio,
+  obterStageRetomadaOriginal,
+  STAGES
 }
 
 if (require.main === module) iniciarServidor()
