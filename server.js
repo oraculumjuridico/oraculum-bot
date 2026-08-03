@@ -347,6 +347,7 @@ const {
   marcarWebhookError,
   obterEstadoWebhookInbox
 } = require("./src/domain/state-persistence")
+const api = { persistirUsersAgora }
 const {
   CALLBACK_IDEMPOTENCY_FILE,
   createCallbackKey,
@@ -636,6 +637,50 @@ app.use(
     fallthrough: false
   })
 )
+
+function validarAdminHttp(req, res, next) {
+  const senha = sanitizarTextoEntrada(req.headers["x-admin-password"] || req.body?.adminPassword || "")
+  if (!senhaAdminConfigurada() || !senhaAdminValida(senha)) {
+    logSegurancaAdmin(req.body?.phone || req.query?.phone || "-", "acesso http admin negado")
+    return res.sendStatus(401)
+  }
+  next()
+}
+
+app.post("/admin/limpar-usuario", validarAdminHttp, async (req, res) => {
+  try {
+    const telefone = normalizarNumeroWhatsAppEnvio(req.body?.phone || req.body?.numero || "")
+    const confirmar = sanitizarTextoEntrada(req.body?.confirmar || "")
+
+    if (!telefone) {
+      return res.status(400).json({ ok: false, motivo: "telefone_obrigatorio" })
+    }
+    if (confirmar !== "LIMPAR_USUARIO") {
+      return res.status(400).json({ ok: false, motivo: "confirmacao_invalida" })
+    }
+
+    const numeroMascarado = mascararTelefoneLog(telefone)
+    const tinha = Object.prototype.hasOwnProperty.call(users, telefone)
+    if (tinha) {
+      const anterior = { ...users[telefone] }
+      delete users[telefone]
+      try {
+        await api.persistirUsersAgora({ propagarErro: true })
+        logInfo(`[admin] usuario_removido phone=${numeroMascarado}`)
+      } catch (e) {
+        users[telefone] = anterior
+        throw e
+      }
+    } else {
+      logInfo(`[admin] usuario_nao_encontrado phone=${numeroMascarado}`)
+    }
+
+    return res.json({ ok: true, removido: tinha })
+  } catch (e) {
+    logErro("admin-limpar-usuario", e.message, e)
+    return res.sendStatus(500)
+  }
+})
 // ================================================================
 //  NOTIFICAÇÕES — WhatsApp pessoal + E-mail
 // ================================================================
@@ -17293,7 +17338,9 @@ module.exports = {
   flowRetomadaMenu,
   processarRetomadaOuReinicio,
   obterStageRetomadaOriginal,
-  STAGES
+  STAGES,
+  persistirUsersAgora,
+  api
 }
 
 if (require.main === module) iniciarServidor()
