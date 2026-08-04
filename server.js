@@ -1203,8 +1203,7 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
       }
       // Se houver múltiplos casos oficiais, reconhecer como cliente e armazenar a lista
       if (casosComNumeroCaso.length > 1) {
-        definirNegocioId(u, casosComNumeroCaso[0].id)
-        u._casosDisponiveis = casosComNumeroCaso.map(c => ({ id: c.id, numeroCaso: c.numeroCaso, area: c.properties?.area_juridica }))
+        u._casosDisponiveis = casosComNumeroCaso.map(c => ({ id: c.id, numeroCaso: c.numeroCaso, area: c.properties?.area_juridica, dealname: c.properties?.dealname || null }))
       }
     }
   } else if (podeReutilizarSessaoLocalSemHubSpot) {
@@ -3132,7 +3131,8 @@ function migrarFluxoAntigoParaRelatoLivre(u) {
 }
 
 function podeMostrarMenuCliente(u) {
-  return Boolean(u?.numeroCaso)
+  return Boolean(u?.numeroCaso) ||
+    Boolean(Array.isArray(u?._casosDisponiveis) && u._casosDisponiveis.length)
 }
 
 function getNumeroCasoOficialDoNegocio(negocio) {
@@ -17375,7 +17375,8 @@ module.exports = {
   obterStageRetomadaOriginal,
   STAGES,
   persistirUsersAgora,
-  api
+  api,
+  podeMostrarMenuCliente
 }
 
 if (require.main === module) iniciarServidor()
