@@ -180,6 +180,17 @@ async function hsBuscarPorPhone(phone) {
   }
 }
 
+async function hsBuscarContatoSeguro(phone) {
+  const phoneNormalizado = normalizarTelefoneHubSpot(phone)
+  if (!phoneNormalizado) return { status: "invalid", contato: null }
+  try {
+    const contato = await hsBuscarPorPhone(phoneNormalizado)
+    return contato ? { status: "found", contato } : { status: "not_found", contato: null }
+  } catch (error) {
+    return { status: error?.code === "ECONNABORTED" ? "timeout" : "error", contato: null, error }
+  }
+}
+
 async function hsBuscarPorCpf(cpf) {
   const canonico = normalizeCpfHubSpot(cpf)
   if (!canonico) return null
@@ -382,6 +393,7 @@ module.exports = {
   HS,
   hsBuscarPorCpf,
   hsBuscarPorPhone,
+  hsBuscarContatoSeguro,
   hsCriarContato,
   hsCriarNegocio,
   hsAssociar,

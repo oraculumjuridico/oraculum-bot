@@ -377,6 +377,7 @@ const {
   HS,
   hsBuscarPorCpf,
   hsBuscarPorPhone,
+  hsBuscarContatoSeguro,
   hsCriarContato,
   hsCriarNegocio,
   hsAssociar,
@@ -399,11 +400,17 @@ const {
   sincronizarContatoNegocioHubSpot,
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
+  hsBuscarNegociosComCasoDoContato,
   hsListarNegociosAtivosDoContato,
   hsAtualizarEtapaNegocio,
   hsMoverStage,
   hsMoverStageSeguro
 } = require("./src/domain/hubspot-sync")
+const {
+  telefoneCanonico,
+  definirContatoId,
+  definirNegocioId
+} = require("./src/domain/identity")
 const {
   configurarGroqClientReplies,
   respostaIA,
@@ -1119,6 +1126,8 @@ function resolverNomeBriefing(u = {}) {
 }
 
 async function resolverUsuarioPorHubSpot(from, nomeWA) {
+  const telefone = telefoneCanonico(from) || from
+  from = telefone
   const sessaoAtual = users[from] || null
   let u = null
   
@@ -1137,7 +1146,11 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
   
   // Só consultar HubSpot se não consultou recentemente
   if (!jaConsultouHubSpot) {
-    contato = await hsBuscarPorPhone(from)
+    const resultadoBusca = await hsBuscarContatoSeguro(from)
+    if (resultadoBusca.status === "error" || resultadoBusca.status === "timeout") {
+      throw Object.assign(new Error("HUBSPOT_CONTACT_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_CONTACT_LOOKUP_UNCERTAIN" })
+    }
+    contato = resultadoBusca.contato
     if (sessaoAtual) {
       sessaoAtual._hubspotConsultadoEm = Date.now()
       sessaoAtual._hubspotResultadoId = contato?.id || null
@@ -1174,6 +1187,26 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     if (!u.nomeConfirmado && nomeHubspotCompleto) {
       u.nome = nomeHubspotCompleto
     }
+
+    // Restaurar contactId
+    definirContatoId(u, contato.id)
+
+    // Buscar negócios associados ao contato para localizar caso existente
+    const negociosHubSpot = await hsBuscarNegociosComCasoDoContato(contato.id)
+    if (negociosHubSpot) {
+      const casosComNumeroCaso = negociosHubSpot.casosOficiais
+      // Se houver exatamente um caso oficial, restaurar o negócio
+      if (casosComNumeroCaso.length === 1) {
+        const negocio = casosComNumeroCaso[0]
+        restaurarEstadoNegocioHubSpot(u, negocio.negocio || negocio)
+        definirNegocioId(u, negocio.id)
+      }
+      // Se houver múltiplos casos oficiais, reconhecer como cliente e armazenar a lista
+      if (casosComNumeroCaso.length > 1) {
+        definirNegocioId(u, casosComNumeroCaso[0].id)
+        u._casosDisponiveis = casosComNumeroCaso.map(c => ({ id: c.id, numeroCaso: c.numeroCaso, area: c.properties?.area_juridica }))
+      }
+    }
   } else if (podeReutilizarSessaoLocalSemHubSpot) {
     u = sessaoAtual
   } else {
@@ -1190,7 +1223,7 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotResultadoId = null
   }
 
-  if (!u._numero && from) u._numero = from
+  if (!u._numero && telefone) u._numero = telefone
   u.nomeWA = nomeBase
   u.nomePerfilWhatsApp = nomePerfilWhatsApp
   
@@ -1203,9 +1236,10 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotSemContato = true
   } else {
     u._hubspotSemContato = false
+    u.whatsappContato = telefone
   }
   
-  u._numero = from
+  u._numero = telefone
   agendarPersistenciaUsers()
 
   return { contato, u }
@@ -16443,7 +16477,8 @@ app.get("/webhook", (req, res) => {
 })
 async function processarMensagemWebhook(value, message) {
   const incomingMessageId = message.id || null
-  const from   = message.from
+  const fromRaw   = message.from
+  const from      = telefoneCanonico(fromRaw) || fromRaw
   if (users[from] && incomingMessageId) {
     digitando(from, incomingMessageId, "").catch(() => {})
   }
