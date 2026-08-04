@@ -285,6 +285,46 @@ async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
   }
 }
 
+async function hsBuscarNegociosComCasoDoContato(contactId) {
+  if (!contactId) return { casosOficiais: [], leads: [], finalizados: [] }
+  try {
+    const dealIds = await hsBuscarNegociosDoContato(contactId)
+    if (!dealIds.length) return { casosOficiais: [], leads: [], finalizados: [] }
+
+    const casosOficiais = []
+    const leads = []
+    const finalizados = []
+
+    for (const dealId of dealIds) {
+      try {
+        const res = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=dealstage,dealname,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso`,
+          { headers: HS() }
+        )
+        const props = res.data?.properties || {}
+        const stage = props.dealstage
+        const numeroCaso = sanitizarTextoEntrada(props.numero_de_caso) || null
+        const info = { id: dealId, stageId: stage, dealname: props.dealname || null, properties: props }
+
+        if (!stage || HS_STAGES_FINALIZADOS.has(stage)) {
+          finalizados.push(info)
+        } else if (numeroCaso) {
+          casosOficiais.push({ ...info, numeroCaso })
+        } else {
+          leads.push(info)
+        }
+      } catch (e) {
+        logErroHubSpot(e, { operation: "buscarNegocioComCaso", contactId, dealId })
+      }
+    }
+
+    return { casosOficiais, leads, finalizados }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "buscarNegociosComCaso", contactId })
+    return { casosOficiais: [], leads: [], finalizados: [] }
+  }
+}
+
 async function hsListarNegociosAtivosDoContato(contactId) {
   try {
     const dealIds = await hsBuscarNegociosDoContato(contactId)
@@ -362,6 +402,7 @@ module.exports = {
   hsBuscarNegociosDoContato,
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
+  hsBuscarNegociosComCasoDoContato,
   hsListarNegociosAtivosDoContato,
   hsAtualizarEtapaNegocio,
   hsMoverStage,
