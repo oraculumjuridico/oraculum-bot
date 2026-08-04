@@ -12,6 +12,7 @@ const {
 } = require("../utils/text")
 const { logDebug, logErroHubSpot } = require("../utils/logging")
 const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
+const { definirNegocioId } = require("./identity")
 
 let deps = {
   HUBSPOT_TOKEN: "",
@@ -285,6 +286,34 @@ async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
   }
 }
 
+async function hsBuscarNegocioAbertoSeguroDoContato(contactId) {
+  if (!contactId) return { status: "invalid", negocio: null }
+  try {
+    // Não reutiliza a função tolerante a erro: aqui erro de leitura deve bloquear criação.
+    const associacoes = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}/associations/deals`,
+      { headers: HS() }
+    )
+    const ids = (associacoes.data?.results || []).map(item => item?.id).filter(Boolean)
+    let negocio = null
+    for (const id of ids) {
+      const res = await axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,numero_de_caso,createdate`,
+        { headers: HS() }
+      )
+      const stage = res.data?.properties?.dealstage
+      if (!stage) return { status: "invalid", negocio: null }
+      if (!HS_STAGES_FINALIZADOS.has(stage)) {
+        negocio = { id, stageId: stage, dealname: res.data?.properties?.dealname || null, properties: res.data?.properties || {} }
+        break
+      }
+    }
+    return negocio ? { status: "found", negocio } : { status: "not_found", negocio: null }
+  } catch (error) {
+    return { status: "error", negocio: null, error }
+  }
+}
+
 async function hsListarNegociosAtivosDoContato(contactId) {
   try {
     const dealIds = await hsBuscarNegociosDoContato(contactId)
@@ -362,6 +391,7 @@ module.exports = {
   hsBuscarNegociosDoContato,
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
+  hsBuscarNegocioAbertoSeguroDoContato,
   hsListarNegociosAtivosDoContato,
   hsAtualizarEtapaNegocio,
   hsMoverStage,

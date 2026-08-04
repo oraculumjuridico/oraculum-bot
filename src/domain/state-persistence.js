@@ -42,7 +42,8 @@ function criarWebhookInboxVazia() {
     updatedAt: null,
     sequence: 0,
     records: {},
-    receipts: {}
+    receipts: {},
+    operations: {}
   }
 }
 
@@ -157,7 +158,8 @@ function carregarWebhookInbox() {
     ...criarWebhookInboxVazia(),
     ...parsed,
     records: parsed.records && typeof parsed.records === "object" ? parsed.records : {},
-    receipts: parsed.receipts && typeof parsed.receipts === "object" ? parsed.receipts : {}
+    receipts: parsed.receipts && typeof parsed.receipts === "object" ? parsed.receipts : {},
+    operations: parsed.operations && typeof parsed.operations === "object" ? parsed.operations : {}
   }
   let recovered = 0
   for (const record of Object.values(proxima.records)) {
@@ -267,6 +269,36 @@ function marcarWebhookError(key, error) {
 
 function obterEstadoWebhookInbox() {
   return clonarJson(webhookInbox)
+}
+
+function criarChaveOperacaoHubSpot({ messageId = "", operationType = "", identity = "", numeroCaso = "" } = {}) {
+  const base = [sanitizarTextoEntrada(messageId), sanitizarTextoEntrada(operationType), sanitizarTextoEntrada(identity), sanitizarTextoEntrada(numeroCaso)].join("|")
+  if (!base.replace(/\|/g, "")) throw new Error("HUBSPOT_OPERATION_KEY_REQUIRED")
+  return crypto.createHash("sha256").update(base).digest("hex")
+}
+
+function obterOperacaoHubSpot(operationKey) {
+  return clonarJson(webhookInbox.operations?.[sanitizarTextoEntrada(operationKey)] || null)
+}
+
+function registrarOperacaoHubSpot(input = {}) {
+  const operationKey = sanitizarTextoEntrada(input.operationKey) || criarChaveOperacaoHubSpot(input)
+  const anterior = webhookInbox.operations?.[operationKey]
+  const agora = new Date().toISOString()
+  const proxima = clonarJson(webhookInbox)
+  proxima.operations[operationKey] = {
+    operationKey, messageId: sanitizarTextoEntrada(input.messageId) || anterior?.messageId || null,
+    operationType: sanitizarTextoEntrada(input.operationType) || anterior?.operationType || null,
+    contactId: sanitizarTextoEntrada(input.contactId) || anterior?.contactId || null,
+    dealId: sanitizarTextoEntrada(input.dealId) || anterior?.dealId || null,
+    numeroCaso: sanitizarTextoEntrada(input.numeroCaso) || anterior?.numeroCaso || null,
+    status: sanitizarTextoEntrada(input.status) || anterior?.status || "pending",
+    attempts: Number(anterior?.attempts || 0) + (input.incrementAttempt ? 1 : 0),
+    error: input.error ? { code: sanitizarTextoEntrada(input.error.code) || "HUBSPOT_OPERATION_FAILED", message: "Operação HubSpot requer reconciliação" } : anterior?.error || null,
+    createdAt: anterior?.createdAt || agora, updatedAt: agora
+  }
+  persistirProximaWebhookInbox(proxima)
+  return clonarJson(proxima.operations[operationKey])
 }
 
 function sessaoAdminAssistidaAtiva(sessao = {}) {
@@ -627,6 +659,9 @@ module.exports = {
   marcarWebhookCompleted,
   marcarWebhookError,
   obterEstadoWebhookInbox,
+  criarChaveOperacaoHubSpot,
+  obterOperacaoHubSpot,
+  registrarOperacaoHubSpot,
   serializarEstado,
   desserializarEstado,
   garantirDiretorioDados,

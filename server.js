@@ -345,7 +345,10 @@ const {
   marcarWebhookProcessing,
   marcarWebhookCompleted,
   marcarWebhookError,
-  obterEstadoWebhookInbox
+  obterEstadoWebhookInbox,
+  criarChaveOperacaoHubSpot,
+  obterOperacaoHubSpot,
+  registrarOperacaoHubSpot
 } = require("./src/domain/state-persistence")
 const api = { persistirUsersAgora }
 const {
@@ -377,6 +380,7 @@ const {
   HS,
   hsBuscarPorCpf,
   hsBuscarPorPhone,
+  hsBuscarContatoSeguro,
   hsCriarContato,
   hsCriarNegocio,
   hsAssociar,
@@ -399,11 +403,21 @@ const {
   sincronizarContatoNegocioHubSpot,
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
+  hsBuscarNegocioAbertoSeguroDoContato,
   hsListarNegociosAtivosDoContato,
   hsAtualizarEtapaNegocio,
   hsMoverStage,
   hsMoverStageSeguro
 } = require("./src/domain/hubspot-sync")
+const {
+  telefoneCanonico,
+  definirContatoId,
+  definirNegocioId
+} = require("./src/domain/identity")
+const {
+  obterOuCriarContato,
+  obterOuCriarNegocio
+} = require("./src/domain/hubspot-operation-journal")
 const {
   configurarGroqClientReplies,
   respostaIA,
@@ -1119,6 +1133,9 @@ function resolverNomeBriefing(u = {}) {
 }
 
 async function resolverUsuarioPorHubSpot(from, nomeWA) {
+  const telefone = telefoneCanonico(from)
+  if (!telefone) throw Object.assign(new Error("WHATSAPP_PHONE_INVALID"), { code: "WHATSAPP_PHONE_INVALID" })
+  from = telefone
   const sessaoAtual = users[from] || null
   let u = null
   
@@ -1137,7 +1154,11 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
   
   // Só consultar HubSpot se não consultou recentemente
   if (!jaConsultouHubSpot) {
-    contato = await hsBuscarPorPhone(from)
+    const resultadoBusca = await hsBuscarContatoSeguro(from)
+    if (resultadoBusca.status === "error" || resultadoBusca.status === "timeout") {
+      throw Object.assign(new Error("HUBSPOT_CONTACT_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_CONTACT_LOOKUP_UNCERTAIN" })
+    }
+    contato = resultadoBusca.contato
     if (sessaoAtual) {
       sessaoAtual._hubspotConsultadoEm = Date.now()
       sessaoAtual._hubspotResultadoId = contato?.id || null
@@ -1165,6 +1186,9 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotSemContato = false
     u._hubspotConsultadoEm = Date.now()
     u._hubspotResultadoId = contato.id
+    definirContatoId(u, contato.id)
+    u._numero = telefone
+    u.whatsappContato = telefone
     
     // Salvar nome completo do HubSpot
     const nomeHubspotCompleto = montarNomeCompletoHubSpot(contato)
@@ -1173,6 +1197,16 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     // Se não tiver nome confirmado, usar nome do HubSpot
     if (!u.nomeConfirmado && nomeHubspotCompleto) {
       u.nome = nomeHubspotCompleto
+    }
+    const resultadoNegocio = await hsBuscarNegocioAbertoSeguroDoContato(contato.id)
+    if (resultadoNegocio.status === "error") {
+      throw Object.assign(new Error("HUBSPOT_DEAL_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_DEAL_LOOKUP_UNCERTAIN" })
+    }
+    if (resultadoNegocio.negocio) {
+      definirNegocioId(u, resultadoNegocio.negocio.id)
+      restaurarEstadoNegocioHubSpot(u, resultadoNegocio.negocio)
+      definirContatoId(u, contato.id)
+      definirNegocioId(u, resultadoNegocio.negocio.id)
     }
   } else if (podeReutilizarSessaoLocalSemHubSpot) {
     u = sessaoAtual
@@ -1190,7 +1224,8 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotResultadoId = null
   }
 
-  if (!u._numero && from) u._numero = from
+  if (!u._numero) u._numero = telefone
+  if (!u.whatsappContato) u.whatsappContato = telefone
   u.nomeWA = nomeBase
   u.nomePerfilWhatsApp = nomePerfilWhatsApp
   
@@ -1205,7 +1240,8 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotSemContato = false
   }
   
-  u._numero = from
+  u._numero = telefone
+  if (!u.whatsappContato) u.whatsappContato = telefone
   agendarPersistenciaUsers()
 
   return { contato, u }
@@ -6388,11 +6424,14 @@ async function capturarLeadIncompleto(from, u) {
 
     logDebug("➡️ Validando contato no HubSpot antes de qualquer reaproveitamento...")
     let existente = null
+    let falhaBuscaContato = null
     try {
       existente = await hsBuscarPorPhone(telefone)
     } catch (e) {
       logErroHubSpot(e, { operation: "capturarLeadBuscarContato" })
+      falhaBuscaContato = e
     }
+    if (falhaBuscaContato) return null
     if (existente?.properties?.firstname && !lead.nomeHubspot) lead.nomeHubspot = existente.properties.firstname
     contatoId = existente?.id || null
 
@@ -6443,6 +6482,7 @@ async function capturarLeadIncompleto(from, u) {
     }
 
     // verificar negócio existente ANTES de criar novo — evitar duplicatas
+    let falhaBuscaNegocio = null
     if (contatoId) {
       try {
         negocioId = await hsBuscarNegocioAbertoDoContato(contatoId)
@@ -6451,8 +6491,10 @@ async function capturarLeadIncompleto(from, u) {
           operation: "capturarLeadBuscarNegocioAberto",
           contactId: contatoId
         })
+        falhaBuscaNegocio = e
       }
     }
+    if (falhaBuscaNegocio) return null
 
     // também checar se já existe negocioId na sessão antes de criar novo
     if (!negocioId && sessao?.negocioId) {
@@ -6733,6 +6775,9 @@ async function finalizarCadastro(from, u) {
   const telefoneContato = getTelefoneContato(from, u)
   const ehTerceiro = u.telefoneEhDoCliente === false
   const ehNovoCasoCliente = Boolean(u._novoCasoDeCliente)
+  if (ehNovoCasoCliente && !sanitizarTextoEntrada(u._novoCasoIntentMessageId)) {
+    throw Object.assign(new Error("NEW_CASE_INTENT_NOT_CONFIRMED"), { code: "NEW_CASE_INTENT_NOT_CONFIRMED" })
+  }
   if (u.numeroCaso) {
     logDebug("? Sessão já possui número de caso, reutilizando existente")
   } else {
@@ -6890,7 +6935,18 @@ async function finalizarCadastro(from, u) {
     if (telefoneJaEhDeOutro) {
       logDebug("[HUBSPOT] Telefone do terceiro ja existe com outro nome. Preservando contato e registrando divergencia no negocio.")
     } else if (!contatoId) {
-      contatoId = await hsCriarContato(telefoneContato, u)
+      const operacaoContato = await obterOuCriarContato({
+        messageId: u._currentMessageId || `finalizar:${numeroCaso}`,
+        identity: telefoneContato,
+        numeroCaso,
+        procurar: async () => {
+          const resultado = await hsBuscarContatoSeguro(telefoneContato)
+          if (resultado.status !== "found" && resultado.status !== "not_found") throw resultado.error || new Error("HUBSPOT_CONTACT_LOOKUP_UNCERTAIN")
+          return resultado.contato
+        },
+        criar: () => hsCriarContato(telefoneContato, u)
+      })
+      contatoId = operacaoContato.contactId
     } else {
       logDebug("Contato encontrado no HubSpot:", contatoId)
       const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
@@ -6899,16 +6955,19 @@ async function finalizarCadastro(from, u) {
       if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
     }
     assertFinalizationOperation("hubspot_contact", contatoId)
-    u.contatoId = contatoId
+    definirContatoId(u, contatoId)
     if (contatoId) u._hubspotSemContato = false
     persistirUsersAgora({ propagarErro: true })
 
     let negocioId = u.negocioId || null
     if (!negocioId && contatoId && !ehNovoCasoCliente) {
-      const negocioExistente = await hsBuscarNegocioAbertoDoContato(contatoId)
-      if (negocioExistente) {
-        negocioId = negocioExistente
-        u.negocioId = negocioId
+      const negocioExistente = await hsBuscarNegocioAbertoSeguroDoContato(contatoId)
+      if (negocioExistente.status !== "found" && negocioExistente.status !== "not_found") {
+        throw Object.assign(new Error("HUBSPOT_DEAL_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_DEAL_LOOKUP_UNCERTAIN" })
+      }
+      if (negocioExistente.negocio?.id) {
+        negocioId = negocioExistente.negocio.id
+        definirNegocioId(u, negocioId)
         logDebug("Negócio existente encontrado:", negocioId)
       }
     }
@@ -6920,8 +6979,20 @@ async function finalizarCadastro(from, u) {
 
     if (!negocioId) {
       logDebug("Nenhum negócio encontrado, criando novo")
-      negocioId = await hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
-      u.negocioId = negocioId
+      const operacaoNegocio = await obterOuCriarNegocio({
+        messageId: u._currentMessageId || `finalizar:${numeroCaso}`,
+        identity: contatoId,
+        numeroCaso,
+        procurar: async () => {
+          if (ehNovoCasoCliente) return null
+          const resultado = await hsBuscarNegocioAbertoSeguroDoContato(contatoId)
+          if (resultado.status !== "found" && resultado.status !== "not_found") throw resultado.error || new Error("HUBSPOT_DEAL_LOOKUP_UNCERTAIN")
+          return resultado.negocio
+        },
+        criar: () => hsCriarNegocio(u, { stage: HS_STAGE.ANALISE })
+      })
+      negocioId = operacaoNegocio.dealId
+      definirNegocioId(u, negocioId)
     } else {
       logDebug("Negócio já existe, atualizando dealname:", negocioId)
       u.negocioId = negocioId
@@ -6930,7 +7001,7 @@ async function finalizarCadastro(from, u) {
       })
     }
     assertFinalizationOperation("hubspot_deal", negocioId)
-    u.negocioId = negocioId
+    definirNegocioId(u, negocioId)
     persistirUsersAgora({ propagarErro: true })
 
     if (u.negocioId && u.numeroCaso) {
@@ -6993,6 +7064,8 @@ async function finalizarCadastro(from, u) {
 
   Reflect.set(u, "stage", STAGES.CLIENTE)
   u._novoCasoDeCliente = false
+  if (ehNovoCasoCliente) u._novoCasoIntentConsumedId = u._novoCasoIntentMessageId
+  u._novoCasoIntentMessageId = null
   u._casoAnteriorCliente = null
   u.leadIncompletoCapturado = false
   agendarPersistenciaUsers()
@@ -7798,6 +7871,8 @@ async function abrirNovoCasoCliente(from, u) {
   if (!u._casoAnteriorCliente) u._casoAnteriorCliente = criarSnapshotCasoCliente(u)
   limparDadosCasoAtual(u)
   u._novoCasoDeCliente = true
+  // A intenção só nasce na confirmação explícita; o id é gravado antes da finalização.
+  if (!u._novoCasoIntentMessageId) u._novoCasoIntentMessageId = null
   u.atendimentoParaTerceiro = false
   u.nomeContato = null
   u.relacaoComAtendido = null
@@ -16241,9 +16316,15 @@ async function processarComLock(from, nomeWA, text, msgObj) {
   let u = users[from] || null
 
   try {
+    const messageId = sanitizarTextoEntrada(msgObj?.id)
+    const operationKey = messageId ? criarChaveOperacaoHubSpot({ messageId, operationType: "whatsapp_message", identity: from }) : null
+    const journal = operationKey ? obterOperacaoHubSpot(operationKey) : null
+    if (journal?.status === "completed") return { texto: "Mensagem já processada.", opcoes: [{ id: "m_inicio", title: "Menu" }] }
+    if (operationKey) registrarOperacaoHubSpot({ operationKey, messageId, operationType: "whatsapp_message", identity: from, status: "searching", incrementAttempt: true })
     const resolvido = await resolverUsuarioPorHubSpot(from, nomeWA)
     const contato = resolvido.contato
     u = resolvido.u
+    if (messageId) u._currentMessageId = messageId
     const { nome: nomeExibicao } = resolverNomeUnificado({ contato, u })
     const nomeWAEfetivo = nomeExibicao
     if (u.negocioId) {
@@ -16295,15 +16376,26 @@ async function processarComLock(from, nomeWA, text, msgObj) {
       return contextoResultado.resposta
     }
 
+    if (textoSanitizado === "novo_caso_confirmar") {
+      const intentId = sanitizarTextoEntrada(msgObj?.id)
+      if (!intentId) throw Object.assign(new Error("NEW_CASE_INTENT_MESSAGE_ID_REQUIRED"), { code: "NEW_CASE_INTENT_MESSAGE_ID_REQUIRED" })
+      if (u._novoCasoIntentConsumedId === intentId) {
+        return { texto: "Este novo caso já foi solicitado. Vou continuar o atendimento em andamento.", opcoes: [{ id: "m_inicio", title: "Menu do cliente" }] }
+      }
+      u._novoCasoIntentMessageId = intentId
+      persistirUsersAgora({ propagarErro: true })
+    }
     const resposta = await processarInterno(from, nomeWAEfetivo, textoSanitizado, msgObj, u)
     if (deveSincronizarEstadoHubSpot(estadoHubSpotAntes, u)) {
       await sincronizarNegocio(u)
     }
+    if (operationKey) registrarOperacaoHubSpot({ operationKey, messageId, operationType: "whatsapp_message", contactId: u.contatoId, dealId: u.negocioId, numeroCaso: u.numeroCaso, status: "completed" })
     return resposta
   } catch (err) {
     logContextoExecucao({ from, stage: u?.stage, flow: "processar", msg: textoSanitizado })
     logErro("processar", "Falha ao processar solicitacao", err)
     if (u) iniciarTimer(from)
+    if (msgObj?.id) registrarOperacaoHubSpot({ messageId: msgObj.id, operationType: "whatsapp_message", identity: from, contactId: u?.contatoId, dealId: u?.negocioId, numeroCaso: u?.numeroCaso, status: "reconciliation_required", error: err })
     return criarRespostaFallbackProcessamento()
   } finally {
     agendarPersistenciaUsers()
@@ -16443,7 +16535,12 @@ app.get("/webhook", (req, res) => {
 })
 async function processarMensagemWebhook(value, message) {
   const incomingMessageId = message.id || null
-  const from   = message.from
+  const from = telefoneCanonico(message.from)
+  if (!from) {
+    logErro("webhook", "Mensagem ignorada: telefone WhatsApp inválido")
+    return null
+  }
+  message = { ...message, from }
   if (users[from] && incomingMessageId) {
     digitando(from, incomingMessageId, "").catch(() => {})
   }

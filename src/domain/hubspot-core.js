@@ -2,6 +2,7 @@ const axios = require("axios")
 const { logErroHubSpot } = require("../utils/logging")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio, normalizarTelefoneHubSpot } = require("./phone-name")
+const { telefoneCanonico } = require("./identity")
 const { validateHubSpotProperties, isPlaceholderValue, normalizeCpfHubSpot } = require("./hubspot-contract")
 const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
 
@@ -95,10 +96,8 @@ function emailValidoHubSpot(email) {
 }
 
 function montarPropsContatoHubSpot(from, u = {}) {
-  const telefoneInformado = Object.hasOwn(u, "whatsappContato")
-    ? u.whatsappContato
-    : (Object.hasOwn(u, "telefone") ? u.telefone : from)
-  const telefone = normalizarTelefoneHubSpot(telefoneInformado)
+  // A presença de uma chave vazia jamais pode ocultar o telefone oficial do webhook.
+  const telefone = telefoneCanonico(u.whatsappContato, u.telefone, u._numero, from)
   const nomeContato =
     (u?.nome && String(u.nome).trim()) ||
     (u?.nomePerfilWhatsApp && String(u.nomePerfilWhatsApp).trim()) ||
@@ -180,6 +179,17 @@ async function hsBuscarPorPhone(phone) {
   }
 }
 
+async function hsBuscarContatoSeguro(phone) {
+  const phoneNormalizado = telefoneCanonico(phone)
+  if (!phoneNormalizado) return { status: "invalid", contato: null }
+  try {
+    const contato = await hsBuscarPorPhone(phoneNormalizado)
+    return contato ? { status: "found", contato } : { status: "not_found", contato: null }
+  } catch (error) {
+    return { status: error?.code === "ECONNABORTED" ? "timeout" : "error", contato: null, error }
+  }
+}
+
 async function hsBuscarPorCpf(cpf) {
   const canonico = normalizeCpfHubSpot(cpf)
   if (!canonico) return null
@@ -209,6 +219,7 @@ async function hsBuscarPorCpf(cpf) {
 
 async function hsCriarContato(from, u) {
   const props = montarPropsContatoHubSpot(from, u)
+  if (!telefoneCanonico(props.phone, props.mobilephone)) return null
   if (!Object.keys(props).length) return null
   try {
     const res = await axios.post("https://api.hubapi.com/crm/v3/objects/contacts", { properties: props }, { headers: HS() })
@@ -382,6 +393,7 @@ module.exports = {
   HS,
   hsBuscarPorCpf,
   hsBuscarPorPhone,
+  hsBuscarContatoSeguro,
   hsCriarContato,
   hsCriarNegocio,
   hsAssociar,

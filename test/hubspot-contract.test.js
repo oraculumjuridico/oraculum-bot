@@ -281,8 +281,9 @@ async function executar() {
     cidade: "Recife",
     uf: "PE"
   })
-  assert.equal(propsPlaceholder.phone, undefined)
-  assert.equal(propsPlaceholder.mobilephone, undefined)
+  // Valor inválido informado não pode mascarar o telefone oficial do webhook.
+  assert.equal(propsPlaceholder.phone, "5581999990000")
+  assert.equal(propsPlaceholder.mobilephone, "5581999990000")
   assert.equal(propsPlaceholder.email, undefined)
   assert.equal(propsPlaceholder.work_email, undefined)
   assert.equal(propsPlaceholder.cpf_do_cliente, undefined)
@@ -296,8 +297,8 @@ async function executar() {
     cidade: "Recife",
     uf: "PE"
   })
-  assert.equal(propsPreservaExistente.phone, undefined)
-  assert.equal(propsPreservaExistente.mobilephone, undefined)
+  assert.equal(propsPreservaExistente.phone, "5581999990000")
+  assert.equal(propsPreservaExistente.mobilephone, "5581999990000")
   assert.equal(propsPreservaExistente.cpf_do_cliente, undefined)
 
   assert.equal(normalizeCpfHubSpot("529.982.247-25"), "52998224725")
