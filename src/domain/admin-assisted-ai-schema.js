@@ -261,8 +261,20 @@ const CAMPOS_ADMIN_ASSISTIDO = {
     pergunta: "Qual é o problema principal?"
   },
   documentosMencionados: {
-    label: "Documentos",
-    pergunta: "Quais documentos foram mencionados?"
+    label: "Documentos mencionados",
+    pergunta: "Quais documentos foram mencionados no relato?"
+  },
+  documentosRecebidos: {
+    label: "Documentos recebidos",
+    pergunta: "Quais documentos foram recebidos por mídia/OCR?"
+  },
+  documentosRecomendados: {
+    label: "Documentos recomendados",
+    pergunta: "Quais documentos são recomendados para esta área?"
+  },
+  documentosPendentes: {
+    label: "Documentos pendentes",
+    pergunta: "Quais documentos ainda faltam?"
   },
   urgencia: {
     label: "Urgência",
@@ -406,6 +418,79 @@ function normalizarCampoAdminAssistido(campo, valor, status = "inferido") {
   return criarCampoAdminAssistido(valor, status)
 }
 
+// Proveniência documental
+const DOCUMENTOS_POR_AREA = {
+  INSS: ["RG", "CPF", "CNIS", "Carta de indeferimento", "Processo administrativo", "Laudos", "Receitas", "Exames"],
+  Trabalhista: ["CTPS", "Contrato", "Holerites", "Extrato FGTS", "TRCT", "Cartões de ponto", "Convenção coletiva"],
+  Família: ["Certidão de casamento", "Certidão de nascimento", "Comprovante de residência", "Comprovantes financeiros"],
+  Consumidor: ["Contrato", "Nota fiscal", "Conversas", "Comprovantes", "Prints"],
+  Bancário: ["Contrato bancário", "Extratos", "Comprovantes de desconto", "Prints do aplicativo", "Comunicações do banco"],
+  Penal: ["Boletim de ocorrência", "Inquérito", "Intimações", "Sentenças", "Procuração"],
+  Civil: ["Contratos", "Comprovantes", "Fotos", "Mensagens"],
+  Imobiliário: ["Matrícula", "Escritura", "Contrato", "IPTU", "Fotos"],
+  Outros: ["Documentos pessoais", "Comprovantes", "Contratos", "Mensagens"]
+}
+
+const DOCUMENTOS_GENERICOS_RELATO = new Set([
+  "alguns documentos",
+  "documentacao",
+  "documentos",
+  "levou documentos",
+  "trouxe documentos",
+  "documentos existentes",
+  "documentos existentes, ainda nao identificados"
+])
+
+function normalizarTextoGatilho(texto = "") {
+  return String(texto || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+}
+
+function obterDocumentosRecomendadosPorArea(area = "Outros") {
+  return [...(DOCUMENTOS_POR_AREA[area] || DOCUMENTOS_POR_AREA.Outros)]
+}
+
+function documentoEstaEmDocumentosMencionados(documento, mencionadosStr = "") {
+  const alvo = normalizarTextoGatilho(documento)
+  const itens = String(mencionadosStr || "")
+    .split(",")
+    .map(s => normalizarTextoGatilho(s))
+    .filter(Boolean)
+  return itens.some(item => item === alvo || item.includes(alvo) || alvo.includes(item))
+}
+
+function documentoPossuiEvidenciaNoRelato(documento, textoOriginal = "") {
+  const alvo = normalizarTextoGatilho(documento)
+  const t = normalizarTextoGatilho(textoOriginal)
+  if (!alvo || !t) return false
+  // Correspondência por palavra principal do documento
+  const palavrasAlvo = alvo.split(/\s+/).filter(Boolean)
+  if (palavrasAlvo.length === 0) return false
+  // Verificar se pelo menos uma palavra principal está no texto
+  const correspondencias = palavrasAlvo.filter(palavra => t.includes(palavra))
+  if (correspondencias.length === 0) return false
+  // Para documentos com 2+ palavras, exigir que a principal esteja presente
+  return correspondencias.length >= 1
+}
+
+function isDocumentoGenericoRelato(texto = "") {
+  return DOCUMENTOS_GENERICOS_RELATO.has(normalizarTextoGatilho(texto))
+}
+
+function calcularDocumentosPendentes(area = "Outros", documentosMencionados = "", documentosRecebidos = []) {
+  const recomendados = obterDocumentosRecomendadosPorArea(area)
+  const mencionados = String(documentosMencionados || "")
+  const recebidos = Array.isArray(documentosRecebidos) ? documentosRecebidos : []
+  return recomendados.filter(doc => {
+    if (documentoEstaEmDocumentosMencionados(doc, mencionados)) return false
+    if (recebidos.some(r => documentoEstaEmDocumentosMencionados(doc, String(r)))) return false
+    return true
+  })
+}
+
 function criarDadosVaziosAdminAssistido() {
   return Object.fromEntries(
     Object.keys(CAMPOS_ADMIN_ASSISTIDO).map(campo => [
@@ -468,5 +553,13 @@ module.exports = {
   PLACEHOLDERS_INVALIDOS,
   CPF_VERIFICATION,
   criarCampoCpfAdminAssistido,
-  normalizarCampoAdminAssistido
+  normalizarCampoAdminAssistido,
+  DOCUMENTOS_POR_AREA,
+  DOCUMENTOS_GENERICOS_RELATO,
+  normalizarTextoGatilho,
+  obterDocumentosRecomendadosPorArea,
+  documentoEstaEmDocumentosMencionados,
+  documentoPossuiEvidenciaNoRelato,
+  isDocumentoGenericoRelato,
+  calcularDocumentosPendentes
 }
