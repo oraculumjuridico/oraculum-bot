@@ -17,8 +17,12 @@ const WEBHOOK_INBOX_SCHEMA_VERSION = 1
 const WEBHOOK_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const ADMIN_ASSISTED_SESSION_SCHEMA_VERSION = 1
 const ADMIN_ASSISTED_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+const OUTBOUND_MESSAGES_SCHEMA_VERSION = 1
+const OUTBOUND_MESSAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
+const OUTBOUND_STATUS_ORDER = { accepted_by_meta: 0, sent: 1, delivered: 2, read: 3, failed: 4 }
 
 let webhookInbox = criarWebhookInboxVazia()
+let outboundMessages = { schemaVersion: OUTBOUND_MESSAGES_SCHEMA_VERSION, records: {} }
 
 let deps = {
   DATA_DIR: "",
@@ -56,6 +60,86 @@ function arquivoWebhookInbox() {
 
 function arquivoSessoesAdminAssistidas() {
   return path.join(deps.DATA_DIR, "admin-assisted-sessions.json")
+}
+function arquivoMensagensOutbound() { return path.join(deps.DATA_DIR, "outbound-messages.json") }
+function carregarMensagensOutbound() {
+  const file = arquivoMensagensOutbound()
+  if (!fs.existsSync(file)) {
+    outboundMessages = { schemaVersion: OUTBOUND_MESSAGES_SCHEMA_VERSION, records: {} }
+    return clonarJson(outboundMessages)
+  }
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"))
+  if (parsed?.schemaVersion !== OUTBOUND_MESSAGES_SCHEMA_VERSION) throw new Error("schema de mensagens outbound incompativel")
+  outboundMessages = { schemaVersion: OUTBOUND_MESSAGES_SCHEMA_VERSION, records: parsed.records || {} }
+  if (limparMensagensOutboundExpiradas(outboundMessages)) persistirMensagensOutbound()
+  return clonarJson(outboundMessages)
+}
+function persistirMensagensOutbound() {
+  limparMensagensOutboundExpiradas(outboundMessages)
+  gravarJsonAtomico(arquivoMensagensOutbound(), outboundMessages)
+}
+function registrarMensagemOutbound(record = {}) {
+  const id = sanitizarTextoEntrada(record.providerMessageId)
+  if (!id) return null
+  const now = new Date().toISOString()
+  outboundMessages.records[id] = {
+    providerMessageId: id, numeroCaso: sanitizarTextoEntrada(record.numeroCaso) || null,
+    contactId: sanitizarTextoEntrada(record.contactId) || null, dealId: sanitizarTextoEntrada(record.dealId) || null,
+    action: sanitizarTextoEntrada(record.action) || null, channel: sanitizarTextoEntrada(record.channel) || null,
+    destinationMasked: sanitizarTextoEntrada(record.destinationMasked) || null,
+    status: "accepted_by_meta", acceptedAt: now, statusAt: now, failureCode: null, failureDescription: null,
+    statusHistory: [{ status: "accepted_by_meta", at: now }],
+    expiresAt: new Date(Date.now() + OUTBOUND_MESSAGE_RETENTION_MS).toISOString()
+  }
+  persistirMensagensOutbound()
+  return clonarJson(outboundMessages.records[id])
+}
+function atualizarStatusMensagemOutbound(providerMessageId, status, details = {}) {
+  const id = sanitizarTextoEntrada(providerMessageId)
+  const record = outboundMessages.records[id]
+  if (!record || !["sent", "delivered", "read", "failed"].includes(status)) return null
+  const at = details.timestamp || new Date().toISOString()
+  const historico = Array.isArray(record.statusHistory) ? record.statusHistory : [{ status: record.status || "accepted_by_meta", at: record.statusAt || record.acceptedAt || at }]
+  const jaRegistrado = historico.some(event => event?.status === status)
+  const statusAtual = record.status || "accepted_by_meta"
+  const podeAvancar = OUTBOUND_STATUS_ORDER[status] > (OUTBOUND_STATUS_ORDER[statusAtual] ?? 0)
+  let alterado = false
+  if (!jaRegistrado) {
+    historico.push({ status, at })
+    alterado = true
+  }
+  if (podeAvancar) {
+    record.status = status
+    record.statusAt = at
+    alterado = true
+  }
+  if (status === "failed") {
+    const failureCode = sanitizarTextoEntrada(details.failureCode) || null
+    const failureDescription = sanitizarTextoEntrada(details.failureDescription).replace(/[\r\n]/g, " ").slice(0, 300) || null
+    if (record.failureCode !== failureCode || record.failureDescription !== failureDescription) {
+      record.failureCode = failureCode
+      record.failureDescription = failureDescription
+      alterado = true
+    }
+  }
+  record.statusHistory = historico
+  if (alterado) persistirMensagensOutbound()
+  return clonarJson(record)
+}
+function limparMensagensOutboundExpiradas(store, agora = Date.now()) {
+  let alterado = false
+  for (const [id, record] of Object.entries(store.records || {})) {
+    const expiresAt = Date.parse(record?.expiresAt || "")
+    if (!Number.isFinite(expiresAt)) {
+      const acceptedAt = Date.parse(record?.acceptedAt || "")
+      record.expiresAt = new Date((Number.isFinite(acceptedAt) ? acceptedAt : agora) + OUTBOUND_MESSAGE_RETENTION_MS).toISOString()
+      alterado = true
+    } else if (expiresAt <= agora) {
+      delete store.records[id]
+      alterado = true
+    }
+  }
+  return alterado
 }
 
 function erroArquivoTemporariamenteIndisponivel(error) {
@@ -621,6 +705,9 @@ module.exports = {
   configurarStatePersistence,
   criarChaveWebhookDuravel,
   carregarWebhookInbox,
+  carregarMensagensOutbound,
+  registrarMensagemOutbound,
+  atualizarStatusMensagemOutbound,
   registrarMensagensWebhook,
   listarWebhookPendentes,
   marcarWebhookProcessing,

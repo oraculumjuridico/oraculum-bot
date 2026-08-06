@@ -345,7 +345,10 @@ const {
   marcarWebhookProcessing,
   marcarWebhookCompleted,
   marcarWebhookError,
-  obterEstadoWebhookInbox
+  obterEstadoWebhookInbox,
+  carregarMensagensOutbound,
+  registrarMensagemOutbound,
+  atualizarStatusMensagemOutbound
 } = require("./src/domain/state-persistence")
 const api = { persistirUsersAgora }
 const {
@@ -5583,6 +5586,17 @@ async function pedirDocsCasoAdmin(from) {
     usuario: u
   })
   const enviadoCliente = envioDocumentos.sent
+  if (enviadoCliente && envioDocumentos.providerMessageId) {
+    const outbound = registrarMensagemOutbound({
+      providerMessageId: envioDocumentos.providerMessageId,
+      numeroCaso: u.numeroCaso, contactId: u.contatoId, dealId: u.negocioId,
+      action: "pedir_documentos", channel: envioDocumentos.channel,
+      destinationMasked: envioDocumentos.destinationMasked
+    })
+    logInfo({ event: "outbound.accepted", status: "accepted_by_meta", providerMessageId: outbound.providerMessageId,
+      numeroCaso: outbound.numeroCaso, contactId: outbound.contactId, dealId: outbound.dealId,
+      action: outbound.action, channel: outbound.channel, phoneMasked: outbound.destinationMasked })
+  }
 
   let notaContato = false
   let notaNegocio = false
@@ -5596,7 +5610,7 @@ async function pedirDocsCasoAdmin(from) {
     texto: [
       "*Pedido de documentos*",
       "",
-      `📨 Cliente avisado: ${enviadoCliente ? "✅ ok" : "❌ falhou"}`,
+      `📨 Solicitação aceita pela Meta: ${enviadoCliente ? "✅" : "❌ falhou"}`,
       `👤 Nota contato: ${notaContato ? "✅ ok" : "⚠️ nao registrada"}`,
       `📄 Nota negocio: ${notaNegocio ? "✅ ok" : "⚠️ nao registrada"}`,
       "",
@@ -16544,6 +16558,26 @@ app.post("/webhook", validarAssinaturaMeta, async (req, res) => {
     for (const entry of req.body?.entry || []) {
       for (const change of entry?.changes || []) {
         const value = change?.value
+        for (const status of value?.statuses || []) {
+          const providerMessageId = sanitizarTextoEntrada(status?.id)
+          const normalizedStatus = sanitizarTextoEntrada(status?.status).toLowerCase()
+          if (!["sent", "delivered", "read", "failed"].includes(normalizedStatus)) {
+            logInfo({ event: "outbound.status_ignored", status: normalizedStatus || "unknown", providerMessageId })
+            continue
+          }
+          const error = Array.isArray(status?.errors) ? status.errors[0] : null
+          const timestampMs = Number(status?.timestamp) * 1000
+          const outbound = atualizarStatusMensagemOutbound(providerMessageId, normalizedStatus, {
+            timestamp: Number.isFinite(timestampMs) && timestampMs > 0 ? new Date(timestampMs).toISOString() : null,
+            failureCode: error?.code,
+            failureDescription: error?.title || error?.message
+          })
+          logInfo({ event: "outbound.status", status: outbound?.status || normalizedStatus || "unknown",
+            providerMessageId, numeroCaso: outbound?.numeroCaso, contactId: outbound?.contactId,
+            dealId: outbound?.dealId, action: outbound?.action, channel: outbound?.channel,
+            phoneMasked: outbound?.destinationMasked, failureCode: outbound?.failureCode,
+            failureDescription: outbound?.failureDescription })
+        }
         for (const message of value?.messages || []) {
           const from = message.from
           const text = sanitizarTextoEntrada(message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "")
@@ -17324,6 +17358,7 @@ async function iniciarServidor() {
       })
     }
     carregarWebhookInbox()
+    carregarMensagensOutbound()
     carregarSessoesAdminAssistidasPersistidas(sessoesAdminWhatsApp)
     restaurarTimersPersistidos()
     await validarMetaWabaNoBoot()

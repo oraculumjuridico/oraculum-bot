@@ -1,4 +1,4 @@
-const { enviar, enviarTemplateWhatsApp } = require("./whatsapp-transport")
+const { enviar, enviarComResultado, enviarTemplateWhatsApp, enviarTemplateComResultado } = require("./whatsapp-transport")
 const { META_TEMPLATES } = require("./meta-templates")
 const { normalizarContextoConversa } = require("./conversation-context")
 
@@ -99,21 +99,18 @@ async function atualizacaoCasoSegura(to, {
 } = {}, options = {}) {
   const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
   if (conversaDentroJanela24h(ultimaMsg, agora)) {
-    return {
-      sent: Boolean(await enviar(to, texto)),
-      channel: "freeform"
-    }
+    const result = await enviarComResultado(to, texto)
+    return { ...result, sent: result.accepted, channel: "freeform" }
   }
   const resumo = String(resumoTemplate || texto || "").trim()
   if (!resumo) return { sent: false, channel: "template", reason: "template_param_missing" }
-  const sent = await casoAtualizacao(to, [resumo], {
-    ...options,
-    usuario
-  })
+  const template = META_TEMPLATES.casoAtualizacao
+  const result = await enviarTemplateComResultado(to, template.nome, [resumo], template.idioma, opcoesTemplate(template))
   return {
-    sent: Boolean(sent),
+    ...result,
+    sent: result.accepted,
     channel: "template",
-    reason: sent ? null : "template_send_failed"
+    reason: result.accepted ? null : "template_send_failed"
   }
 }
 
