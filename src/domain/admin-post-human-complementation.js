@@ -93,7 +93,10 @@ async function handleAtendimentoRealizadoConfirmation({ from, interactionId, usu
       negocioId: context.negocioId, numeroCaso: context.numeroCaso, contatoId: usuario.contatoId
     })
     if (cycle.alreadyExisted) return { handled: true, existing: true, cycle, text: "Atendimento já havia sido registrado para este ciclo." }
-    await processCycle?.(cycle, usuario)
+    const processed = await processCycle?.(cycle, usuario)
+    if (processed?.skipped) {
+      return { handled: true, existing: false, cycle, skipped: true, text: "Nova mensagem do cliente surgiu durante a análise. O envio foi cancelado e o caso precisa ser revisado." }
+    }
     return { handled: true, existing: false, cycle, text: "Atendimento registrado. A análise do caso foi iniciada." }
   } catch {
     return { handled: true, failed: true, text: "Não foi possível registrar o atendimento com segurança. Nenhuma ação será repetida automaticamente." }

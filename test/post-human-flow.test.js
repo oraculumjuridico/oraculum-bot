@@ -137,16 +137,52 @@ async function makeRepo() {
     const repo = await makeRepo()
     const cycle = await repo.createCycle({ negocioId: "DL", numeroCaso: "C" })
     let transport = ""
+    const fixedLatest = Date.now() - 60000
     const latestResult = await processPostHumanCycle({
       cycle, repository: repo,
       usuario: { negocioId: "DL", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: 1, listaDocumental: ["RG"], docsEntregues: ["RG"] },
       deps: {
-        getLatestCustomerMessage: async () => Date.now(),
+        getLatestCustomerMessage: async () => fixedLatest,
         sendFree: async () => (transport = "free", { id: "latest" }),
         sendTemplate: async () => (transport = "template", { id: "wrong" })
       }
     })
     assert.equal(transport, "free"); assert.equal(latestResult.tipoEnvio, "livre")
+  })
+
+  await test("nova atividade do cliente durante a analise aborta o envio e preserva o ciclo em ready_to_send", async () => {
+    const repo = await makeRepo()
+    const cycle = await repo.createCycle({ negocioId: "DL-NEW", numeroCaso: "C" })
+    const calls = []
+    const startUltimaMsg = 1000
+    const latest = 2000
+    let getLatestCallCount = 0
+    const result = await processPostHumanCycle({
+      cycle, repository: repo,
+      usuario: { negocioId: "DL-NEW", numeroCaso: "C", telefoneNormalizado: "5511", listaDocumental: ["RG"], docsEntregues: ["RG"] },
+      deps: {
+        getLatestCustomerMessage: async () => (getLatestCallCount++ === 0 ? startUltimaMsg : latest),
+        sendFree: async () => (calls.push("free"), { id: "m1" }),
+        sendTemplate: async () => (calls.push("template"), { id: "m2" }),
+        templateConfig: {
+          nome: "caso_atualizacao_v3", idioma: "pt_BR", contratoVerificado: true,
+          headerImageUrl: "https://example.invalid/approved-header.png",
+          parametrosEsperados: 1,
+          componentes: [
+            { tipo: "HEADER", formato: "IMAGE" },
+            { tipo: "BODY", parametros: [{ tipo: "text", ordem: 1 }] },
+            { tipo: "FOOTER" }
+          ]
+        },
+        buildTemplateParams: solicitation => [solicitation.texto]
+      }
+    })
+    assert.equal(result.skipped, true)
+    assert.equal(result.reason, "nova_atividade_cliente")
+    assert.equal(result.cycle.status, "ready_to_send")
+    assert.equal(calls.length, 0)
+    const refreshed = await repo.getCycle(cycle.cycleId)
+    assert.equal(refreshed.status, "ready_to_send")
   })
 
   await test("ligacao telefonica e evento agenda nao atualizam janela", async () => {
