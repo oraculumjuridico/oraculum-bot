@@ -41,6 +41,9 @@ function logInfo(evento = {}) {
     const durationMs = Number(evento.durationMs)
     if (Number.isFinite(durationMs)) payload.durationMs = durationMs
   }
+  for (const key of ["providerMessageId", "action", "channel", "failureCode", "failureDescription"]) {
+    if (evento[key] !== undefined) payload[key] = sanitizarCampoLog(evento[key])
+  }
 
   console.log(JSON.stringify(payload))
   return payload

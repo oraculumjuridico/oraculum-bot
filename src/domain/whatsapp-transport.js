@@ -109,13 +109,17 @@ function normalizarTituloOpcaoWhatsApp(title, maxChars) {
   return Array.from(texto).slice(0, maxChars).join("")
 }
 
-async function enviar(to, texto, opcoes = null, comDelay = true, messageId = null, semFallback131009 = false) {
+function resultadoEnvio({ accepted = false, providerMessageId = null, httpStatus = null, channel = "freeform", destinationMasked = "", immediateError = null } = {}) {
+  return { accepted, providerMessageId, httpStatus, channel, destinationMasked, immediateError }
+}
+
+async function enviarComResultado(to, texto, opcoes = null, comDelay = true, messageId = null, semFallback131009 = false) {
   try {
     // Validar destinatário
     const validacaoDestino = validarDestinatarioWhatsApp(to)
     if (!validacaoDestino.valido) {
       logErro("whatsapp", `destinatario_invalido: ${validacaoDestino.motivo} to=${mascararTelefoneLog(to)}`)
-      return false
+      return resultadoEnvio({ destinationMasked: mascararTelefoneLog(to), immediateError: validacaoDestino.motivo })
     }
     const numeroValidado = validacaoDestino.numero
 
@@ -123,7 +127,7 @@ async function enviar(to, texto, opcoes = null, comDelay = true, messageId = nul
     const validacaoTexto = validarTextoWhatsApp(texto)
     if (!validacaoTexto.valido) {
       logErro("whatsapp", `texto_invalido: ${validacaoTexto.motivo} to=${mascararTelefoneLog(to)}`)
-      return false
+      return resultadoEnvio({ destinationMasked: mascararTelefoneLog(to), immediateError: validacaoTexto.motivo })
     }
     const textoValidado = validacaoTexto.texto
 
@@ -157,7 +161,7 @@ async function enviar(to, texto, opcoes = null, comDelay = true, messageId = nul
 
     const messageIdResposta = resp.data?.messages?.[0]?.id
     logDebug(`[WHATSAPP_ENVIO] sucesso to=${mascararTelefoneLog(numeroValidado)} message_id=${messageIdResposta} tipo=${body.type}`)
-    return true
+    return resultadoEnvio({ accepted: true, providerMessageId: messageIdResposta || null, httpStatus: resp.status, destinationMasked: mascararTelefoneLog(numeroValidado) })
   } catch (e) {
     const codigoErro = e.response?.data?.error?.code
     const mensagemErro = e.response?.data?.error?.message || e.message
@@ -178,23 +182,27 @@ async function enviar(to, texto, opcoes = null, comDelay = true, messageId = nul
             type: "text",
             text: { body: validacaoTexto.texto + "\n\nNao consegui carregar o menu completo agora. Tente novamente em alguns segundos." }
           }
-          await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, bodyTexto, {
+          const fallbackResp = await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, bodyTexto, {
             headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
           })
           logDebug("[WHATSAPP_FALLBACK] Fallback texto enviado com sucesso")
-          return true
+          return resultadoEnvio({ accepted: true, providerMessageId: fallbackResp.data?.messages?.[0]?.id || null, httpStatus: fallbackResp.status, destinationMasked: mascararTelefoneLog(validacaoDestino.numero) })
         }
       } catch (fallbackError) {
         logErro("whatsapp", `fallback_falhou: ${fallbackError.message}`)
       }
     }
 
-    return false
+    return resultadoEnvio({ httpStatus: statusHttp || null, destinationMasked: mascararTelefoneLog(to), immediateError: String(codigoErro || statusHttp || "send_failed") })
   }
 }
 
-async function enviarTemplateWhatsApp(to, templateName, params = [], languageCode = WHATSAPP_TEMPLATE_LANG, options = {}) {
-  if (!templateName || !to) return false
+async function enviar(to, texto, opcoes = null, comDelay = true, messageId = null, semFallback131009 = false) {
+  return (await enviarComResultado(to, texto, opcoes, comDelay, messageId, semFallback131009)).accepted
+}
+
+async function enviarTemplateComResultado(to, templateName, params = [], languageCode = WHATSAPP_TEMPLATE_LANG, options = {}) {
+  if (!templateName || !to) return resultadoEnvio({ channel: "template", destinationMasked: mascararTelefoneLog(to), immediateError: "template_or_destination_missing" })
   const components = []
   if (options.headerImageUrl) {
     components.push({
@@ -227,7 +235,7 @@ async function enviarTemplateWhatsApp(to, templateName, params = [], languageCod
   logDebug("[WHATSAPP_TEMPLATE_DIAG] URL:", url)
   logDebug("[WHATSAPP_TEMPLATE_DIAG] Authorization:", authorizationMascarado)
   logDebug("[WHATSAPP_TEMPLATE_DIAG] Payload:")
-  logDebug(JSON.stringify(payload, null, 2))
+  logDebug(JSON.stringify({ ...payload, to: mascararTelefoneLog(to) }, null, 2))
 
   try {
     const resp = await axios.post(url, payload, {
@@ -238,7 +246,7 @@ async function enviarTemplateWhatsApp(to, templateName, params = [], languageCod
     logDebug("[WHATSAPP_TEMPLATE_DIAG] Resposta Meta:")
     logDebug(JSON.stringify(resp.data, null, 2))
     console.log(`[WHATSAPP_TEMPLATE] template=${templateName} status=sucesso http=${resp.status} message_id=${messageId}`)
-    return true
+    return resultadoEnvio({ accepted: true, providerMessageId: messageId === "-" ? null : messageId, httpStatus: resp.status, channel: "template", destinationMasked: mascararTelefoneLog(to) })
   } catch (e) {
     const status = e.response?.status || "sem_status"
     const messageId = e.response?.data?.messages?.[0]?.id || "-"
@@ -246,8 +254,12 @@ async function enviarTemplateWhatsApp(to, templateName, params = [], languageCod
     logDebug("[WHATSAPP_TEMPLATE_DIAG] Resposta Meta:")
     logDebug(JSON.stringify(e.response?.data || { message: e.message }, null, 2))
     logErro("whatsapp", `template=${templateName} status=erro http=${status} message_id=${messageId} to=${mascararTelefoneLog(to)}`)
-    return false
+    return resultadoEnvio({ httpStatus: Number.isFinite(Number(status)) ? Number(status) : null, channel: "template", destinationMasked: mascararTelefoneLog(to), immediateError: String(e.response?.data?.error?.code || status || "template_send_failed") })
   }
+}
+
+async function enviarTemplateWhatsApp(to, templateName, params = [], languageCode = WHATSAPP_TEMPLATE_LANG, options = {}) {
+  return (await enviarTemplateComResultado(to, templateName, params, languageCode, options)).accepted
 }
 
 async function enviarAudio(to, audioUrl) {
@@ -339,7 +351,9 @@ module.exports = {
   validarTextoWhatsApp,
   validarOpcoesWhatsApp,
   enviar,
+  enviarComResultado,
   enviarTemplateWhatsApp,
+  enviarTemplateComResultado,
   enviarAudio,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados
