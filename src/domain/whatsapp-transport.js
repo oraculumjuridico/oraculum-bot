@@ -279,16 +279,17 @@ async function enviarAudio(to, audioUrl) {
   }
 }
 
-async function enviarImagemWhatsApp(to, imageUrl, caption = "", opcoes = null) {
+async function enviarImagemComResultado(to, imageUrl, caption = "", opcoes = null) {
+  const destinationMasked = mascararTelefoneLog(to)
   if (!imageUrl) {
     logDebug("[IMAGEM] URL vazia — abortando")
-    return false
+    return resultadoEnvio({ channel: "freeform_image", destinationMasked, immediateError: "image_url_missing" })
   }
 
   const validation = await validatePublicImageUrl(imageUrl)
   if (!validation.ok) {
     logErro("whatsapp", `imagem indisponivel: ${validation.code}`)
-    return false
+    return resultadoEnvio({ channel: "freeform_image", destinationMasked, immediateError: validation.code || "image_url_invalid" })
   }
 
   // WhatsApp limita body/caption a 1024 chars em mensagens interativas
@@ -330,18 +331,24 @@ async function enviarImagemWhatsApp(to, imageUrl, caption = "", opcoes = null) {
       body,
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     )
-    logDebug(`[IMAGEM] ? Enviada | message_id: ${resp.data?.messages?.[0]?.id}`)
+    const providerMessageId = resp.data?.messages?.[0]?.id || null
+    logDebug(`[IMAGEM] ? Enviada | message_id: ${providerMessageId}`)
     if (Array.isArray(opcoes) && opcoes.length > 3) {
       await new Promise(r => setTimeout(r, 500))
       await enviar(to, "Escolha uma opção abaixo para continuar:", opcoes, false)
     }
-    return true
+    return resultadoEnvio({ accepted: true, providerMessageId, httpStatus: resp.status, channel: "freeform_image", destinationMasked })
   } catch (e) {
-    const detalhe = JSON.stringify(e.response?.data || e.message)
-    logDebug(`[IMAGEM] ? ERRO: ${detalhe}`)
-    logErro("whatsapp", `imagem>${to}: ${detalhe}`)
-    return false
+    const httpStatus = e.response?.status || null
+    const errorCode = String(e.response?.data?.error?.code || httpStatus || "image_send_failed")
+    logDebug(`[IMAGEM] envio falhou to=${destinationMasked} http=${httpStatus || "-"} codigo=${errorCode}`)
+    logErro("whatsapp", `imagem_envio_falhou to=${destinationMasked} http=${httpStatus || "-"} codigo=${errorCode}`)
+    return resultadoEnvio({ channel: "freeform_image", destinationMasked, httpStatus, immediateError: errorCode })
   }
+}
+
+async function enviarImagemWhatsApp(to, imageUrl, caption = "", opcoes = null) {
+  return (await enviarImagemComResultado(to, imageUrl, caption, opcoes)).accepted
 }
 
 module.exports = {
@@ -355,6 +362,7 @@ module.exports = {
   enviarTemplateWhatsApp,
   enviarTemplateComResultado,
   enviarAudio,
+  enviarImagemComResultado,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados
 }

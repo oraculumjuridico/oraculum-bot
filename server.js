@@ -5710,7 +5710,7 @@ async function pedirDocsCasoAdmin(from) {
     })
     logInfo({ event: "outbound.accepted", status: "accepted_by_meta", providerMessageId: outbound.providerMessageId,
       numeroCaso: outbound.numeroCaso, contactId: outbound.contactId, dealId: outbound.dealId,
-      action: outbound.action, channel: outbound.channel, phoneMasked: outbound.destinationMasked })
+      action: outbound.action, channel: outbound.channel, fallback: Boolean(envioDocumentos.fallback), phoneMasked: outbound.destinationMasked })
   }
 
   let notaContato = false

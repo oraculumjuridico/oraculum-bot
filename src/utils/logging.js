@@ -41,7 +41,7 @@ function logInfo(evento = {}) {
     const durationMs = Number(evento.durationMs)
     if (Number.isFinite(durationMs)) payload.durationMs = durationMs
   }
-  for (const key of ["providerMessageId", "action", "channel", "failureCode", "failureDescription", "queue", "stages", "receivedCount", "hubspotTotal", "after", "filteredCount", "errorCode"]) {
+  for (const key of ["providerMessageId", "action", "channel", "fallback", "failureCode", "failureDescription", "queue", "stages", "receivedCount", "hubspotTotal", "after", "filteredCount", "errorCode"]) {
     if (evento[key] !== undefined) payload[key] = sanitizarCampoLog(evento[key])
   }
 
