@@ -3,6 +3,8 @@
 const {
   CAMPOS_ADMIN_ASSISTIDO,
   camposFaltantesAdminAssistido,
+  campoAdminAssistidoPreenchido,
+  normalizarCampoAdminAssistido,
   normalizarAreaJuridicaAdminAssistido
 } = require("./admin-assisted-ai-schema")
 
@@ -22,8 +24,23 @@ const USER_FIELDS = Object.freeze({
   beneficio: ["beneficio"], motivo: ["motivo"], situacao: ["situacao"], nb: ["nb"]
 })
 
+const CAMPOS_CADASTRAIS = new Set([
+  "nomeCompleto", "cpf", "dataNascimento", "telefone", "email", "cidade", "uf"
+])
+
+const SITUACOES_INSS_COM_NB = new Set([
+  "beneficio concedido",
+  "beneficio cessado",
+  "beneficio cortado",
+  "beneficio suspenso",
+  "beneficio revisado"
+])
+
 function present(value) { return value !== null && value !== undefined && String(value).trim() !== "" }
 function normalize(value) { return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR") }
+function normalizeIndicator(value) {
+  return normalize(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+}
 function properties(source) { return source?.properties && typeof source.properties === "object" ? source.properties : source }
 function read(source, aliases) {
   const object = properties(source) || {}
@@ -32,8 +49,32 @@ function read(source, aliases) {
 }
 function sourceLoaded(source) { return Boolean(source && source.loaded !== false) }
 
+function respostaValida(campo, resposta) {
+  if (!present(resposta?.valor)) return false
+  // Respostas legadas sem status permanecem compatíveis como "inferido".
+  const normalizado = normalizarCampoAdminAssistido(campo, resposta.valor, resposta?.status || "inferido")
+  return ["confirmado", "inferido"].includes(normalizado.status) &&
+    campoAdminAssistidoPreenchido(normalizado, campo)
+}
+
+function recebeBeneficioConfirmado(valor) {
+  if (valor === true) return true
+  return ["sim", "true", "1"].includes(normalizeIndicator(valor))
+}
+
+function indicadorNbObrigatorio(usuario = {}, data = {}) {
+  if (recebeBeneficioConfirmado(usuario.recebeBeneficio) ||
+      recebeBeneficioConfirmado(usuario.recebe_beneficio)) return true
+  return SITUACOES_INSS_COM_NB.has(normalizeIndicator(data.situacao?.valor))
+}
+
+function camposJuridicosInssCondicionais(usuario, data, area) {
+  if (area !== "INSS" || !indicadorNbObrigatorio(usuario, data)) return []
+  return campoAdminAssistidoPreenchido(data.nb, "nb") ? [] : ["nb"]
+}
+
 function resolveComplementaryContext({
-  usuario = {}, contact, deal, answered = {}, previousPending = [], documents = {},
+  usuario = {}, contact, deal, answered = {}, documents = {},
   expectedContactId, expectedDealId
 } = {}) {
   const identityInvalid =
@@ -43,8 +84,9 @@ function resolveComplementaryContext({
   const divergences = []
   const data = {}
   for (const field of Object.keys(CAMPOS_ADMIN_ASSISTIDO)) {
+    const resposta = respostaValida(field, answered[field]) ? answered[field].valor : null
     const candidates = [
-      ["resposta", answered[field]?.valor],
+      ["resposta", resposta],
       ["usuario", read(usuario, USER_FIELDS[field])],
       ["contato", sourceLoaded(contact) ? read(contact, CONTACT_FIELDS[field]) : null],
       ["negocio", sourceLoaded(deal) ? read(deal, DEAL_FIELDS[field]) : null]
@@ -58,12 +100,23 @@ function resolveComplementaryContext({
   }
   const area = normalizarAreaJuridicaAdminAssistido(data.areaJuridica?.valor || "Outros")
   const missing = camposFaltantesAdminAssistido(data, area)
-  const alreadyAnswered = new Set(Object.entries(answered).filter(([, item]) => present(item?.valor)).map(([field]) => field))
-  const camposPendentes = [...new Set([...previousPending, ...missing])]
-    .filter(field => !alreadyAnswered.has(field))
+  const responded = new Set(Object.entries(answered)
+    .filter(([field, item]) => respostaValida(field, item))
+    .map(([field]) => field))
+  const obrigatoriosAtuais = missing.filter(field => !responded.has(field))
+  const juridicosCondicionais = camposJuridicosInssCondicionais(usuario, data, area)
+    .filter(field => !responded.has(field))
+  const camposCadastraisPendentes = obrigatoriosAtuais.filter(field => CAMPOS_CADASTRAIS.has(field))
+  const camposJuridicosPendentes = [...new Set([
+    ...obrigatoriosAtuais.filter(field => !CAMPOS_CADASTRAIS.has(field)),
+    ...juridicosCondicionais
+  ])]
+  const camposPendentes = [...camposCadastraisPendentes, ...camposJuridicosPendentes]
+  const revisaoHumana = identityInvalid || divergences.length > 0
   return {
-    data, camposPendentes, documents, contactLoaded: sourceLoaded(contact), dealLoaded: sourceLoaded(deal),
-    divergences, humanReviewRequired: identityInvalid || divergences.length > 0,
+    data, camposCadastraisPendentes, camposJuridicosPendentes, camposPendentes,
+    documents, contactLoaded: sourceLoaded(contact), dealLoaded: sourceLoaded(deal),
+    divergences, divergencias: divergences, revisaoHumana, humanReviewRequired: revisaoHumana,
     reviewReason: identityInvalid ? "contexto_contato_negocio_invalido" : divergences.length ? "dados_divergentes" : null
   }
 }
@@ -73,5 +126,6 @@ function resolveComplementaryFields(input) {
 }
 
 module.exports = {
-  CONTACT_FIELDS, DEAL_FIELDS, resolveComplementaryContext, resolveComplementaryFields
+  CONTACT_FIELDS, DEAL_FIELDS, respostaValida, recebeBeneficioConfirmado,
+  indicadorNbObrigatorio, resolveComplementaryContext, resolveComplementaryFields
 }
