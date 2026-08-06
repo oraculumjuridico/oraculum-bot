@@ -6,7 +6,10 @@ const { sanitizeError } = require("./post-human-safe-log")
 
 async function enviarSolicitacaoAdaptativa({ telefone, solicitacao, usuario, cycle, repository, deps, now = Date.now }) {
   const latest = await Promise.resolve(deps.getLatestCustomerMessage?.(telefone) ?? usuario.ultimaMsg)
-  if (deps.hasNewRelevantActivity && await deps.hasNewRelevantActivity(cycle, latest)) return { skipped: true, reason: "nova_atividade_cliente" }
+  const startUltimaMsg = Number(deps.startUltimaMsg ?? 0)
+  if (startUltimaMsg > 0 && latest > startUltimaMsg) {
+    return { skipped: true, reason: "nova_atividade_cliente" }
+  }
   const tipoEnvio = conversaDentroJanela24h(latest, now()) ? "livre" : "template"
   const sendAttemptId = crypto.randomUUID()
   await repository.updateStatus(cycle.cycleId, "sending", { tipoEnvio, sendAttemptId, resultadoEnvio: "pendente" })
