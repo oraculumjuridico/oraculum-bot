@@ -4266,6 +4266,7 @@ const ADMIN_IDS = {
   casosNovos: "adm_casos_novos",
   casosAnalise: "adm_casos_analise",
   casosDocs: "adm_casos_docs",
+  casosAtivos: "adm_casos_ativos",
   alertasCriticos: "adm_alertas_criticos",
   alertasParados: "adm_alertas_parados",
   alertasDocs: "adm_alertas_docs",
@@ -4404,7 +4405,7 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
 
 async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = null) {
   const valores = stages.filter(Boolean)
-  if (!valores.length) return { deals: [], total: 0, after: null }
+  if (!valores.length) return { ok: true, deals: [], total: 0, after: null, errorCode: null, errorMessage: null }
   try {
     return await executarComRetryHubSpot(
       async () => {
@@ -4427,9 +4428,12 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
         )
         const deals = mapearNegociosHubSpotAdmin(res.data)
         return {
+          ok: true,
           deals,
           total: res.data?.total || 0,
-          after: res.data?.paging?.next?.after || null
+          after: res.data?.paging?.next?.after || null,
+          errorCode: null,
+          errorMessage: null
         }
       },
       {
@@ -4443,7 +4447,62 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
     )
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarNegociosPorStages" })
-    return { deals: [], total: 0, after: null }
+    return {
+      ok: false,
+      deals: [], total: 0, after: null,
+      errorCode: sanitizarTextoEntrada(e?.response?.data?.category || e?.response?.data?.errorType || e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED"),
+      errorMessage: sanitizarTextoEntrada(mascararErroHubSpot(e)).replace(/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?9?\d{4}[\s.-]?\d{4}\b/g, "[PHONE REDACTED]").slice(0, 300)
+    }
+  }
+}
+
+async function hsAdminBuscarTodosNegociosPorStages(stages = [], queue = "ativos") {
+  const inicio = Date.now()
+  const deals = []
+  const dealIds = new Set()
+  const cursors = new Set()
+  let after = null
+  let total = 0
+  do {
+    const resultado = await hsAdminBuscarNegociosPorStages(stages, 100, after)
+    if (!resultado.ok) {
+      logInfo({ event: "admin.cases.query", status: "error", queue, stages: stages.join(","), errorCode: resultado.errorCode, durationMs: Date.now() - inicio })
+      return { ...resultado, deals: [] }
+    }
+    for (const deal of resultado.deals) {
+      if (deal?.id && !dealIds.has(String(deal.id))) {
+        dealIds.add(String(deal.id))
+        deals.push(deal)
+      }
+    }
+    total = resultado.total
+    after = resultado.after
+    if (after && cursors.has(String(after))) {
+      logInfo({ event: "admin.cases.query", status: "error", queue, stages: stages.join(","), errorCode: "PAGING_CURSOR_REPEATED", durationMs: Date.now() - inicio })
+      return { ok: false, deals: [], total, after: null, errorCode: "PAGING_CURSOR_REPEATED", errorMessage: "cursor de paginação repetido" }
+    }
+    if (after) cursors.add(String(after))
+    logInfo({ event: "admin.cases.query", status: "page", queue, stages: stages.join(","), receivedCount: resultado.deals.length, hubspotTotal: total, after: after || "", durationMs: Date.now() - inicio })
+  } while (after)
+  logInfo({ event: "admin.cases.query", status: deals.length ? "success" : "empty", queue, stages: stages.join(","), receivedCount: deals.length, hubspotTotal: total, durationMs: Date.now() - inicio })
+  return { ok: true, deals, total, after: null, errorCode: null, errorMessage: null }
+}
+
+async function hsAdminBuscarNegociosDireto(query, after = null) {
+  const texto = sanitizarTextoEntrada(query)
+  if (!texto) return { ok: true, deals: [], total: 0, after: null, errorCode: null, errorMessage: null }
+  try {
+    const res = await executarComRetryHubSpot(async () => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
+      query: texto,
+      sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
+      properties: ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso"],
+      limit: 100,
+      ...(after ? { after } : {})
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarNegociosDireto", idempotente: true })
+    return { ok: true, deals: mapearNegociosHubSpotAdmin(res.data), total: res.data?.total || 0, after: res.data?.paging?.next?.after || null, errorCode: null, errorMessage: null }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarNegociosDireto" })
+    return { ok: false, deals: [], total: 0, after: null, errorCode: sanitizarTextoEntrada(e?.response?.status || e?.code || "HUBSPOT_QUERY_FAILED"), errorMessage: sanitizarTextoEntrada(mascararErroHubSpot(e)).slice(0, 300) }
   }
 }
 
@@ -4496,9 +4555,12 @@ async function hsAdminItensPorStages(stages = [], limit = 30, after = null) {
   const resultado = await hsAdminBuscarNegociosPorStages(stages, limit, after)
   const deals = resultado.deals || []
   return {
+    ok: resultado.ok,
     items: deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null)),
     total: resultado.total || 0,
-    nextAfter: resultado.after || null
+    nextAfter: resultado.after || null,
+    errorCode: resultado.errorCode || null,
+    errorMessage: resultado.errorMessage || null
   }
 }
 
@@ -4535,14 +4597,18 @@ async function adminItensAtivosHubSpot(limit = 100) {
 
 async function adminFonteCasos(filtro = () => true, stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), limit = 30, after = null) {
   const resultado = await hsAdminItensPorStages(stages, limit, after)
+  if (!resultado.ok) return { ok: false, items: [], total: 0, nextAfter: null, errorCode: resultado.errorCode, errorMessage: resultado.errorMessage }
   const itensHubSpot = resultado.items
   const vistos = new Set(itensHubSpot.map(item => String(item.u?.negocioId || item.negocio?.id || "")).filter(Boolean))
   const locais = usuariosAdminOrdenados(filtro).filter(item => {
     const id = String(item.u?.negocioId || "")
     return !id || !vistos.has(id)
   })
+  const items = [...itensHubSpot, ...locais].filter(({ u }) => u && filtro(u))
+  logInfo({ event: "admin.cases.queue", status: items.length ? "success" : "empty", queue: "filtered", stages: stages.join(","), receivedCount: itensHubSpot.length, hubspotTotal: resultado.total, filteredCount: items.length })
   return {
-    items: [...itensHubSpot, ...locais].filter(({ u }) => u && filtro(u)),
+    ok: true,
+    items,
     total: resultado.total + (after ? 0 : locais.length),
     nextAfter: resultado.nextAfter
   }
@@ -4997,14 +5063,38 @@ function iniciarConsultaCasoAdmin(from) {
 }
 
 async function executarConsultaCasoAdmin(from, query) {
-  const resumo = await adminResumoOperacional()
-  const encontrados = searchAdminCases(resumo.todos || [], query)
+  const inicio = Date.now()
+  const deals = []
+  const dealIds = new Set()
+  const cursors = new Set()
+  let after = null
+  do {
+    const pagina = await hsAdminBuscarNegociosDireto(query, after)
+    if (!pagina.ok) {
+      logInfo({ event: "admin.cases.search", status: "error", queue: "consulta", errorCode: pagina.errorCode, durationMs: Date.now() - inicio })
+      return telaAdminFalhaHubSpot()
+    }
+    for (const deal of pagina.deals) {
+      if (deal?.id && !dealIds.has(String(deal.id))) {
+        dealIds.add(String(deal.id))
+        deals.push(deal)
+      }
+    }
+    after = pagina.after
+    if (after && cursors.has(String(after))) {
+      logInfo({ event: "admin.cases.search", status: "error", queue: "consulta", errorCode: "PAGING_CURSOR_REPEATED", durationMs: Date.now() - inicio })
+      return telaAdminFalhaHubSpot()
+    }
+    if (after) cursors.add(String(after))
+  } while (after)
+  const encontrados = searchAdminCases(deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null)), query)
+  logInfo({ event: "admin.cases.search", status: encontrados.length ? "success" : "empty", queue: "consulta", receivedCount: deals.length, filteredCount: encontrados.length, durationMs: Date.now() - inicio })
   const chave = normalizarNumeroWhatsAppEnvio(from)
   const sessao = sessoesAdminWhatsApp.get(chave) || {}
   if (!encontrados.length) {
     sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
     return {
-      texto: "Nenhum caso encontrado. Confira o dado e tente novamente.",
+      texto: "Nenhum caso encontrado nesta fila. Confira o dado e tente novamente.",
       opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
       registrarPergunta: false
     }
@@ -5264,7 +5354,7 @@ async function telaAdminCasos() {
 
   return {
     texto: [
-      "📂 *Casos*",
+      "📂 *Filas de casos*",
       "",
       `🆕 Novos/pre-cadastro: ${novos}`,
       `🔎 Em analise: ${analise}`,
@@ -5276,6 +5366,7 @@ async function telaAdminCasos() {
       { id: ADMIN_IDS.casosNovos, title: "🆕 Novos casos" },
       { id: ADMIN_IDS.casosAnalise, title: "🔎 Casos em análise" },
       { id: ADMIN_IDS.casosDocs, title: "📎 Documentos pendentes" },
+      { id: ADMIN_IDS.casosAtivos, title: "📋 Todos ativos" },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
@@ -5365,25 +5456,49 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
   }
 }
 
+function telaAdminFalhaHubSpot() {
+  return {
+    texto: "Não foi possível consultar os casos no HubSpot agora. Tente novamente em alguns minutos.",
+    opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Filas de casos" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+    registrarPergunta: false
+  }
+}
+
 async function telaAdminCasosNovos(from) {
   const filtro = u => [HS_STAGE.LEAD, HS_STAGE.CADASTRO].includes(u.negocioStageId) || (!u.numeroCaso && u.stage !== STAGES.CLIENTE)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "🆕 *Novos casos e pre-cadastros*", itens, "✅ Nao encontrei novos casos ou pre-cadastros parados.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminCasosAnalise(from) {
   const filtro = u => u.negocioStageId === HS_STAGE.ANALISE && Boolean(u.numeroCaso)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "🔎 *Casos em analise*", itens, "✅ Nao encontrei casos em analise no HubSpot nem na memoria atual.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminCasosDocumentos(from) {
   const filtro = u => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "📎 *Casos com documentos pendentes*", itens, "✅ Nao encontrei casos com documentos criticos pendentes.", ADMIN_IDS.casos, 1, totalPaginas)
+}
+
+async function telaAdminCasosAtivos(from) {
+  const stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
+  const resultado = await hsAdminBuscarTodosNegociosPorStages(stages, "todos_ativos")
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const hubspot = resultado.deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null))
+  const itens = mesclarItensAdminPorIdentidade(hubspot, usuariosAdminOrdenados())
+  logInfo({ event: "admin.cases.session", status: itens.length ? "saved" : "empty", queue: "todos_ativos", receivedCount: hubspot.length, hubspotTotal: resultado.total, filteredCount: itens.length })
+  return telaAdminListaCasos(from, "📋 *Todos os casos ativos*", itens, "Nenhum caso encontrado nesta fila.", ADMIN_IDS.casos, 1, Math.max(1, Math.ceil(itens.length / 8)))
 }
 
 async function telaAdminAlertasUrgentes(from) {
@@ -5434,7 +5549,7 @@ function telaDetalheCasoAdmin(from, idx) {
   const item = obterCasoAdmin(from, idx)
   if (!item) {
     return {
-      texto: "Nao encontrei esse caso na lista atual. Abra *Prioridades* ou *Casos* para atualizar.",
+      texto: "A lista anterior expirou. Abra novamente Filas de casos e selecione o caso.",
       opcoes: [
         { id: ADMIN_IDS.prioridades, title: "Prioridades" },
         { id: ADMIN_IDS.casos, title: "Casos" }
@@ -6263,7 +6378,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
 
   if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) return iniciarConsultaCasoAdmin(from)
 
-  if (["admin_casos", ADMIN_IDS.casos].includes(comando)) return await telaAdminCasos()
+  if (["admin_casos", ADMIN_IDS.casos, "filas de casos"].includes(comando)) return await telaAdminCasos()
   if (["completar informacoes", "completar informações", ADMIN_IDS.completarInformacoes].includes(comando)) return await telaAdminCasos()
   if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
@@ -6272,6 +6387,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["admin_casos_novos", ADMIN_IDS.casosNovos].includes(comando)) return await telaAdminCasosNovos(from)
   if (["admin_casos_analise", ADMIN_IDS.casosAnalise].includes(comando)) return await telaAdminCasosAnalise(from)
   if (["admin_casos_docs", ADMIN_IDS.casosDocs].includes(comando)) return await telaAdminCasosDocumentos(from)
+  if (["admin_casos_ativos", ADMIN_IDS.casosAtivos].includes(comando)) return await telaAdminCasosAtivos(from)
 
   if (["admin_alertas", ADMIN_IDS.alertas].includes(comando)) return await telaAdminAlertas()
   if (["admin_alertas_criticos", "admin_alertas_urgentes", ADMIN_IDS.alertasCriticos, ADMIN_IDS.alertasUrgentes].includes(comando)) return await telaAdminAlertasUrgentes(from)
@@ -6292,7 +6408,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       const itemCaso = obterCasoAdmin(from, Number(comando) - 1)
       if (itemCaso) return telaDetalheCasoAdmin(from)
       return {
-        texto: "⚠️ Nao encontrei esse caso na lista atual.\n\nAbra *Prioridades* ou *Casos* para atualizar a lista.",
+      texto: "A lista anterior expirou. Abra novamente Filas de casos e selecione o caso.",
         opcoes: [
           { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
           { id: ADMIN_IDS.casos, title: "📂 Casos" },
