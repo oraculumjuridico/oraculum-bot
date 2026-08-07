@@ -63,7 +63,7 @@ function montarBotaoAtendimentoRealizado(negocioId, numeroCaso, options = {}) {
     customerPhone,
     createdAt: Date.now()
   })
-  return { id: `${ACTION_ID}_${token}`, title: "Enviar ao cliente" }
+  return { id: `${ACTION_ID}_${token}`, title: "✅ Atendimento realizado" }
 }
 
 function consumeAction(id, from) {
@@ -97,7 +97,16 @@ async function handleAtendimentoRealizadoConfirmation({ from, interactionId, usu
     if (processed?.skipped) {
       return { handled: true, existing: false, cycle, skipped: true, text: "Nova mensagem do cliente surgiu durante a análise. O envio foi cancelado e o caso precisa ser revisado." }
     }
-    return { handled: true, existing: false, cycle, text: "Atendimento registrado. A análise do caso foi iniciada." }
+    const processedCycle = processed?.cycle || processed
+    if (processedCycle?.status === "completed") {
+      return {
+        handled: true,
+        existing: false,
+        cycle: processedCycle,
+        text: "Atendimento humano registrado. Não há complementação pendente para este caso."
+      }
+    }
+    return { handled: true, existing: false, cycle, text: "Atendimento humano registrado. A verificação de pendências foi iniciada." }
   } catch {
     return { handled: true, failed: true, text: "Não foi possível registrar o atendimento com segurança. Nenhuma ação será repetida automaticamente." }
   }
