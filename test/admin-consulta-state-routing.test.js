@@ -6,7 +6,7 @@ const path = require("node:path")
 const vm = require("node:vm")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
-const consultaStart = source.indexOf("function encerrarConsultaPendenteAdmin")
+const consultaStart = source.indexOf("function iniciarConsultaCasoAdmin")
 const consultaEnd = source.indexOf("\nfunction iniciarComplementacaoCasoAdmin", consultaStart)
 const handlerStart = source.indexOf("async function processarAdminWhatsApp")
 const handlerEnd = source.indexOf("\nfunction detalharErroHubspot", handlerStart)
@@ -27,10 +27,18 @@ function criarHandler({ pagina = { ok: true, deals: [], after: null }, sessao = 
     normalizarItemAdminLocal: (_a, _b, deal) => deal, searchAdminCases: deals => deals.map(item => ({ item, numeroCaso: item.numeroCaso || "1", nomeMascarado: "***", cpfMascarado: "***", telefoneMascarado: "***" })),
     salvarListaCasosAdmin: noop, logInfo: noop, telaAdminFalhaHubSpot: () => ({ route: "erro" }),
     telaAdminPrioridades: async () => ({ route: "prioridades" }), telaAdminCasos: async () => ({ route: "casos" }), telaAdminPrincipal: async () => ({ route: "menu", texto: "menu" }), telaAdminAlertas: async () => ({ route: "alertas" }), telaConsultasAdmin: async () => ({ route: "consultas" }),
-    telaAdminCasosNovos: async () => ({ route: "casos-novos" }), telaAdminCasosDocumentos: async () => ({ route: "casos-docs" }), telaAdminAlertasUrgentes: async () => ({ route: "alertas-criticos" }), telaAdminAlertasDocs: async () => ({ route: "alertas-docs" }), telaDetalheCasoAdmin: async () => ({ route: "caso" }), obterCasoAdmin: () => ({ u: {} }),
+    telaAdminCasosNovos: async () => ({ route: "casos-novos" }), telaAdminCasosDocumentos: async () => ({ route: "casos-docs" }), telaAdminAlertasUrgentes: async () => ({ route: "alertas-criticos" }), telaAdminAlertasDocs: async () => ({ route: "alertas-docs" }), telaDetalheCasoAdmin: async () => ({ route: "caso" }),
+    obterCasoAdmin: (from, idx = null) => {
+      const sessaoAtual = sessions.get(from)
+      const indice = idx === null ? sessaoAtual?.casoSelecionado : idx
+      const item = sessaoAtual?.casos?.[indice]
+      if (!item) return null
+      sessions.set(from, { ...sessaoAtual, casoSelecionado: indice })
+      return item
+    },
     finalizarCadastroAssistidoAdmin: noop, agendarPersistenciaSessoesAdminAssistidas: noop, logDebug: noop, logErro: noop, buscarPorCEP: noop, buscarCidadePorNomeInteligente: noop, baixarMidia: noop, transcrever: noop, adminAssistedMediaStaging: { stage: noop, promote: noop }, uploadDrive: noop, executarPipelineDocumental: noop,
     iniciarAtendimentoAssistidoAdmin: noop, processarAtendimentoAssistidoAdmin: noop, executarDocumentoCasoSelecionadoAdmin: noop, executarComplementacaoCasoAdmin: noop, executarAgendamentoCasoAdmin: noop,
-    iniciarConsultaCasoAdmin: from => { sessions.set(from, { ...(sessions.get(from) || {}), acaoCasoPendente: "consultar" }); return { route: "consultar" } }, iniciarComplementacaoCasoAdmin: noop, iniciarEnvioDocumentoCasoAdmin: noop, iniciarAgendamentoCasoAdmin: noop, telaPreferenciaComunicacaoAdmin: noop, atualizarPreferenciaComunicacaoAdmin: noop,
+    iniciarComplementacaoCasoAdmin: noop, iniciarEnvioDocumentoCasoAdmin: noop, iniciarAgendamentoCasoAdmin: noop, telaPreferenciaComunicacaoAdmin: noop, atualizarPreferenciaComunicacaoAdmin: noop,
     telaAdminCasosAnalise: noop, telaAdminCasosAtivos: noop, telaAdminAlertasSemResposta: noop, telaAdminAlertasAgenda: noop, telaAdminResumoDiario: noop, telaDetalheConsultaAdmin: noop, telaAdminListaCasos: noop,
     telaConfirmarCancelamentoAdmin: noop, cancelarConsultaAdmin: noop, telaLinksCasoAdmin: noop, pedirDocsCasoAdmin: noop, enviarLembreteCasoAdmin: noop, marcarCasoUrgenteAdmin: noop, enviarAnaliseCasoAdmin: noop, marcarCasoRevisadoAdmin: noop,
     handleAtendimentoRealizadoConfirmation: noop, ehWhatsAppAdmin: noop, postHumanCycleRepository: {}, processPostHumanCycle: noop, criarVerificadorCompletudePosHumana: noop, getDocumentosListaCaso: noop, listarArquivosDriveNaPasta: noop, carregarPendenciasComplementaresPosHumanas: noop, users: {}, enviar: noop, enviarTemplateWhatsApp: noop, META_TEMPLATES: { casoAtualizacao: {} }, opcoesAposAcaoCasoAdmin: () => []
@@ -40,8 +48,8 @@ function criarHandler({ pagina = { ok: true, deals: [], after: null }, sessao = 
 }
 
 ;(async () => {
-  for (const [command, route] of [["Prioridades", "prioridades"], ["Casos", "casos"], ["Filas de casos", "casos"], ["Alertas", "alertas"], ["Menu", "menu"], ["Voltar", "menu"], ["Cancelar", "menu"], ["admin_prioridades", "prioridades"], ["admin_consultas", "consultas"], ["admin_casos_novos", "casos-novos"], ["admin_alertas_criticos", "alertas-criticos"], ["admin_alertas_docs", "alertas-docs"], ["adm_prioridades", "prioridades"], ["1", "caso"]]) {
-    const test = criarHandler({ sessao: command === "1" ? { acaoCasoPendente: "consultar", listaAtiva: "casos" } : undefined })
+  for (const [command, route] of [["Prioridades", "prioridades"], ["Casos", "casos"], ["Filas de casos", "casos"], ["Alertas", "alertas"], ["Menu", "menu"], ["Voltar", "menu"], ["Cancelar", "menu"], ["admin_prioridades", "prioridades"], ["admin_consultas", "consultas"], ["admin_casos_novos", "casos-novos"], ["admin_alertas_criticos", "alertas-criticos"], ["admin_alertas_docs", "alertas-docs"], ["adm_prioridades", "prioridades"]]) {
+    const test = criarHandler()
     assert.equal((await test.handler("admin", command)).route, route, command)
     assert.deepEqual(test.queries, [], command)
     assert.notEqual(test.sessions.get("admin").acaoCasoPendente, "consultar", command)
@@ -64,8 +72,30 @@ function criarHandler({ pagina = { ok: true, deals: [], after: null }, sessao = 
   assert.equal(encontrado.sessions.get("admin").acaoCasoPendente, null)
 
   const nova = criarHandler()
-  assert.equal((await nova.handler("admin", "Consultar Caso")).route, "consultar")
+  assert.match((await nova.handler("admin", "Consultar Caso")).texto, /Consultar caso/)
   await nova.handler("admin", "texto real")
   assert.deepEqual(nova.queries, ["texto real"])
+
+  const criarSessaoListaAntiga = () => ({
+    casos: [{ u: { numeroCaso: "ANTIGO" } }], casoSelecionado: 0, origemCasos: "adm_casos", listaAtiva: "casos",
+    paginaAtual: 2, tamanhoPagina: 8, totalItens: 9, totalPaginas: 2, nextAfter: "cursor-antigo", dadosAdmin: "preservar"
+  })
+  for (const query of ["PRV.260714.707", "81999999999", "João Silva"]) {
+    const test = criarHandler({ sessao: criarSessaoListaAntiga() })
+    await test.handler("admin", "Consultar Caso")
+    const limpa = test.sessions.get("admin")
+    for (const campo of ["casos", "casoSelecionado", "origemCasos", "listaAtiva", "paginaAtual", "tamanhoPagina", "totalItens", "totalPaginas", "nextAfter"]) assert.equal(Object.hasOwn(limpa, campo), false, campo)
+    assert.equal(limpa.dadosAdmin, "preservar")
+    const resposta = await test.handler("admin", query)
+    assert.deepEqual(test.queries, [query], query)
+    assert.doesNotMatch(resposta.texto, /A lista anterior expirou/)
+  }
+
+  const selecaoNormal = criarHandler({ sessao: { listaAtiva: "casos", casos: [{ u: {} }] } })
+  assert.equal((await selecaoNormal.handler("admin", "1")).route, "caso")
+  assert.deepEqual(selecaoNormal.queries, [])
+  const selecaoExpirada = criarHandler({ sessao: { listaAtiva: "casos", casos: [] } })
+  assert.match((await selecaoExpirada.handler("admin", "1")).texto, /A lista anterior expirou/)
+  assert.deepEqual(selecaoExpirada.queries, [])
   console.log("admin-consulta-state-routing.test.js: ok")
 })().catch(error => { console.error(error); process.exitCode = 1 })

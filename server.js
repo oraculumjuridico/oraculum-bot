@@ -5280,7 +5280,19 @@ async function telaAdminPrincipal() {
 function iniciarConsultaCasoAdmin(from) {
   const chave = normalizarNumeroWhatsAppEnvio(from)
   const sessao = sessoesAdminWhatsApp.get(chave) || {}
-  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
+  const {
+    casos: _casos,
+    casoSelecionado: _casoSelecionado,
+    origemCasos: _origemCasos,
+    listaAtiva: _listaAtiva,
+    paginaAtual: _paginaAtual,
+    tamanhoPagina: _tamanhoPagina,
+    totalItens: _totalItens,
+    totalPaginas: _totalPaginas,
+    nextAfter: _nextAfter,
+    ...sessaoSemListaDeCasos
+  } = sessao
+  sessoesAdminWhatsApp.set(chave, { ...sessaoSemListaDeCasos, acaoCasoPendente: "consultar", ts: Date.now() })
   return {
     texto: "🔎 *Consultar caso*\n\nInforme o protocolo, nome, CPF ou telefone. Identificadores serão exibidos de forma mascarada.",
     opcoes: [
@@ -6760,6 +6772,14 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["admin_alertas_agenda", ADMIN_IDS.alertasAgenda].includes(comando)) return await telaAdminAlertasAgenda(from)
   if (["admin_resumo_diario", ADMIN_IDS.resumo].includes(comando)) return await telaAdminResumoDiario()
 
+  // Telefones podem conter apenas dígitos. Em uma consulta pendente, texto livre
+  // deve ser resolvido antes de qualquer tentativa de seleção por índice.
+  const interacaoAdmin = comando.startsWith("admin_")
+  if (consultaPendente && sanitizarTextoEntrada(text) && !interacaoAdmin) {
+    consultaConsumidaComoTexto = true
+    return executarConsultaCasoAdmin(from, text)
+  }
+
   const matchConsulta = comando.match(/^admin_consulta_(\d+)$/)
   if (matchConsulta) return telaDetalheConsultaAdmin(from, Number(matchConsulta[1]))
 
@@ -6856,11 +6876,6 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["admin_caso_marcar_urg", ADMIN_IDS.casoMarcarUrgente].includes(comando)) return await marcarCasoUrgenteAdmin(from)
   if (["admin_caso_enviar_analise", ADMIN_IDS.casoEnviarAnalise].includes(comando)) return await enviarAnaliseCasoAdmin(from)
   if (["admin_caso_revisado", ADMIN_IDS.casoRevisado].includes(comando)) return await marcarCasoRevisadoAdmin(from)
-
-  if (consultaPendente && sanitizarTextoEntrada(text)) {
-    consultaConsumidaComoTexto = true
-    return executarConsultaCasoAdmin(from, text)
-  }
 
   comandoNaoReconhecido = true
   const menu = await telaAdminPrincipal()
