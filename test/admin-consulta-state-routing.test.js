@@ -23,6 +23,7 @@ function criarHandler({ pagina = { ok: true, deals: [], after: null }, sessao = 
     normalizarTextoGatilho: value => String(value || "").trim().toLowerCase(), sanitizarTextoEntrada: value => String(value || "").trim(), normalizarNumeroWhatsAppEnvio: value => value,
     adminWhatsAppAutenticado: () => true, atendimentoAssistidoAdminAtivo: () => false,
     hsAdminBuscarNegociosDireto: async query => { queries.push(query); return pagina },
+    resolverConsultaCasoAdmin: async query => { queries.push(query); return pagina },
     normalizarItemAdminLocal: (_a, _b, deal) => deal, searchAdminCases: deals => deals.map(item => ({ item, numeroCaso: item.numeroCaso || "1", nomeMascarado: "***", cpfMascarado: "***", telefoneMascarado: "***" })),
     salvarListaCasosAdmin: noop, logInfo: noop, telaAdminFalhaHubSpot: () => ({ route: "erro" }),
     telaAdminPrioridades: async () => ({ route: "prioridades" }), telaAdminCasos: async () => ({ route: "casos" }), telaAdminPrincipal: async () => ({ route: "menu", texto: "menu" }), telaAdminAlertas: async () => ({ route: "alertas" }), telaConsultasAdmin: async () => ({ route: "consultas" }),

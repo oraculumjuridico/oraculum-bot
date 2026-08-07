@@ -77,7 +77,7 @@ async function run() {
   const consulta = loadFunction("executarConsultaCasoAdmin", "function iniciarComplementacaoCasoAdmin", {
     Date, Set, Map, normalizarNumeroWhatsAppEnvio: value => value,
     hsAdminBuscarNegociosDireto: async () => ({ ok: false, errorCode: "INVALID_HUBSPOT_RESPONSE" }),
-    logInfo: () => {}, telaAdminFalhaHubSpot: () => failure, encerrarConsultaPendenteAdmin: () => {}
+    logInfo: () => {}, telaAdminFalhaHubSpot: () => failure, encerrarConsultaPendenteAdmin: () => {}, resolverConsultaCasoAdmin: async () => ({ ok: false, errorCode: "INVALID_HUBSPOT_RESPONSE" })
   })
   assert.equal(await consulta("admin", "x"), failure)
 
@@ -85,7 +85,7 @@ async function run() {
     Date, Set, Map, normalizarNumeroWhatsAppEnvio: value => value,
     hsAdminBuscarNegociosDireto: async () => ({ ok: true, deals: [], after: null }),
     normalizarItemAdminLocal: () => null, searchAdminCases: () => [], logInfo: () => {},
-    sessoesAdminWhatsApp: new Map(), ADMIN_IDS: { menu: "menu" }, ADMIN_MENU_LABELS: { voltarMenu: "Menu" }, telaAdminFalhaHubSpot: () => failure, encerrarConsultaPendenteAdmin: () => {}
+    sessoesAdminWhatsApp: new Map(), ADMIN_IDS: { menu: "menu" }, ADMIN_MENU_LABELS: { voltarMenu: "Menu" }, telaAdminFalhaHubSpot: () => failure, encerrarConsultaPendenteAdmin: () => {}, resolverConsultaCasoAdmin: async () => ({ ok: true, deals: [], after: null })
   })
   assert.match((await consultaVazia("admin", "x")).texto, /Nenhum caso encontrado/)
 
