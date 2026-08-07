@@ -314,6 +314,7 @@ const {
   validarOpcoesWhatsApp
 } = require("./src/domain/whatsapp-transport")
 const templateService = require("./src/domain/template-service")
+const { enviarAudioPedidoDocumentos } = require("./src/domain/admin-document-request-audio")
 const { validarMetaWabaNoBoot } = require("./src/domain/meta-waba-validator")
 const {
   validarAssinaturaMeta,
@@ -5779,6 +5780,23 @@ async function pedirDocsCasoAdmin(from) {
     usuario: u
   })
   const enviadoCliente = envioDocumentos.sent
+  // Fora da janela, atualizacaoCasoSegura preserva o template aprovado e não
+  // há áudio. Dentro da janela, o complemento fala somente com autorização
+  // canônica explícita (audio_sempre), após a imagem + legenda já aceita.
+  if (enviadoCliente) {
+    await enviarAudioPedidoDocumentos({
+      dentroJanela24h: templateService.conversaDentroJanela24h(u.ultimaMsg),
+      usuario: u,
+      from: destino,
+      texto: mensagemDocumentos,
+      deveEnviarAudioAutomatico,
+      gerarAudioAtendente,
+      urlAudioAtendente,
+      enviarAudio,
+      logInfo,
+      logErro
+    })
+  }
   if (enviadoCliente && envioDocumentos.providerMessageId) {
     const outbound = registrarMensagemOutbound({
       providerMessageId: envioDocumentos.providerMessageId,
