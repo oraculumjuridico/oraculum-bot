@@ -5170,7 +5170,16 @@ function iniciarConsultaCasoAdmin(from) {
   }
 }
 
+function encerrarConsultaPendenteAdmin(from) {
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  if (sessao.acaoCasoPendente !== "consultar") return
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: null, ts: Date.now() })
+}
+
 async function executarConsultaCasoAdmin(from, query) {
+  // A consulta é pontual: qualquer resultado encerra a espera por texto.
+  encerrarConsultaPendenteAdmin(from)
   const inicio = Date.now()
   const deals = []
   const dealIds = new Set()
@@ -5200,7 +5209,6 @@ async function executarConsultaCasoAdmin(from, query) {
   const chave = normalizarNumeroWhatsAppEnvio(from)
   const sessao = sessoesAdminWhatsApp.get(chave) || {}
   if (!encontrados.length) {
-    sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
     return {
       texto: "Nenhum caso encontrado nesta fila. Confira o dado e tente novamente.",
       opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
@@ -6540,6 +6548,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   }
 
   if (["admin_atendimento_assistido_ia", ADMIN_IDS.atendimentoAssistidoIa].includes(comando)) {
+    encerrarConsultaPendenteAdmin(from)
     return iniciarAtendimentoAssistidoAdmin(from, depsAtendimentoAssistido)
   }
 
@@ -6565,9 +6574,11 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
 
   const sessaoAcaoAdmin = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}
   const navegacaoAdmin = new Set(["menu", "inicio", "admin", "admin_menu", ADMIN_IDS.menu, "voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"])
-  if (sessaoAcaoAdmin.acaoCasoPendente === "consultar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
-    return executarConsultaCasoAdmin(from, text)
-  }
+  const consultaPendente = sessaoAcaoAdmin.acaoCasoPendente === "consultar"
+  let consultaConsumidaComoTexto = false
+  let iniciouNovaConsulta = false
+  let comandoNaoReconhecido = false
+  try {
   if (sessaoAcaoAdmin.acaoCasoPendente === "completar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
     return executarComplementacaoCasoAdmin(from, text)
   }
@@ -6601,9 +6612,12 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return await telaConsultasAdmin(from)
   }
 
-  if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) return iniciarConsultaCasoAdmin(from)
+  if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) {
+    iniciouNovaConsulta = true
+    return iniciarConsultaCasoAdmin(from)
+  }
 
-  if (["admin_casos", ADMIN_IDS.casos, "filas de casos"].includes(comando)) return await telaAdminCasos()
+  if (["admin_casos", ADMIN_IDS.casos, "casos", "filas de casos"].includes(comando)) return await telaAdminCasos()
   if (["completar informacoes", "completar informações", ADMIN_IDS.completarInformacoes].includes(comando)) return await telaAdminCasos()
   if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
@@ -6618,7 +6632,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["admin_casos_docs", ADMIN_IDS.casosDocs].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["admin_casos_ativos", ADMIN_IDS.casosAtivos].includes(comando)) return await telaAdminCasosAtivos(from)
 
-  if (["admin_alertas", ADMIN_IDS.alertas].includes(comando)) return await telaAdminAlertas()
+  if (["admin_alertas", ADMIN_IDS.alertas, "alertas"].includes(comando)) return await telaAdminAlertas()
   if (["admin_alertas_criticos", "admin_alertas_urgentes", ADMIN_IDS.alertasCriticos, ADMIN_IDS.alertasUrgentes].includes(comando)) return await telaAdminAlertasUrgentes(from)
   if (["admin_alertas_parados", "admin_alertas_sem_resposta", ADMIN_IDS.alertasParados, ADMIN_IDS.alertasSemResposta].includes(comando)) return await telaAdminAlertasSemResposta(from)
   if (["admin_alertas_docs", ADMIN_IDS.alertasDocs].includes(comando)) return await telaAdminAlertasDocs(from)
@@ -6722,6 +6736,12 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["admin_caso_enviar_analise", ADMIN_IDS.casoEnviarAnalise].includes(comando)) return await enviarAnaliseCasoAdmin(from)
   if (["admin_caso_revisado", ADMIN_IDS.casoRevisado].includes(comando)) return await marcarCasoRevisadoAdmin(from)
 
+  if (consultaPendente && sanitizarTextoEntrada(text)) {
+    consultaConsumidaComoTexto = true
+    return executarConsultaCasoAdmin(from, text)
+  }
+
+  comandoNaoReconhecido = true
   const menu = await telaAdminPrincipal()
   return {
     ...menu,
@@ -6730,6 +6750,13 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       "",
       menu.texto
     ].join("\n")
+  }
+  } finally {
+    // A própria cadeia de rotas acima define o que é ação administrativa. Só o
+    // texto que chega ao fallback pode ser consumido como consulta pendente.
+    if (consultaPendente && !consultaConsumidaComoTexto && !iniciouNovaConsulta && !comandoNaoReconhecido) {
+      encerrarConsultaPendenteAdmin(from)
+    }
   }
 }
 
