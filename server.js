@@ -247,6 +247,9 @@ const {
   mapearNegociosHubSpotAdmin
 } = require("./src/domain/admin-hubspot-deal-mapper")
 const {
+  inspecionarRespostaBuscaHubSpotAdmin
+} = require("./src/domain/admin-hubspot-search-response")
+const {
   resolverUrgenciaAdmin,
   persistirUrgenciaAltaAdmin
 } = require("./src/domain/admin-urgency")
@@ -4422,13 +4425,14 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
 
 async function hsAdminContarNegociosPorStages(stages = []) {
   const valores = stages.filter(Boolean)
-  if (!valores.length) return { total: 0 }
+  if (!valores.length) return { ok: true, total: 0, errorCode: null, errorMessage: null }
   try {
-    const { total } = await hsAdminBuscarNegociosPorStages(valores, 1)
-    return { total }
+    const resultado = await hsAdminBuscarNegociosPorStages(valores, 1)
+    if (!resultado.ok) return { ok: false, total: 0, errorCode: resultado.errorCode, errorMessage: resultado.errorMessage }
+    return { ok: true, total: resultado.total, errorCode: null, errorMessage: null }
   } catch (e) {
     logErroHubSpot(e, { operation: "adminContarNegociosPorStages" })
-    return { total: 0 }
+    return { ok: false, total: 0, errorCode: "HUBSPOT_QUERY_FAILED", errorMessage: "hubspot_query_failed" }
   }
 }
 
@@ -4466,6 +4470,7 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
 async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = null) {
   const valores = stages.filter(Boolean)
   if (!valores.length) return { ok: true, deals: [], total: 0, after: null, errorCode: null, errorMessage: null }
+  const inicio = Date.now()
   try {
     return await executarComRetryHubSpot(
       async () => {
@@ -4486,6 +4491,22 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
           body,
           { headers: HS() }
         )
+        const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
+        logInfo({
+          event: "admin.hubspot.search",
+          status: inspecao.ok ? "success" : "invalid_response",
+          operation: "adminBuscarNegociosPorStages",
+          searchType: "stages",
+          ...inspecao.metadata,
+          durationMs: Date.now() - inicio
+        })
+        if (!inspecao.ok) {
+          return {
+            ok: false, deals: [], total: 0, after: null,
+            errorCode: "INVALID_HUBSPOT_RESPONSE",
+            errorMessage: inspecao.reason
+          }
+        }
         const deals = mapearNegociosHubSpotAdmin(res.data)
         return {
           ok: true,
@@ -4506,6 +4527,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
       }
     )
   } catch (e) {
+    logInfo({ event: "admin.hubspot.search", status: "error", operation: "adminBuscarNegociosPorStages", searchType: "stages", httpStatus: e?.response?.status, durationMs: Date.now() - inicio })
     logErroHubSpot(e, { operation: "adminBuscarNegociosPorStages" })
     return {
       ok: false,
@@ -4551,6 +4573,7 @@ async function hsAdminBuscarTodosNegociosPorStages(stages = [], queue = "ativos"
 async function hsAdminBuscarNegociosDireto(query, after = null) {
   const texto = sanitizarTextoEntrada(query)
   if (!texto) return { ok: true, deals: [], total: 0, after: null, errorCode: null, errorMessage: null }
+  const inicio = Date.now()
   try {
     const res = await executarComRetryHubSpot(async () => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
       query: texto,
@@ -4559,8 +4582,21 @@ async function hsAdminBuscarNegociosDireto(query, after = null) {
       limit: 100,
       ...(after ? { after } : {})
     }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarNegociosDireto", idempotente: true })
+    const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
+    logInfo({
+      event: "admin.hubspot.search",
+      status: inspecao.ok ? "success" : "invalid_response",
+      operation: "adminBuscarNegociosDireto",
+      searchType: "direct",
+      ...inspecao.metadata,
+      durationMs: Date.now() - inicio
+    })
+    if (!inspecao.ok) {
+      return { ok: false, deals: [], total: 0, after: null, errorCode: "INVALID_HUBSPOT_RESPONSE", errorMessage: inspecao.reason }
+    }
     return { ok: true, deals: mapearNegociosHubSpotAdmin(res.data), total: res.data?.total || 0, after: res.data?.paging?.next?.after || null, errorCode: null, errorMessage: null }
   } catch (e) {
+    logInfo({ event: "admin.hubspot.search", status: "error", operation: "adminBuscarNegociosDireto", searchType: "direct", httpStatus: e?.response?.status, durationMs: Date.now() - inicio })
     logErroHubSpot(e, { operation: "adminBuscarNegociosDireto" })
     return { ok: false, deals: [], total: 0, after: null, errorCode: sanitizarTextoEntrada(e?.response?.status || e?.code || "HUBSPOT_QUERY_FAILED"), errorMessage: sanitizarTextoEntrada(mascararErroHubSpot(e)).slice(0, 300) }
   }
@@ -4651,8 +4687,7 @@ async function hsAdminItemPorDealId(dealId) {
 
 async function adminItensAtivosHubSpot(limit = 100) {
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
-  const resultado = await hsAdminItensPorStages(stagesAtivos, limit)
-  return resultado.items
+  return await hsAdminItensPorStages(stagesAtivos, limit)
 }
 
 async function adminFonteCasos(filtro = () => true, stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), limit = 30, after = null) {
@@ -4682,10 +4717,16 @@ async function adminResumoOperacional() {
   }
 
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
-  const { total: totalAtivos } = await hsAdminContarNegociosPorStages(stagesAtivos)
-  const { total: totalAnalise } = await hsAdminContarNegociosPorStages([HS_STAGE.ANALISE])
+  const contagemAtivos = await hsAdminContarNegociosPorStages(stagesAtivos)
+  if (!contagemAtivos.ok) return { ok: false, errorCode: contagemAtivos.errorCode, errorMessage: contagemAtivos.errorMessage }
+  const contagemAnalise = await hsAdminContarNegociosPorStages([HS_STAGE.ANALISE])
+  if (!contagemAnalise.ok) return { ok: false, errorCode: contagemAnalise.errorCode, errorMessage: contagemAnalise.errorMessage }
+  const totalAtivos = contagemAtivos.total
+  const totalAnalise = contagemAnalise.total
 
-  const ativos = await adminItensAtivosHubSpot(Math.min(totalAtivos, 100))
+  const ativosResultado = await adminItensAtivosHubSpot(Math.min(totalAtivos, 100))
+  if (!ativosResultado.ok) return { ok: false, errorCode: ativosResultado.errorCode, errorMessage: ativosResultado.errorMessage }
+  const ativos = ativosResultado.items
   const memoria = usuariosAdminOrdenados()
   const todos = mesclarItensAdminPorIdentidade(ativos, memoria)
 
@@ -4694,6 +4735,7 @@ async function adminResumoOperacional() {
   const preAtendimentos = todos.filter(({ u }) => !u.numeroCaso)
 
   const resultado = {
+    ok: true,
     fonte: ativos.length ? "HubSpot + memoria local" : "memoria local",
     totalClientes: totalAtivos,
     totalCasosComNumero: casosComNumero.length,
@@ -4780,6 +4822,7 @@ function maiorAlertaOperacionalAdmin(item) {
 
 async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return resumo
   const briefings = resumo.todos
     .filter(({ u }) => Boolean(u))
     .map(({ from, u }) => {
@@ -4987,13 +5030,17 @@ function scorePrioridadeAdmin({ u }) {
 
 async function gerarPrioridadesAdmin(limite = 10) {
   const resumo = await adminResumoOperacional()
-  return resumo.todos
+  if (!resumo.ok) return { ok: false, items: [], errorCode: resumo.errorCode, errorMessage: resumo.errorMessage }
+  return {
+    ok: true,
+    items: resumo.todos
     .filter(({ u }) => Boolean(u))
     .map(item => ({ ...item, prioridadeScore: scorePrioridadeAdmin(item) }))
     .filter(item => !casoAdminRevisado(item))
     .filter(item => item.prioridadeScore > 0)
     .sort((a, b) => b.prioridadeScore - a.prioridadeScore)
     .slice(0, limite)
+  }
 }
 
 function resolverTelefoneInterfaceAdmin(item, adminAutenticado = false) {
@@ -5072,6 +5119,7 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
 
 async function telaAdminPrincipal() {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
   const semResposta = resumo.todos.filter(({ u }) => {
     const idade = Date.now() - Number(u.ultimaMsg || 0)
     return idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado && u.stage !== STAGES.CLIENTE
@@ -5336,7 +5384,9 @@ async function executarAgendamentoCasoAdmin(from, text) {
 async function telaAdminPrioridades(from, pagina = 1) {
   try {
     const tamanhoPagina = 8
-    const itens = await gerarPrioridadesAdmin(100)
+    const prioridades = await gerarPrioridadesAdmin(100)
+    if (!prioridades.ok) return telaAdminFalhaHubSpot()
+    const itens = prioridades.items
     const totalItens = itens.length
     const totalPaginas = Math.max(1, Math.ceil(totalItens / tamanhoPagina))
     const inicio = (pagina - 1) * tamanhoPagina
@@ -5408,6 +5458,7 @@ async function telaAdminPrioridades(from, pagina = 1) {
 
 async function telaAdminCasos() {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
   const novos = resumo.todos.filter(({ u }) => [HS_STAGE.LEAD, HS_STAGE.CADASTRO].includes(u.negocioStageId) || (!u.numeroCaso && u.stage !== STAGES.CLIENTE)).length
   const analise = resumo.analise
   const docs = resumo.docsPendentes
@@ -5435,6 +5486,7 @@ async function telaAdminCasos() {
 
 async function telaAdminAlertas() {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
   const criticos = resumo.todos.filter(({ u }) => {
     const emocional = scoreEmocional(u)
     return u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || emocional.nivel === "alto"
@@ -5563,7 +5615,9 @@ async function telaAdminCasosAtivos(from) {
 
 async function telaAdminAlertasUrgentes(from) {
   const filtro = u => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || scoreEmocional(u).nivel === "alto"
-  const { items: itens, total } = await adminFonteCasos(filtro, Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), 100)
+  const resultado = await adminFonteCasos(filtro, Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "🔥 *Alertas criticos*", itens, "✅ Nao encontrei alerta critico no HubSpot nem na memoria atual.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
@@ -5573,14 +5627,18 @@ async function telaAdminAlertasSemResposta(from) {
     const idade = Date.now() - Number(u.ultimaMsg || 0)
     return idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado && u.stage !== STAGES.CLIENTE
   }
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "⏳ *Casos parados*", itens, "✅ Nao encontrei pre-atendimentos parados ha mais de 2 horas.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
 
 async function telaAdminAlertasDocs(from) {
   const filtro = u => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "📎 *Alertas de documentos*", itens, "✅ Nao encontrei documentos criticos pendentes.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
@@ -5592,6 +5650,7 @@ async function telaAdminAlertasAgenda(from) {
 
 async function telaAdminResumoDiario() {
   const resumo = await gerarResumoDiarioOperacional({ limite: 10 })
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
 
   return {
     texto: textoResumoDiarioOperacional(resumo),
@@ -16798,6 +16857,7 @@ app.get("/resumo-diario", validarWebhookInterno, async (req, res) => {
   try {
     const limite = Math.max(1, Math.min(30, Number(req.query?.limit || req.query?.limite || 10) || 10))
     const resumo = await gerarResumoDiarioOperacional({ limite })
+    if (!resumo.ok) return res.status(502).json({ ok: false, errorCode: resumo.errorCode || "HUBSPOT_QUERY_FAILED" })
     if (sanitizarTextoEntrada(req.query?.format).toLowerCase() === "text") {
       return res.type("text/plain").send(textoResumoDiarioOperacional(resumo))
     }
