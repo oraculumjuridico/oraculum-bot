@@ -59,8 +59,8 @@ function criarContexto(u, texto) {
       esperar: async ms => chamadas.esperas.push(ms),
       logErro: (...args) => chamadas.erros.push(args),
       normalizarTextoCRM: valor => valor.trim().replace(/\s+/g, " "),
-      telaConfirmarTranscricao: async (from, atendente, transcricao, area) => {
-        chamadas.confirmacoes.push({ from, atendente, transcricao, area })
+      telaConfirmarTranscricao: async (from, u, transcricao, area) => {
+        chamadas.confirmacoes.push({ from, atendente: u?.atendente, transcricao, area })
         return { texto: "confirmar transcrição", opcoes: [] }
       }
     }

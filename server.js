@@ -306,7 +306,7 @@ const {
 const {
   digitando,
   enviar,
-  enviarAudio,
+  enviarAudio: enviarAudioTransport,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados,
   validarDestinatarioWhatsApp,
@@ -1507,16 +1507,18 @@ configurarStatePersistence({
 //  NOVO FLUXO HUMANIZADO - FUNÇÕES AUXILIARES
 // ================================================================
 
-async function telaConfirmarTranscricao(from, atendente, transcricao, area) {
+async function telaConfirmarTranscricao(from, u, transcricao, area) {
   const preview = String(transcricao || "").trim()
   const previewExibir = preview.slice(0, 360) + (preview.length > 360 ? "..." : "")
 
-  try {
-    const ogg = await gerarAudioAtendente(atendente,
-      `Recebi seu áudio. Ouvi o seguinte: "${preview.slice(0, 200)}${preview.length > 200 ? "..." : ""}". Está correto? Se estiver, toque em Confirmar envio. Se não estiver, toque em Enviar novo áudio ou em Corrigir digitando.`)
-    await enviarAudio(from, urlAudioAtendente(ogg))
-    await new Promise(r => setTimeout(r, 4000))
-  } catch (e) { logErro("tts", "Falha áudio confirmar transcrição", e) }
+  if (deveEnviarAudioAutomatico(u, from)) {
+    try {
+      const ogg = await gerarAudioAtendente(u?.atendente,
+        `Recebi seu áudio. Ouvi o seguinte: "${preview.slice(0, 200)}${preview.length > 200 ? "..." : ""}". Está correto? Se estiver, toque em Confirmar envio. Se não estiver, toque em Enviar novo áudio ou em Corrigir digitando.`)
+      await enviarAudio(from, urlAudioAtendente(ogg))
+      await new Promise(r => setTimeout(r, 4000))
+    } catch (e) { logErro("tts", "Falha áudio confirmar transcrição", e) }
+  }
 
   return {
     texto: `🎙️ *Recebi seu áudio!*\n\nIsto é o que entendi:\n\n_"${previewExibir}"_\n\nO que deseja fazer?`,
@@ -1528,13 +1530,15 @@ async function telaConfirmarTranscricao(from, atendente, transcricao, area) {
   }
 }
 
-async function telaConfirmarArea(from, atendente, area) {
-  try {
-    const ogg = await gerarAudioAtendente(atendente,
-      `Identifiquei que seu caso é sobre ${area}. Você tem duas opções. Primeira: Sim, está certo. Segunda: Explicar melhor a situação, se a área parecer errada.`)
-    await enviarAudio(from, urlAudioAtendente(ogg))
-    await new Promise(r => setTimeout(r, 4000))
-  } catch (e) { logErro("tts", "Falha áudio confirmar área", e) }
+async function telaConfirmarArea(from, u, area) {
+  if (deveEnviarAudioAutomatico(u, from)) {
+    try {
+      const ogg = await gerarAudioAtendente(u?.atendente,
+        `Identifiquei que seu caso é sobre ${area}. Você tem duas opções. Primeira: Sim, está certo. Segunda: Explicar melhor a situação, se a área parecer errada.`)
+      await enviarAudio(from, urlAudioAtendente(ogg))
+      await new Promise(r => setTimeout(r, 4000))
+    } catch (e) { logErro("tts", "Falha áudio confirmar área", e) }
+  }
 
   return {
     texto: `⚖️ Identifiquei que seu caso é sobre *${area || "Outros"}*.\n\nEstá correto?`,
@@ -1546,14 +1550,16 @@ async function telaConfirmarArea(from, atendente, area) {
 }
 
 async function telaConfirmarAreaAudio(from, u, origemTexto = false) {
-  try {
-    const textoAudio = origemTexto
-      ? `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação. Terceira opção: Corrigir o texto.`
-      : `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação.`
-    const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
-    await enviarAudio(from, urlAudioAtendente(ogg))
-    await new Promise(r => setTimeout(r, 4000))
-  } catch (e) { logErro("tts", "Falha áudio confirmar área audio", e) }
+  if (deveEnviarAudioAutomatico(u, from)) {
+    try {
+      const textoAudio = origemTexto
+        ? `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação. Terceira opção: Corrigir o texto.`
+        : `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação.`
+      const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
+      await enviarAudio(from, urlAudioAtendente(ogg))
+      await new Promise(r => setTimeout(r, 4000))
+    } catch (e) { logErro("tts", "Falha áudio confirmar área audio", e) }
+  }
 
   const opcoes = origemTexto
     ? [
@@ -1821,7 +1827,7 @@ async function telaParaQuem(from, u) {
     ? `Só uma pergunta rápida antes de começar. Você está aqui para cuidar do seu próprio caso, ou vai abrir um atendimento para ${labelRelacao}? Primeira opção: É para mim. Segunda opção: É para ${labelRelacao}.`
     : `Só uma pergunta rápida antes de começar. Você está aqui para cuidar do seu próprio caso, ou vai abrir um atendimento para outra pessoa, como um familiar ou amigo? Primeira opção: É para mim. Segunda opção: É para outra pessoa.`
 
-  if (!u.modoTexto) {
+  if (deveEnviarAudioAutomatico(u, from)) {
     try {
       const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
       await enviarAudio(from, urlAudioAtendente(ogg))
@@ -1850,7 +1856,7 @@ async function perguntarTitularNomePreCadastro(from, u, nomeLimpo, contexto = {}
 
   const alvo = contexto?.label || "outra pessoa"
   const textoAudio = `Só para eu preencher corretamente: ${nomeLimpo} é o seu nome, ou é o nome da pessoa atendida, ${alvo}? Se o nome estiver errado, me diga o nome correto agora.`
-  if (!u.modoTexto) {
+  if (deveEnviarAudioAutomatico(u, from)) {
     try {
       const ogg = await gerarAudioAtendente(u.atendente, `Só para eu preencher corretamente: ${nomeLimpo} é o seu nome, ou é o nome da pessoa atendida, ${alvo}? Primeira opção: é meu nome. Segunda opção: é o nome da pessoa atendida. Se o nome estiver errado, me diga o nome correto agora.`)
       await enviarAudio(from, urlAudioAtendente(ogg))
@@ -7620,16 +7626,44 @@ function telaAdvogadoCliente(u) {
   return telaConsultaAdvogado(cabecalhoCasoAtivo(u))
 }
 
-// Enquanto a preferência de canal ainda não foi definida (ACOLHIMENTO e
-// ACOLHIMENTO_MODO), o sistema deve sempre enviar áudio + texto, independente
-// de u.modoTexto — a preferência só é respeitada após a escolha em ACOLHIMENTO_MODO.
-function deveForcarAudioPreModo(u) {
+// A preferência canônica de comunicação controla o áudio automático.
+// Somente audio_sempre autoriza envio de áudio; texto e nao_definido bloqueiam.
+// Compatibilidade legada: modoTexto true conserva o bloqueio de texto;
+// modoTexto false nunca autoriza áudio sem escolha canônica explícita.
+// Durante o pré-atendimento (ACOLHIMENTO / ACOLHIMENTO_MODO), se não houver
+// preferência canônica nem legado, o áudio é forçado para a saudação inicial.
+function deveEnviarAudioAutomatico(u, from = "") {
+  if (!u) return false
+  const phone = telefonePreferenciaComunicacao(u, from)
+  const record = communicationPreferences.resolve({
+    contactId: u?.contatoId,
+    phoneNormalized: phone,
+    snapshotPreference: u?.communicationPreference,
+    modoTexto: u?.modoTexto
+  })
+  // A escolha somente é explícita quando tem uma origem canônica e data de
+  // seleção. Snapshots incompletos e a migração legada não autorizam áudio.
+  const isCanonical = record && record.source !== "migracao_legado" && Boolean(record.selectedAt)
+  if (isCanonical) {
+    return record.preference === "audio_sempre"
+  }
+  if (u?.modoTexto === true) return false
+  // modoTexto === false é apenas projeção legada: nunca é autorização.
   return u?.stage === STAGES.ACOLHIMENTO || u?.stage === STAGES.ACOLHIMENTO_MODO
+}
+
+// Última barreira para os fluxos legados que ainda chamam enviarAudio
+// diretamente. Ela mantém a exceção de apresentação no pré-atendimento e
+// impede que uma preferência canônica seja contornada por esses call sites.
+async function enviarAudio(from, audioUrl) {
+  const u = users[from]
+  if (u && !deveEnviarAudioAutomatico(u, from)) return
+  return enviarAudioTransport(from, audioUrl)
 }
 
 async function enviarAudioModoVoz(from, u, texto, contexto = "cliente") {
   if (!from || !u?.atendente) return
-  if (u?.modoTexto !== false && !deveForcarAudioPreModo(u)) return
+  if (!deveEnviarAudioAutomatico(u, from)) return
   try {
     const ogg = await gerarAudioAtendente(u.atendente, texto)
     await enviarAudio(from, urlAudioAtendente(ogg))
@@ -7652,8 +7686,7 @@ function ehContatoAdmin(from) {
 
 async function enviarAudioAutomaticoTela(from, u, payload, contexto = "tela") {
   if (!from || !u || !u.atendente || ehContatoAdmin(from)) return
-  const forcarPreModo = deveForcarAudioPreModo(u)
-  if (u.modoTexto !== false && !forcarPreModo) return
+  if (!deveEnviarAudioAutomatico(u, from)) return
   if (!payload?.texto) return
   if (payload.audio === false || payload.semAudio === true) return
   const agora = Date.now()
@@ -9467,7 +9500,7 @@ async function flowAudioConfirmarTranscricao(u, ctx) {
     return iniciarFluxoRelatoLivre(from, u, { boasVindas: false })
   }
 
-  return telaConfirmarTranscricao(from, u.atendente, u._audioCanalTranscricao, u.area)
+  return telaConfirmarTranscricao(from, u, u._audioCanalTranscricao, u.area)
 }
 
 async function flowAudioConfirmarAreaCanal(u, ctx) {
@@ -14114,7 +14147,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
     }
     iniciarTimer(from)
-    return responderComTimer(from, await telaConfirmarArea(from, u.atendente, u.area || "Outros"))
+    return responderComTimer(from, await telaConfirmarArea(from, u, u.area || "Outros"))
   }
 
   // ── ACOLHIMENTO_PARA_QUEM ────────────────────────────────────────────────
