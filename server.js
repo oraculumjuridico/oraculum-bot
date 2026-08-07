@@ -6642,6 +6642,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
           },
           getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(currentUser._numero || currentUser.whatsappContato)]?.ultimaMsg ?? currentUser.ultimaMsg,
           applySafeHubspotUpdates: async () => ({ humanReviewRequired: false, divergences: [] }),
+          isComplete: criarVerificadorCompletudePosHumana(currentUser, postHumanCycleRepository),
           sendFree: (to, text) => enviar(to, text),
           sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
           templateConfig: META_TEMPLATES.casoAtualizacao,
@@ -16473,6 +16474,20 @@ async function carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repo
   return context
 }
 
+async function complementoPosHumanoEstaCompleto({ cycle, usuario, repository }) {
+  if (!cycle?.cycleId || !usuario?.contatoId || !usuario?.negocioId || !usuario?.numeroCaso || !usuario?.pastaDriveId) return false
+  const context = await carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository })
+  return !context.humanReviewRequired && context.camposPendentes.length === 0 &&
+    !(usuario.docsAusentes || []).length && !(usuario.docsParciais || []).length && !usuario.revisaoDocumentalNecessaria
+}
+
+function criarVerificadorCompletudePosHumana(usuario, repository) {
+  return async input => {
+    const cycle = input?.cycle || input
+    return complementoPosHumanoEstaCompleto({ cycle, usuario: input?.usuario || usuario, repository })
+  }
+}
+
 function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
   return createPostHumanDispatcher({
     isEnabled: isPostHumanComplementationEnabled,
@@ -16564,13 +16579,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       agendarPersistenciaUsers()
       return true
     },
-    isComplete: async currentCycle => {
-      const cycle = currentCycle?.cycle || currentCycle
-      if (!cycle?.cycleId || !usuario?.contatoId || !usuario?.negocioId || !usuario?.numeroCaso || !usuario?.pastaDriveId) return false
-      const context = await carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository: postHumanCycleRepository })
-      return !context.humanReviewRequired && context.camposPendentes.length === 0 &&
-        !(usuario.docsAusentes || []).length && !(usuario.docsParciais || []).length && !usuario.revisaoDocumentalNecessaria
-    },
+    isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository),
     continueCycle: async ({ cycle }) => processPostHumanCycle({
       cycle,
       usuario,
@@ -16585,8 +16594,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
         templateConfig: META_TEMPLATES.casoAtualizacao,
         buildTemplateParams: solicitation => [solicitation.texto],
-        isComplete: async ({ analysis }) => !(analysis.camposPendentes || []).length && analysis.estado === "DOCUMENTOS_COMPLETOS" &&
-          Boolean(usuario.contatoId && usuario.negocioId && usuario.numeroCaso && usuario.pastaDriveId)
+        isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository)
       }
     }),
     legacyDocumentPipeline: createLegacyDocumentPipeline({
@@ -17674,7 +17682,8 @@ async function iniciarServidor() {
             sendFree: (to, message) => enviar(to, message),
             sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
             templateConfig: META_TEMPLATES.casoAtualizacao,
-            buildTemplateParams: solicitacao => [solicitacao.texto]
+            buildTemplateParams: solicitacao => [solicitacao.texto],
+            isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository)
           }
         }),
         safeLogger: (event, error) => logErro("post_human", `${event}: ${error}`)

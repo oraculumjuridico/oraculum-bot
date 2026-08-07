@@ -18,7 +18,7 @@ const { PostHumanPostgresMock } = require("./mocks/post-human-postgres-mock")
   const authorized = "PILOT-001"
   process.env.POST_HUMAN_PILOT_CASES = authorized
   const button = montarBotaoAtendimentoRealizado("D-PILOT", authorized, { allowedCases: [authorized], adminId: "ADMIN", contatoId: "CONTACT-PILOT", customerPhone: "5511999999999", customerPhoneConfirmed: true })
-  assert.equal(button?.title, "Enviar ao cliente")
+  assert.equal(button?.title, "✅ Atendimento realizado")
   assert.equal(montarBotaoAtendimentoRealizado("D-OTHER", "OTHER", { allowedCases: [authorized] }), null)
 
   const externalCalls = { metaMock: 0, hubspotMock: 0, driveMock: 0, postgresMock: 0, real: 0 }
@@ -40,7 +40,7 @@ const { PostHumanPostgresMock } = require("./mocks/post-human-postgres-mock")
     })
   })
   assert.equal(confirmation.existing, false)
-  assert.equal(confirmation.text, "Atendimento registrado. A análise do caso foi iniciada.")
+  assert.equal(confirmation.text, "Atendimento humano registrado. A verificação de pendências foi iniciada.")
   const cycle = await repo.findActiveByBusiness("D-PILOT")
   assert.equal(cycle.status, "awaiting_response")
 

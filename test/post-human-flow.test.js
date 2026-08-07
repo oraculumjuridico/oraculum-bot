@@ -4,6 +4,8 @@ const assert = require("node:assert/strict")
 const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
+const vm = require("node:vm")
+const { createRequire } = require("node:module")
 const { PostHumanCycleRepository } = require("../src/domain/post-human-cycle-model")
 const { analisarEstadoDocumental, STATES } = require("../src/domain/post-human-document-analyzer")
 const { construirSolicitacao } = require("../src/domain/post-human-solicitation-builder")
@@ -13,6 +15,48 @@ const { tratarRespostaClientePosAtendimento, resolverCiclo } = require("../src/d
 const { sanitizeSensitive } = require("../src/domain/post-human-safe-log")
 const { montarBotaoAtendimentoRealizado, handleAtendimentoRealizadoConfirmation } = require("../src/domain/admin-post-human-complementation")
 const { META_TEMPLATES } = require("../src/domain/meta-templates")
+
+const root = path.join(__dirname, "..")
+const serverPath = path.join(root, "server.js")
+const serverRequire = createRequire(serverPath)
+
+function carregarPoliticaRealPosHumana() {
+  const axios = serverRequire("axios")
+  const reads = []
+  const source = fs.readFileSync(serverPath, "utf8").replace(
+    "module.exports = {\n  app,",
+    "module.exports = {\n  complementoPosHumanoEstaCompleto,\n  criarVerificadorCompletudePosHumana,\n  carregarPendenciasComplementaresPosHumanas,\n  app,"
+  )
+  const sandbox = {
+    __dirname: root, __filename: serverPath, Buffer, URL, clearImmediate, clearInterval, clearTimeout,
+    console, global, module: { exports: {} }, process, setImmediate, setInterval, setTimeout,
+    require: request => request === "axios" ? {
+      ...axios,
+      get: async url => {
+        reads.push(url)
+        if (url.includes("/associations/contacts")) return { data: { results: [{ id: "P-REAL" }] } }
+        if (url.includes("/objects/contacts/")) return { data: { id: "P-REAL", properties: {} } }
+        if (url.includes("/objects/deals/")) return { data: { id: "D-REAL", properties: {} } }
+        throw new Error(`leitura CRM inesperada: ${url}`)
+      }
+    } : serverRequire(request)
+  }
+  sandbox.exports = sandbox.module.exports
+  vm.runInNewContext(source, sandbox, { filename: serverPath })
+  return { ...sandbox.module.exports, reads }
+}
+
+function usuarioRealCompleto(overrides = {}) {
+  return {
+    negocioId: "D-REAL", contatoId: "P-REAL", numeroCaso: "REAL",
+    telefoneNormalizado: "5511999999999", pastaDriveId: "DRIVE-EXISTENTE",
+    nome: "Ana Silva", whatsappContato: "5511999999999", cidade: "Recife", uf: "PE",
+    area: "Outros", tipoCaso: "orientacao", descricao: "Relato juridico suficientemente detalhado.",
+    listaDocumental: ["RG"], docsEntregues: ["RG"], docsAusentes: [], docsParciais: [],
+    revisaoDocumentalNecessaria: false, ultimaMsg: Date.now(),
+    ...overrides
+  }
+}
 
 let passed = 0
 async function test(name, fn) {
@@ -264,6 +308,110 @@ async function makeRepo() {
     assert.equal(later.deferred, true)
   })
 
+  await test("atendimento realizado completo exerce a politica real e encerra somente o ciclo", async () => {
+    const repo = await makeRepo()
+    const {
+      complementoPosHumanoEstaCompleto,
+      criarVerificadorCompletudePosHumana,
+      carregarPendenciasComplementaresPosHumanas,
+      reads
+    } = carregarPoliticaRealPosHumana()
+    process.env.POST_HUMAN_PILOT_CASES = "REAL"
+    const usuario = usuarioRealCompleto()
+    const policy = criarVerificadorCompletudePosHumana(usuario, repo)
+    const button = montarBotaoAtendimentoRealizado(usuario.negocioId, usuario.numeroCaso, {
+      adminId: "ADMIN", contatoId: usuario.contatoId, customerPhone: usuario.telefoneNormalizado, customerPhoneConfirmed: true
+    })
+    const sends = []
+    const hubspotUpdateAttempts = []
+    const result = await handleAtendimentoRealizadoConfirmation({
+      from: "ADMIN", interactionId: button.id, usuario, isAdmin: value => value === "ADMIN", repository: repo,
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle, usuario: currentUser, repository: repo,
+        deps: {
+          camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario: currentUser, cycle, repository: repo }),
+          isComplete: policy,
+          applySafeHubspotUpdates: async input => {
+            hubspotUpdateAttempts.push(input)
+            return { humanReviewRequired: false, divergences: [] }
+          },
+          sendFree: async () => { sends.push("free") },
+          sendTemplate: async () => { sends.push("template") }
+        }
+      })
+    })
+    assert.equal(result.cycle.status, "completed")
+    assert.match(result.text, /Atendimento humano registrado.*não há complementação pendente/i)
+    assert.deepEqual(sends, [])
+    assert.equal(result.cycle.negocioId, usuario.negocioId)
+    assert.equal(result.cycle.contatoId, usuario.contatoId)
+    assert.equal(result.cycle.numeroCaso, usuario.numeroCaso)
+    assert.equal(await repo.findActiveByBusiness(usuario.negocioId), null)
+    assert.equal(await complementoPosHumanoEstaCompleto({ cycle: result.cycle, usuario, repository: repo }), true)
+    assert.equal(await policy(result.cycle), true)
+    assert.equal(reads.length >= 6, true, "politica real deve ler contato, negocio e associacao")
+    assert.equal(hubspotUpdateAttempts.length, 1, "o unico updater permitido e o de complemento seguro")
+    assert.equal(
+      hubspotUpdateAttempts.some(({ incoming = {} }) =>
+        incoming.dealstage || incoming.numero_de_caso || incoming.cliente_aceito ||
+        incoming.accepted_client || incoming.status === "completed"),
+      false,
+      "completed do ciclo nao pode comandar conclusao juridica, aceite ou alteracao do caso"
+    )
+  })
+
+  async function confirmarAtendimentoComPendencia({ nome, alteracoes, pergunta }) {
+    process.env.POST_HUMAN_PILOT_CASES = "REAL"
+    const { complementoPosHumanoEstaCompleto, criarVerificadorCompletudePosHumana, carregarPendenciasComplementaresPosHumanas } = carregarPoliticaRealPosHumana()
+    const repo = await makeRepo()
+    const usuario = usuarioRealCompleto(alteracoes)
+    const policy = criarVerificadorCompletudePosHumana(usuario, repo)
+    const button = montarBotaoAtendimentoRealizado(usuario.negocioId, usuario.numeroCaso, {
+      adminId: "ADMIN", contatoId: usuario.contatoId, customerPhone: usuario.telefoneNormalizado, customerPhoneConfirmed: true
+    })
+    const sends = []
+    const result = await handleAtendimentoRealizadoConfirmation({
+      from: "ADMIN", interactionId: button.id, usuario, isAdmin: value => value === "ADMIN", repository: repo,
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle, usuario: currentUser, repository: repo,
+        deps: {
+          camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario: currentUser, cycle, repository: repo }),
+          isComplete: policy,
+          sendFree: async (_to, text) => { sends.push(text); return { id: "mock" } },
+          sendTemplate: async () => { throw new Error("template nao esperado") }
+        }
+      })
+    })
+    const cycle = await repo.findActiveByBusiness(usuario.negocioId)
+    assert.equal(result.existing, false)
+    assert.equal(cycle.negocioId, usuario.negocioId)
+    assert.equal(cycle.contatoId, usuario.contatoId)
+    assert.equal(cycle.numeroCaso, usuario.numeroCaso)
+    assert.equal(cycle.status, "awaiting_response")
+    assert.equal(sends.length, 1, `${nome} deve fazer somente uma pergunta`)
+    assert.equal(await complementoPosHumanoEstaCompleto({ cycle, usuario, repository: repo }), false, `pendencia ${nome} deve reprovar politica real`)
+    assert.equal(await policy(cycle), false, `verificador real deve reprovar pendencia ${nome}`)
+    assert.match(sends[0], pergunta)
+    return sends[0]
+  }
+
+  await test("atendimento realizado com pendencia cadastral seleciona uma pergunta cadastral", async () => {
+    const pergunta = await confirmarAtendimentoComPendencia({ nome: "cadastral", alteracoes: { cidade: "" }, pergunta: /Em qual cidade/i })
+    assert.doesNotMatch(pergunta, /Tipo do caso|envie/i)
+  })
+
+  await test("atendimento realizado com pendencia juridica seleciona uma pergunta juridica", async () => {
+    const pergunta = await confirmarAtendimentoComPendencia({ nome: "juridica", alteracoes: { tipoCaso: "" }, pergunta: /Tipo do caso/i })
+    assert.doesNotMatch(pergunta, /Em qual cidade|envie/i)
+  })
+
+  await test("atendimento realizado com pendencia documental preserva o fluxo documental", async () => {
+    const pergunta = await confirmarAtendimentoComPendencia({
+      nome: "documental", alteracoes: { docsEntregues: [], docsAusentes: ["RG"] }, pergunta: /envie/i
+    })
+    assert.doesNotMatch(pergunta, /Em qual cidade|Tipo do caso/i)
+  })
+
   await test("flag, piloto, admin autorizado e template mapeado", async () => {
     const prior = process.env.POST_HUMAN_COMPLEMENTATION_ENABLED
     process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "false"
@@ -271,7 +419,7 @@ async function makeRepo() {
     process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "true"
     process.env.POST_HUMAN_PILOT_CASES = "C"
     assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["OTHER"] }), null)
-    assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["C"], adminId: "A", contatoId: "P", customerPhone: "5511999999999", customerPhoneConfirmed: true }).title, "Enviar ao cliente")
+    assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["C"], adminId: "A", contatoId: "P", customerPhone: "5511999999999", customerPhoneConfirmed: true }).title, "✅ Atendimento realizado")
     const repo = await makeRepo()
     const unauthorized = await handleAtendimentoRealizadoConfirmation({ from: "x", interactionId: "admin_post_human_completed:D:C", usuario: { negocioId: "D", numeroCaso: "C" }, isAdmin: () => false, repository: repo })
     assert.match(unauthorized.text, /administrador/)
@@ -284,7 +432,7 @@ async function makeRepo() {
     assert.doesNotMatch(output, /529|99999|abc/)
   })
 
-  console.log(`RESULT ${passed}/11 passed`)
+  console.log(`RESULT ${passed} passed`)
   if (originalEnabled === undefined) delete process.env.POST_HUMAN_COMPLEMENTATION_ENABLED
   else process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = originalEnabled
   if (originalCases === undefined) delete process.env.POST_HUMAN_PILOT_CASES
