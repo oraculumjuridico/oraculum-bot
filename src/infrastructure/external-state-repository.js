@@ -11,6 +11,7 @@ const DEFAULT_FILES = [
   "users-state.json",
   "communication-preferences.json",
   "webhook-inbox.json",
+  "pending-document-request-audio.json",
   "admin-assisted-sessions.json",
   "callback-idempotency.json",
   "consulta-events.jsonl",
