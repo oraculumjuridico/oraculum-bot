@@ -307,6 +307,7 @@ const {
   digitando,
   enviar,
   enviarAudio: enviarAudioTransport,
+  enviarAudioComResultado: enviarAudioTransportComResultado,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados,
   validarDestinatarioWhatsApp,
@@ -350,7 +351,11 @@ const {
   obterEstadoWebhookInbox,
   carregarMensagensOutbound,
   registrarMensagemOutbound,
-  atualizarStatusMensagemOutbound
+  atualizarStatusMensagemOutbound,
+  carregarPendenciasAudioPedidoDocumentos,
+  criarPendenciaAudioPedidoDocumentos,
+  reservarPendenciaAudioPedidoDocumentos,
+  concluirPendenciaAudioPedidoDocumentos
 } = require("./src/domain/state-persistence")
 const { createCommunicationPreferences, applyPreferenceToUser } = require("./src/domain/communication-preferences")
 const api = { persistirUsersAgora }
@@ -5734,6 +5739,63 @@ async function marcarCasoRevisadoAdmin(from) {
   }
 }
 
+function preferenciaAudioSempreCanonica(u, from) {
+  const record = communicationPreferences.resolve({
+    contactId: u?.contatoId,
+    phoneNormalized: telefonePreferenciaComunicacao(u, from),
+    snapshotPreference: u?.communicationPreference,
+    modoTexto: u?.modoTexto
+  })
+  return record?.preference === "audio_sempre" && record.source !== "migracao_legado" && Boolean(record.selectedAt)
+}
+
+function chaveAtivaAudioPedidoDocumentos(u, from) {
+  const contact = sanitizarTextoEntrada(u?.contatoId) || telefonePreferenciaComunicacao(u, from)
+  const deal = sanitizarTextoEntrada(u?.negocioId)
+  const caso = sanitizarTextoEntrada(u?.numeroCaso)
+  return `admin_document_request_audio:${contact}:${deal}:${caso}`
+}
+
+async function consumirPendenciaAudioPedidoDocumentos(from) {
+  const u = users[from]
+  if (!u || ehWhatsAppAdmin(from)) return false
+  const pendencia = reservarPendenciaAudioPedidoDocumentos({
+    contactId: u.contatoId,
+    phoneNormalized: telefonePreferenciaComunicacao(u, from),
+    dealId: u.negocioId,
+    numeroCaso: u.numeroCaso
+  })
+  if (!pendencia) return false
+
+  if (!preferenciaAudioSempreCanonica(u, from)) {
+    concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "suppressed", reason: "preference_changed" })
+    logInfo({ event: "admin.document_request_audio", status: "suppressed", reason: "preference_changed", action: "pedir_documentos" })
+    return false
+  }
+
+  try {
+    const ogg = await gerarAudioAtendente(u.atendente, pendencia.audioText)
+    const envio = await enviarAudioTransportComResultado(from, urlAudioAtendente(ogg))
+    if (!envio?.accepted) {
+      concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "pending", reason: envio?.immediateError || "audio_send_failed" })
+      logInfo({ event: "admin.document_request_audio", status: "failed", action: "pedir_documentos" })
+      return false
+    }
+    concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "sent", providerMessageId: envio.providerMessageId })
+    if (envio.providerMessageId) registrarMensagemOutbound({
+      providerMessageId: envio.providerMessageId, numeroCaso: u.numeroCaso, contactId: u.contatoId,
+      dealId: u.negocioId, action: "pedir_documentos_audio", channel: envio.channel,
+      destinationMasked: envio.destinationMasked
+    })
+    logInfo({ event: "admin.document_request_audio", status: "sent", action: "pedir_documentos" })
+    return true
+  } catch (error) {
+    concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "pending", reason: "tts_failed" })
+    logErro("tts", "Falha áudio pendente pedir documentos admin", error)
+    return false
+  }
+}
+
 async function pedirDocsCasoAdmin(from) {
   invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
@@ -5795,6 +5857,14 @@ async function pedirDocsCasoAdmin(from) {
       enviarAudio,
       logInfo,
       logErro
+    })
+  }
+  if (enviadoCliente && !templateService.conversaDentroJanela24h(u.ultimaMsg) && envioDocumentos.channel === "template" && preferenciaAudioSempreCanonica(u, destino)) {
+    criarPendenciaAudioPedidoDocumentos({
+      activeKey: chaveAtivaAudioPedidoDocumentos(u, destino), contactId: u.contatoId,
+      phoneNormalized: telefonePreferenciaComunicacao(u, destino), dealId: u.negocioId,
+      numeroCaso: u.numeroCaso, providerMessageId: envioDocumentos.providerMessageId,
+      audioText: mensagemDocumentos
     })
   }
   if (enviadoCliente && envioDocumentos.providerMessageId) {
@@ -16744,6 +16814,10 @@ async function processarMensagemWebhook(value, message) {
   const nomeWA = contato?.profile?.name || "Cliente"
   const text   = sanitizarTextoEntrada(message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "")
   const resposta = await processar(from, nomeWA, text, message)
+  // A inbox durável já aceitou e reservou este inbound; a janela foi reaberta
+  // por processar(). Consuma antes do áudio automático da resposta para evitar
+  // dois áudios consecutivos para a mesma interação.
+  await consumirPendenciaAudioPedidoDocumentos(from)
   if (!resposta) return
   if (deveAtivarModoDigitando(resposta) && users[from]) {
     users[from].modoDigitando = true
@@ -17608,6 +17682,7 @@ async function iniciarServidor() {
     }
     carregarWebhookInbox()
     carregarMensagensOutbound()
+    carregarPendenciasAudioPedidoDocumentos()
     carregarSessoesAdminAssistidasPersistidas(sessoesAdminWhatsApp)
     restaurarTimersPersistidos()
     await validarMetaWabaNoBoot()

@@ -262,10 +262,11 @@ async function enviarTemplateWhatsApp(to, templateName, params = [], languageCod
   return (await enviarTemplateComResultado(to, templateName, params, languageCode, options)).accepted
 }
 
-async function enviarAudio(to, audioUrl) {
-  if (!audioUrl) return null
+async function enviarAudioComResultado(to, audioUrl) {
+  const destinationMasked = mascararTelefoneLog(to)
+  if (!audioUrl) return resultadoEnvio({ channel: "audio", destinationMasked, immediateError: "audio_url_missing" })
   try {
-    await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
+    const resp = await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
       messaging_product: "whatsapp",
       to,
       type: "audio",
@@ -274,9 +275,16 @@ async function enviarAudio(to, audioUrl) {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
     })
     ultimosAudiosEnviados.set(String(to || ""), Date.now())
+    return resultadoEnvio({ accepted: true, providerMessageId: resp.data?.messages?.[0]?.id || null, httpStatus: resp.status, channel: "audio", destinationMasked })
   } catch (e) {
     logErro("whatsapp", `>${to}: ` + (e.response?.data?.error?.message || e.message))
+    return resultadoEnvio({ channel: "audio", destinationMasked, httpStatus: e.response?.status || null, immediateError: String(e.response?.data?.error?.code || e.response?.status || "audio_send_failed") })
   }
+}
+
+async function enviarAudio(to, audioUrl) {
+  if (!audioUrl) return null
+  await enviarAudioComResultado(to, audioUrl)
 }
 
 async function enviarImagemComResultado(to, imageUrl, caption = "", opcoes = null) {
@@ -362,6 +370,7 @@ module.exports = {
   enviarTemplateWhatsApp,
   enviarTemplateComResultado,
   enviarAudio,
+  enviarAudioComResultado,
   enviarImagemComResultado,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados
