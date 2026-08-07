@@ -111,4 +111,51 @@ test("não há logs de telefone completo no módulo", () => {
   assert.doesNotMatch(source, /log(Debug|Erro)\(/)
 })
 
-console.log(`RESULT ${passed}/13 passed`)
+test("deveEnviarAudioAutomatico consulta a preferência canônica primeiro", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.match(server, /function deveEnviarAudioAutomatico\(u, from/)
+  assert.match(server, /communicationPreferences\.resolve\(/)
+  assert.match(server, /record\.preference === "audio_sempre"/)
+  assert.match(server, /record\.source !== "migracao_legado" && Boolean\(record\.selectedAt\)/)
+})
+
+test("enviarAudioModoVoz usa deveEnviarAudioAutomatico", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.match(server, /async function enviarAudioModoVoz\(from, u, texto/)
+  assert.match(server, /if \(!deveEnviarAudioAutomatico\(u, from\)\) return/)
+  assert.doesNotMatch(server, /async function enviarAudioModoVoz[\s\S]*?u\?\.modoTexto !== false[\s\S]*?deveForcarAudioPreModo/)
+})
+
+test("enviarAudioAutomaticoTela usa deveEnviarAudioAutomatico", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.match(server, /async function enviarAudioAutomaticoTela\(from, u, payload/)
+  assert.match(server, /if \(!deveEnviarAudioAutomatico\(u, from\)\) return/)
+  assert.doesNotMatch(server, /u\.modoTexto !== false/)
+})
+
+test("telaConfirmarTranscricao respeita a preferência", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.match(server, /async function telaConfirmarTranscricao\(from, u, transcricao, area\)/)
+  assert.match(server, /if \(deveEnviarAudioAutomatico\(u, from\)\)/)
+})
+
+test("telaConfirmarArea respeita a preferência", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.match(server, /async function telaConfirmarArea\(from, u, area\)/)
+  assert.match(server, /if \(deveEnviarAudioAutomatico\(u, from\)\)/)
+})
+
+test("telaConfirmarAreaAudio respeita a preferência", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.match(server, /async function telaConfirmarAreaAudio\(from, u, origemTexto = false\)/)
+  assert.match(server, /if \(deveEnviarAudioAutomatico\(u, from\)\)/)
+})
+
+test("modoTexto false sem registro canônico não autoriza áudio", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+  assert.doesNotMatch(server, /if \(u\?\.modoTexto === false\) return true/)
+  assert.match(server, /if \(u\?\.modoTexto === true\) return false/)
+  assert.match(server, /record\.source !== "migracao_legado" && Boolean\(record\.selectedAt\)/)
+})
+
+console.log(`RESULT ${passed}/20 passed`)

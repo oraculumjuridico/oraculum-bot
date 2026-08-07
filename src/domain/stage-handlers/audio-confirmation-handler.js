@@ -75,7 +75,7 @@ async function handleAudioConfirmation({
     return { handled: true, response: await seguirAposClassificacaoAudio() }
   }
   iniciarTimer(from)
-  return { handled: true, response: responderComTimer(from, await telaConfirmarTranscricao(from, u.atendente, u._audioCanalTranscricao || "", u.area)) }
+  return { handled: true, response: responderComTimer(from, await telaConfirmarTranscricao(from, u, u._audioCanalTranscricao || "", u.area)) }
 }
 
 module.exports = {
