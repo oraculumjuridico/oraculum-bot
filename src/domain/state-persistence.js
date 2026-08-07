@@ -725,4 +725,5 @@ module.exports = {
   carregarSessoesAdminAssistidasPersistidas,
   hidratarUsuarioPersistido,
   carregarUsersPersistidos
+  ,gravarJsonAtomico
 }

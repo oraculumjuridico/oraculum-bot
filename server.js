@@ -338,6 +338,7 @@ const {
   carregarSessoesAdminAssistidasPersistidas,
   hidratarUsuarioPersistido,
   carregarUsersPersistidos,
+  gravarJsonAtomico,
   criarChaveWebhookDuravel,
   carregarWebhookInbox,
   registrarMensagensWebhook,
@@ -350,6 +351,7 @@ const {
   registrarMensagemOutbound,
   atualizarStatusMensagemOutbound
 } = require("./src/domain/state-persistence")
+const { createCommunicationPreferences, applyPreferenceToUser } = require("./src/domain/communication-preferences")
 const api = { persistirUsersAgora }
 const {
   CALLBACK_IDEMPOTENCY_FILE,
@@ -886,6 +888,7 @@ const {
 
 const DATA_DIR = path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "data"))
 const USERS_STATE_FILE = path.join(DATA_DIR, "users-state.json")
+const communicationPreferences = createCommunicationPreferences({ dataDir: DATA_DIR, writeJsonAtomically: gravarJsonAtomico })
 
 const HS_PIPELINE = "default"
 
@@ -963,6 +966,46 @@ const locksUsuarios = new Map()
 const sessoesAdminAutenticadas = new Map()
 const tentativasAdminWhatsApp = new Map()
 const revisoesCasosAdmin = new Map()
+
+function telefonePreferenciaComunicacao(u, from = "") {
+  return normalizarNumeroWhatsAppEnvio(u?.whatsappContato || u?._numero || from)
+}
+
+function obterPreferenciaComunicacao(u, from = "") {
+  const phoneNormalized = telefonePreferenciaComunicacao(u, from)
+  const record = communicationPreferences.resolve({
+    contactId: u?.contatoId,
+    phoneNormalized,
+    snapshotPreference: u?.communicationPreference,
+    modoTexto: u?.modoTexto
+  })
+  applyPreferenceToUser(u, record)
+  return record
+}
+
+function promoverPreferenciaComunicacao(u, from = "") {
+  const record = communicationPreferences.promote({ contactId: u?.contatoId, phoneNormalized: telefonePreferenciaComunicacao(u, from) })
+  if (record) applyPreferenceToUser(u, record)
+  return record
+}
+
+function definirPreferenciaComunicacao(u, from, preference, source) {
+  const record = communicationPreferences.set({
+    preference, source, contactId: u.contatoId, phoneNormalized: telefonePreferenciaComunicacao(u, from)
+  })
+  for (const [numero, usuario] of Object.entries(users)) {
+    if (String(usuario?.contatoId || "") === String(u.contatoId)) applyPreferenceToUser(usuario, record)
+  }
+  applyPreferenceToUser(u, record)
+  agendarPersistenciaUsers()
+  return record
+}
+
+function rotuloPreferenciaComunicacao(record) {
+  if (record?.preference === "texto") return "📝 Comunicação por texto"
+  if (record?.preference === "audio_sempre") return "🔊 Comunicação sempre por áudio"
+  return "❓ Comunicação não definida"
+}
 
 // Cache curto do resumo operacional para reduzir chamadas ao HubSpot
 const cacheResumoOperacional = {
@@ -1094,6 +1137,7 @@ function novoUsuario(nomeWA) {
     processing: false,
     modoDigitando: false,
     modoTexto: false,
+    communicationPreference: null,
     aguardandoResposta: false,
     _jaEsclareceuRelato: false,
     _jaAcolheuSofrimento: false,
@@ -4281,6 +4325,10 @@ const ADMIN_IDS = {
   casoCompletar: "adm_caso_completar",
   casoEnviarDocumento: "adm_caso_enviar_documento",
   casoAgendar: "adm_caso_agendar",
+  casoPreferenciaComunicacao: "adm_caso_preferencia_comunicacao",
+  preferenciaTexto: "adm_preferencia_texto",
+  preferenciaAudioSempre: "adm_preferencia_audio_sempre",
+  preferenciaNaoDefinida: "adm_preferencia_nao_definida",
   casoLinks: "adm_caso_links",
   casoPedirDocs: "adm_caso_pedir_docs",
   casoLembrete: "adm_caso_lembrete",
@@ -5568,8 +5616,9 @@ function telaDetalheCasoAdmin(from, idx) {
     customerPhone: normalizarNumeroWhatsAppEnvio(item.from || item.u?._numero || item.u?.whatsappContato),
     customerPhoneConfirmed: item.u?.telefoneEhDoCliente === true
   })
+  const preferencia = obterPreferenciaComunicacao(item.u, item.from || from)
   return {
-    texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
+    texto: `${textoDetalheCasoAdmin(item, { adminAutenticado: true })}\n\n${rotuloPreferenciaComunicacao(preferencia)}`,
     opcoes: [
       botaoPosAtendimento,
       { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
@@ -5578,12 +5627,35 @@ function telaDetalheCasoAdmin(from, idx) {
       { id: ADMIN_IDS.casoCompletar, title: "✏️ Completar dados" },
       { id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Anexar documento" },
       { id: ADMIN_IDS.casoAgendar, title: "📅 Agendar atendimento" },
+      { id: ADMIN_IDS.casoPreferenciaComunicacao, title: "💬 Preferência de comunicação" },
       { id: voltar, title: `⬅️ ${ADMIN_MENU_LABELS.voltarLista}` },
       { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
   }
+}
+
+function telaPreferenciaComunicacaoAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.contatoId) return { texto: "Este caso não possui contato confirmado. Nenhuma preferência foi alterada.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const atual = obterPreferenciaComunicacao(item.u, item.from || from)
+  return {
+    texto: `💬 *Preferência de comunicação*\n\nAtual: ${rotuloPreferenciaComunicacao(atual)}\n\nEscolha a preferência para todos os casos desta pessoa.`,
+    opcoes: [
+      { id: ADMIN_IDS.preferenciaTexto, title: "📝 Texto" },
+      { id: ADMIN_IDS.preferenciaAudioSempre, title: "🔊 Sempre com áudio" },
+      { id: ADMIN_IDS.preferenciaNaoDefinida, title: "❓ Não definida" },
+      { id: `admin_caso_${(sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}).casoSelecionado || 0}`, title: "⬅️ Voltar ao caso" }
+    ], registrarPergunta: false
+  }
+}
+
+function atualizarPreferenciaComunicacaoAdmin(from, preference) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.contatoId) return { texto: "Este caso não possui contato confirmado. Nenhuma preferência foi alterada.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  definirPreferenciaComunicacao(item.u, item.from || from, preference, "admin_manual")
+  return telaDetalheCasoAdmin(from)
 }
 
 function telaLinksCasoAdmin(from) {
@@ -6384,6 +6456,10 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
   if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
   if (["agendar atendimento", ADMIN_IDS.casoAgendar].includes(comando)) return iniciarAgendamentoCasoAdmin(from)
+  if (["preferencia de comunicacao", "preferência de comunicação", ADMIN_IDS.casoPreferenciaComunicacao].includes(comando)) return telaPreferenciaComunicacaoAdmin(from)
+  if ([ADMIN_IDS.preferenciaTexto].includes(comando)) return atualizarPreferenciaComunicacaoAdmin(from, "texto")
+  if ([ADMIN_IDS.preferenciaAudioSempre].includes(comando)) return atualizarPreferenciaComunicacaoAdmin(from, "audio_sempre")
+  if ([ADMIN_IDS.preferenciaNaoDefinida].includes(comando)) return atualizarPreferenciaComunicacaoAdmin(from, "nao_definido")
   if (["admin_casos_novos", ADMIN_IDS.casosNovos].includes(comando)) return await telaAdminCasosNovos(from)
   if (["admin_casos_analise", ADMIN_IDS.casosAnalise].includes(comando)) return await telaAdminCasosAnalise(from)
   if (["admin_casos_docs", ADMIN_IDS.casosDocs].includes(comando)) return await telaAdminCasosDocumentos(from)
@@ -7065,6 +7141,7 @@ async function finalizarCadastro(from, u) {
     assertFinalizationOperation("hubspot_contact", contatoId)
     u.contatoId = contatoId
     if (contatoId) u._hubspotSemContato = false
+    promoverPreferenciaComunicacao(u, from)
     persistirUsersAgora({ propagarErro: true })
 
     let negocioId = u.negocioId || null
@@ -14046,7 +14123,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
   if (u.stage === STAGES.ACOLHIMENTO_MODO) {
     const modoAtendimento = detectarModoAtendimento(text)
     if (modoAtendimento) {
-      u.modoTexto = modoAtendimento === "texto"
+      definirPreferenciaComunicacao(u, from, modoAtendimento === "texto" ? "texto" : "audio_sempre", "pre_atendimento")
       iniciarTimer(from)
       return await telaParaQuem(from, u)
     }
@@ -17439,6 +17516,11 @@ async function iniciarServidor() {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
     console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)
     carregarUsersPersistidos()
+    communicationPreferences.load()
+    for (const [from, u] of Object.entries(users)) {
+      promoverPreferenciaComunicacao(u, from)
+      obterPreferenciaComunicacao(u, from)
+    }
     if (isPostHumanComplementationEnabled()) {
       postHumanCycleRepository = new PostHumanCycleRepository({
         pool: getPool(),
