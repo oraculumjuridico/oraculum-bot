@@ -416,6 +416,7 @@ const {
   hsBuscarNegocioAbertoInfoDoContato,
   hsBuscarNegociosComCasoDoContato,
   hsListarNegociosAtivosDoContato,
+  hsListarNegociosAtivosDoContatoEstrito,
   hsAtualizarEtapaNegocio,
   hsMoverStage,
   hsMoverStageSeguro
@@ -425,6 +426,7 @@ const {
   definirContatoId,
   definirNegocioId
 } = require("./src/domain/identity")
+const { normalizarTelefoneHubSpot } = require("./src/domain/phone-name")
 const {
   configurarGroqClientReplies,
   respostaIA,
@@ -4602,6 +4604,125 @@ async function hsAdminBuscarNegociosDireto(query, after = null) {
   }
 }
 
+const ADMIN_DEAL_SEARCH_PROPERTIES = ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso"]
+
+function deduplicarDealsAdmin(deals = []) {
+  return [...new Map((Array.isArray(deals) ? deals : []).filter(deal => deal?.id).map(deal => [String(deal.id), deal])).values()]
+}
+
+async function hsAdminBuscarDealsPorNumeroCaso(numeroCaso) {
+  try {
+    const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
+      filterGroups: [{ filters: [{ propertyName: "numero_de_caso", operator: "EQ", value: numeroCaso }] }],
+      properties: ADMIN_DEAL_SEARCH_PROPERTIES,
+      limit: 100
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarDealPorNumeroCaso", idempotente: true })
+    const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
+    if (!inspecao.ok) return { ok: false, deals: [], errorCode: "INVALID_HUBSPOT_RESPONSE", errorMessage: inspecao.reason }
+    return { ok: true, deals: mapearNegociosHubSpotAdmin(res.data) }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarDealPorNumeroCaso" })
+    return { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED"), errorMessage: "hubspot_query_failed" }
+  }
+}
+
+async function hsAdminBuscarContatosPorNome(nome) {
+  try {
+    const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+      query: nome, properties: ["firstname", "lastname", "phone", "mobilephone"], limit: 100
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarContatosPorNome", idempotente: true })
+    if (!Array.isArray(res?.data?.results)) return { ok: false, contatos: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+    return { ok: true, contatos: res.data.results }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarContatosPorNome" })
+    return { ok: false, contatos: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED") }
+  }
+}
+
+async function hsAdminBuscarContatosPorTelefone(telefone) {
+  try {
+    const phone = normalizarTelefoneHubSpot(telefone)
+    if (!phone) return { ok: true, contatos: [] }
+    const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+      filterGroups: [
+        { filters: [{ propertyName: "phone", operator: "EQ", value: phone }] },
+        { filters: [{ propertyName: "mobilephone", operator: "EQ", value: phone }] }
+      ],
+      properties: ["firstname", "lastname", "phone", "mobilephone"], limit: 100
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarContatosPorTelefone", idempotente: true })
+    if (!Array.isArray(res?.data?.results)) return { ok: false, contatos: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+    const contatos = [...new Map(res.data.results.filter(contato => contato?.id).map(contato => [String(contato.id), contato])).values()]
+    return { ok: true, contatos }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarContatosPorTelefone" })
+    return { ok: false, contatos: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED") }
+  }
+}
+
+function cpfValidoConsultaAdmin(valor) {
+  const cpf = String(valor || "").replace(/\D/g, "")
+  if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false
+  for (let tamanho = 9; tamanho <= 10; tamanho++) {
+    let soma = 0
+    for (let indice = 0; indice < tamanho; indice++) soma += Number(cpf[indice]) * (tamanho + 1 - indice)
+    const digito = (soma * 10) % 11 % 10
+    if (digito !== Number(cpf[tamanho])) return false
+  }
+  return true
+}
+
+function classificarConsultaCasoAdmin(texto) {
+  const valor = sanitizarTextoEntrada(texto)
+  const digitos = valor.replace(/\D/g, "")
+  if (/^[A-Za-z]{2,6}[.\-]\d{6}[.\-]\d{3,}$/i.test(valor)) return "case_number"
+  if (/^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(valor)) return "cpf"
+  if (/^\+?55[\s().-]*\d/.test(valor) || (/^[+()\d\s-]+$/.test(valor) && digitos.length >= 10 && digitos.length <= 13 && /[()\s-]/.test(valor))) return "phone"
+  if (digitos.length === 11) return cpfValidoConsultaAdmin(digitos) ? "cpf" : "phone"
+  if (digitos.length >= 10 && digitos.length <= 13) return "phone"
+  return "contact_name"
+}
+
+async function hsAdminListarDealsDosContatosEstrito(contatos = []) {
+  const resultados = await Promise.all(contatos.map(contato => hsListarNegociosAtivosDoContatoEstrito(contato.id)))
+  const falha = resultados.find(resultado => !resultado?.ok)
+  return falha ? { ok: false, deals: [], errorCode: falha.errorCode || "HUBSPOT_QUERY_FAILED" } : { ok: true, deals: resultados.flatMap(resultado => resultado.deals) }
+}
+
+async function resolverConsultaCasoAdmin(query, after = null) {
+  const texto = sanitizarTextoEntrada(query)
+  const inicio = Date.now()
+  const cpf = texto.replace(/\D/g, "")
+  let estrategia = classificarConsultaCasoAdmin(texto)
+  let resultado
+  if (estrategia === "case_number") {
+    resultado = await hsAdminBuscarDealsPorNumeroCaso(texto.toUpperCase())
+  } else if (estrategia === "cpf") {
+    try {
+      const contato = await hsBuscarPorCpf(cpf)
+      resultado = contato?.id ? await hsAdminListarDealsDosContatosEstrito([contato]) : { ok: true, deals: [] }
+    } catch (e) { resultado = { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || "HUBSPOT_QUERY_FAILED") } }
+  } else if (estrategia === "phone") {
+    const contatos = await hsAdminBuscarContatosPorTelefone(texto)
+    resultado = contatos.ok ? await hsAdminListarDealsDosContatosEstrito(contatos.contatos) : { ok: false, deals: [], errorCode: contatos.errorCode }
+  } else {
+    estrategia = "contact_name"
+    const contatos = await hsAdminBuscarContatosPorNome(texto)
+    if (!contatos.ok) resultado = { ok: false, deals: [], errorCode: contatos.errorCode }
+    else {
+      try {
+        const porContato = await hsAdminListarDealsDosContatosEstrito(contatos.contatos)
+        if (!porContato.ok) return { ok: false, deals: [], total: 0, after: null, errorCode: porContato.errorCode, errorMessage: null }
+        const fallback = await hsAdminBuscarNegociosDireto(texto, after)
+        if (!fallback.ok) resultado = fallback
+        else resultado = { ok: true, deals: [...porContato.deals, ...fallback.deals], total: fallback.total, after: fallback.after }
+      } catch (e) { resultado = { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || "HUBSPOT_QUERY_FAILED") } }
+    }
+  }
+  const deals = deduplicarDealsAdmin(resultado?.deals)
+  logInfo({ event: "admin.cases.resolve", status: resultado?.ok ? (deals.length ? "success" : "empty") : "error", searchStrategy: estrategia, dealCount: deals.length, durationMs: Date.now() - inicio })
+  return { ok: Boolean(resultado?.ok), deals, total: resultado?.total ?? deals.length, after: resultado?.after || null, errorCode: resultado?.errorCode || null, errorMessage: resultado?.errorMessage || null }
+}
+
 async function mapearComLimite(itens = [], limite = 2, fn) {
   const entrada = Array.isArray(itens) ? itens : []
   const max = Math.max(1, Number(limite) || 1)
@@ -5186,7 +5307,7 @@ async function executarConsultaCasoAdmin(from, query) {
   const cursors = new Set()
   let after = null
   do {
-    const pagina = await hsAdminBuscarNegociosDireto(query, after)
+    const pagina = await resolverConsultaCasoAdmin(query, after)
     if (!pagina.ok) {
       logInfo({ event: "admin.cases.search", status: "error", queue: "consulta", errorCode: pagina.errorCode, durationMs: Date.now() - inicio })
       return telaAdminFalhaHubSpot()
