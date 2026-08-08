@@ -54,14 +54,18 @@ async function main() {
   assert.equal(await estadoExiste("pasta-caso", deps), true)
 
   const lido = await carregarEstadoDocumental("pasta-caso", deps)
-  assert.deepEqual(lido.registry, { documentos: [{ id: "d1" }] })
+  assert.deepEqual(lido.registry.documentos, [{ id: "d1" }])
+  assert.deepEqual(lido.registry.evidencias, [])
+  assert.deepEqual(lido.registry.confirmacoes, [])
+  assert.deepEqual(lido.registry.decisoes, [])
   assert.deepEqual(lido.pdfs, [{ arquivo: "docs.pdf" }])
 
   const atualizado = await atualizarEstadoDocumental("pasta-caso", {
     analysis: { analises: [{ id: "a1" }, { id: "a2" }] }
   }, deps)
   assert.equal(atualizado.estado.analysis.analises.length, 2)
-  assert.deepEqual(atualizado.estado.registry, { documentos: [{ id: "d1" }] })
+  assert.deepEqual(atualizado.estado.registry.documentos, [{ id: "d1" }])
+  assert.deepEqual(atualizado.estado.registry.evidencias, [])
   assert.deepEqual(atualizado.estado.pdfs, [{ arquivo: "docs.pdf" }])
 
   const snapshot = JSON.stringify(arquivos.get(DOCUMENT_STATE_FILE))
