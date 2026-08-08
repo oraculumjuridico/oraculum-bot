@@ -6623,7 +6623,8 @@ async function cancelarEventoConsultaUsuario(u, motivo = "consulta_cancelada", e
 }
 
 async function processarAdminWhatsApp(from, text, msgObj = null) {
-  const comando = normalizarTextoGatilho(text)
+  const callbackPosHumano = sanitizarTextoEntrada(text)
+  const comando = /^admin_post_human_completed_[A-Za-z0-9_-]{24}$/.test(callbackPosHumano) ? callbackPosHumano : normalizarTextoGatilho(text)
 
   if (["sair", "bloquear", "logout"].includes(comando)) {
     bloquearAdminWhatsApp(from)
