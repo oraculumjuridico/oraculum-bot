@@ -34,7 +34,16 @@ async function enviarSolicitacaoAdaptativa({ telefone, solicitacao, usuario, cyc
       tipoEnvio, templateUsado: tipoEnvio === "template" ? deps.templateConfig.nome : null,
       sendAttemptId, providerMessageId, resultadoEnvio: "aceito_pelo_provider", entregaConfirmada: false
     })
-    return { cycle: updated, tipoEnvio, providerMessageId, entregaConfirmada: false }
+    let clientMenuPresented = false
+    let clientMenuError = null
+    if (tipoEnvio === "livre" && solicitacao.tipo === "documentos" && typeof deps.presentClientMenu === "function") {
+      try {
+        clientMenuPresented = await deps.presentClientMenu(telefone, usuario) !== false
+      } catch (error) {
+        clientMenuError = sanitizeError(error)
+      }
+    }
+    return { cycle: updated, tipoEnvio, providerMessageId, entregaConfirmada: false, clientMenuPresented, clientMenuError }
   } catch (error) {
     const uncertain = Boolean(error?.sendOutcomeUnknown)
     await repository.updateStatus(cycle.cycleId, uncertain ? "failed_transient" : "failed_terminal", {

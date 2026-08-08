@@ -1,19 +1,65 @@
 "use strict"
 
 const { STATES } = require("./post-human-document-analyzer")
+const { DOCS_BASE, DOCS_EXTRA, getDocumentosListaCaso } = require("./documents-core")
 const {
   CAMPOS_ADMIN_ASSISTIDO,
   perguntaCampoAdminAssistido
 } = require("./admin-assisted-ai-schema")
 
-function list(items) { return (items || []).map(item => `• ${item}`).join("\n") }
+function catalogoDocumentalCanonico(usuario) {
+  const documentosDoCaso = getDocumentosListaCaso(usuario)
+  const documentosConhecidos = [
+    ...documentosDoCaso,
+    ...DOCS_BASE,
+    ...Object.values(DOCS_EXTRA).flat()
+  ]
+  const labels = new Map()
+  for (const documento of documentosConhecidos) {
+    if (documento?.id && documento?.label && !labels.has(documento.id)) {
+      labels.set(documento.id, documento.label)
+    }
+  }
+  return labels
+}
+
+function nomesDocumentos(items, usuario) {
+  const labels = catalogoDocumentalCanonico(usuario)
+  return (items || []).map(item => {
+    const id = typeof item === "object" ? String(item?.id || "") : String(item || "")
+    const labelInformado = typeof item === "object" ? String(item?.label || "") : ""
+    const label = labels.get(id) || labelInformado || (!/^doc_/i.test(id) ? id : "")
+    if (!label) throw new Error(`codigo_documento_sem_rotulo_canonico:${id}`)
+    return label
+  })
+}
+
+function construirSolicitacaoDocumentos(items, usuario) {
+  const linhas = nomesDocumentos(items, usuario).map(label => `📎 *${label}*`).join("\n")
+  return {
+    tipo: "documentos",
+    texto: [
+      "👋 Olá! Para dar continuidade ao seu atendimento, identificamos alguns documentos que ainda estão pendentes.",
+      "",
+      "📄 *DOCUMENTOS PENDENTES*",
+      "",
+      linhas,
+      "",
+      "Você pode enviar os documentos que já possui e completar os demais posteriormente.",
+      "",
+      `📁 *Caso: ${usuario.numeroCaso || ""}*`,
+      "",
+      "👇 Para enviar documentos ou continuar seu atendimento, acesse o *Menu do Cliente* abaixo."
+    ].join("\n")
+  }
+}
 
 function construirSolicitacao(analise, usuario = {}) {
   switch (analise.estado) {
     case STATES.SEM_DOCUMENTOS:
-      return { tipo: "documentos", texto: `Para continuarmos o caso ${usuario.numeroCaso || ""}, envie:\n${list(analise.ausentes || analise.listaDocumental)}\nVocê pode enviar os arquivos por aqui.` }
+      return construirSolicitacaoDocumentos(analise.ausentes || analise.listaDocumental, usuario)
     case STATES.DOCUMENTOS_PARCIAIS:
-      return { tipo: "documentos", texto: `Recebemos: ${analise.recebidos.join(", ") || "parte dos documentos"}.\nAinda precisamos de:\n${list([...analise.ausentes, ...analise.parciais])}` }
+      return construirSolicitacaoDocumentos([...(analise.ausentes || []), ...(analise.parciais || [])], usuario)
     case STATES.DOCUMENTOS_COMPLETOS:
       return { tipo: "nenhuma", texto: "Recebemos a documentação necessária. O caso seguirá para análise." }
     case STATES.DOCUMENTOS_NAO_ANALISADOS:

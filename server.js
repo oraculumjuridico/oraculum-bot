@@ -6890,6 +6890,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
           applySafeHubspotUpdates: async () => ({ humanReviewRequired: false, divergences: [] }),
           isComplete: criarVerificadorCompletudePosHumana(currentUser, postHumanCycleRepository),
           sendFree: (to, text) => enviar(to, text),
+          presentClientMenu: (to) => apresentarMenuClientePosHumano(to, item.u),
           sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
           templateConfig: META_TEMPLATES.casoAtualizacao,
           buildTemplateParams: solicitacao => [solicitacao.texto]
@@ -8155,6 +8156,14 @@ async function menuClienteComAudio(from, u) {
   u._menuClienteBoasVindas = false
   u._menuClienteJaApresentado = true
   return null
+}
+
+async function apresentarMenuClientePosHumano(from, u) {
+  if (!u?.numeroCaso) return false
+  setStage(u, STAGES.CLIENTE)
+  iniciarTimer(from)
+  await menuClienteComAudio(from, u)
+  return true
 }
 
 async function abrirSelecaoCasoParaAcao(from, u, acao) {
@@ -16845,6 +16854,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository: postHumanCycleRepository }),
         getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
         sendFree: (to, message) => enviar(to, message),
+        presentClientMenu: (to) => apresentarMenuClientePosHumano(to, usuario),
         sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
         templateConfig: META_TEMPLATES.casoAtualizacao,
         buildTemplateParams: solicitation => [solicitation.texto],
@@ -16862,6 +16872,9 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
 
 async function processarComLock(from, nomeWA, text, msgObj) {
   const textoSanitizado = sanitizarTextoEntrada(text)
+  const tipoEntrada = String(msgObj?.type || "").toLowerCase()
+  const ehCallbackCliente = ["interactive", "button"].includes(tipoEntrada) &&
+    /^(?:m_|docs_|doc_|cliente_|adv_|dir_|novo_caso_|nc_)/.test(textoSanitizado)
   let u = users[from] || null
 
   try {
@@ -16877,7 +16890,7 @@ async function processarComLock(from, nomeWA, text, msgObj) {
     }
     const estadoHubSpotAntes = serializarEstado(u)
 
-    if (postHumanCycleRepository) {
+    if (postHumanCycleRepository && !ehCallbackCliente) {
       const postHumanDispatch = await criarDispatcherPosHumano({ from, nomeWA: nomeWAEfetivo, usuario: u })({
         from,
         msgType: msgObj?.type,
@@ -17940,6 +17953,7 @@ async function iniciarServidor() {
             },
             getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
             sendFree: (to, message) => enviar(to, message),
+            presentClientMenu: (to) => apresentarMenuClientePosHumano(to, usuario),
             sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
             templateConfig: META_TEMPLATES.casoAtualizacao,
             buildTemplateParams: solicitacao => [solicitacao.texto],
