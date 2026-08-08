@@ -112,11 +112,118 @@ async function makeRepo() {
   })
 
   await test("decisao nao solicita recebido e pergunta uma informacao por vez", async () => {
-    const partial = construirSolicitacao({ estado: STATES.DOCUMENTOS_PARCIAIS, recebidos: ["RG"], ausentes: ["CPF"], parciais: [] })
+    const partial = construirSolicitacao({ estado: STATES.DOCUMENTOS_PARCIAIS, recebidos: ["RG"], ausentes: ["CPF"], parciais: [] }, { numeroCaso: "C" })
     assert.match(partial.texto, /CPF/); assert.doesNotMatch(partial.texto, /Ainda precisamos de:\n.*RG/)
     const info = construirSolicitacao({ estado: STATES.INFORMACOES_COMPLEMENTARES_PENDENTES, camposPendentes: ["cidade", "estado"] })
     assert.equal(info.campo, "cidade"); assert.doesNotMatch(info.texto, /estado/)
     assert.equal(construirSolicitacao({ estado: STATES.INFORMACOES_COMPLEMENTARES_PENDENTES, camposPendentes: ["campo_inventado"] }).tipo, "revisao")
+  })
+
+  await test("solicitacao documental usa nomes canonicos, negrito e preserva quantidade e ordem", async () => {
+    const usuario = { numeroCaso: "PRV.260801.813", area: "Previdenciário", tipo: "revisão" }
+    const casos = [
+      ["doc_rg"],
+      ["doc_rg", "doc_cpf", "doc_res"],
+      ["doc_rg", "doc_cpf", "doc_res", "doc_indf", "doc_ant"]
+    ]
+    const labels = {
+      doc_rg: "RG ou CNH",
+      doc_cpf: "CPF",
+      doc_res: "Comprovante de Residência",
+      doc_indf: "Carta de Indeferimento do INSS",
+      doc_ant: "Documentos do Pedido Anterior"
+    }
+    for (const ids of casos) {
+      const solicitacao = construirSolicitacao({
+        estado: STATES.SEM_DOCUMENTOS,
+        ausentes: ids,
+        listaDocumental: ids
+      }, usuario)
+      assert.doesNotMatch(solicitacao.texto, /\bdoc_[a-z0-9_]+\b/i)
+      assert.equal((solicitacao.texto.match(/^📎 /gm) || []).length, ids.length)
+      assert.deepEqual(solicitacao.texto.match(/^📎 \*.*\*$/gm), ids.map(id => `📎 *${labels[id]}*`))
+      assert.match(solicitacao.texto, /📁 \*Caso: PRV\.260801\.813\*/)
+      assert.doesNotMatch(solicitacao.texto, /advogad[oa]|orienta(?:ção|cao) anterior/i)
+    }
+    const real = construirSolicitacao({
+      estado: STATES.SEM_DOCUMENTOS,
+      ausentes: casos[2],
+      listaDocumental: casos[2]
+    }, usuario)
+    assert.equal(real.texto, [
+      "👋 Olá! Para dar continuidade ao seu atendimento, identificamos alguns documentos que ainda estão pendentes.",
+      "",
+      "📄 *DOCUMENTOS PENDENTES*",
+      "",
+      "📎 *RG ou CNH*",
+      "📎 *CPF*",
+      "📎 *Comprovante de Residência*",
+      "📎 *Carta de Indeferimento do INSS*",
+      "📎 *Documentos do Pedido Anterior*",
+      "",
+      "Você pode enviar os documentos que já possui e completar os demais posteriormente.",
+      "",
+      "📁 *Caso: PRV.260801.813*",
+      "",
+      "👇 Para enviar documentos ou continuar seu atendimento, acesse o *Menu do Cliente* abaixo."
+    ].join("\n"))
+  })
+
+  await test("documentos apresentam um unico Menu do Cliente somente dentro da janela de 24h", async () => {
+    for (const open of [true, false]) {
+      const repo = await makeRepo()
+      const cycle = await repo.createCycle({ negocioId: open ? "DMO" : "DMF", numeroCaso: "C" })
+      const calls = []
+      const documentos = [
+        { id: "doc_rg", label: "RG ou CNH" },
+        { id: "doc_cpf", label: "CPF" },
+        { id: "doc_res", label: "Comprovante de Residência" },
+        { id: "doc_indf", label: "Carta de Indeferimento do INSS" },
+        { id: "doc_ant", label: "Documentos do Pedido Anterior" }
+      ]
+      const result = await processPostHumanCycle({
+        cycle,
+        repository: repo,
+        usuario: {
+          negocioId: cycle.negocioId,
+          numeroCaso: "C",
+          telefoneNormalizado: "5511",
+          ultimaMsg: open ? Date.now() : 1,
+          listaDocumental: documentos.map(({ id }) => id),
+          docsEntregues: []
+        },
+        deps: {
+          resolverListaDocumental: () => documentos,
+          sendFree: async (_to, text) => (calls.push(["free", text]), { id: "m1" }),
+          presentClientMenu: async () => { calls.push(["menu"]); return true },
+          sendTemplate: async (_to, name, params) => (calls.push(["template", name, params]), { id: "m2" }),
+          templateConfig: {
+            nome: "caso_atualizacao_v3", idioma: "pt_BR", contratoVerificado: true,
+            headerImageUrl: "https://example.invalid/approved-header.png",
+            parametrosEsperados: 1,
+            componentes: [
+              { tipo: "HEADER", formato: "IMAGE" },
+              { tipo: "BODY", parametros: [{ tipo: "text", ordem: 1 }] },
+              { tipo: "FOOTER" }
+            ]
+          },
+          buildTemplateParams: solicitation => [solicitation.texto]
+        }
+      })
+      assert.equal(result.tipoEnvio, open ? "livre" : "template")
+      assert.equal(calls.filter(([kind]) => kind === "menu").length, open ? 1 : 0)
+      assert.equal(result.clientMenuPresented, open)
+      if (open) {
+        assert.deepEqual(calls.map(([kind]) => kind), ["free", "menu"])
+        assert.doesNotMatch(calls[0][1], /\bdoc_[a-z0-9_]+\b/i)
+        assert.deepEqual(calls[0][1].match(/^📎 \*.*\*$/gm), documentos.map(({ label }) => `📎 *${label}*`))
+      }
+      else assert.deepEqual(calls.map(([kind]) => kind), ["template"])
+    }
+    const integrations = fs.readFileSync(serverPath, "utf8")
+    assert.equal((integrations.match(/presentClientMenu: \(to\) => apresentarMenuClientePosHumano\(to, /g) || []).length, 3)
+    assert.match(integrations, /async function apresentarMenuClientePosHumano[\s\S]*menuClienteComAudio\(from, u\)/)
+    assert.match(integrations, /postHumanCycleRepository && !ehCallbackCliente/)
   })
 
   await test("hubspot preenche vazio, mantem igual, anota divergencia e preserva negocio", async () => {
@@ -407,7 +514,7 @@ async function makeRepo() {
 
   await test("atendimento realizado com pendencia documental preserva o fluxo documental", async () => {
     const pergunta = await confirmarAtendimentoComPendencia({
-      nome: "documental", alteracoes: { docsEntregues: [], docsAusentes: ["RG"] }, pergunta: /envie/i
+      nome: "documental", alteracoes: { docsEntregues: [], docsAusentes: ["RG"] }, pergunta: /documentos.*pendentes|enviar/is
     })
     assert.doesNotMatch(pergunta, /Em qual cidade|Tipo do caso/i)
   })
