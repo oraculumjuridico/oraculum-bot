@@ -375,7 +375,7 @@ async function makeRepo() {
     assert.equal(calls.filter(c => c === "free").length, 0, "sendFree NÃO foi chamado")
   })
 
-  await test("falha Meta e configuracao incompleta falham seguro sem retry apos reinicio", async () => {
+  await test("falhas de outbound distinguem pre-transporte, rejeicao, incerteza e falha pos-transporte", async () => {
     const repo = await makeRepo()
     const cycle = await repo.createCycle({ negocioId: "D", numeroCaso: "C" })
     const result = await processPostHumanCycle({
@@ -383,6 +383,9 @@ async function makeRepo() {
       deps: { sendFree: async () => { throw new Error("token=abc telefone 11999999999") } }
     })
     assert.equal(result.failed, true)
+    assert.equal(result.transportInvoked, true)
+    assert.equal(result.retryableBeforeSend, false)
+    assert.equal(result.failurePhase, "after_transport_without_acceptance")
     assert.equal((await repo.listRecoverable()).length, 0)
     assert.doesNotMatch(result.error, /abc|11999999999/)
     const uncertainRepo = await makeRepo()
@@ -394,7 +397,57 @@ async function makeRepo() {
       deps: { sendFree: async () => { throw uncertainError } }
     })
     assert.equal(uncertain.uncertain, true)
+    assert.equal(uncertain.retryableBeforeSend, false)
+    assert.equal(uncertain.failurePhase, "after_transport_without_acceptance")
     assert.equal((await uncertainRepo.getCycle(uncertainCycle.cycleId)).resultadoEnvio, "incerto")
+
+    const beforeRepo = await makeRepo()
+    const beforeCycle = await beforeRepo.createCycle({ negocioId: "DB", numeroCaso: "C" })
+    let templateTransport = 0
+    const beforeTransport = await processPostHumanCycle({
+      cycle: beforeCycle, repository: beforeRepo,
+      usuario: { negocioId: "DB", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: 1, listaDocumental: ["RG"] },
+      deps: { sendTemplate: async () => { templateTransport++ } }
+    })
+    assert.equal(beforeTransport.failed, true)
+    assert.equal(beforeTransport.transportInvoked, false)
+    assert.equal(beforeTransport.retryableBeforeSend, true)
+    assert.equal(templateTransport, 0)
+    assert.equal((await beforeRepo.getCycle(beforeCycle.cycleId)).resultadoEnvio, "nao_enviado")
+    assert.equal((await beforeRepo.listRecoverable()).length, 1)
+
+    const rejectedRepo = await makeRepo()
+    const rejectedCycle = await rejectedRepo.createCycle({ negocioId: "DR", numeroCaso: "C" })
+    const rejectedError = new Error("provider rejeitou"); rejectedError.sendOutcomeKnownRejected = true
+    const rejected = await processPostHumanCycle({
+      cycle: rejectedCycle, repository: rejectedRepo,
+      usuario: { negocioId: "DR", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: Date.now(), listaDocumental: ["RG"] },
+      deps: { sendFree: async () => { throw rejectedError } }
+    })
+    assert.equal(rejected.knownRejected, true)
+    assert.equal(rejected.retryableBeforeSend, true)
+    assert.equal((await rejectedRepo.getCycle(rejectedCycle.cycleId)).resultadoEnvio, "rejeitado")
+    assert.equal((await rejectedRepo.listRecoverable()).length, 1)
+
+    const acceptedButNotPersistedRepo = await makeRepo()
+    const acceptedButNotPersistedCycle = await acceptedButNotPersistedRepo.createCycle({ negocioId: "DA", numeroCaso: "C" })
+    const realUpdateStatus = acceptedButNotPersistedRepo.updateStatus.bind(acceptedButNotPersistedRepo)
+    let messageSentPersistenceAttempts = 0
+    acceptedButNotPersistedRepo.updateStatus = async (cycleId, status, extras, options) => {
+      if (status === "message_sent" && messageSentPersistenceAttempts++ === 0) throw new Error("persistencia indisponivel")
+      return realUpdateStatus(cycleId, status, extras, options)
+    }
+    const acceptedButNotPersisted = await processPostHumanCycle({
+      cycle: acceptedButNotPersistedCycle, repository: acceptedButNotPersistedRepo,
+      usuario: { negocioId: "DA", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: Date.now(), listaDocumental: ["RG"] },
+      deps: { sendFree: async () => ({ id: "provider-accepted-id" }) }
+    })
+    assert.equal(acceptedButNotPersisted.failed, true)
+    assert.equal(acceptedButNotPersisted.providerAccepted, true)
+    assert.equal(acceptedButNotPersisted.providerMessageId, "provider-accepted-id")
+    assert.equal(acceptedButNotPersisted.failurePhase, "after_provider_acceptance")
+    assert.equal((await acceptedButNotPersistedRepo.getCycle(acceptedButNotPersistedCycle.cycleId)).status, "failed_terminal")
+    assert.equal((await acceptedButNotPersistedRepo.listRecoverable()).length, 0)
   })
 
   await test("resposta parcial, respondo depois e isolamento de negocios", async () => {

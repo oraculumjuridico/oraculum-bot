@@ -88,6 +88,21 @@ function normalizarCoverage(value) {
   return [...new Set((Array.isArray(value) ? value : []).map(texto).filter(Boolean))]
 }
 
+function normalizarEvidenceRefs(value) {
+  const refs = []
+  for (const input of Array.isArray(value) ? value : []) {
+    try {
+      const evidenceId = exigirTexto(input?.evidenceId, "evidenceId")
+      const version = Number(input?.version)
+      if (!Number.isInteger(version) || version < 1) continue
+      const sha256 = input?.sha256 ? normalizarSha256(input.sha256) : null
+      const ref = { evidenceId, version, sha256 }
+      if (!refs.some(item => item.evidenceId === evidenceId && item.version === version && item.sha256 === sha256)) refs.push(ref)
+    } catch {}
+  }
+  return refs.sort((left, right) => left.evidenceId.localeCompare(right.evidenceId) || left.version - right.version)
+}
+
 function criarEvidenciaDocumental(input = {}) {
   const arquivoFisico = criarArquivoFisico(input)
   const unidadeLogica = criarUnidadeLogica(input)
@@ -106,9 +121,13 @@ function criarEvidenciaDocumental(input = {}) {
     pageNumber: unidadeLogica.pageNumber,
     tipoDocumento,
     classificacao,
+    ocr: sanitizarPersistivel(input.ocr) ?? null,
     extracao,
     coverage: normalizarCoverage(input.coverage),
+    partyRole: texto(input.partyRole) || null,
     status: texto(input.status) || "analyzed",
+    avisos: sanitizarPersistivel(Array.isArray(input.avisos) ? input.avisos : []) || [],
+    erros: sanitizarPersistivel(Array.isArray(input.erros) ? input.erros : []) || [],
     version,
     arquivoFisico,
     unidadeLogica
@@ -121,7 +140,8 @@ function criarConfirmationId(input = {}) {
   const material = {
     fileId: exigirTexto(input.fileId, "fileId"),
     origem: exigirTexto(input.origem, "origem"),
-    assertion: texto(input.assertion) || null
+    assertion: texto(input.assertion) || null,
+    evidenceRefs: normalizarEvidenceRefs(input.evidenceRefs)
   }
   return `confirmation:${stableHash(material).slice(0, 32)}`
 }
@@ -135,7 +155,8 @@ function criarConfirmacaoDocumental(input = {}) {
     fileId,
     data,
     origem,
-    assertion: texto(input.assertion) || null
+    assertion: texto(input.assertion) || null,
+    evidenceRefs: normalizarEvidenceRefs(input.evidenceRefs)
   }
 }
 
@@ -165,7 +186,10 @@ function criarDecisaoDocumental(input = {}) {
     revision,
     status: exigirTexto(input.status, "status"),
     evidenceIds: [...new Set((input.evidenceIds || []).map(texto).filter(Boolean))],
+    evidenceRefs: normalizarEvidenceRefs(input.evidenceRefs),
     confirmationIds: [...new Set((input.confirmationIds || []).map(texto).filter(Boolean))],
+    divergenceIds: [...new Set((input.divergenceIds || []).map(texto).filter(Boolean))],
+    reviewIds: [...new Set((input.reviewIds || []).map(texto).filter(Boolean))],
     reasonCode: exigirTexto(input.reasonCode, "reasonCode"),
     decidedAt: exigirTexto(input.decidedAt, "decidedAt")
   }
@@ -219,14 +243,30 @@ function registrarEvidenciaDocumental(registry = {}, input = {}) {
 
 function registrarConfirmacaoDocumental(registry = {}, input = {}) {
   const state = normalizarContratoEvidencias(registry)
-  const confirmation = criarConfirmacaoDocumental(input)
+  const fileId = exigirTexto(input.fileId, "fileId")
+  const latestByEvidenceId = new Map()
+  for (const evidence of state.evidencias.filter(item => item.fileId === fileId)) {
+    const current = latestByEvidenceId.get(evidence.evidenceId)
+    if (!current || evidence.version > current.version) latestByEvidenceId.set(evidence.evidenceId, evidence)
+  }
+  const inferredRefs = [...latestByEvidenceId.values()].map(evidence => ({
+    evidenceId: evidence.evidenceId,
+    version: evidence.version,
+    sha256: evidence.sha256
+  }))
+  const confirmation = criarConfirmacaoDocumental({
+    ...input,
+    fileId,
+    evidenceRefs: Array.isArray(input.evidenceRefs) ? input.evidenceRefs : inferredRefs
+  })
   if (!state.evidencias.some(evidence => evidence.fileId === confirmation.fileId)) {
     throw erroContrato("DOCUMENT_CONFIRMATION_FILE_NOT_FOUND", "confirmacao sem evidencia do fileId")
   }
   const existing = state.confirmacoes.find(item => item.confirmationId === confirmation.confirmationId)
   if (!existing) return { ...state, confirmacoes: [...state.confirmacoes, confirmation] }
   const sameConfirmation = existing.fileId === confirmation.fileId &&
-    existing.origem === confirmation.origem && existing.assertion === confirmation.assertion
+    existing.origem === confirmation.origem && existing.assertion === confirmation.assertion &&
+    materialIgual(existing.evidenceRefs || [], confirmation.evidenceRefs || [])
   if (!sameConfirmation) {
     throw erroContrato("DOCUMENT_CONFIRMATION_CONFLICT", "confirmacoes possui identidade conflitante")
   }
@@ -265,5 +305,6 @@ module.exports = {
   registrarConfirmacaoDocumental,
   registrarDivergenciaDocumental,
   registrarDecisaoDocumental,
+  normalizarEvidenceRefs,
   sanitizarPersistivel
 }

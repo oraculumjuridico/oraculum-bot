@@ -68,7 +68,7 @@ class PostHumanCycleRepository {
   async _read() { await this.initialize(); return JSON.parse(await fs.promises.readFile(this.file, "utf8")) }
   async _atomicWrite(data) {
     await fs.promises.mkdir(path.dirname(this.file), { recursive: true })
-    const temporary = `${this.file}.${process.pid}.${Date.now()}.tmp`
+    const temporary = `${this.file}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`
     await fs.promises.writeFile(temporary, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o600 })
     await fs.promises.rename(temporary, this.file)
   }
@@ -191,6 +191,149 @@ class PostHumanCycleRepository {
       cycle.timestamps.updatedAt = nowIso(this.clock)
       if (TERMINAL.has(status)) cycle.timestamps[`${status}Em`] = cycle.timestamps.updatedAt
       await this._atomicWrite(db); return cycle
+    })
+  }
+  async _replacePayload(cycleId, payload, expectedVersion) {
+    if (this.mode === "postgres") {
+      const result = await this.pool.query(
+        `UPDATE post_human_cycles SET payload=$2::jsonb, updated_at=CURRENT_TIMESTAMP, version=version+1
+         WHERE cycle_id=$1::uuid AND version=$3 RETURNING *`,
+        [cycleId, JSON.stringify(payload || {}), Number(expectedVersion)]
+      )
+      if (!result.rows[0]) throw new Error("post_human_concurrency_conflict")
+      return normalizeRow(result.rows[0])
+    }
+    return this._serialized(async () => {
+      const db = await this._read()
+      const cycle = db.cycles.find(item => item.cycleId === cycleId)
+      if (!cycle) throw new Error("ciclo nao encontrado")
+      if (Number(cycle.version || 0) !== Number(expectedVersion)) throw new Error("post_human_concurrency_conflict")
+      cycle.payload = structuredClone(payload || {})
+      cycle.version = Number(expectedVersion) + 1
+      cycle.timestamps.updatedAt = nowIso(this.clock)
+      await this._atomicWrite(db)
+      return cycle
+    })
+  }
+  async _mutatePayload(cycleId, mutate) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await this.getCycle(cycleId)
+      if (!current) throw new Error("ciclo nao encontrado")
+      const mutation = mutate(structuredClone(current.payload || {}), current)
+      if (mutation.skip) return { cycle: current, ...mutation.result }
+      try {
+        const cycle = await this._replacePayload(cycleId, mutation.payload, current.version)
+        return { cycle, ...mutation.result }
+      } catch (error) {
+        if (error.message !== "post_human_concurrency_conflict" || attempt === 2) throw error
+      }
+    }
+  }
+  async claimDocumentDecision(cycleId, { requirementId, revision, claimId, now, staleMs = 5 * 60 * 1000 } = {}) {
+    if (!requirementId || !Number.isInteger(Number(revision)) || Number(revision) < 1) throw new Error("document_claim_invalid")
+    const timestamp = now || nowIso(this.clock)
+    return this._mutatePayload(cycleId, (payload, cycle) => {
+      const claims = { ...(payload.documentDecisionClaims || {}) }
+      const existing = claims[requirementId]
+      if (Number(existing?.revision || 0) > Number(revision) ||
+          (Number(existing?.revision) === Number(revision) && existing?.state === "completed")) {
+        return { skip: true, result: { claimed: false, alreadyCompleted: true } }
+      }
+      if (Number(existing?.revision) === Number(revision) && existing?.state === "claimed") {
+        const providerChanged = Boolean(cycle.providerMessageId) && cycle.providerMessageId !== existing.baselineProviderMessageId
+        const attemptChanged = Boolean(cycle.sendAttemptId) && cycle.sendAttemptId !== existing.baselineSendAttemptId
+        const deliveryMayHaveStarted = ["sending", "message_sent"].includes(cycle.status) ||
+          providerChanged || attemptChanged || cycle.resultadoEnvio === "incerto" || TERMINAL.has(cycle.status)
+        if (deliveryMayHaveStarted) {
+          return { skip: true, result: { claimed: false, requiresFinalization: true } }
+        }
+      }
+      const blockingClaim = Object.values(claims).find(item =>
+        ["outbound_uncertain", "failed_after_transport"].includes(item?.state))
+      const unsafeCycleStatus = ["sending", "message_sent", "awaiting_response", "failed_terminal"].includes(cycle.status)
+      const unsafeSendResult = ["pendente", "incerto", "aceito_pelo_provider", "falha"].includes(cycle.resultadoEnvio)
+      if (blockingClaim || unsafeCycleStatus || unsafeSendResult) {
+        return {
+          skip: true,
+          result: {
+            claimed: false,
+            outboundInProgress: true,
+            blockedState: blockingClaim?.state || cycle.status,
+            blockedRevision: blockingClaim?.revision || null
+          }
+        }
+      }
+      if (Number(existing?.revision) === Number(revision) && existing?.state === "retryable") {
+        const safeRetry = cycle.status === "failed_transient" && ["nao_enviado", "rejeitado"].includes(cycle.resultadoEnvio)
+        if (!RECOVERABLE.has(cycle.status) || !safeRetry) {
+          return { skip: true, result: { claimed: false, inProgress: true, blockedState: "retryable_not_safe" } }
+        }
+      } else if (existing?.state === "retryable") {
+        const safeRetry = cycle.status === "failed_transient" && ["nao_enviado", "rejeitado"].includes(cycle.resultadoEnvio)
+        if (!safeRetry) {
+          return { skip: true, result: { claimed: false, inProgress: true, blockedState: "retryable_not_safe" } }
+        }
+      } else if (Number(existing?.revision) === Number(revision) && existing?.state === "claimed") {
+        const providerChanged = Boolean(cycle.providerMessageId) && cycle.providerMessageId !== existing.baselineProviderMessageId
+        const attemptChanged = Boolean(cycle.sendAttemptId) && cycle.sendAttemptId !== existing.baselineSendAttemptId
+        const deliveryMayHaveStarted = ["sending", "message_sent"].includes(cycle.status) ||
+          providerChanged || attemptChanged || cycle.resultadoEnvio === "incerto" || TERMINAL.has(cycle.status)
+        if (deliveryMayHaveStarted) {
+          return { skip: true, result: { claimed: false, requiresFinalization: true } }
+        }
+        const age = Date.parse(timestamp) - Date.parse(existing.claimedAt || timestamp)
+        if (!Number.isFinite(age) || age < staleMs || !RECOVERABLE.has(cycle.status)) {
+          return { skip: true, result: { claimed: false, inProgress: true } }
+        }
+      }
+      const id = claimId || crypto.randomUUID()
+      claims[requirementId] = {
+        revision: Number(revision), state: "claimed", claimId: id, claimedAt: timestamp,
+        baselineProviderMessageId: cycle.providerMessageId || null,
+        baselineSendAttemptId: cycle.sendAttemptId || null
+      }
+      return {
+        skip: false,
+        payload: { ...payload, documentDecisionClaims: claims },
+        result: { claimed: true, claimId: id, resumed: Boolean(existing) }
+      }
+    })
+  }
+  async completeDocumentDecision(cycleId, { requirementId, revision, claimId, now } = {}) {
+    return this._mutatePayload(cycleId, payload => {
+      const claims = { ...(payload.documentDecisionClaims || {}) }
+      const existing = claims[requirementId]
+      if (Number(existing?.revision || 0) > Number(revision) ||
+          (Number(existing?.revision) === Number(revision) && existing?.state === "completed")) {
+        return { skip: true, result: { completed: false, alreadyCompleted: true } }
+      }
+      if (claimId && existing?.claimId && existing.claimId !== claimId) {
+        return { skip: true, result: { completed: false, claimMismatch: true } }
+      }
+      claims[requirementId] = {
+        ...existing, revision: Number(revision), state: "completed", completedAt: now || nowIso(this.clock)
+      }
+      return { skip: false, payload: { ...payload, documentDecisionClaims: claims }, result: { completed: true } }
+    })
+  }
+  async setDocumentDecisionClaimOutcome(cycleId, { requirementId, revision, claimId, state, reason, now } = {}) {
+    if (!['retryable', 'outbound_uncertain', 'failed_after_transport'].includes(state)) throw new Error("document_claim_outcome_invalid")
+    return this._mutatePayload(cycleId, payload => {
+      const claims = { ...(payload.documentDecisionClaims || {}) }
+      const existing = claims[requirementId]
+      if (!existing || Number(existing.revision) !== Number(revision)) {
+        return { skip: true, result: { updated: false, claimMissing: true } }
+      }
+      if (claimId && existing.claimId !== claimId) {
+        return { skip: true, result: { updated: false, claimMismatch: true } }
+      }
+      claims[requirementId] = {
+        ...existing,
+        state,
+        outcomeReason: reason || null,
+        outcomeAt: now || nowIso(this.clock)
+      }
+      return { skip: false, payload: { ...payload, documentDecisionClaims: claims }, result: { updated: true, state } }
     })
   }
   async findActiveByBusiness(negocioId) { return (await this.getActiveCycles({ negocioId }))[0] || null }
