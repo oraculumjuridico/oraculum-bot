@@ -3,6 +3,7 @@
 const fs = require("node:fs")
 const path = require("node:path")
 const crypto = require("node:crypto")
+const { isDeepStrictEqual } = require("node:util")
 const { sanitizeError } = require("./post-human-safe-log")
 
 const ACTIVE = new Set(["pending", "analyzing", "ready_to_send", "sending", "message_sent", "awaiting_response", "human_review_required", "failed_transient"])
@@ -73,12 +74,41 @@ class PostHumanCycleRepository {
   }
   _serialized(operation) { const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result }
 
-  async createCycle({ negocioId, numeroCaso, contatoId = null }) {
+  _createLocalCycle(db, { negocioId, numeroCaso, contatoId = null }) {
+    const existing = db.cycles.find(c => c.negocioId === String(negocioId) && ACTIVE.has(c.status))
+    if (existing) return { ...existing, alreadyExisted: true }
+    const sequencia = Math.max(0, ...db.cycles.filter(c => c.negocioId === String(negocioId)).map(c => c.sequencia || 0)) + 1
+    const timestamp = nowIso(this.clock)
+    const cycle = {
+      cycleId: crypto.randomUUID(), negocioId: String(negocioId), numeroCaso: String(numeroCaso),
+      contatoId: contatoId ? String(contatoId) : null, sequencia, status: "pending",
+      version: 0,
+      timestamps: { createdAt: timestamp, updatedAt: timestamp, confirmadoEm: timestamp },
+      estadoDocumental: null, sendAttemptId: null, providerMessageId: null,
+      resultadoEnvio: null, erro: null, payload: {}
+    }
+    db.cycles.push(cycle)
+    return cycle
+  }
+
+  async _compensateCreatedLocalCycle(expectedCycle) {
+    return this._serialized(async () => {
+      const db = await this._read()
+      const index = db.cycles.findIndex(cycle => cycle.cycleId === expectedCycle.cycleId)
+      if (index < 0) return { ok: true, removed: false, reason: "already_absent" }
+      if (!isDeepStrictEqual(db.cycles[index], expectedCycle)) return { ok: false, removed: false, reason: "cycle_changed" }
+      db.cycles.splice(index, 1)
+      await this._atomicWrite(db)
+      return { ok: true, removed: true }
+    })
+  }
+
+  async createCycle({ negocioId, numeroCaso, contatoId = null }, { transaction = null } = {}) {
     if (!negocioId || !numeroCaso) throw new Error("negocioId e numeroCaso obrigatorios")
     if (this.mode === "postgres") {
       if (!this.pool) throw new Error("post_human_postgres_required")
       const cycleId = crypto.randomUUID()
-      const result = await this.pool.query(
+      const result = await (transaction?.client || this.pool).query(
         "SELECT * FROM create_post_human_cycle($1::uuid,$2,$3,$4)",
         [cycleId, String(negocioId), String(numeroCaso), contatoId ? String(contatoId) : null]
       )
@@ -87,21 +117,22 @@ class PostHumanCycleRepository {
       }
       return normalizeRow(result.rows[0])
     }
+    if (transaction?.mode === "local") {
+      return this._serialized(async () => {
+        const db = await this._read()
+        const cycle = this._createLocalCycle(db, { negocioId, numeroCaso, contatoId })
+        if (cycle.alreadyExisted) return cycle
+        await this._atomicWrite(db)
+        const expectedCycle = structuredClone(cycle)
+        transaction.compensations.push(() => this._compensateCreatedLocalCycle(expectedCycle))
+        return cycle
+      })
+    }
     return this._serialized(async () => {
       const db = await this._read()
-      const existing = db.cycles.find(c => c.negocioId === String(negocioId) && ACTIVE.has(c.status))
-      if (existing) return { ...existing, alreadyExisted: true }
-      const sequencia = Math.max(0, ...db.cycles.filter(c => c.negocioId === String(negocioId)).map(c => c.sequencia || 0)) + 1
-      const timestamp = nowIso(this.clock)
-      const cycle = {
-        cycleId: crypto.randomUUID(), negocioId: String(negocioId), numeroCaso: String(numeroCaso),
-        contatoId: contatoId ? String(contatoId) : null, sequencia, status: "pending",
-        version: 0,
-        timestamps: { createdAt: timestamp, updatedAt: timestamp, confirmadoEm: timestamp },
-        estadoDocumental: null, sendAttemptId: null, providerMessageId: null,
-        resultadoEnvio: null, erro: null, payload: {}
-      }
-      db.cycles.push(cycle); await this._atomicWrite(db); return cycle
+      const cycle = this._createLocalCycle(db, { negocioId, numeroCaso, contatoId })
+      if (!cycle.alreadyExisted) await this._atomicWrite(db)
+      return cycle
     })
   }
   async getCycle(cycleId) {

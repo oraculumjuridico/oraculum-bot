@@ -215,11 +215,14 @@ const {
 } = require("./src/domain/admin-case-ui")
 const {
   montarBotaoAtendimentoRealizado,
+  waitForActionContextButton,
   handleAtendimentoRealizadoConfirmation,
-  isPilotCaseAllowed
+  isPilotCaseAllowed,
+  normalizeCaseNumber
 } = require("./src/domain/admin-post-human-complementation")
 const { isPostHumanComplementationEnabled } = require("./src/domain/post-human-feature-flag")
 const { PostHumanCycleRepository } = require("./src/domain/post-human-cycle-model")
+const { PostHumanActionContextRepository } = require("./src/domain/post-human-action-context-repository")
 const { processPostHumanCycle } = require("./src/domain/post-human-flow")
 const { createPostHumanDispatcher, recoverPostHumanCycles } = require("./src/domain/post-human-dispatcher")
 const { createLegacyDocumentPipeline } = require("./src/domain/post-human-document-pipeline")
@@ -4303,6 +4306,7 @@ async function liberarAgendamentoERecalcularStage(u, motivo = "agendamento_liber
 
 
 let postHumanCycleRepository = null
+let postHumanActionContextRepository = null
 function labelStageAdmin(stage) {
   const mapa = {
     [HS_STAGE.LEAD]: "🟡 Lead",
@@ -4623,6 +4627,28 @@ async function hsAdminBuscarDealsPorNumeroCaso(numeroCaso) {
   } catch (e) {
     logErroHubSpot(e, { operation: "adminBuscarDealPorNumeroCaso" })
     return { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED"), errorMessage: "hubspot_query_failed" }
+  }
+}
+
+// Read-only confirmation immediately before creating a post-human cycle.  The
+// rendered Admin snapshot is deliberately not a source of truth here.
+async function confirmarVinculoPosHumanoHubSpot(context) {
+  try {
+    const result = await hsAdminBuscarDealsPorNumeroCaso(context.numeroCaso)
+    if (!result?.ok || !Array.isArray(result.deals)) return { ok: false, reason: result?.errorCode === "INVALID_HUBSPOT_RESPONSE" ? "hubspot_invalid_response" : "hubspot_error" }
+    if (result.deals.length === 0) return { ok: false, reason: "hubspot_deal_not_found" }
+    if (result.deals.length !== 1) return { ok: false, reason: "hubspot_ambiguous" }
+    const deal = result.deals[0]
+    if (String(deal?.id) !== String(context.negocioId) || normalizeCaseNumber(deal?.numeroCaso || deal?.properties?.numero_de_caso) !== normalizeCaseNumber(context.numeroCaso)) return { ok: false, reason: "hubspot_deal_mismatch" }
+    const association = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(context.negocioId)}/associations/contacts`, { headers: HS() }
+    )
+    if (!Array.isArray(association?.data?.results)) return { ok: false, reason: "hubspot_invalid_response" }
+    const contacts = association.data.results.map(item => String(item?.id || "")).filter(Boolean)
+    if (contacts.length !== 1) return { ok: false, reason: contacts.length ? "hubspot_ambiguous" : "hubspot_contact_mismatch" }
+    return contacts[0] === String(context.contatoId) ? { ok: true } : { ok: false, reason: "hubspot_contact_mismatch" }
+  } catch (error) {
+    return { ok: false, reason: error?.response || error?.code ? "hubspot_error" : "hubspot_invalid_response" }
   }
 }
 
@@ -5826,13 +5852,14 @@ function telaDetalheCasoAdmin(from, idx) {
     adminId: normalizarNumeroWhatsAppEnvio(from),
     contatoId: item.u?.contatoId,
     customerPhone: normalizarNumeroWhatsAppEnvio(item.from || item.u?._numero || item.u?.whatsappContato),
-    customerPhoneConfirmed: item.u?.telefoneEhDoCliente === true
+    customerPhoneConfirmed: item.u?.telefoneEhDoCliente === true,
+    actionContextRepository: postHumanActionContextRepository
   })
   const preferencia = obterPreferenciaComunicacao(item.u, item.from || from)
-  return {
+  const montarTela = botao => ({
     texto: `${textoDetalheCasoAdmin(item, { adminAutenticado: true })}\n\n${rotuloPreferenciaComunicacao(preferencia)}`,
     opcoes: [
-      botaoPosAtendimento,
+      botao,
       { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
       { id: ADMIN_IDS.casoEnviarAnalise, title: `📝 ${ADMIN_MENU_LABELS.registrarAnalise}` },
       { id: ADMIN_IDS.casoPedirDocs, title: `📎 ${ADMIN_MENU_LABELS.pedirDocumentos}` },
@@ -5845,7 +5872,8 @@ function telaDetalheCasoAdmin(from, idx) {
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
-  }
+  })
+  return botaoPosAtendimento ? waitForActionContextButton(botaoPosAtendimento).then(montarTela) : montarTela(null)
 }
 
 function telaPreferenciaComunicacaoAdmin(from) {
@@ -5863,11 +5891,11 @@ function telaPreferenciaComunicacaoAdmin(from) {
   }
 }
 
-function atualizarPreferenciaComunicacaoAdmin(from, preference) {
+async function atualizarPreferenciaComunicacaoAdmin(from, preference) {
   const item = obterCasoAdmin(from)
   if (!item?.u?.contatoId) return { texto: "Este caso não possui contato confirmado. Nenhuma preferência foi alterada.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
   definirPreferenciaComunicacao(item.u, item.from || from, preference, "admin_manual")
-  return telaDetalheCasoAdmin(from)
+  return await telaDetalheCasoAdmin(from)
 }
 
 function telaLinksCasoAdmin(from) {
@@ -6757,9 +6785,9 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
   if (["agendar atendimento", ADMIN_IDS.casoAgendar].includes(comando)) return iniciarAgendamentoCasoAdmin(from)
   if (["preferencia de comunicacao", "preferência de comunicação", ADMIN_IDS.casoPreferenciaComunicacao].includes(comando)) return telaPreferenciaComunicacaoAdmin(from)
-  if ([ADMIN_IDS.preferenciaTexto].includes(comando)) return atualizarPreferenciaComunicacaoAdmin(from, "texto")
-  if ([ADMIN_IDS.preferenciaAudioSempre].includes(comando)) return atualizarPreferenciaComunicacaoAdmin(from, "audio_sempre")
-  if ([ADMIN_IDS.preferenciaNaoDefinida].includes(comando)) return atualizarPreferenciaComunicacaoAdmin(from, "nao_definido")
+  if ([ADMIN_IDS.preferenciaTexto].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "texto")
+  if ([ADMIN_IDS.preferenciaAudioSempre].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "audio_sempre")
+  if ([ADMIN_IDS.preferenciaNaoDefinida].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "nao_definido")
   if (["admin_casos_novos", ADMIN_IDS.casosNovos].includes(comando)) return await telaAdminCasosNovos(from)
   if (["admin_casos_analise", ADMIN_IDS.casosAnalise].includes(comando)) return await telaAdminCasosAnalise(from)
   if (["admin_casos_docs", ADMIN_IDS.casosDocs].includes(comando)) return await telaAdminCasosDocumentos(from)
@@ -6784,13 +6812,13 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (matchConsulta) return telaDetalheConsultaAdmin(from, Number(matchConsulta[1]))
 
   const matchCaso = comando.match(/^admin_caso_(\d+)$/)
-  if (matchCaso) return telaDetalheCasoAdmin(from, Number(matchCaso[1]))
+  if (matchCaso) return await telaDetalheCasoAdmin(from, Number(matchCaso[1]))
 
   if (/^\d+$/.test(comando)) {
     const sessaoAdmin = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from))
     if (sessaoAdmin?.listaAtiva === "casos") {
       const itemCaso = obterCasoAdmin(from, Number(comando) - 1)
-      if (itemCaso) return telaDetalheCasoAdmin(from)
+      if (itemCaso) return await telaDetalheCasoAdmin(from)
       return {
       texto: "A lista anterior expirou. Abra novamente Filas de casos e selecione o caso.",
         opcoes: [
@@ -6840,6 +6868,9 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       usuario,
       isAdmin: ehWhatsAppAdmin,
       repository: postHumanCycleRepository,
+      actionContextRepository: postHumanActionContextRepository,
+      confirmHubspotContext: confirmarVinculoPosHumanoHubSpot,
+      logger: logInfo,
       processCycle: (cycle, currentUser) => processPostHumanCycle({
         cycle,
         usuario: currentUser,
@@ -17882,6 +17913,11 @@ async function iniciarServidor() {
         pool: getPool(),
         mode: process.env.NODE_ENV === "production" ? "postgres" : (getPool() ? "postgres" : "local")
       })
+      postHumanActionContextRepository = new PostHumanActionContextRepository({
+        pool: getPool(),
+        mode: process.env.NODE_ENV === "production" ? "postgres" : (getPool() ? "postgres" : "local")
+      })
+      await postHumanActionContextRepository.initialize()
       await recoverPostHumanCycles({
         isEnabled: isPostHumanComplementationEnabled,
         repository: postHumanCycleRepository,
