@@ -40,7 +40,7 @@ function pruneActionContexts(now = Date.now()) {
   }
 }
 function safeLog(logger, status, reason, startedAt) {
-  try { logger?.({ event: "post_human.action_confirmation", status, reason, operation: "admin_post_human_completed", durationMs: Date.now() - startedAt }) } catch {}
+  try { logger?.({ event: "post_human.action_confirmation", status, failureCode: reason, operation: "admin_post_human_completed", durationMs: Date.now() - startedAt }) } catch {}
 }
 function tokenFromInteraction(id) { return String(id || "").match(/^admin_post_human_completed_([A-Za-z0-9_-]{24})$/)?.[1] || null }
 async function waitForActionContextButton(button) {
