@@ -12,12 +12,13 @@ function classify(msgType, content) {
 }
 
 async function resolverCiclo({ repository, usuario = {}, telefoneNormalizado, numeroCaso, contexto = {} }) {
+  const contextoSeguro = contexto && typeof contexto === "object" ? contexto : {}
   let contatoId = usuario.contatoId ? String(usuario.contatoId) : null
   if (!contatoId) return null
   const candidates = await repository.getActiveCycles({ contatoId })
   const allowed = candidates.filter(cycle => isPilotCaseAllowed(cycle.numeroCaso))
-  const expectedBusiness = contexto.negocioId || usuario.negocioId || null
-  const expectedCase = normalizeCaseNumber(numeroCaso || contexto.numeroCaso || usuario.numeroCaso)
+  const expectedBusiness = contextoSeguro.negocioId || usuario.negocioId || null
+  const expectedCase = normalizeCaseNumber(numeroCaso || contextoSeguro.numeroCaso || usuario.numeroCaso)
   let filtered = allowed
   if (expectedBusiness) filtered = filtered.filter(c => c.negocioId === String(expectedBusiness))
   if (expectedCase) filtered = filtered.filter(c => normalizeCaseNumber(c.numeroCaso) === expectedCase)
