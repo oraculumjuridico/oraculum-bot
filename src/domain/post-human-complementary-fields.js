@@ -7,9 +7,10 @@ const {
   normalizarCampoAdminAssistido,
   normalizarAreaJuridicaAdminAssistido
 } = require("./admin-assisted-ai-schema")
+const { montarNomeCompletoHubSpot } = require("./admin-name-resolver")
 
 const CONTACT_FIELDS = Object.freeze({
-  nomeCompleto: ["firstname"], cpf: ["cpf_do_cliente"], dataNascimento: ["date_of_birth"],
+  nomeCompleto: ["firstname", "lastname"], cpf: ["cpf_do_cliente"], dataNascimento: ["date_of_birth"],
   telefone: ["phone"], email: ["email", "work_email"], cidade: ["city"], uf: ["state"]
 })
 const DEAL_FIELDS = Object.freeze({
@@ -88,7 +89,11 @@ function resolveComplementaryContext({
     const candidates = [
       ["resposta", resposta],
       ["usuario", read(usuario, USER_FIELDS[field])],
-      ["contato", sourceLoaded(contact) ? read(contact, CONTACT_FIELDS[field]) : null],
+      ["contato", sourceLoaded(contact)
+        ? field === "nomeCompleto"
+          ? montarNomeCompletoHubSpot(contact)
+          : read(contact, CONTACT_FIELDS[field])
+        : null],
       ["negocio", sourceLoaded(deal) ? read(deal, DEAL_FIELDS[field]) : null]
     ].filter(([, value]) => present(value))
     const distinct = new Map(candidates.map(([source, value]) => [normalize(value), { source, value }]))
