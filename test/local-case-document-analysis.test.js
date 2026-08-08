@@ -10,6 +10,7 @@ const childProcess = require("node:child_process")
 const Module = require("node:module")
 const { createCanvas } = require("@napi-rs/canvas")
 const { analyzeCaseFolder, consolidateCase, renderPdfPages, writeAnalysisReports, readCache, normalizeName, ocrWithTimeout, sanitizeCaseAnalysis, shouldIgnoreInventoryFile, getBlockingReviewReasons } = require("../src/domain/local-case-document-analysis")
+const { normalizarEntradaDocumental } = require("../src/domain/document-input-normalizer")
 // Load import-real-cases BEFORE Module._load hook is set up (must be at top to avoid blocking on hubspot-deal-title)
 const { inventory } = require("../scripts/import-real-cases")
 
@@ -48,12 +49,22 @@ async function imageFixture(file) {
   await fsp.writeFile(file, await canvas.encode("png"))
 }
 
-function pdfFixture() {
+function pdfFixture(pageCount = 1) {
+  const kids = []
+  const pageObjects = []
+  for (let index = 0; index < pageCount; index++) {
+    const pageObject = 3 + index * 2
+    const contentObject = pageObject + 1
+    kids.push(`${pageObject} 0 R`)
+    pageObjects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> /Contents ${contentObject} 0 R >>`,
+      `<< /Length 27 >>\nstream\n0 0 0 rg ${30 + index} 80 240 40 re f\nendstream`
+    )
+  }
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> /Contents 4 0 R >>",
-    "<< /Length 27 >>\nstream\n0 0 0 rg 30 80 240 40 re f\nendstream"
+    `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pageCount} >>`,
+    ...pageObjects
   ]
   let output = "%PDF-1.4\n"
   const offsets = [0]
@@ -86,6 +97,20 @@ async function main() {
   const rendered = await renderPdfPages(await fsp.readFile(path.join(caseFolder, "beneficio.pdf")), 2)
   assert.equal(rendered.pages.length, 1)
   assert.ok(rendered.pages[0].subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+
+  const realMultipagePdf = pdfFixture(3)
+  const renderedMultipage = await renderPdfPages(realMultipagePdf, 5)
+  assert.deepEqual(renderedMultipage.renderedPages.map(item => item.pageNumber), [1, 2, 3])
+  assert.equal(renderedMultipage.pages.every(page => page.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))), true)
+  const normalizedMultipage = await normalizarEntradaDocumental({
+    fileId: "pdf-real-multipagina",
+    buffer: realMultipagePdf,
+    mimeType: "application/pdf"
+  })
+  assert.deepEqual(normalizedMultipage.units.map(item => item.evidenceId), [
+    "pdf-real-multipagina#page=1", "pdf-real-multipagina#page=2", "pdf-real-multipagina#page=3"
+  ])
+  assert.deepEqual(normalizedMultipage.units.map(item => item.pageNumber), [1, 2, 3])
 
   let oversizedCanvasCreations = 0
   await assert.rejects(

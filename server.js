@@ -292,6 +292,9 @@ const {
 const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
+const { confirmCanonicalDocument } = require("./src/domain/document-canonical-service")
+const { projectDocumentDecision } = require("./src/domain/document-checklist-projection")
+const { reevaluatePostHumanForDecision } = require("./src/domain/post-human-document-reevaluation")
 const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
 const { createAdminAssistedMediaStaging, processExistingCaseAdminMedia } = require("./src/domain/admin-assisted-media")
 const { createLiveCaseFlow, buildCanonicalPlan } = require("./src/domain/live-case-executor-bridge")
@@ -10558,6 +10561,57 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
   }
 }
 
+function dependenciasReavaliacaoDocumentalPosHumana(usuario, cycle) {
+  return {
+    resolverListaDocumental: () => getDocumentosListaCaso(usuario),
+    listarArquivosDrive: async () => usuario.pastaDriveId ? listarArquivosDriveNaPasta(usuario.pastaDriveId) : [],
+    requiredSources: usuario.pastaDriveId ? ["drive"] : [],
+    camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({
+      usuario, cycle, repository: postHumanCycleRepository
+    }),
+    getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
+    sendFree: (to, message) => enviar(to, message),
+    presentClientMenu: to => apresentarMenuClientePosHumano(to, usuario),
+    sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
+    templateConfig: META_TEMPLATES.casoAtualizacao,
+    buildTemplateParams: solicitation => [solicitation.texto],
+    isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository)
+  }
+}
+
+async function confirmarDocumentoCanonicoSeguro(u, fileId, options = {}) {
+  if (!u?.pastaDriveId || !fileId) return { ok: false, skipped: true, reason: "case_or_file_missing" }
+  try {
+    const canonical = await confirmCanonicalDocument({
+      pastaDriveId: u.pastaDriveId,
+      fileId,
+      origem: options.origem || "client_callback",
+      assertion: options.assertion || null
+    })
+    if (!canonical.ok) return canonical
+    const projection = projectDocumentDecision(u, canonical.decision, marcarStatusDocumento)
+    const promotable = ["partial", "delivered"].includes(canonical.decision?.status)
+    if (!promotable) return { ...canonical, projection, reevaluation: { processed: false, reason: "decision_not_promoted" } }
+    await api.persistirUsersAgora({ propagarErro: true })
+    const reevaluation = await reevaluatePostHumanForDecision({
+      usuario: u,
+      decision: canonical.decision,
+      repository: postHumanCycleRepository
+    }, {
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle,
+        usuario: currentUser,
+        repository: postHumanCycleRepository,
+        deps: dependenciasReavaliacaoDocumentalPosHumana(currentUser, cycle)
+      })
+    })
+    return { ...canonical, projection, reevaluation }
+  } catch (error) {
+    logErro("document_canonical", `falha nao bloqueante: ${error.code || error.name || "erro"}`)
+    return { ok: false, skipped: false, reason: error.code || "DOCUMENT_CANONICAL_ERROR" }
+  }
+}
+
 async function consolidarDocumentosDoCasoSeguro({ u, contexto = {} }) {
   try {
     return await consolidarDocumentosDoCaso({
@@ -10804,6 +10858,9 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }
   })
   await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "guiado" })
+  if (docAtual?.id === "doc_rg" && u.ultimoArqId && u.ultimoArqId !== arquivo.id) {
+    await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "guided_next_upload" })
+  }
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
@@ -16050,6 +16107,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         "DOCUMENTO ANEXADO AO CASO",
         `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinalDoc}${linkFinalDoc ? `\nDrive: ${linkFinalDoc}` : ""}`
       )
+      await confirmarDocumentoCanonicoSeguro(u, fileIdDoc, { origem: "doc_cliente_anexar" })
       u.documentosEnviados = true
       u._docsClienteGuiado = false
       u._docClientePendenteNome = null
@@ -16417,7 +16475,10 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.etapa = "documentos"
       const { doc: docRg } = getDocumentoAtualGuia(u)
       if (docRg?.id === "doc_rg") {
-        marcarStatusDocumento(u, docRg.id, "docsEntregues")
+        await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, {
+          origem: "docs_rg_verso_junto",
+          assertion: "front_and_back_same_image"
+        })
         await hsCriarNota(
           u.contatoId,
           "DOCUMENTO COMPLETO - FRENTE E VERSO NA MESMA IMAGEM",
@@ -16440,7 +16501,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.etapa = "documentos"
       const { doc: docRg, folha: folhaRg, fIdx: fIdxRg, folhas: folhasRg } = getDocumentoAtualGuia(u)
       if (docRg?.id === "doc_rg") {
-        marcarStatusDocumento(u, docRg.id, "docsParciais")
+        await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "docs_rg_sem_verso" })
         await hsCriarNota(
           u.contatoId,
           "DOCUMENTO PARCIAL - CLIENTE SEGUIU SEM VERSO",
@@ -16489,9 +16550,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const docAtual4 = pend4[0]
       const folhas4 = docAtual4?.folhas || ["Foto"]
       const fIdx4 = u.docAtualIdx || 0
+      if (docAtual4?.id === "doc_rg" && u.ultimoArqId) {
+        await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "docs_proxdoc" })
+      }
       if (fIdx4 >= folhas4.length) {
         // Todas as folhas do documento atual foram enviadas — avança para o próximo documento
-        if (docAtual4?.id) marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
+        if (docAtual4?.id && docAtual4.id !== "doc_rg") marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
         u.docAtualIdx = 0
       }
       if (getDocsPendentes(u).length === 0) {
@@ -16517,7 +16581,11 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         const fIdxDepois = u.docAtualIdx || 0
         const docCompletoDepois = fIdxDepois >= folhasDepois.length
         if (docCompletoDepois) {
-          marcarStatusDocumento(u, docAtualDepois.id, "docsEntregues")
+          if (docAtualDepois.id === "doc_rg" && u.ultimoArqId) {
+            await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "docs_depois" })
+          } else if (docAtualDepois.id !== "doc_rg") {
+            marcarStatusDocumento(u, docAtualDepois.id, "docsEntregues")
+          }
           u.docAtualIdx = 0
         }
       }

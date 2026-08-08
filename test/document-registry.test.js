@@ -72,6 +72,9 @@ function main() {
   }, { now: NOW })
 
   assert.equal(registry.versao, DOCUMENT_REGISTRY_VERSION)
+  assert.deepEqual(registry.evidencias, [])
+  assert.deepEqual(registry.confirmacoes, [])
+  assert.deepEqual(registry.decisoes, [])
   assert.equal(registry.documentos.length, 2)
   assert.equal(registry.documentos[0].fileId, "file-rg-frente")
   assert.equal(registry.documentos[0].drive.webViewLink.includes("file-rg-frente"), true)
