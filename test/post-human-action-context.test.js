@@ -7,6 +7,7 @@ const path = require("node:path")
 const { PostHumanActionContextRepository } = require("../src/domain/post-human-action-context-repository")
 const { PostHumanCycleRepository } = require("../src/domain/post-human-cycle-model")
 const { montarBotaoAtendimentoRealizado, handleAtendimentoRealizadoConfirmation } = require("../src/domain/admin-post-human-complementation")
+const { logInfo } = require("../src/utils/logging")
 
 async function test(name, fn) { try { await fn(); console.log(`PASS ${name}`) } catch (error) { console.error(`FAIL ${name}: ${error.stack}`); process.exitCode = 1 } }
 async function makeRepository(clock = Date.now) {
@@ -25,6 +26,14 @@ function user(overrides = {}) { return { negocioId: "D1", contatoId: "C1", numer
 function setup() { process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "true"; process.env.POST_HUMAN_PILOT_CASES = "CASE-1" }
 function button(repo, overrides = {}) { return montarBotaoAtendimentoRealizado("D1", "CASE-1", { adminId: "ADMIN", contatoId: "C1", customerPhone: "5511999999999", customerPhoneConfirmed: true, actionContextRepository: repo, ...overrides }) }
 function tokenFromButtonId(id) { return String(id).replace(/^admin_post_human_completed_/, "") }
+async function captureStructuredLogs(operation) {
+  const messages = []; const original = console.log
+  console.log = (...args) => messages.push(args.map(String).join(" "))
+  try {
+    const result = await operation()
+    return { result, logs: messages.map(message => JSON.parse(message)) }
+  } finally { console.log = original }
+}
 function confirmation(buttonId, repo, overrides = {}) {
   return handleAtendimentoRealizadoConfirmation({ from: "ADMIN", interactionId: buttonId, usuario: user(), isAdmin: value => value === "ADMIN", repository: { createCycle: async () => ({ cycleId: "cycle" }) }, actionContextRepository: repo, confirmHubspotContext: async () => ({ ok: true }), processCycle: async () => ({ status: "pending" }), ...overrides })
 }
@@ -52,8 +61,40 @@ function confirmation(buttonId, repo, overrides = {}) {
   await test("reconfirmação HubSpot falha fechada e logs não expõem token nem PII", async () => {
     const { repo } = await makeRepository(); const events = []; const rendered = await button(repo); let cycles = 0
     const result = await confirmation(rendered.id, repo, { repository: { createCycle: async () => (++cycles, {}) }, confirmHubspotContext: async () => ({ ok: false, reason: "hubspot_contact_mismatch" }), logger: event => events.push(event) })
-    assert.equal(result.reason, "hubspot_contact_mismatch"); assert.equal(cycles, 0); assert.deepEqual(events[0].reason, "hubspot_contact_mismatch")
+    assert.equal(result.reason, "hubspot_contact_mismatch"); assert.equal(cycles, 0); assert.deepEqual(events[0].failureCode, "hubspot_contact_mismatch")
     assert.equal(JSON.stringify(events).includes(tokenFromButtonId(rendered.id)), false); assert.equal(JSON.stringify(events).includes("5511999999999"), false)
+  })
+  await test("rejeicoes chegam ao JSON final como failureCode sem token nem PII", async () => {
+    const sensitive = { phone: "5511999999999", cpf: "123.456.789-09", name: "Nome Completo Sensivel" }
+    const { repo } = await makeRepository(); const rendered = await button(repo)
+    const hubspot = await captureStructuredLogs(() => confirmation(rendered.id, repo, {
+      usuario: user({ telefone: sensitive.phone, cpf: sensitive.cpf, nome: sensitive.name }),
+      confirmHubspotContext: async () => ({ ok: false, reason: "hubspot_contact_mismatch" }),
+      logger: logInfo
+    }))
+    assert.equal(hubspot.result.reason, "hubspot_contact_mismatch")
+    assert.equal(hubspot.logs.length, 1)
+    assert.equal(hubspot.logs[0].event, "post_human.action_confirmation")
+    assert.equal(hubspot.logs[0].status, "rejected")
+    assert.equal(hubspot.logs[0].failureCode, "hubspot_contact_mismatch")
+
+    let now = 1_000; process.env.POST_HUMAN_ACTION_TTL_MS = "1000"
+    try {
+      const { repo: expiredRepo } = await makeRepository(() => now); const expiredButton = await button(expiredRepo); now = 2_001
+      const expired = await captureStructuredLogs(() => confirmation(expiredButton.id, expiredRepo, {
+        usuario: user({ telefone: sensitive.phone, cpf: sensitive.cpf, nome: sensitive.name }), logger: logInfo
+      }))
+      assert.equal(expired.result.reason, "context_expired")
+      assert.equal(expired.logs.length, 1)
+      assert.equal(expired.logs[0].event, "post_human.action_confirmation")
+      assert.equal(expired.logs[0].status, "rejected")
+      assert.equal(expired.logs[0].failureCode, "context_expired")
+
+      const serialized = JSON.stringify([...hubspot.logs, ...expired.logs])
+      for (const value of [tokenFromButtonId(rendered.id), tokenFromButtonId(expiredButton.id), sensitive.phone, sensitive.cpf, sensitive.name]) {
+        assert.equal(serialized.includes(value), false, value)
+      }
+    } finally { delete process.env.POST_HUMAN_ACTION_TTL_MS }
   })
   await test("erro transitório do HubSpot preserva token para retry seguro", async () => {
     const { repo } = await makeRepository(); const rendered = await button(repo); let cycles = 0; let outbounds = 0
@@ -94,7 +135,7 @@ function confirmation(buttonId, repo, overrides = {}) {
       processCycle: async () => { outbounds++ }, logger: event => events.push(event)
     })
     assert.equal(failed.reason, "cycle_create_failed_rolled_back"); assert.equal(outbounds, 0)
-    assert.equal(events[0]?.reason, "cycle_create_failed_rolled_back"); assert.equal(JSON.stringify(events).includes(tokenFromButtonId(rendered.id)), false); assert.equal(JSON.stringify(events).includes("5511999999999"), false)
+    assert.equal(events[0]?.failureCode, "cycle_create_failed_rolled_back"); assert.equal(JSON.stringify(events).includes(tokenFromButtonId(rendered.id)), false); assert.equal(JSON.stringify(events).includes("5511999999999"), false)
     assert.equal((await actionRepo.inspect(tokenFromButtonId(rendered.id), "ADMIN")).ok, true)
     assert.equal((await cycleRepo.getActiveCycles({ negocioId: "D1" })).length, 0)
     const retried = await confirmation(rendered.id, actionRepo, { repository: cycleRepo, processCycle: async () => { outbounds++ } })
@@ -167,7 +208,7 @@ function confirmation(buttonId, repo, overrides = {}) {
     const actionRepo = new ConcurrentCycleUpdateRepository({ file: path.join(dir, "contexts.json") })
     const rendered = await button(actionRepo); const events = []; failConsumedWrite = true
     const failed = await confirmation(rendered.id, actionRepo, { repository: cycleRepo, logger: event => events.push(event) })
-    assert.equal(failed.reason, "cycle_compensation_conflict_preserved"); assert.equal(events[0]?.reason, "cycle_compensation_conflict_preserved")
+    assert.equal(failed.reason, "cycle_compensation_conflict_preserved"); assert.equal(events[0]?.failureCode, "cycle_compensation_conflict_preserved")
     const [preserved] = await cycleRepo.getActiveCycles({ negocioId: "D1" })
     assert.equal(preserved.status, "analyzing"); assert.equal(preserved.version, 1); assert.equal(preserved.payload.concurrentUpdate, true)
     assert.equal((await actionRepo.inspect(tokenFromButtonId(rendered.id), "ADMIN")).ok, true)
@@ -255,6 +296,6 @@ function confirmation(buttonId, repo, overrides = {}) {
       assert.equal(result.reason, reason)
     }
     assert.equal(cycles, 0); assert.equal(outbounds, 0)
-    assert.ok(events.some(event => event.reason === "context_missing")); assert.ok(events.some(event => event.reason === "hubspot_invalid_response"))
+    assert.ok(events.some(event => event.failureCode === "context_missing")); assert.ok(events.some(event => event.failureCode === "hubspot_invalid_response"))
   })
 })()
