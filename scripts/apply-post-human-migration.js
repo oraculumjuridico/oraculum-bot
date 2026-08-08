@@ -4,7 +4,10 @@ const fs = require("node:fs")
 const path = require("node:path")
 const { Pool } = require("pg")
 
-const MIGRATION_PATH = path.join(__dirname, "..", "migrations", "20260728_post_human_cycles.sql")
+const MIGRATION_PATHS = [
+  path.join(__dirname, "..", "migrations", "20260728_post_human_cycles.sql"),
+  path.join(__dirname, "..", "migrations", "20260807_post_human_action_contexts.sql")
+]
 
 function createPool(connectionString) {
   return new Pool({
@@ -42,7 +45,7 @@ async function applyPostHumanMigration(options = {}) {
   let began = false
 
   try {
-    const sql = fs.readFileSync(MIGRATION_PATH, "utf8")
+    const sql = MIGRATION_PATHS.map(migrationPath => fs.readFileSync(migrationPath, "utf8")).join("\n\n")
     client = await pool.connect()
     await client.query("BEGIN")
     began = true
