@@ -12,6 +12,7 @@ const { pendingPostHumanLegalQuestions } = require("./admin-assisted-intake-cata
 const { mergeInssFacts } = require("./inss-legal-facts")
 const { isBpcCase, mergeBpcFacts } = require("./bpc-legal-facts")
 const { ADDRESS_FIELDS, extractSyntacticFacts, trustedAddressDocumentFacts, same: sameAddressValue } = require("./address-facts")
+const { resolveLegalCaseNomenclature } = require("./legal-case-nomenclature")
 
 const CONTACT_FIELDS = Object.freeze({
   nomeCompleto: ["firstname", "lastname"], cpf: ["cpf_do_cliente"], dataNascimento: ["date_of_birth"],
@@ -162,11 +163,26 @@ function resolveComplementaryContext({
     ...perguntasJuridicasDinamicas
   ])]
   const camposPendentes = [...camposCadastraisPendentes, ...camposJuridicosPendentes]
-  const revisaoHumana = identityInvalid || divergences.length > 0
+  const nomenclaturaJuridica = resolveLegalCaseNomenclature({
+    current: usuario.nomenclaturaJuridica,
+    narrative: [data.descricao?.valor, data.objetivo?.valor, data.situacao?.valor],
+    answered,
+    usuario,
+    deal,
+    documents
+  })
+  if (nomenclaturaJuridica.divergences.length) {
+    divergences.push(...nomenclaturaJuridica.divergences.map(item => ({
+      ...item,
+      source: "nomenclatura_juridica"
+    })))
+  }
+  const requerRevisao = identityInvalid || divergences.length > 0
   return {
     data, camposCadastraisPendentes, camposJuridicosPendentes, camposPendentes,
     documents, contactLoaded: sourceLoaded(contact), dealLoaded: sourceLoaded(deal),
-    divergences, divergencias: divergences, revisaoHumana, humanReviewRequired: revisaoHumana,
+    nomenclaturaJuridica,
+    divergences, divergencias: divergences, revisaoHumana: requerRevisao, humanReviewRequired: requerRevisao,
     reviewReason: identityInvalid ? "contexto_contato_negocio_invalido" : divergences.length ? "dados_divergentes" : null
   }
 }

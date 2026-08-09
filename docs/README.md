@@ -1,5 +1,7 @@
 # Documentação do Bot Oráculum
 
+Comece por [ORACULUM_RUNTIME_ARCHITECTURE.md](ORACULUM_RUNTIME_ARCHITECTURE.md) para a descrição do runtime e dos gates atuais.
+
 Esta árvore separa documentação por finalidade:
 
 - `architecture/`: modelos, roadmaps e análises estruturais;

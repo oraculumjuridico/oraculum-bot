@@ -29,6 +29,10 @@ const {
 } = require("./admin-assisted-questionnaire")
 const { normalizeUf, classifyInssDemand, reconcileDocuments, registrationStatus } = require("./admin-assisted-intake-catalog")
 const { ADDRESS_FIELDS, buildAddressAnswerResult } = require("./address-facts")
+const {
+  resolveLegalCaseNomenclature,
+  projectLegalCaseNomenclature
+} = require("./legal-case-nomenclature")
 
 const ADMIN_ASSISTIDO_ORIGEM = "admin_assistido_ia"
 const ADMIN_ASSISTIDO_ETAPA_INICIAL = "aguardando_relato"
@@ -949,6 +953,14 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
   const tipo = textoCampo(dados, "tipoCaso") || adminAssistido.analise?.tipoCaso || "outros"
   const descricao = montarDescricaoAdminAssistido(dados)
   const nome = textoCampo(dados, "nomeCompleto") || textoCampo(dados, "clientePrincipal")
+  const nomenclaturaJuridica = resolveLegalCaseNomenclature({
+    current: adminAssistido.nomenclaturaJuridica,
+    narrative: [descricao, textoCampo(dados, "objetivo")],
+    answered: dados,
+    usuario: { area, tipo, descricao, objetivo: textoCampo(dados, "objetivo") },
+    classification: adminAssistido.analise
+  })
+  const projecaoJuridica = projectLegalCaseNomenclature(nomenclaturaJuridica)
 
   return {
     stage: "confirmacao",
@@ -981,12 +993,13 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     regiao: null,
     cidade: textoCampo(dados, "cidade"),
     uf: textoCampo(dados, "uf"),
-    area,
-    tipo,
-    situacao: textoCampo(dados, "situacao") || tipo,
-    subTipo: textoCampo(dados, "motivo") || null,
+    area: projecaoJuridica.area || area,
+    tipo: projecaoJuridica.tipoCaso || tipo,
+    situacao: projecaoJuridica.situacao || textoCampo(dados, "situacao") || tipo,
+    subTipo: projecaoJuridica.subTipo || null,
     detalhe: textoCampo(dados, "problema") || textoCampo(dados, "objetivo") || null,
-    objetivo: textoCampo(dados, "objetivo") || null,
+    objetivo: projecaoJuridica.objetivo || textoCampo(dados, "objetivo") || null,
+    nomenclaturaJuridica,
     acidenteTrabalho: valorCampo(dados, "acidenteTrabalho"),
     limitacoesAtuais: textoCampo(dados, "limitacoesAtuais") || null,
     motivoEncerramentoVinculo: textoCampo(dados, "motivoEncerramentoVinculo") || null,

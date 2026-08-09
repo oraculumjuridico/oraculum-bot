@@ -408,6 +408,41 @@ async function executar() {
   }
 
   // === Test 12: REAL_EXTERNAL_ACTIONS = 0 ===
+  {
+    const semAtividade = {}
+    restaurarEstadoNegocioHubSpot(semAtividade, {
+      id: "deal-window-1",
+      properties: {
+        numero_de_caso: "WIN.001",
+        estado_bot_snapshot: JSON.stringify({ numeroCaso: "WIN.001", stage: "cliente" })
+      }
+    })
+    assert.equal(semAtividade.ultimaMsg, null)
+
+    const timestampPersistido = 1_700_000_000_000
+    const comAtividadePersistida = {}
+    restaurarEstadoNegocioHubSpot(comAtividadePersistida, {
+      id: "deal-window-2",
+      properties: {
+        numero_de_caso: "WIN.002",
+        estado_bot_snapshot: JSON.stringify({ numeroCaso: "WIN.002", stage: "cliente", ultimaMsg: timestampPersistido })
+      }
+    })
+    assert.equal(comAtividadePersistida.ultimaMsg, timestampPersistido)
+
+    const timestampLocalMaisRecente = timestampPersistido + 10_000
+    const comAtividadeLocal = { ultimaMsg: timestampLocalMaisRecente }
+    restaurarEstadoNegocioHubSpot(comAtividadeLocal, {
+      id: "deal-window-3",
+      properties: {
+        numero_de_caso: "WIN.003",
+        estado_bot_snapshot: JSON.stringify({ numeroCaso: "WIN.003", stage: "cliente", ultimaMsg: timestampPersistido })
+      }
+    })
+    assert.equal(comAtividadeLocal.ultimaMsg, timestampLocalMaisRecente)
+    console.log("Test: restore preserves real customer timestamp without opening a synthetic window")
+  }
+
   assert.equal(realExternalActions, 0)
   console.log("✅ Test 12: realExternalActions = 0")
 
