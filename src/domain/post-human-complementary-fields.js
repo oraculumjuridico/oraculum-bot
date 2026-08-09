@@ -11,10 +11,12 @@ const { montarNomeCompletoHubSpot } = require("./admin-name-resolver")
 const { pendingPostHumanLegalQuestions } = require("./admin-assisted-intake-catalog")
 const { mergeInssFacts } = require("./inss-legal-facts")
 const { isBpcCase, mergeBpcFacts } = require("./bpc-legal-facts")
+const { ADDRESS_FIELDS, extractSyntacticFacts, trustedAddressDocumentFacts, same: sameAddressValue } = require("./address-facts")
 
 const CONTACT_FIELDS = Object.freeze({
   nomeCompleto: ["firstname", "lastname"], cpf: ["cpf_do_cliente"], dataNascimento: ["date_of_birth"],
-  telefone: ["phone"], email: ["email", "work_email"], cidade: ["city"], uf: ["state"]
+  telefone: ["phone"], email: ["email", "work_email"], cidade: ["city"], uf: ["state"],
+  endereco: ["address"], cep: ["zip"]
 })
 const DEAL_FIELDS = Object.freeze({
   areaJuridica: ["area_juridica"], tipoCaso: ["tipo_de_caso"],
@@ -24,6 +26,9 @@ const DEAL_FIELDS = Object.freeze({
 const USER_FIELDS = Object.freeze({
   nomeCompleto: ["nome"], cpf: ["cpf"], dataNascimento: ["dataNascimento"],
   telefone: ["whatsappContato"], email: ["email"], cidade: ["cidade"], uf: ["uf"],
+  endereco: ["endereco", "address"], numeroEndereco: ["numeroEndereco"],
+  complementoEndereco: ["complementoEndereco"], bairro: ["bairro"], cep: ["cep", "zip"],
+  referenciaEndereco: ["referenciaEndereco"],
   areaJuridica: ["area"], tipoCaso: ["tipo", "tipoCaso"], descricao: ["descricao"],
   beneficio: ["beneficio"], motivo: ["motivo"], situacao: ["situacao"], nb: ["nb"],
   dataRequerimento: ["dataRequerimento"], resultadoPericia: ["resultadoPericia"],
@@ -40,7 +45,8 @@ const USER_FIELDS = Object.freeze({
 })
 
 const CAMPOS_CADASTRAIS = new Set([
-  "nomeCompleto", "cpf", "dataNascimento", "telefone", "email", "cidade", "uf"
+  "nomeCompleto", "cpf", "dataNascimento", "telefone", "email", "cidade", "uf",
+  ...ADDRESS_FIELDS
 ])
 
 const SITUACOES_INSS_COM_NB = new Set([
@@ -97,6 +103,10 @@ function resolveComplementaryContext({
     (expectedDealId && String(deal?.id || "") !== String(expectedDealId)) ||
     (contact?.dealIds && expectedDealId && !contact.dealIds.map(String).includes(String(expectedDealId)))
   const divergences = []
+  const documentAddressFacts = trustedAddressDocumentFacts(documents)
+  const contactAddressFacts = sourceLoaded(contact)
+    ? extractSyntacticFacts(read(contact, ["address"]) || "", { origem: "contato" }).facts
+    : {}
   let data = {}
   for (const field of Object.keys(CAMPOS_ADMIN_ASSISTIDO)) {
     const resposta = respostaValida(field, answered[field]) ? answered[field].valor : null
@@ -106,15 +116,20 @@ function resolveComplementaryContext({
       ["contato", sourceLoaded(contact)
         ? field === "nomeCompleto"
           ? montarNomeCompletoHubSpot(contact)
-          : read(contact, CONTACT_FIELDS[field])
+          : contactAddressFacts[field]?.valor || read(contact, CONTACT_FIELDS[field])
         : null],
-      ["negocio", sourceLoaded(deal) ? read(deal, DEAL_FIELDS[field]) : null]
+      ["negocio", sourceLoaded(deal) ? read(deal, DEAL_FIELDS[field]) : null],
+      ["documento_confirmado", documentAddressFacts[field]?.valor]
     ].filter(([, value]) => present(value))
-    const distinct = new Map(candidates.map(([source, value]) => [normalize(value), { source, value }]))
-    if (distinct.size > 1) divergences.push({ field, sources: candidates.map(([source]) => source) })
+    const distinct = candidates.filter(([, value], index, all) =>
+      all.findIndex(([, prior]) => ADDRESS_FIELDS.has(field) ? sameAddressValue(prior, value) : normalize(prior) === normalize(value)) === index)
+    const explicitCorrection = ADDRESS_FIELDS.has(field) && answered[field]?.correcao === true
+    if (distinct.length > 1 && !explicitCorrection) divergences.push({ field, sources: candidates.map(([source]) => source) })
     const selected = candidates[0]
     data[field] = selected
-      ? { valor: selected[1], status: "confirmado", origem: selected[0] }
+      ? selected[0] === "resposta"
+        ? { ...answered[field] }
+        : { valor: selected[1], status: "confirmado", origem: selected[0] }
       : { valor: "", status: "ausente", origem: "nenhuma" }
   }
   const area = normalizarAreaJuridicaAdminAssistido(data.areaJuridica?.valor || "Outros")

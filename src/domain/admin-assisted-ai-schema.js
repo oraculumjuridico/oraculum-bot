@@ -112,6 +112,11 @@ function valorENormalizadoInvalido(valor, campoNome) {
       if (!/^[A-Z]{2}$/i.test(valor.trim())) return true
       break
     }
+    case "cep": {
+      const digits = valor.replace(/\D/g, "")
+      if (digits.length !== 8 || /^(\d)\1{7}$/.test(digits)) return true
+      break
+    }
     case "email": {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
       if (!emailRegex.test(valor.trim())) return true
@@ -234,6 +239,7 @@ const CAMPOS_ADMIN_ASSISTIDO = {
   complementoEndereco: { label: "Complemento", pergunta: "Há complemento no endereço?" },
   bairro: { label: "Bairro", pergunta: "Qual é o bairro?" },
   cep: { label: "CEP", pergunta: "Qual é o CEP?" },
+  referenciaEndereco: { label: "Referência", pergunta: "Há algum ponto de referência para localizar o endereço?" },
   apelido: { label: "Apelido", pergunta: "Há nome social ou apelido relevante?" },
   conflitoInteresses: { label: "Conflito de interesses", pergunta: "Existe conflito de interesses conhecido?" },
   acidenteTrabalho: { label: "Acidente de trabalho", pergunta: "Houve acidente de trabalho?" },

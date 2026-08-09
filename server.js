@@ -234,6 +234,7 @@ const {
 } = require("./src/domain/post-human-complementary-fields")
 const { buildInssLegalAnswerResult, isInssLegalField } = require("./src/domain/inss-legal-facts")
 const { buildBpcLegalAnswerResult, isBpcLegalField, isBpcCase } = require("./src/domain/bpc-legal-facts")
+const { ADDRESS_FIELDS, buildAddressAnswerResult } = require("./src/domain/address-facts")
 const { atualizarHubSpotSeguro } = require("./src/domain/post-human-hubspot-updater")
 const { META_TEMPLATES } = require("./src/domain/meta-templates")
 const {
@@ -16977,16 +16978,32 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const legalBpcField = bpcCase && isBpcLegalField(field)
       const legalInssField = previdenciario && isInssLegalField(field)
       const legalField = legalBpcField || legalInssField
+      const addressField = ADDRESS_FIELDS.has(field)
       const legalResult = legalBpcField
         ? buildBpcLegalAnswerResult(field, content, { previousAnswers })
         : legalInssField
           ? buildInssLegalAnswerResult(field, content, { previousAnswers })
         : null
-      const legalAnswers = legalResult?.canonicalAnswers || null
+      const addressResult = addressField
+        ? await buildAddressAnswerResult(field, content, {
+            previousAnswers,
+            known: usuario,
+            resolveLocation: async entrada => {
+              const texto = sanitizarTextoEntrada(entrada)
+              const cep = texto.replace(/\D/g, "")
+              return cep.length === 8 ? buscarPorCEP(cep) : buscarCidadePorNomeInteligente(texto)
+            }
+          })
+        : null
+      const canonicalResult = addressResult || legalResult
+      const legalAnswers = canonicalResult?.canonicalAnswers || null
       if (legalField && !Object.keys(legalAnswers).length) return legalResult
+      if (addressField && !Object.keys(legalAnswers || {}).length) return addressResult
       const contactFields = {
         nomeCompleto: "firstname", cpf: "cpf_do_cliente", dataNascimento: "date_of_birth",
-        telefone: "phone", email: "email", cidade: "city", uf: "state"
+        telefone: "phone", email: "email", cidade: "city", uf: "state",
+        endereco: "address", numeroEndereco: "address", complementoEndereco: "address",
+        bairro: "address", cep: "zip"
       }
       const dealFields = {
         areaJuridica: "area_juridica", tipoCaso: "tipo_de_caso",
@@ -16998,6 +17015,37 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const objectId = objectType === "contact" ? cycle.contatoId : cycle.negocioId
       if (legalField && legalAnswers[field]?.status !== "confirmado") return legalResult
       if (legalField && (!property || !objectId)) return legalResult
+      if (addressField) {
+        const confirmedValues = Object.fromEntries(Object.entries(legalAnswers)
+          .filter(([, item]) => item?.status === "confirmado")
+          .map(([key, item]) => [key, item.valor]))
+        const canonicalPatch = {
+          values: confirmedValues,
+          corrections: Object.keys(confirmedValues).filter(key => legalAnswers[key]?.correcao === true)
+        }
+        const existingContact = cycle.contatoId ? await hsBuscarPorPhone(from) : null
+        const currentProperties = existingContact?.properties || {}
+        const projected = montarPropsContatoHubSpot(from, { ...usuario, ...confirmedValues })
+        const requestedProperties = new Set([
+          ...(confirmedValues.cidade ? ["city"] : []),
+          ...(confirmedValues.uf ? ["state"] : []),
+          ...(confirmedValues.cep ? ["zip"] : []),
+          ...((confirmedValues.endereco || usuario.endereco || usuario.address) &&
+            Object.keys(confirmedValues).some(key => ["endereco", "numeroEndereco", "complementoEndereco", "bairro"].includes(key)) ? ["address"] : [])
+        ])
+        const incoming = Object.fromEntries(Object.entries(projected)
+          .filter(([key, value]) => requestedProperties.has(key) && sanitizarTextoEntrada(value)))
+        return {
+          ...addressResult,
+          canonicalPatch,
+          ...(cycle.contatoId && cycle.negocioId && Object.keys(incoming).length ? {
+            hubspot: {
+              objectType: "contact", objectId: cycle.contatoId, contactId: cycle.contatoId,
+              expectedDealId: cycle.negocioId, current: currentProperties, incoming
+            }
+          } : {})
+        }
+      }
       if (!property || !objectId || !cycle.contatoId || !cycle.negocioId) {
         return { persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" }
       }
@@ -17045,16 +17093,28 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         }
       }),
     updateCanonicalState: async ({ patch }) => {
-      const field = patch?.field
-      const value = sanitizarTextoEntrada(patch?.value)
+      const values = patch?.values && typeof patch.values === "object"
+        ? patch.values
+        : patch?.field ? { [patch.field]: patch.value } : {}
       const userFields = {
         nomeCompleto: "nome", cpf: "cpf", dataNascimento: "dataNascimento", telefone: "whatsappContato",
         email: "email", cidade: "cidade", uf: "uf", areaJuridica: "area", tipoCaso: "tipoCaso",
-        descricao: "descricao", beneficio: "beneficio", motivo: "motivo", situacao: "situacao", nb: "nb"
+        descricao: "descricao", beneficio: "beneficio", motivo: "motivo", situacao: "situacao", nb: "nb",
+        endereco: "endereco", numeroEndereco: "numeroEndereco", complementoEndereco: "complementoEndereco",
+        bairro: "bairro", cep: "cep", referenciaEndereco: "referenciaEndereco"
       }
-      const target = userFields[field]
-      if (!target || !value) return false
-      if (!sanitizarTextoEntrada(usuario[target])) usuario[target] = value
+      let changed = false
+      const corrections = new Set(patch?.corrections || [])
+      for (const [field, rawValue] of Object.entries(values)) {
+        const target = userFields[field]
+        const value = sanitizarTextoEntrada(rawValue)
+        if (!target || !value) continue
+        if (!sanitizarTextoEntrada(usuario[target]) || corrections.has(field)) {
+          usuario[target] = value
+          changed = true
+        }
+      }
+      if (!changed) return false
       agendarPersistenciaUsers()
       return true
     },
