@@ -42,6 +42,7 @@ function createPostHumanDispatcher({
   normalizePhone,
   resolveValidatedContactByPhone,
   resolveBusiness,
+  transcribeInformationAudio,
   saveInformation,
   applySafeHubspotUpdates,
   updateCanonicalState,
@@ -76,6 +77,7 @@ function createPostHumanDispatcher({
         deps: {
           normalizePhone,
           resolveValidatedContactByPhone,
+          transcribeInformationAudio,
           saveInformation,
           applySafeHubspotUpdates,
           updateCanonicalState,

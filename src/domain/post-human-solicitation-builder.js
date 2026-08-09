@@ -66,7 +66,8 @@ function construirSolicitacao(analise, usuario = {}) {
       return { tipo: "revisao", texto: "Recebemos seus arquivos e eles estão em análise. Avisaremos quando a conferência terminar." }
     case STATES.INFORMACOES_COMPLEMENTARES_PENDENTES: {
       const campo = analise.camposPendentes?.[0]
-      return campo && CAMPOS_ADMIN_ASSISTIDO[campo]
+      const campoDinamicoBpc = String(campo || "").startsWith("bpcDetalhesMembro__")
+      return campo && (CAMPOS_ADMIN_ASSISTIDO[campo] || campoDinamicoBpc)
         ? { tipo: "informacoes", campo, campos: analise.camposPendentes, texto: `${perguntaCampoAdminAssistido(campo)} Você também pode responder “respondo depois”.` }
         : { tipo: "revisao", texto: "Estamos revisando as informações do seu caso e retornaremos por aqui." }
     }

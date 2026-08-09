@@ -1,6 +1,7 @@
 "use strict"
 
 const { ESTADOS_EXTENSO, buscarPorCEP, buscarCidadePorNomeInteligente } = require("./geo-search")
+const { isBpcCase, nextFamilyMember, memberFieldId } = require("./bpc-legal-facts")
 
 const GENERIC_DOCUMENT = "Documentos existentes, ainda não identificados"
 const REGISTRATION_STATUS = Object.freeze({ INITIAL: "cadastro_inicial", COMPLEMENTATION: "aguardando_complementacao", DOCUMENTS: "aguardando_documentos", REVIEW: "em_revisao_humana", COMPLETE: "cadastro_completo" })
@@ -22,10 +23,28 @@ const GENERAL_QUESTIONS = Object.freeze([
 
 const AREA_QUESTIONS = Object.freeze({
   INSS: [
-    { id: "beneficio", required: true, admin: "Qual benefício ou requerimento está envolvido?", client: "Qual benefício ou requerimento está envolvido?" },
-    { id: "motivo", required: true, admin: "Qual foi o motivo da decisão do INSS?", client: "Qual foi o motivo informado pelo INSS?" },
-    { id: "dataRequerimento", condition: ({ data }) => /requer|indefer|recurso/i.test(value(data, "tipoCaso") + " " + value(data, "descricao")), admin: "Qual é a data do requerimento ou da decisão?", client: "Qual é a data do requerimento ou da decisão?" },
-    { id: "nb", condition: ({ data }) => /benef[ií]cio|cessad|revis/i.test(value(data, "descricao")), admin: "Qual é o número do benefício, se houver?", client: "Qual é o número do benefício, se houver?", skippable: true }
+    { id: "beneficio", required: true, admin: "Qual benefício ou requerimento está envolvido?", client: "Qual benefício ou requerimento está envolvido?", postHuman: true },
+    { id: "bpcRequerenteTipo", postHumanOnly: true, client: "O pedido de BPC é para uma criança, uma pessoa adulta ou uma pessoa idosa?", postHuman: ({ data }) => isBpcCase(data) },
+    { id: "bpcDeficiencia", postHumanOnly: true, client: "Qual deficiência ou condição relevante foi informada para o requerente do BPC?", postHuman: ({ data }) => isBpcDisability(data) },
+    { id: "bpcImpedimentoLongoPrazo", postHumanOnly: true, client: "Essa condição causa impedimentos de longo prazo?", postHuman: ({ data }) => isBpcDisability(data) },
+    { id: "bpcComposicaoFamiliar", postHumanOnly: true, client: "Quem mora com o requerente na mesma casa?", postHuman: ({ data }) => isBpcCase(data) },
+    { id: "bpcDespesas", postHumanOnly: true, client: "Há gastos importantes relacionados à saúde ou à deficiência que pesam no orçamento da família?", postHuman: ({ data }) => isBpcDisability(data) },
+    { id: "bpcCadUnico", postHumanOnly: true, client: "O requerente possui CadÚnico? Se souber, informe também se está atualizado.", postHuman: ({ data }) => isBpcCase(data) },
+    { id: "bpcSituacaoAdministrativa", postHumanOnly: true, client: "Já houve pedido de BPC? Se houve, ele foi concedido, negado ou ainda está em análise?", postHuman: ({ data }) => isBpcCase(data) },
+    { id: "motivo", required: true, admin: "Qual foi o motivo da decisão do INSS?", client: "Qual foi o motivo informado pelo INSS?", postHuman: ({ data }) => isDenied(data) },
+    { id: "dataRequerimento", condition: ({ data }) => /requer|indefer|recurso/i.test(value(data, "tipoCaso") + " " + value(data, "descricao")), admin: "Qual é a data do requerimento ou da decisão?", client: "Qual é a data do requerimento ou da decisão?", postHuman: ({ data }) => hasApplication(data) },
+    { id: "houvePericia", postHumanOnly: true, client: "Você passou por perícia do INSS?", postHuman: ({ data }) => isIncapacity(data) },
+    { id: "dataPericia", postHumanOnly: true, client: "Qual foi a data da perícia?", postHuman: ({ data }) => isTrue(data, "houvePericia") },
+    { id: "inicioIncapacidade", postHumanOnly: true, client: "Quando começou a incapacidade para o trabalho?", postHuman: ({ data }) => isIncapacity(data) },
+    { id: "incapacidadeAtual", postHumanOnly: true, client: "A incapacidade para o trabalho continua atualmente?", postHuman: ({ data }) => isIncapacity(data) },
+    { id: "limitacoesAtuais", postHumanOnly: true, client: "Quais limitações você tem hoje para realizar seu trabalho?", postHuman: ({ data }) => isIncapacity(data) && !isFalse(data, "incapacidadeAtual") },
+    { id: "atividadeHabitual", postHumanOnly: true, client: "Qual é ou era sua atividade profissional habitual?", postHuman: ({ data }) => isIncapacity(data) },
+    { id: "vinculosContribuicoes", postHumanOnly: true, client: "Há algum problema nos vínculos ou contribuições do CNIS?", postHuman: ({ data }) => needsContributionHistory(data) },
+    { id: "nb", condition: ({ data }) => /benef[ií]cio|cessad|revis/i.test(value(data, "descricao")), admin: "Qual é o número do benefício, se houver?", client: "Qual é o número do benefício, se houver?", skippable: true, postHuman: ({ data }) => needsBenefitNumber(data) },
+    { id: "protocoloRequerimento", postHumanOnly: true, client: "Qual é o protocolo do requerimento específico?", postHuman: ({ data }) => needsApplicationProtocol(data) },
+    { id: "cartaDecisaoAdministrativa", postHumanOnly: true, client: "Você recebeu a carta ou decisão administrativa do INSS?", postHuman: ({ data }) => isDenied(data) },
+    { id: "recursoAdministrativo", postHumanOnly: true, client: "Foi apresentado recurso administrativo?", postHuman: ({ data }) => isDenied(data) },
+    { id: "beneficioAnterior", postHumanOnly: true, client: "Você já recebeu benefício por incapacidade anteriormente?", postHuman: ({ data }) => isIncapacity(data) }
   ],
   Trabalhista: [{ id: "empresa", required: true, admin: "Qual empresa está envolvida?", client: "Qual empresa está envolvida?" }, { id: "motivo", required: true, admin: "O vínculo terminou? Por qual motivo?", client: "O vínculo terminou? Por qual motivo?" }],
   Família: [{ id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" }, { id: "vinculoFamiliar", required: true, admin: "Qual é a relação familiar entre as partes?", client: "Qual é a relação familiar entre as partes?" }],
@@ -39,8 +58,47 @@ const AREA_QUESTIONS = Object.freeze({
 
 function value(data, field) { return String(data?.[field]?.valor ?? data?.[field] ?? "").trim() }
 function answered(data, field) { const item = data?.[field]; return !(item && typeof item === "object" && ["ausente", "invalido", "precisa_conferir", "contraditorio"].includes(item.status)) && Boolean(value(data, field)) }
-function questionCatalog(area = "Outros", context = {}) { return [...GENERAL_QUESTIONS, ...(AREA_QUESTIONS[area] || AREA_QUESTIONS.Outros).map((item, index) => ({ group: "Dados da área", priority: 100 + index, target: "deal", ...item }))].filter(item => !item.condition || item.condition(context)) }
+function contextText(data = {}) { return ["tipoCaso", "descricao", "situacao", "beneficio", "motivo", "resultadoPericia", "bpcRequerenteTipo", "bpcDeficiencia", "bpcSituacaoAdministrativa"].map(field => value(data, field)).join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() }
+function isIncapacity(data) { return /incapac|auxilio.?doenca|pericia|invalidez|afastad/.test(contextText(data)) }
+function isDenied(data) { return /indefer|negad|recusad|nao conced/.test(contextText(data)) }
+function hasApplication(data) {
+  if (isBpcCase(data)) {
+    const status = value(data, "bpcSituacaoAdministrativa")
+    if (status === "nao_requerido") return false
+    if (["requerido", "em_analise", "indeferido", "concedido"].includes(status)) return true
+  }
+  return isDenied(data) || /requer|pedido|protocolo|der\b|recurso/.test(contextText(data))
+}
+function isBpcDisability(data) { return isBpcCase(data) && value(data, "bpcRequerenteTipo") !== "idoso" }
+function isTrue(data, field) { return value(data, field) === "true" || /^(sim|houve|realizada?)$/i.test(value(data, field)) }
+function isFalse(data, field) { return value(data, field) === "false" || /^(nao|não|negativo)$/i.test(value(data, field)) }
+function needsContributionHistory(data) { return /aposentadoria|cnis|contribui|vinculo/.test(contextText(data)) }
+function needsBenefitNumber(data) { return /beneficio concedido|beneficio cessado|beneficio cortado|beneficio suspenso|beneficio revisado|\bnb\b/.test(contextText(data)) }
+function needsApplicationProtocol(data) { return /multiplos? requerimentos?|mais de um requerimento|dois pedidos|distinguir (?:o )?requerimento|localizar (?:o )?requerimento|protocolo (?:necessario|obrigatorio|especifico)/.test(contextText(data)) }
+function questionCatalog(area = "Outros", context = {}) { return [...GENERAL_QUESTIONS, ...(AREA_QUESTIONS[area] || AREA_QUESTIONS.Outros).filter(item => !item.postHumanOnly).map((item, index) => ({ group: "Dados da área", priority: 100 + index, target: "deal", ...item }))].filter(item => !item.condition || item.condition(context)) }
 function pendingQuestions({ area = "Outros", data = {}, asked = [], deferred = [] } = {}) { const ignored = new Set([...asked.filter(id => answered(data, id)), ...deferred]); return questionCatalog(area, { data }).filter(item => !answered(data, item.id) && !ignored.has(item.id)) }
+function pendingPostHumanLegalQuestions({ area = "Outros", data = {} } = {}) {
+  const pending = (AREA_QUESTIONS[area] || AREA_QUESTIONS.Outros)
+    .map((item, index) => ({ group: "Dados da área", priority: 100 + index, target: "deal", ...item }))
+    .filter(item => item.postHuman === true || (typeof item.postHuman === "function" && item.postHuman({ data })))
+    .filter(item => !answered(data, item.id))
+  if (area === "INSS" && isBpcCase(data) && answered(data, "bpcComposicaoFamiliar")) {
+    const member = nextFamilyMember(data)
+    if (member) {
+      const id = memberFieldId(member.memberId)
+      const position = pending.findIndex(item => item.id === "bpcDespesas")
+      pending.splice(position < 0 ? pending.length : position, 0, {
+        id,
+        group: "Dados da área",
+        priority: 104,
+        target: "deal",
+        postHumanOnly: true,
+        client: `Qual é a situação de trabalho, renda ou benefício de ${member.label}?`
+      })
+    }
+  }
+  return pending
+}
 
 function normalizeDocumentName(input) { return String(input || "").trim().replace(/\s+/g, " ") }
 function isGenericDocumentReference(input) { const text = normalizeDocumentName(input); return /^(alguns? documentos?|documenta[cç][aã]o(?: que possui)?|documentos? existentes?)$/i.test(text) || text === GENERIC_DOCUMENT }
@@ -55,4 +113,4 @@ function safeOcrUpdates({ current = {}, extraction = {}, allowlist = [], confide
 function normalizeUf(input) { const normalized = String(input || "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); for (const [uf, name] of Object.entries(ESTADOS_EXTENSO)) { const candidate = String(name).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); if (normalized === uf.toLowerCase() || normalized === candidate) return uf } return null }
 async function resolveCityOrCep(input, deps = {}) { const text = String(input || "").trim(); const digits = text.replace(/\D/g, ""); if (digits.length === 8) return (deps.searchCep || buscarPorCEP)(digits); const ufOnly = normalizeUf(text); if (ufOnly) return { uf: ufOnly, ufOnly: true }; return (await (deps.searchCity || buscarCidadePorNomeInteligente)(text)) || null }
 
-module.exports = { GENERAL_QUESTIONS, AREA_QUESTIONS, GENERIC_DOCUMENT, REGISTRATION_STATUS, questionCatalog, pendingQuestions, reconcileDocuments, isGenericDocumentReference, classifyInssDemand, registrationStatus, safeOcrUpdates, normalizeUf, resolveCityOrCep, answered }
+module.exports = { GENERAL_QUESTIONS, AREA_QUESTIONS, GENERIC_DOCUMENT, REGISTRATION_STATUS, questionCatalog, pendingQuestions, pendingPostHumanLegalQuestions, reconcileDocuments, isGenericDocumentReference, classifyInssDemand, registrationStatus, safeOcrUpdates, normalizeUf, resolveCityOrCep, answered }

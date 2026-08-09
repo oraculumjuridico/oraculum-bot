@@ -38,9 +38,16 @@ test("resposta invalida nao elimina pendencia", () => {
   assert.equal(result.camposJuridicosPendentes.includes("beneficio"), true)
 })
 
-test("INSS exige beneficio e motivo quando ausentes", () => {
+test("INSS exige beneficio, mas nao inventa motivo sem decisao", () => {
   const result = resolveComplementaryContext(base())
   assert.equal(result.camposJuridicosPendentes.includes("beneficio"), true)
+  assert.equal(result.camposJuridicosPendentes.includes("motivo"), false)
+})
+
+test("INSS exige motivo quando o relato informa indeferimento", () => {
+  const result = resolveComplementaryContext(base({
+    usuario: { tipoCaso: "beneficio por incapacidade indeferido", descricao: "Meu pedido foi negado." }
+  }))
   assert.equal(result.camposJuridicosPendentes.includes("motivo"), true)
 })
 
