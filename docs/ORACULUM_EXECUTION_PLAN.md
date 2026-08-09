@@ -23,7 +23,7 @@ Consolidar localmente os fluxos do cliente, WhatsApp, Admin/pós-humano, importa
 - [x] 4. Importação/local e convergência — relatório dry-run canônico validado sem rede.
 - [x] 5. Pendências: RG real e voz/TTS — TTS Unicode comprovado; RG permanece pendente de evidência real.
 - [x] 6. Documentação técnica durável — contexto curto e arquitetura operacional consolidados.
-- [ ] 7. Auditoria integrada e gate final.
+- [x] 7. Auditoria integrada e gate final — suíte completa aprovada localmente.
 
 ## Decisões comprovadas
 
@@ -49,3 +49,4 @@ Additional verified decisions:
 
 - Nenhum bloqueador local no início.
 - Validação real de RG pode permanecer pendente se depender da imagem/log de produção.
+- Gate final de 2026-08-09: `npm test` concluiu com exit 0 em 743,1 s; sintaxe e diff aprovados.
