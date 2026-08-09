@@ -43,8 +43,20 @@ async function tratarRespostaClientePosAtendimento({
   const cycle = await resolverCiclo({ repository, usuario: identidade, telefoneNormalizado, numeroCaso, contexto })
   if (!cycle || (!cycle.cycleId && !cycle.ambiguous)) return null
   if (cycle.ambiguous) return { handled: true, ambiguous: true, askCase: true, cases: cycle.cycles }
-  const kind = classify(msgType, content)
+  let processedContent = content
+  let kind = classify(msgType, content)
+  const pendingInformationField = cycle.payload?.campoPendente || cycle.campoPendente || null
+  if (kind === "document" && String(msgType || "").toLowerCase() === "audio" && pendingInformationField &&
+      typeof deps.transcribeInformationAudio === "function") {
+    const transcription = await deps.transcribeInformationAudio({ cycle, content })
+    if (!String(transcription || "").trim()) {
+      return { handled: true, partial: true, transcriptionFailed: true, cycle }
+    }
+    processedContent = String(transcription).trim()
+    kind = "information"
+  }
   let documentSaveResult = null
+  let informationSaveResult = null
   if (kind === "later") {
     return { handled: true, deferred: true, cycle: await repository.updateStatus(cycle.cycleId, "awaiting_response", { respostaAdiada: true }) }
   }
@@ -61,7 +73,8 @@ async function tratarRespostaClientePosAtendimento({
       documentoMetadados: saved.metadata || { persisted: true }
     })
   } else if (kind === "information") {
-    const saveResult = await deps.saveInformation?.({ cycle, content })
+    const saveResult = await deps.saveInformation?.({ cycle, content: processedContent })
+    informationSaveResult = saveResult || null
     let reviewRequired = Boolean(saveResult?.humanReviewRequired || saveResult?.hubspot?.humanReviewRequired)
     let reviewReason = saveResult?.reviewReason || saveResult?.hubspot?.reviewReason || null
     if (saveResult?.hubspot) {
@@ -87,9 +100,23 @@ async function tratarRespostaClientePosAtendimento({
   const complete = await Promise.resolve(deps.isComplete?.(refreshedBeforeCompletion) || false)
   const status = complete ? "completed" : "awaiting_response"
   const campo = refreshedBeforeCompletion.payload?.campoPendente || refreshedBeforeCompletion.campoPendente || null
-  const camposRespondidos = campo ? [...new Set([...(refreshedBeforeCompletion.payload?.camposRespondidos || refreshedBeforeCompletion.camposRespondidos || []), campo])] : []
-  const canonicalAnswers = kind === "information" && campo
-    ? { ...(refreshedBeforeCompletion.payload?.respostas || {}), [campo]: { valor: String(content?.text || content || "").trim(), status: "confirmado", origem: "cliente" } }
+  const extractedAnswers = kind === "information" && informationSaveResult?.canonicalAnswers &&
+      typeof informationSaveResult.canonicalAnswers === "object"
+    ? informationSaveResult.canonicalAnswers
+    : {}
+  const defaultAnswer = kind === "information" && campo && !informationSaveResult?.skipDefaultAnswer
+    ? { [campo]: { valor: String(processedContent?.text || processedContent || "").trim(), status: "confirmado", origem: "cliente" } }
+    : {}
+  const newAnswers = { ...defaultAnswer, ...extractedAnswers }
+  const answeredFields = Object.entries(newAnswers)
+    .filter(([, item]) => item && item.valor !== null && item.valor !== undefined && String(item.valor).trim() !== "")
+    .map(([field]) => field)
+  const camposRespondidos = [...new Set([
+    ...(refreshedBeforeCompletion.payload?.camposRespondidos || refreshedBeforeCompletion.camposRespondidos || []),
+    ...answeredFields
+  ])]
+  const canonicalAnswers = answeredFields.length
+    ? { ...(refreshedBeforeCompletion.payload?.respostas || {}), ...Object.fromEntries(answeredFields.map(field => [field, newAnswers[field]])) }
     : null
   const updated = await repository.updateStatus(cycle.cycleId, status, {
     respondidoEm: new Date().toISOString(),

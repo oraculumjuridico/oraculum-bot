@@ -232,6 +232,8 @@ const {
   resolveComplementaryContext,
   resolveComplementaryFields
 } = require("./src/domain/post-human-complementary-fields")
+const { buildInssLegalAnswerResult, isInssLegalField } = require("./src/domain/inss-legal-facts")
+const { buildBpcLegalAnswerResult, isBpcLegalField, isBpcCase } = require("./src/domain/bpc-legal-facts")
 const { atualizarHubSpotSeguro } = require("./src/domain/post-human-hubspot-updater")
 const { META_TEMPLATES } = require("./src/domain/meta-templates")
 const {
@@ -16957,10 +16959,31 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const caso = numeroCaso || contexto?.numeroCaso || current?.numeroCaso
       return negocioId && caso ? { validated: true, negocioId, numeroCaso: caso } : null
     },
+    transcribeInformationAudio: async ({ content }) => {
+      const mediaId = content?.audio?.id || content?.voice?.id
+      if (!mediaId) return null
+      const media = await baixarMidia(mediaId)
+      if (!media) return null
+      const transcription = await transcrever(media.buffer, media.mimeType, { origem: "post_human_legal_answer" })
+      return transcription ? normalizarTextoCRM(transcription) : null
+    },
     saveInformation: async ({ cycle, content }) => {
       const current = await postHumanCycleRepository.getCycle(cycle.cycleId)
       const field = current?.payload?.campoPendente || current?.campoPendente
       if (!field) return { persisted: true }
+      const previousAnswers = current?.payload?.respostas || {}
+      const previdenciario = /inss|previd/i.test(String(usuario.area || ""))
+      const bpcCase = previdenciario && isBpcCase({ ...usuario, ...previousAnswers })
+      const legalBpcField = bpcCase && isBpcLegalField(field)
+      const legalInssField = previdenciario && isInssLegalField(field)
+      const legalField = legalBpcField || legalInssField
+      const legalResult = legalBpcField
+        ? buildBpcLegalAnswerResult(field, content, { previousAnswers })
+        : legalInssField
+          ? buildInssLegalAnswerResult(field, content, { previousAnswers })
+        : null
+      const legalAnswers = legalResult?.canonicalAnswers || null
+      if (legalField && !Object.keys(legalAnswers).length) return legalResult
       const contactFields = {
         nomeCompleto: "firstname", cpf: "cpf_do_cliente", dataNascimento: "date_of_birth",
         telefone: "phone", email: "email", cidade: "city", uf: "state"
@@ -16973,6 +16996,8 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const property = contactFields[field] || dealFields[field]
       const objectType = contactFields[field] ? "contact" : dealFields[field] ? "deal" : null
       const objectId = objectType === "contact" ? cycle.contatoId : cycle.negocioId
+      if (legalField && legalAnswers[field]?.status !== "confirmado") return legalResult
+      if (legalField && (!property || !objectId)) return legalResult
       if (!property || !objectId || !cycle.contatoId || !cycle.negocioId) {
         return { persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" }
       }
@@ -16987,12 +17012,14 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         )
         currentProperties = response.data?.properties || {}
       }
+      const canonicalValue = legalField ? legalAnswers[field]?.valor : sanitizarTextoEntrada(content)
       return {
+        ...(legalResult || {}),
         persisted: true,
-        canonicalPatch: { field, value: sanitizarTextoEntrada(content) },
+        canonicalPatch: { field, value: canonicalValue },
         hubspot: {
           objectType, objectId, contactId: cycle.contatoId, expectedDealId: cycle.negocioId,
-          current: currentProperties, incoming: { [property]: sanitizarTextoEntrada(content) }
+          current: currentProperties, incoming: { [property]: canonicalValue }
         }
       }
     },
@@ -17094,6 +17121,7 @@ async function processarComLock(from, nomeWA, text, msgObj) {
           return { texto: "Há mais de um caso aguardando complemento. Selecione o caso no Menu do Cliente para continuar.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         }
         if (postHumanResponse.deferred) return { texto: "Tudo bem. Seu progresso foi salvo e você pode responder depois.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanResponse.transcriptionFailed) return { texto: "Não consegui ouvir esse áudio com clareza. Pode enviar outro áudio ou responder por texto?", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         if (postHumanResponse.pipelineResponse) return postHumanResponse.pipelineResponse
         if (postHumanDispatch.humanReviewRequired) return { texto: "Recebi sua informação. Ela seguirá para revisão segura antes de qualquer atualização.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         if (postHumanResponse.partial) return { texto: "Informação recebida e vinculada ao seu caso. Você pode continuar enviando os itens pendentes.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }

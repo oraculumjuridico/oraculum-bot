@@ -8,6 +8,9 @@ const {
   normalizarAreaJuridicaAdminAssistido
 } = require("./admin-assisted-ai-schema")
 const { montarNomeCompletoHubSpot } = require("./admin-name-resolver")
+const { pendingPostHumanLegalQuestions } = require("./admin-assisted-intake-catalog")
+const { mergeInssFacts } = require("./inss-legal-facts")
+const { isBpcCase, mergeBpcFacts } = require("./bpc-legal-facts")
 
 const CONTACT_FIELDS = Object.freeze({
   nomeCompleto: ["firstname", "lastname"], cpf: ["cpf_do_cliente"], dataNascimento: ["date_of_birth"],
@@ -22,7 +25,18 @@ const USER_FIELDS = Object.freeze({
   nomeCompleto: ["nome"], cpf: ["cpf"], dataNascimento: ["dataNascimento"],
   telefone: ["whatsappContato"], email: ["email"], cidade: ["cidade"], uf: ["uf"],
   areaJuridica: ["area"], tipoCaso: ["tipo", "tipoCaso"], descricao: ["descricao"],
-  beneficio: ["beneficio"], motivo: ["motivo"], situacao: ["situacao"], nb: ["nb"]
+  beneficio: ["beneficio"], motivo: ["motivo"], situacao: ["situacao"], nb: ["nb"],
+  dataRequerimento: ["dataRequerimento"], resultadoPericia: ["resultadoPericia"],
+  houvePericia: ["houvePericia"], dataPericia: ["dataPericia"],
+  inicioIncapacidade: ["inicioIncapacidade"], incapacidadeAtual: ["incapacidadeAtual"],
+  limitacoesAtuais: ["limitacoesAtuais"], atividadeHabitual: ["atividadeHabitual"],
+  vinculosContribuicoes: ["vinculosContribuicoes"], protocoloRequerimento: ["protocoloRequerimento"],
+  cartaDecisaoAdministrativa: ["cartaDecisaoAdministrativa"], recursoAdministrativo: ["recursoAdministrativo"],
+  beneficioAnterior: ["beneficioAnterior"],
+  bpcRequerenteTipo: ["bpcRequerenteTipo"], bpcDeficiencia: ["bpcDeficiencia"],
+  bpcImpedimentoLongoPrazo: ["bpcImpedimentoLongoPrazo"], bpcComposicaoFamiliar: ["bpcComposicaoFamiliar"],
+  bpcDespesas: ["bpcDespesas"], bpcCadUnico: ["bpcCadUnico"],
+  bpcSituacaoAdministrativa: ["bpcSituacaoAdministrativa"]
 })
 
 const CAMPOS_CADASTRAIS = new Set([
@@ -83,7 +97,7 @@ function resolveComplementaryContext({
     (expectedDealId && String(deal?.id || "") !== String(expectedDealId)) ||
     (contact?.dealIds && expectedDealId && !contact.dealIds.map(String).includes(String(expectedDealId)))
   const divergences = []
-  const data = {}
+  let data = {}
   for (const field of Object.keys(CAMPOS_ADMIN_ASSISTIDO)) {
     const resposta = respostaValida(field, answered[field]) ? answered[field].valor : null
     const candidates = [
@@ -104,17 +118,33 @@ function resolveComplementaryContext({
       : { valor: "", status: "ausente", origem: "nenhuma" }
   }
   const area = normalizarAreaJuridicaAdminAssistido(data.areaJuridica?.valor || "Outros")
+  if (area === "INSS") {
+    const semantic = mergeInssFacts({ data, usuario, documents })
+    data = semantic.data
+    divergences.push(...semantic.divergences)
+    if (isBpcCase({ ...data, ...usuario })) {
+      const bpcSemantic = mergeBpcFacts({ data, usuario, documents })
+      data = bpcSemantic.data
+      divergences.push(...bpcSemantic.divergences)
+    }
+  }
   const missing = camposFaltantesAdminAssistido(data, area)
   const responded = new Set(Object.entries(answered)
     .filter(([field, item]) => respostaValida(field, item))
     .map(([field]) => field))
-  const obrigatoriosAtuais = missing.filter(field => !responded.has(field))
+  const obrigatoriosAtuais = missing
+    .filter(field => area !== "INSS" || field !== "motivo")
+    .filter(field => !responded.has(field))
   const juridicosCondicionais = camposJuridicosInssCondicionais(usuario, data, area)
     .filter(field => !responded.has(field))
   const camposCadastraisPendentes = obrigatoriosAtuais.filter(field => CAMPOS_CADASTRAIS.has(field))
+  const perguntasJuridicasDinamicas = area === "INSS"
+    ? pendingPostHumanLegalQuestions({ area, data }).map(item => item.id).filter(field => !responded.has(field))
+    : []
   const camposJuridicosPendentes = [...new Set([
     ...obrigatoriosAtuais.filter(field => !CAMPOS_CADASTRAIS.has(field)),
-    ...juridicosCondicionais
+    ...juridicosCondicionais,
+    ...perguntasJuridicasDinamicas
   ])]
   const camposPendentes = [...camposCadastraisPendentes, ...camposJuridicosPendentes]
   const revisaoHumana = identityInvalid || divergences.length > 0
