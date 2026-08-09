@@ -7,6 +7,8 @@ const {
   registrarDecisaoDocumental
 } = require("./document-evidence-model")
 
+const DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE = 0.85
+
 function text(value) {
   return String(value || "").trim()
 }
@@ -79,6 +81,8 @@ function documentKind(evidence) {
 function eligible(evidence) {
   const kind = documentKind(evidence)
   return ["rg frente", "rg verso", "rg", "cnh"].includes(kind) &&
+    Number(evidence.classificacao?.confianca) >= DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE &&
+    normalized(evidence.partyRole) === "titular" &&
     !["error", "erro", "quarantined", "review"].includes(normalized(evidence.status)) &&
     !(evidence.erros || []).length
 }
@@ -94,8 +98,12 @@ function coverage(evidence) {
 function strongIdentity(left, right) {
   const a = fields(left); const b = fields(right)
   if (a.partyRole && b.partyRole && a.partyRole !== b.partyRole) return { match: false, divergent: true, code: "party_role_mismatch" }
-  if (a.rg && b.rg) return a.rg === b.rg ? { match: true } : { match: false, divergent: true, code: "rg_mismatch" }
-  if (a.cpf && b.cpf) return a.cpf === b.cpf ? { match: true } : { match: false, divergent: true, code: "cpf_mismatch" }
+  const cpfComparable = Boolean(a.cpf && b.cpf)
+  const rgComparable = Boolean(a.rg && b.rg)
+  if (cpfComparable && a.cpf !== b.cpf) return { match: false, divergent: true, code: "cpf_mismatch" }
+  if (rgComparable && a.rg !== b.rg) return { match: false, divergent: true, code: "rg_mismatch" }
+  if (cpfComparable) return { match: true }
+  if (rgComparable) return { match: true }
   if (a.nome && b.nome && a.nascimento && b.nascimento) {
     return a.nome === b.nome && a.nascimento === b.nascimento
       ? { match: true }
@@ -126,12 +134,31 @@ function addDivergence(registry, code, evidenceIds, now) {
 function decideRg(registryInput = {}, options = {}) {
   let registry = normalizarContratoEvidencias(registryInput)
   const now = options.now || new Date().toISOString()
-  const confirmedEntries = confirmedEvidence(registry).filter(item => eligible(item.evidence))
+  const allConfirmedEntries = confirmedEvidence(registry)
+  const identityKinds = new Set(["rg frente", "rg verso", "rg", "cnh"])
+  const preexistingDivergenceIds = new Set()
+  for (const entry of allConfirmedEntries) {
+    const evidence = entry.evidence
+    if (!identityKinds.has(documentKind(evidence))) continue
+    let code = null
+    if (Number(evidence.classificacao?.confianca) < DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE) {
+      code = "document_classification_confidence_insufficient"
+    } else if (normalized(evidence.partyRole) !== "titular") {
+      code = normalized(evidence.partyRole) === "terceiro"
+        ? "document_holder_identity_mismatch"
+        : "document_holder_identity_unverified"
+    }
+    if (!code) continue
+    const added = addDivergence(registry, code, [evidence.evidenceId], now)
+    registry = added.registry
+    if (added.divergence) preexistingDivergenceIds.add(added.divergence.divergenceId)
+  }
+  const confirmedEntries = allConfirmedEntries.filter(item => eligible(item.evidence))
   const evidences = confirmedEntries.map(item => item.evidence)
   const confirmations = new Map(confirmedEntries.map(item => [evidenceKey(item.evidence), item.confirmation]))
   const used = new Set()
   const confirmationIds = new Set()
-  const divergenceIds = new Set()
+  const divergenceIds = new Set(preexistingDivergenceIds)
   let delivered = false
   let partial = evidences.length > 0
 
@@ -229,4 +256,10 @@ function confirmAndDecide(registryInput = {}, input = {}) {
   return result
 }
 
-module.exports = { confirmAndDecide, decideRg, strongIdentity, validCpf }
+module.exports = {
+  DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE,
+  confirmAndDecide,
+  decideRg,
+  strongIdentity,
+  validCpf
+}

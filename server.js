@@ -295,6 +295,17 @@ const {
 const { confirmCanonicalDocument } = require("./src/domain/document-canonical-service")
 const { projectDocumentDecision } = require("./src/domain/document-checklist-projection")
 const { reevaluatePostHumanForDecision } = require("./src/domain/post-human-document-reevaluation")
+const {
+  sincronizarDocumentosHubSpot,
+  aplicarDadosDocumentaisConfiaveisAoUsuario,
+  validarContextoDocumentalHubSpot
+} = require("./src/domain/document-hubspot-sync")
+const { atualizarEstadoDocumental } = require("./src/domain/document-state-repository")
+const { resolveDocumentPartyIdentity } = require("./src/domain/document-party-identity")
+const {
+  evaluateGuidedDocumentReceipt,
+  applyGuidedDocumentReceipt
+} = require("./src/domain/document-guided-receipt")
 const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
 const { createAdminAssistedMediaStaging, processExistingCaseAdminMedia } = require("./src/domain/admin-assisted-media")
 const { createLiveCaseFlow, buildCanonicalPlan } = require("./src/domain/live-case-executor-bridge")
@@ -10549,7 +10560,12 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
         tipo: u?.tipo || null,
         subTipo: u?.subTipo || null,
         ...contexto
-      }
+      },
+      resolvePartyRole: ({ pipeline, registry }) => resolveDocumentPartyIdentity({
+        extraction: pipeline?.extracao || {},
+        trustedUser: u || {},
+        registry
+      })
     })
     if (resultado?.reason && !resultado.skipped) {
       logErro("document_analysis", resultado.reason)
@@ -10579,6 +10595,57 @@ function dependenciasReavaliacaoDocumentalPosHumana(usuario, cycle) {
   }
 }
 
+async function sincronizarDecisaoDocumentalCanonicaHubSpotSeguro(u, canonical) {
+  if (!u?.contatoId || !u?.negocioId || !u?.numeroCaso || !u?.pastaDriveId ||
+      !canonical?.decision || !canonical?.registry) {
+    return { ok: false, skipped: true, reason: "canonical_hubspot_context_missing" }
+  }
+  try {
+    const contactProperties = ["firstname", "lastname", "cpf_do_cliente", "date_of_birth"]
+    const [contactResponse, dealResponse, associationResponse] = await Promise.all([
+      axios.get(
+        `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(u.contatoId)}?properties=${encodeURIComponent(contactProperties.join(","))}`,
+        { headers: HS() }
+      ),
+      axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(u.negocioId)}?properties=numero_de_caso`,
+        { headers: HS() }
+      ),
+      axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(u.negocioId)}/associations/contacts`,
+        { headers: HS() }
+      )
+    ])
+    const associatedIds = (associationResponse.data?.results || []).map(item => String(item.id))
+    const validContext = validarContextoDocumentalHubSpot({
+      usuario: u,
+      contato: { id: contactResponse.data?.id, properties: contactResponse.data?.properties || {} },
+      negocio: { id: dealResponse.data?.id, properties: dealResponse.data?.properties || {} },
+      associatedContactIds: associatedIds
+    })
+    if (!validContext.ok) return { ok: false, skipped: true, reason: validContext.reason }
+
+    const sync = await sincronizarDocumentosHubSpot({
+      registry: canonical.registry,
+      decision: canonical.decision,
+      usuario: u,
+      contato: { id: String(u.contatoId), properties: contactResponse.data?.properties || {} },
+      negocio: { id: String(u.negocioId), properties: dealResponse.data?.properties || {} }
+    }, { hsAtualizarContato })
+    if (sync.registry) {
+      const persisted = await atualizarEstadoDocumental(u.pastaDriveId, { registry: sync.registry })
+      if (!persisted?.arquivo) {
+        return { ...sync, ok: false, retryable: true, reason: "canonical_sync_provenance_persistence_failed", trustedUserPatch: {} }
+      }
+    }
+    if (sync.ok) aplicarDadosDocumentaisConfiaveisAoUsuario(u, sync.trustedUserPatch)
+    return sync
+  } catch (error) {
+    logErro("document_hubspot_sync", `falha nao bloqueante: ${error.code || error.name || "erro"}`)
+    return { ok: false, skipped: false, retryable: true, reason: "canonical_hubspot_sync_failed" }
+  }
+}
+
 async function confirmarDocumentoCanonicoSeguro(u, fileId, options = {}) {
   if (!u?.pastaDriveId || !fileId) return { ok: false, skipped: true, reason: "case_or_file_missing" }
   try {
@@ -10592,6 +10659,9 @@ async function confirmarDocumentoCanonicoSeguro(u, fileId, options = {}) {
     const projection = projectDocumentDecision(u, canonical.decision, marcarStatusDocumento)
     const promotable = ["partial", "delivered"].includes(canonical.decision?.status)
     if (!promotable) return { ...canonical, projection, reevaluation: { processed: false, reason: "decision_not_promoted" } }
+    const hubspotSync = canonical.decision?.status === "delivered"
+      ? await sincronizarDecisaoDocumentalCanonicaHubSpotSeguro(u, canonical)
+      : { ok: true, skipped: true, reason: "decision_not_delivered" }
     await api.persistirUsersAgora({ propagarErro: true })
     const reevaluation = await reevaluatePostHumanForDecision({
       usuario: u,
@@ -10605,7 +10675,7 @@ async function confirmarDocumentoCanonicoSeguro(u, fileId, options = {}) {
         deps: dependenciasReavaliacaoDocumentalPosHumana(currentUser, cycle)
       })
     })
-    return { ...canonical, projection, reevaluation }
+    return { ...canonical, projection, hubspotSync, reevaluation }
   } catch (error) {
     logErro("document_canonical", `falha nao bloqueante: ${error.code || error.name || "erro"}`)
     return { ok: false, skipped: false, reason: error.code || "DOCUMENT_CANONICAL_ERROR" }
@@ -10843,7 +10913,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }))
   }
 
-  await processarAnaliseDocumentalSegura({
+  const resultadoAnaliseGuiada = await processarAnaliseDocumentalSegura({
     u,
     arquivo,
     buffer: midia.buffer,
@@ -10858,8 +10928,44 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }
   })
   await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "guiado" })
-  if (docAtual?.id === "doc_rg" && u.ultimoArqId && u.ultimoArqId !== arquivo.id) {
-    await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "guided_next_upload" })
+  let recebimentoGuiado = null
+  let confirmacaoCanonicaGuiada = null
+  if (docAtual?.id === "doc_rg") {
+    recebimentoGuiado = evaluateGuidedDocumentReceipt({
+      requirementId: docAtual.id,
+      folha,
+      analysisResult: resultadoAnaliseGuiada
+    })
+    if (recebimentoGuiado.confirmEvidence) {
+      confirmacaoCanonicaGuiada = await confirmarDocumentoCanonicoSeguro(u, arquivo.id, {
+        origem: "guided_matched_upload"
+      })
+    }
+    applyGuidedDocumentReceipt(u, recebimentoGuiado, {
+      requirementId: docAtual.id,
+      fileId: arquivo.id,
+      totalParts: folhas.length,
+      decisionStatus: confirmacaoCanonicaGuiada?.decision?.status || null
+    })
+    if (!recebimentoGuiado.accepted && confirmacaoCanonicaGuiada?.decision?.status !== "delivered") {
+      u.ultimoArqId = null
+      u.ultimoArqNome = null
+      salvarEtapa(u._numero, "documentos")
+      const telaReenvioDocumento = criarTela({
+        id: `documento_guiado_${recebimentoGuiado.reasonCode || "reenvio"}`,
+        titulo: "Precisamos de outro arquivo",
+        texto: recebimentoGuiado.message,
+        textoAudioBase: recebimentoGuiado.message,
+        acoes: [
+          { id: "docs_depois", label: "Continuar depois" },
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
+        ]
+      })
+      await enviarGuiaDocs(from, u, telaReenvioDocumento)
+      registrarUltimaPergunta(u, telaReenvioDocumento)
+      iniciarTimer(from)
+      return {}
+    }
   }
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
@@ -10883,9 +10989,11 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
 
   await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
 
-  u.docAtualIdx = arquivoEhPdf ? folhas.length : fIdx + 1
-  const rgAguardandoVerso = docAtual?.id === "doc_rg" && !arquivoEhPdf && u.docAtualIdx < folhas.length
-  const docAtualCompleto = arquivoEhPdf || u.docAtualIdx >= folhas.length
+  if (docAtual?.id !== "doc_rg") u.docAtualIdx = arquivoEhPdf ? folhas.length : fIdx + 1
+  const rgAguardandoVerso = docAtual?.id === "doc_rg" && u.docAtualIdx < folhas.length
+  const docAtualCompleto = docAtual?.id === "doc_rg"
+    ? u.docAtualIdx >= folhas.length
+    : arquivoEhPdf || u.docAtualIdx >= folhas.length
   const temProximoDoc = pendentes.length > 1
   const proximaAcaoTitle = !docAtualCompleto ? "Próxima página" : temProximoDoc ? "Próximo documento" : "Concluir envio"
   const statusRecebido = docAtualCompleto
@@ -10896,24 +11004,24 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     : temProximoDoc
       ? `Toque em *Próximo documento* quando estiver pronto.`
       : `Todos os documentos foram enviados. Toque em *Concluir envio* para finalizar.`
-  const textoAudioRecebido = arquivoEhPdf
-    ? `${lblD} recebido em PDF. Vou considerar este documento completo. Na tela, você pode ${temProximoDoc ? "seguir para o próximo documento" : "concluir o envio"} ou continuar depois.`
-    : rgAguardandoVerso
-      ? `${lblD}, ${folha}, recebido. Se o verso estiver nessa mesma imagem, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
+  const textoAudioRecebido = rgAguardandoVerso
+    ? `${lblD}, ${folha}, recebido. Se o verso estiver nesse mesmo arquivo, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
+    : arquivoEhPdf
+      ? `${lblD} recebido em PDF. Na tela, você pode ${temProximoDoc ? "seguir para o próximo documento" : "concluir o envio"} ou continuar depois.`
     : !docAtualCompleto
       ? `${lblD}, ${folha}, recebido. Envie a próxima parte quando estiver pronto ou toque em Continuar depois para parar por agora.`
       : temProximoDoc
         ? `${lblD} recebido. Na tela, você pode enviar complemento, seguir para o próximo documento ou continuar depois.`
         : `${lblD} recebido. Todos os documentos foram enviados. Toque em Concluir envio para finalizar ou em Continuar depois para parar por agora.`
-  const opcoesRecebido = arquivoEhPdf
+  const opcoesRecebido = rgAguardandoVerso
     ? [
-        { id:"docs_proxdoc", title: proximaAcaoTitle },
-        { id: "docs_depois", title: "Continuar depois" }
-      ]
-    : (rgAguardandoVerso
-      ? [
           { id:"docs_rg_verso_junto", title: "Usar mesma foto" },
           { id:"docs_rg_sem_verso", title: "Seguir sem verso" },
+          { id: "docs_depois", title: "Continuar depois" }
+        ]
+    : (arquivoEhPdf
+      ? [
+          { id:"docs_proxdoc", title: proximaAcaoTitle },
           { id: "docs_depois", title: "Continuar depois" }
         ]
       : (!docAtualCompleto

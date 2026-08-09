@@ -160,7 +160,8 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
     buffer,
     mimeType,
     nomeOriginal,
-    contexto
+    contexto,
+    resolvePartyRole
   } = input
 
   const dependencias = {
@@ -210,7 +211,12 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
         )
         const erros = coletarEventos(pipeline, "erros")
         const avisos = coletarEventos(pipeline, "avisos")
-        const status = normalizedInput.reviewRequired || erros.length ? "review" : "analyzed"
+        const identityDocument = /^(rg(?: frente| verso)?|cnh)$/i.test(String(pipeline.classificacao?.tipoDocumento || "").trim())
+        const partyResolution = typeof resolvePartyRole === "function" && identityDocument
+          ? await resolvePartyRole({ pipeline, registry, contexto: contexto || {}, fileId: arquivo.id, evidenceId: unit.evidenceId })
+          : { status: contexto?.partyRole || null, reasonCode: null }
+        const identityUnsafe = identityDocument && typeof resolvePartyRole === "function" && partyResolution?.status !== "titular"
+        const status = normalizedInput.reviewRequired || erros.length || identityUnsafe ? "review" : "analyzed"
         registry = registrarEvidenciaDocumental(registry, {
           evidenceId: unit.evidenceId,
           fileId: arquivo.id,
@@ -222,12 +228,24 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
           classificacao: pipeline.classificacao,
           extracao: pipeline.extracao,
           coverage: coverageFrom(pipeline.classificacao?.tipoDocumento, contexto, unit.pageNumber),
-          partyRole: contexto?.partyRole || null,
+          partyRole: partyResolution?.status === "titular" || partyResolution?.status === "terceiro"
+            ? partyResolution.status : null,
           status,
           avisos: [...avisos, ...normalizedInput.warnings],
           erros: [...erros, ...normalizedInput.errors],
           version: nextEvidenceVersion(registry, unit.evidenceId)
         })
+        if (identityUnsafe) {
+          registry = registrarDivergenciaSeNova(registry, {
+            code: partyResolution?.status === "terceiro"
+              ? "document_holder_identity_mismatch"
+              : "document_holder_identity_unverified",
+            evidenceIds: [unit.evidenceId],
+            status: "open",
+            createdAt: new Date().toISOString(),
+            details: { reasonCode: partyResolution?.reasonCode || "strong_identity_insufficient" }
+          })
+        }
         unitResults.push({ unit: { ...unit, buffer: undefined }, pipeline })
       } catch (unitError) {
         dependencias.logErro("document_analysis", `pipeline documental falhou para ${arquivo.id}: ${unitError.message}`, unitError)
