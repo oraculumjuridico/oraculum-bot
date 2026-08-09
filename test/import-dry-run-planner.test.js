@@ -16,16 +16,18 @@ function makeRecord({ name, cpf, phone, email, officialNumber, importId }) {
   const record = makeRecord({ name: 'Test User', importId: 'r1' })
   record.consolidatedCase = consolidated
 
-  const summaries = await generateDryRunReport([record])
-  // function returns summaries (no network)
-  assert.ok(Array.isArray(summaries), 'summaries should be array')
-  assert.strictEqual(summaries[0].planoHubSpot.contato.cpf, '<PRESENTE>')
+  const report = generateDryRunReport([record], { records: [record] })
+  assert.ok(Array.isArray(report.reports), 'canonical report should expose reports')
+  assert.strictEqual(report.reports[0].planning.cpf, '<PRESENTE>')
+  assert.ok(report.reports[0].canonicalPlan?.hash, 'canonical plan hash should be present')
 
   // Ensure generateDryRunReport is exported
   const importer = require('../scripts/import-real-cases')
   assert.ok(importer.generateDryRunReport, 'generateDryRunReport exported')
 
   console.log('✓ generateDryRunReport produced masked summary and did not perform network actions')
-})()
-
-console.log('ALL IMPORT-DRY-RUN-PLANNER TESTS PASSED')
+  console.log('ALL IMPORT-DRY-RUN-PLANNER TESTS PASSED')
+})().catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})
