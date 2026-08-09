@@ -58,7 +58,9 @@ const CASE_TYPE_LABELS = Object.freeze({
 })
 
 function rotuloTipoCasoNegocio(u = {}) {
-  const explicit = sanitizarTextoEntrada(u.caseTypeLabel || u.rotuloTipoCaso || "")
+  const explicit = sanitizarTextoEntrada(
+    u.nomenclaturaJuridica?.subtypeLabel || u.caseTypeLabel || u.rotuloTipoCaso || ""
+  )
   if (explicit) return explicit
   const subtype = sanitizarTextoEntrada(u.subtipo || u.caseSubtype || "").toLowerCase()
   const type = sanitizarTextoEntrada(u.tipo_de_caso || u.tipoCaso || u.caseType || "").toLowerCase()

@@ -234,6 +234,10 @@ const {
 } = require("./src/domain/post-human-complementary-fields")
 const { buildInssLegalAnswerResult, isInssLegalField } = require("./src/domain/inss-legal-facts")
 const { buildBpcLegalAnswerResult, isBpcLegalField, isBpcCase } = require("./src/domain/bpc-legal-facts")
+const {
+  resolveLegalCaseNomenclature,
+  applyLegalCaseNomenclatureToUser
+} = require("./src/domain/legal-case-nomenclature")
 const { ADDRESS_FIELDS, buildAddressAnswerResult } = require("./src/domain/address-facts")
 const { atualizarHubSpotSeguro } = require("./src/domain/post-human-hubspot-updater")
 const { META_TEMPLATES } = require("./src/domain/meta-templates")
@@ -16997,7 +17001,33 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         : null
       const canonicalResult = addressResult || legalResult
       const legalAnswers = canonicalResult?.canonicalAnswers || null
-      if (legalField && !Object.keys(legalAnswers).length) return legalResult
+      const nomenclaturaJuridica = legalField && Object.values(legalAnswers || {}).some(item => item?.status === "confirmado")
+        ? resolveLegalCaseNomenclature({
+            current: usuario.nomenclaturaJuridica,
+            narrative: sanitizarTextoEntrada(content?.text || content),
+            answered: { ...previousAnswers, ...legalAnswers },
+            usuario,
+            explicitCorrection: Object.values(legalAnswers || {}).some(item => item?.correcao === true)
+          })
+        : null
+      const withLegalNomenclature = result => {
+        if (!nomenclaturaJuridica) return result
+        const existingPatch = result?.canonicalPatch || {}
+        const existingValues = existingPatch.values && typeof existingPatch.values === "object"
+          ? existingPatch.values
+          : existingPatch.field ? { [existingPatch.field]: existingPatch.value } : {}
+        const correctedFields = Object.entries(legalAnswers || {})
+          .filter(([, item]) => item?.correcao === true)
+          .map(([field]) => field)
+        return {
+          ...(result || {}),
+          canonicalPatch: {
+            values: { ...existingValues, nomenclaturaJuridica },
+            corrections: [...new Set([...(existingPatch.corrections || []), ...correctedFields])]
+          }
+        }
+      }
+      if (legalField && !Object.keys(legalAnswers).length) return withLegalNomenclature(legalResult)
       if (addressField && !Object.keys(legalAnswers || {}).length) return addressResult
       const contactFields = {
         nomeCompleto: "firstname", cpf: "cpf_do_cliente", dataNascimento: "date_of_birth",
@@ -17013,8 +17043,8 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const property = contactFields[field] || dealFields[field]
       const objectType = contactFields[field] ? "contact" : dealFields[field] ? "deal" : null
       const objectId = objectType === "contact" ? cycle.contatoId : cycle.negocioId
-      if (legalField && legalAnswers[field]?.status !== "confirmado") return legalResult
-      if (legalField && (!property || !objectId)) return legalResult
+      if (legalField && legalAnswers[field]?.status !== "confirmado") return withLegalNomenclature(legalResult)
+      if (legalField && (!property || !objectId)) return withLegalNomenclature(legalResult)
       if (addressField) {
         const confirmedValues = Object.fromEntries(Object.entries(legalAnswers)
           .filter(([, item]) => item?.status === "confirmado")
@@ -17047,7 +17077,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         }
       }
       if (!property || !objectId || !cycle.contatoId || !cycle.negocioId) {
-        return { persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" }
+        return withLegalNomenclature({ persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" })
       }
       let currentProperties = {}
       if (objectType === "contact") {
@@ -17061,7 +17091,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         currentProperties = response.data?.properties || {}
       }
       const canonicalValue = legalField ? legalAnswers[field]?.valor : sanitizarTextoEntrada(content)
-      return {
+      return withLegalNomenclature({
         ...(legalResult || {}),
         persisted: true,
         canonicalPatch: { field, value: canonicalValue },
@@ -17069,7 +17099,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
           objectType, objectId, contactId: cycle.contatoId, expectedDealId: cycle.negocioId,
           current: currentProperties, incoming: { [property]: canonicalValue }
         }
-      }
+      })
     },
     applySafeHubspotUpdates: async ({ cycle, objectType, objectId, contactId, expectedDealId, current, incoming }) =>
       atualizarHubSpotSeguro({
@@ -17106,6 +17136,10 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       let changed = false
       const corrections = new Set(patch?.corrections || [])
       for (const [field, rawValue] of Object.entries(values)) {
+        if (field === "nomenclaturaJuridica" && rawValue && typeof rawValue === "object") {
+          changed = applyLegalCaseNomenclatureToUser(usuario, rawValue) || changed
+          continue
+        }
         const target = userFields[field]
         const value = sanitizarTextoEntrada(rawValue)
         if (!target || !value) continue
