@@ -84,11 +84,22 @@ async function tratarRespostaClientePosAtendimento({
       saveResult.divergences = hubspotResult?.divergences || []
     }
     if (reviewRequired) {
+      const reviewAnswers = saveResult?.canonicalAnswers && typeof saveResult.canonicalAnswers === "object"
+        ? Object.fromEntries(Object.entries(saveResult.canonicalAnswers)
+            .filter(([, item]) => item && item.valor !== null && item.valor !== undefined && String(item.valor).trim() !== ""))
+        : {}
+      if (saveResult?.canonicalPatch && typeof deps.updateCanonicalState === "function") {
+        await deps.updateCanonicalState({ cycle, patch: saveResult.canonicalPatch })
+      }
       return {
         handled: true, partial: true, humanReviewRequired: true,
         cycle: await repository.updateStatus(cycle.cycleId, "human_review_required", {
           motivoRevisao: String(reviewReason || "human_review_required").replace(/[^a-z0-9_.-]/gi, "_").slice(0, 120),
-          divergencias: saveResult?.divergences?.map(item => item.field) || []
+          divergencias: saveResult?.divergences?.map(item => item.field) || [],
+          ...(Object.keys(reviewAnswers).length ? {
+            respostas: { ...(cycle.payload?.respostas || {}), ...reviewAnswers },
+            camposRespondidos: [...new Set([...(cycle.payload?.camposRespondidos || []), ...Object.keys(reviewAnswers)])]
+          } : {})
         })
       }
     }
