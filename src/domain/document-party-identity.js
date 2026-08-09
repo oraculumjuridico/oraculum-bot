@@ -2,6 +2,8 @@
 
 const { normalizeCpfHubSpot } = require("./hubspot-contract")
 
+const MIN_PAIRED_BACK_CLASSIFICATION_CONFIDENCE = 0.85
+
 function text(value) {
   return String(value || "").trim()
 }
@@ -62,27 +64,65 @@ function trustedRegistryIdentities(registry = {}) {
     .map(item => identityFromFields(item.extracao?.camposExtraidos || {}))
 }
 
-function resolveDocumentPartyIdentity({ extraction = {}, trustedUser = {}, registry = {} } = {}) {
+function evidenceKey(evidence = {}) {
+  return `${evidence.evidenceId}:${Number(evidence.version)}:${evidence.sha256 || ""}`
+}
+
+function confirmedEvidenceKeys(registry = {}) {
+  const keys = new Set()
+  for (const confirmation of registry.confirmacoes || []) {
+    for (const ref of confirmation.evidenceRefs || []) keys.add(evidenceKey(ref))
+  }
+  return keys
+}
+
+function hasOpenDivergence(registry = {}, evidenceId) {
+  return (registry.divergencias || []).some(item =>
+    item.status !== "resolved" && (item.evidenceIds || []).includes(evidenceId))
+}
+
+function hasConfirmedTrustedFront(registry = {}, requirementId = "doc_rg") {
+  const confirmed = confirmedEvidenceKeys(registry)
+  return (registry.evidencias || []).some(evidence => {
+    const kind = normalized(evidence.tipoDocumento || evidence.classificacao?.tipoDocumento)
+    const scopedRequirement = evidence.requirementId || (kind === "rg frente" ? "doc_rg" : null)
+    return kind === "rg frente" && scopedRequirement === requirementId &&
+      normalized(evidence.partyRole) === "titular" && normalized(evidence.status) === "analyzed" &&
+      Number(evidence.classificacao?.confianca || 0) >= MIN_PAIRED_BACK_CLASSIFICATION_CONFIDENCE &&
+      confirmed.has(evidenceKey(evidence)) && !hasOpenDivergence(registry, evidence.evidenceId)
+  })
+}
+
+function resolveDocumentPartyIdentity({
+  extraction = {}, trustedUser = {}, registry = {}, documentType = null,
+  classificationConfidence = 0, requirementId = null
+} = {}) {
   const candidate = identityFromFields(extraction.camposExtraidos || extraction)
   const trusted = [identityFromUser(trustedUser), ...trustedRegistryIdentities(registry)]
-  let sawComparable = false
+  let confirmedMatch = null
   for (const identity of trusted) {
     const result = compareIdentity(candidate, identity)
-    if (result.status === "titular") return result
-    if (result.status === "terceiro") {
-      sawComparable = true
-      return result
-    }
+    if (result.status === "terceiro") return result
+    if (result.status === "titular" && !confirmedMatch) confirmedMatch = result
+  }
+  if (confirmedMatch) return confirmedMatch
+  const kind = normalized(documentType)
+  if (kind === "rg verso" && requirementId === "doc_rg" &&
+      Number(classificationConfidence) >= MIN_PAIRED_BACK_CLASSIFICATION_CONFIDENCE &&
+      hasConfirmedTrustedFront(registry, requirementId)) {
+    return { status: "scoped_pair_candidate", reasonCode: "confirmed_trusted_front_available" }
   }
   return {
     status: "indeterminado",
-    reasonCode: sawComparable ? "identity_mismatch" : "strong_identity_insufficient"
+    reasonCode: "strong_identity_insufficient"
   }
 }
 
 module.exports = {
+  MIN_PAIRED_BACK_CLASSIFICATION_CONFIDENCE,
   identityFromFields,
   identityFromUser,
   compareIdentity,
-  resolveDocumentPartyIdentity
+  resolveDocumentPartyIdentity,
+  hasConfirmedTrustedFront
 }

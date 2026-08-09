@@ -87,6 +87,24 @@ function eligible(evidence) {
     !(evidence.erros || []).length
 }
 
+function scopedPairCandidate(evidence) {
+  return documentKind(evidence) === "rg verso" &&
+    normalized(evidence.partyResolutionStatus) === "scoped_pair_candidate" &&
+    (evidence.requirementId || "doc_rg") === "doc_rg" &&
+    Number(evidence.classificacao?.confianca) >= DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE &&
+    normalized(evidence.status) === "analyzed" && !(evidence.erros || []).length
+}
+
+function trustedFront(evidence) {
+  return documentKind(evidence) === "rg frente" && eligible(evidence) &&
+    (evidence.requirementId || "doc_rg") === "doc_rg"
+}
+
+function scopedFrontBackMatch(left, right) {
+  return (trustedFront(left) && scopedPairCandidate(right)) ||
+    (trustedFront(right) && scopedPairCandidate(left))
+}
+
 function coverage(evidence) {
   const result = new Set((evidence.coverage || []).map(normalized))
   const kind = documentKind(evidence)
@@ -135,6 +153,7 @@ function decideRg(registryInput = {}, options = {}) {
   let registry = normalizarContratoEvidencias(registryInput)
   const now = options.now || new Date().toISOString()
   const allConfirmedEntries = confirmedEvidence(registry)
+  const confirmedTrustedFrontAvailable = allConfirmedEntries.some(item => trustedFront(item.evidence))
   const identityKinds = new Set(["rg frente", "rg verso", "rg", "cnh"])
   const preexistingDivergenceIds = new Set()
   for (const entry of allConfirmedEntries) {
@@ -143,7 +162,8 @@ function decideRg(registryInput = {}, options = {}) {
     let code = null
     if (Number(evidence.classificacao?.confianca) < DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE) {
       code = "document_classification_confidence_insufficient"
-    } else if (normalized(evidence.partyRole) !== "titular") {
+    } else if (normalized(evidence.partyRole) !== "titular" &&
+        !(scopedPairCandidate(evidence) && confirmedTrustedFrontAvailable)) {
       code = normalized(evidence.partyRole) === "terceiro"
         ? "document_holder_identity_mismatch"
         : "document_holder_identity_unverified"
@@ -153,21 +173,24 @@ function decideRg(registryInput = {}, options = {}) {
     registry = added.registry
     if (added.divergence) preexistingDivergenceIds.add(added.divergence.divergenceId)
   }
-  const confirmedEntries = allConfirmedEntries.filter(item => eligible(item.evidence))
+  const confirmedEntries = allConfirmedEntries.filter(item =>
+    eligible(item.evidence) || (confirmedTrustedFrontAvailable && scopedPairCandidate(item.evidence)))
   const evidences = confirmedEntries.map(item => item.evidence)
   const confirmations = new Map(confirmedEntries.map(item => [evidenceKey(item.evidence), item.confirmation]))
   const used = new Set()
   const confirmationIds = new Set()
   const divergenceIds = new Set(preexistingDivergenceIds)
   let delivered = false
-  let partial = evidences.length > 0
+  let partial = evidences.some(eligible)
 
   for (const evidence of evidences) {
     const confirmation = confirmations.get(evidenceKey(evidence))
     used.add(evidence.evidenceId); confirmationIds.add(confirmation.confirmationId)
     const ownCoverage = coverage(evidence)
-    const completeAssertion = ["front_and_back_same_image", "document_complete", "digital_complete"]
-      .includes(normalized(confirmation.assertion))
+    const assertion = normalized(confirmation.assertion)
+    const humanSameImageVisuallySupported = assertion === "front_and_back_same_image" &&
+      ownCoverage.has("front") && ownCoverage.has("back")
+    const completeAssertion = ["document_complete", "digital_complete"].includes(assertion) || humanSameImageVisuallySupported
     if (completeAssertion && (documentKind(evidence).startsWith("rg") || documentKind(evidence) === "cnh")) delivered = true
     if (ownCoverage.has("digital_complete")) delivered = true
   }
@@ -190,7 +213,7 @@ function decideRg(registryInput = {}, options = {}) {
         registry = added.registry
         const divergence = added.divergence
         divergenceIds.add(divergence.divergenceId)
-      } else if (identity.match) {
+      } else if (identity.match || scopedFrontBackMatch(left, right)) {
         delivered = true
         used.add(left.evidenceId); used.add(right.evidenceId)
         confirmationIds.add(confirmations.get(evidenceKey(left)).confirmationId)
@@ -261,5 +284,7 @@ module.exports = {
   confirmAndDecide,
   decideRg,
   strongIdentity,
+  scopedPairCandidate,
+  scopedFrontBackMatch,
   validCpf
 }

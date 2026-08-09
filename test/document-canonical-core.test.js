@@ -94,7 +94,11 @@ async function main() {
   assert.equal(confirm(nameOnly, "nv").decision.status, "partial")
 
   let sameImage = evidence(normalizarContratoEvidencias({}), { fileId: "same", tipoDocumento: "RG frente", campos: {} })
-  assert.equal(confirm(sameImage, "same", "front_and_back_same_image").decision.status, "delivered")
+  assert.equal(confirm(sameImage, "same", "front_and_back_same_image").decision.status, "partial")
+  let visuallySupportedSameImage = evidence(normalizarContratoEvidencias({}), {
+    fileId: "same-supported", tipoDocumento: "RG frente", campos: {}, coverage: ["front", "back"]
+  })
+  assert.equal(confirm(visuallySupportedSameImage, "same-supported", "front_and_back_same_image").decision.status, "delivered")
 
   let pdfRegistry = evidence(normalizarContratoEvidencias({}), { fileId: "rg.pdf", pageNumber: 1, tipoDocumento: "RG frente", campos: { cpf: "529.982.247-25" } })
   pdfRegistry = evidence(pdfRegistry, { fileId: "rg.pdf", pageNumber: 2, tipoDocumento: "RG verso", campos: { cpf: "529.982.247-25" } })
@@ -172,7 +176,7 @@ async function main() {
   assert.ok(thirdResult.registry.divergencias.some(item => item.code === "document_holder_identity_mismatch"))
 
   let versionedDecision = evidence(normalizarContratoEvidencias({}), {
-    fileId: "same-file", sha256: "1".repeat(64), tipoDocumento: "RG frente", version: 1
+    fileId: "same-file", sha256: "1".repeat(64), tipoDocumento: "RG frente", coverage: ["front", "back"], version: 1
   })
   versionedDecision = confirm(versionedDecision, "same-file", "front_and_back_same_image").registry
   const historicalDecision = versionedDecision.decisoes.at(-1)

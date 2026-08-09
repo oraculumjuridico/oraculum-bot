@@ -1,6 +1,7 @@
 "use strict"
 
 const { DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE } = require("./document-requirement-engine")
+const { hasConfirmedTrustedFront } = require("./document-party-identity")
 
 function normalized(value) {
   return String(value || "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
@@ -25,11 +26,22 @@ function evidenceSide(evidence = {}) {
 
 function response(reasonCode, requested, extra = {}) {
   const sideLabel = requested === "back" ? "verso" : requested === "front" ? "frente" : "documento"
+  const qualityWarnings = extra.qualityWarnings || []
+  let qualityMessage = null
+  if (qualityWarnings.includes("low_resolution")) {
+    qualityMessage = `A imagem ficou pequena para leitura. Envie outra foto da ${sideLabel}, mais perto e mostrando o documento inteiro.`
+  } else if (qualityWarnings.includes("possible_blur")) {
+    qualityMessage = `A imagem ficou pouco nitida. Apoie o celular e envie outra foto da ${sideLabel}, um pouco mais perto.`
+  } else if (qualityWarnings.includes("underexposed")) {
+    qualityMessage = `A imagem ficou escura. Envie outra foto da ${sideLabel} com mais iluminacao e sem sombra.`
+  } else if (qualityWarnings.includes("overexposed")) {
+    qualityMessage = `A imagem ficou clara demais. Envie outra foto da ${sideLabel} sem flash ou reflexo sobre o documento.`
+  }
   const messages = {
     wrong_side: `Recebi outra parte do documento, mas ainda preciso da ${sideLabel}. Envie uma foto legivel da ${sideLabel}.`,
     wrong_document_type: `O arquivo recebido parece ser diferente do documento solicitado. Envie o documento correto para continuar.`,
     identity_not_verified: `Nao consegui confirmar que o documento pertence ao titular do caso. O documento correto continua pendente.`,
-    unreadable_or_uncertain: `Nao consegui reconhecer o documento com seguranca. Envie uma nova foto legivel, sem reflexo e com tudo enquadrado.`
+    unreadable_or_uncertain: qualityMessage || `Nao consegui reconhecer o documento com seguranca. Envie uma nova foto legivel, sem reflexo e com tudo enquadrado.`
   }
   return { accepted: false, confirmEvidence: false, advance: false, reasonCode, message: messages[reasonCode], ...extra }
 }
@@ -49,14 +61,26 @@ function evaluateGuidedDocumentReceipt(input = {}) {
     const unknown = evidences.some(evidence => normalized(evidence.tipoDocumento || evidence.classificacao?.tipoDocumento) === "documento desconhecido")
     return response(unknown ? "unreadable_or_uncertain" : "wrong_document_type", requested)
   }
-  const safe = identityEvidences.filter(evidence =>
+  const confirmedFrontAvailable = hasConfirmedTrustedFront(input.analysisResult?.registry || {}, "doc_rg")
+  const safe = identityEvidences.filter(evidence => {
+    const roleSafe = normalized(evidence.partyRole) === "titular" || (
+      normalized(evidence.partyResolutionStatus) === "scoped_pair_candidate" &&
+      normalized(evidence.tipoDocumento || evidence.classificacao?.tipoDocumento) === "rg verso" &&
+      confirmedFrontAvailable
+    )
+    return (
     normalized(evidence.status) === "analyzed" &&
-    normalized(evidence.partyRole) === "titular" &&
+    roleSafe &&
     Number(evidence.classificacao?.confianca) >= DOCUMENT_REQUIREMENT_MIN_CLASSIFICATION_CONFIDENCE &&
     !(evidence.erros || []).length)
+  })
   if (!safe.length) {
+    const qualityWarnings = [...new Set(identityEvidences.flatMap(evidence => [
+      ...(evidence.quality?.warnings || []),
+      ...(evidence.quality?.originalWarnings || [])
+    ]))]
     const identityUnsafe = identityEvidences.some(evidence => normalized(evidence.partyRole) !== "titular")
-    return response(identityUnsafe ? "identity_not_verified" : "unreadable_or_uncertain", requested)
+    return response(identityUnsafe ? "identity_not_verified" : "unreadable_or_uncertain", requested, { qualityWarnings })
   }
 
   const sides = new Set(safe.map(evidenceSide).filter(Boolean))
