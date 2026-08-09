@@ -21,9 +21,10 @@ function evidence(registry, input) {
     sha256: input.sha256 || crypto.createHash("sha256").update(input.fileId).digest("hex"),
     pageNumber: input.pageNumber,
     tipoDocumento: input.tipoDocumento,
+    classificacao: { tipoDocumento: input.tipoDocumento, confianca: input.classificationConfidence ?? 0.96 },
     extracao: { camposExtraidos: input.campos || {} },
     coverage: input.coverage || [],
-    partyRole: input.partyRole,
+    partyRole: input.partyRole === undefined ? "titular" : input.partyRole,
     status: input.status || "analyzed",
     erros: input.erros || [],
     version: input.version || 1
@@ -75,6 +76,17 @@ async function main() {
   const divergentResult = confirm(divergent, "vb")
   assert.equal(divergentResult.decision.status, "review")
   assert.equal(divergentResult.registry.divergencias.at(-1).code, "cpf_mismatch")
+
+  let contradictoryStrongIds = evidence(normalizarContratoEvidencias({}), {
+    fileId: "strong-front", tipoDocumento: "RG frente", campos: { rg: "12.345.678-9", cpf: "529.982.247-25" }
+  })
+  contradictoryStrongIds = confirm(contradictoryStrongIds, "strong-front").registry
+  contradictoryStrongIds = evidence(contradictoryStrongIds, {
+    fileId: "strong-back", tipoDocumento: "RG verso", campos: { rg: "12.345.678-9", cpf: "111.444.777-35" }
+  })
+  const contradictoryStrongIdsResult = confirm(contradictoryStrongIds, "strong-back")
+  assert.equal(contradictoryStrongIdsResult.decision.status, "review")
+  assert.ok(contradictoryStrongIdsResult.registry.divergencias.some(item => item.code === "cpf_mismatch"))
 
   let nameOnly = evidence(normalizarContratoEvidencias({}), { fileId: "nf", tipoDocumento: "RG frente", campos: { nome: "Maria Silva" } })
   nameOnly = confirm(nameOnly, "nf").registry
@@ -157,7 +169,7 @@ async function main() {
   })
   const thirdResult = confirm(thirdAfterDelivered, "third-front")
   assert.equal(thirdResult.decision.status, "review")
-  assert.ok(thirdResult.registry.divergencias.some(item => item.code === "party_role_mismatch"))
+  assert.ok(thirdResult.registry.divergencias.some(item => item.code === "document_holder_identity_mismatch"))
 
   let versionedDecision = evidence(normalizarContratoEvidencias({}), {
     fileId: "same-file", sha256: "1".repeat(64), tipoDocumento: "RG frente", version: 1

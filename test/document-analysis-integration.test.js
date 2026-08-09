@@ -160,7 +160,7 @@ async function main() {
     arquivo: { id: "drive-file-conflict", name: "RG.jpg" },
     buffer,
     mimeType: "image/jpeg",
-    contexto: { folha: "Frente" }
+    contexto: { folha: "Frente", partyRole: "titular" }
   }, {
     ...deps,
     executarPipelineDocumental: async input => {
