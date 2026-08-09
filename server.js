@@ -8091,28 +8091,9 @@ configurarClientMenuUi({
   textoAudioOpcoes
 })
 
-// Detecta gênero pelo nome via IA e retorna saudação adequada
-async function saudacaoGenero(nome) {
-  try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 10,
-        messages: [{
-          role: "user",
-          content: `Responda SOMENTE com a letra M (masculino) ou F (feminino) com base no primeiro nome: "${nome}". Sem nenhum outro texto.`
-        }]
-      })
-    })
-    const data = await resp.json()
-    const letra = (data?.content?.[0]?.text || "").trim().toUpperCase()
-    if (letra === "F") return "Seja bem-vinda"
-    return "Seja bem-vindo"
-  } catch (e) {
-    return "Seja bem-vindo"
-  }
+// Saudação inclusiva e determinística: o Menu não depende de inferência externa de gênero.
+function saudacaoGenero() {
+  return "Seja bem-vindo(a)"
 }
 
 async function menuClienteComAudio(from, u) {
