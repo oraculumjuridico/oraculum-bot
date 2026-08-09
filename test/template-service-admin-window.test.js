@@ -31,6 +31,12 @@ async function loadWithMocks({ imageAccepted = true } = {}) {
 }
 
 ;(async () => {
+  const boundaryNow = 1_800_000_000_000
+  const boundary = await loadWithMocks()
+  assert.equal(boundary.service.conversaDentroJanela24h(boundaryNow - 24 * 60 * 60 * 1000, boundaryNow), true)
+  assert.equal(boundary.service.conversaDentroJanela24h(boundaryNow - 24 * 60 * 60 * 1000 - 1, boundaryNow), false)
+  assert.equal(boundary.service.conversaDentroJanela24h(null, boundaryNow), false)
+
   const recent = await loadWithMocks()
   const free = await recent.service.atualizacaoCasoSegura("5511999999999", {
     ultimaMsg: Date.now() - 60_000,

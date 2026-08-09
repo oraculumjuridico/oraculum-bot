@@ -174,7 +174,9 @@ function restaurarEstadoNegocioHubSpot(u, negocio) {
     restaurado.processing = false
     restaurado.timer = null
     restaurado.timerIncentivoDescricao = null
-    restaurado.ultimaMsg = u.ultimaMsg || Date.now()
+    // A janela de 24h pertence exclusivamente a uma mensagem real do cliente.
+    // Restaurar um snapshot do HubSpot nunca deve fabricar atividade recente.
+    restaurado.ultimaMsg = u.ultimaMsg || estadoSnapshot.ultimaMsg || null
 
     Object.assign(u, restaurado)
   }
