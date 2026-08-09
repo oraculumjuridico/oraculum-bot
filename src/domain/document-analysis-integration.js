@@ -13,7 +13,7 @@ const {
   registrarEvidenciaDocumental,
   registrarDivergenciaDocumental
 } = require("./document-evidence-model")
-const { logDebug, logErro } = require("../utils/logging")
+const { logDebug, logInfo, logErro } = require("../utils/logging")
 
 const DOCUMENT_ANALYSIS_FOLDER = "00_ADMIN"
 const DOCUMENT_ANALYSIS_FILE = "document-analysis.json"
@@ -92,6 +92,65 @@ function coverageFrom(tipoDocumento, contexto = {}, pageNumber = null) {
   if (/frente/.test(folha) && !/verso/.test(folha)) return ["front"]
   if (/verso/.test(folha) && !/frente/.test(folha)) return ["back"]
   return []
+}
+
+function ocrConfidenceBucket(value) {
+  const confidence = Number(value)
+  if (!Number.isFinite(confidence)) return "unavailable"
+  if (confidence < 60) return "low"
+  if (confidence < 80) return "medium"
+  return "high"
+}
+
+function recognizedSidesFromType(type) {
+  const value = String(type || "").trim().toLowerCase()
+  if (value === "rg frente") return "front"
+  if (value === "rg verso") return "back"
+  return "none"
+}
+
+function emitirLogsDocumentaisSeguros({ logger, pipeline, contexto, evidenceStatus, partyResolution }) {
+  const attempts = Array.isArray(pipeline?.tentativas) && pipeline.tentativas.length
+    ? pipeline.tentativas : [{
+      retryAttempt: 0,
+      preprocessingProfile: pipeline?.preprocessamento?.profile || "standard",
+      classificationType: pipeline?.classificacao?.tipoDocumento || null,
+      classificationConfidence: pipeline?.classificacao?.confianca || 0,
+      ocrHasText: Boolean(String(pipeline?.ocr?.textoCompleto || "").trim()),
+      ocrConfidence: pipeline?.ocr?.confianca,
+      qualityWarnings: pipeline?.qualidade?.warnings || [],
+      errorCodes: coletarEventos(pipeline, "erros").map(item => item.code || "DOCUMENT_PIPELINE_ERROR"),
+      safe: false
+    }]
+  for (let index = 0; index < attempts.length; index++) {
+    const attempt = attempts[index]
+    const selected = pipeline?.selectedVariant
+      ? attempt.preprocessingProfile === pipeline.selectedVariant
+      : index === 0
+    const reasonCode = selected
+      ? partyResolution?.reasonCode || attempt.errorCodes?.[0] ||
+        (evidenceStatus === "analyzed" ? "analysis_completed" : attempt.safe ? "safe_result_selected" : "insufficient_result_selected")
+      : attempt.errorCodes?.[0] || "variant_not_selected"
+    try {
+      logger({
+        event: "document.analysis_attempt",
+        status: selected ? evidenceStatus : "attempted",
+        classificationType: attempt.classificationType || "unknown",
+        classificationConfidence: attempt.classificationConfidence,
+        ocrHasText: Boolean(attempt.ocrHasText),
+        ocrConfidenceBucket: ocrConfidenceBucket(attempt.ocrConfidence),
+        preprocessingProfile: attempt.preprocessingProfile || "standard",
+        requestedSide: String(contexto?.folha || "none").toLowerCase(),
+        recognizedSides: recognizedSidesFromType(attempt.classificationType),
+        evidenceStatus,
+        partyResolutionStatus: partyResolution?.status || "not_applicable",
+        reasonCode,
+        qualityWarnings: (attempt.qualityWarnings || []).join(",") || "none",
+        retryAttempt: attempt.retryAttempt || 0,
+        selectedVariant: pipeline?.selectedVariant || "standard"
+      })
+    } catch {}
+  }
 }
 
 function nextEvidenceVersion(registry = {}, evidenceId) {
@@ -173,6 +232,7 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
     carregarEstadoDocumental: deps.carregarEstadoDocumental || carregarEstadoDocumental,
     normalizarEntradaDocumental: deps.normalizarEntradaDocumental || normalizarEntradaDocumental,
     logDebug: deps.logDebug || logDebug,
+    logInfo: deps.logInfo || logInfo,
     logErro: deps.logErro || logErro
   }
 
@@ -215,8 +275,17 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
         const partyResolution = typeof resolvePartyRole === "function" && identityDocument
           ? await resolvePartyRole({ pipeline, registry, contexto: contexto || {}, fileId: arquivo.id, evidenceId: unit.evidenceId })
           : { status: contexto?.partyRole || null, reasonCode: null }
-        const identityUnsafe = identityDocument && typeof resolvePartyRole === "function" && partyResolution?.status !== "titular"
+        const scopedPairCandidate = partyResolution?.status === "scoped_pair_candidate"
+        const identityUnsafe = identityDocument && typeof resolvePartyRole === "function" &&
+          partyResolution?.status !== "titular" && !scopedPairCandidate
         const status = normalizedInput.reviewRequired || erros.length || identityUnsafe ? "review" : "analyzed"
+        emitirLogsDocumentaisSeguros({
+          logger: dependencias.logInfo,
+          pipeline,
+          contexto,
+          evidenceStatus: status,
+          partyResolution
+        })
         registry = registrarEvidenciaDocumental(registry, {
           evidenceId: unit.evidenceId,
           fileId: arquivo.id,
@@ -225,11 +294,14 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
           pageNumber: unit.pageNumber,
           tipoDocumento: pipeline.classificacao?.tipoDocumento,
           ocr: pipeline.ocr,
+          quality: pipeline.qualidade,
           classificacao: pipeline.classificacao,
           extracao: pipeline.extracao,
           coverage: coverageFrom(pipeline.classificacao?.tipoDocumento, contexto, unit.pageNumber),
+          requirementId: contexto?.documentoId || null,
           partyRole: partyResolution?.status === "titular" || partyResolution?.status === "terceiro"
             ? partyResolution.status : null,
+          partyResolutionStatus: partyResolution?.status || null,
           status,
           avisos: [...avisos, ...normalizedInput.warnings],
           erros: [...erros, ...normalizedInput.errors],
@@ -365,5 +437,7 @@ module.exports = {
   DOCUMENT_ANALYSIS_FILE,
   DOCUMENT_PIPELINE_VERSION,
   processarAnaliseDocumentalPosUpload,
-  removerBuffers
+  removerBuffers,
+  emitirLogsDocumentaisSeguros,
+  ocrConfidenceBucket
 }

@@ -10561,10 +10561,13 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
         subTipo: u?.subTipo || null,
         ...contexto
       },
-      resolvePartyRole: ({ pipeline, registry }) => resolveDocumentPartyIdentity({
+      resolvePartyRole: ({ pipeline, registry, contexto: analysisContext }) => resolveDocumentPartyIdentity({
         extraction: pipeline?.extracao || {},
         trustedUser: u || {},
-        registry
+        registry,
+        documentType: pipeline?.classificacao?.tipoDocumento,
+        classificationConfidence: pipeline?.classificacao?.confianca,
+        requirementId: analysisContext?.documentoId || null
       })
     })
     if (resultado?.reason && !resultado.skipped) {
@@ -10935,6 +10938,16 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       requirementId: docAtual.id,
       folha,
       analysisResult: resultadoAnaliseGuiada
+    })
+    logInfo({
+      event: "document.guided_receipt",
+      status: recebimentoGuiado.accepted ? "accepted" : "rejected",
+      requestedSide: folha,
+      recognizedSides: (recebimentoGuiado.recognizedSides || []).join(",") || "none",
+      reasonCode: recebimentoGuiado.reasonCode || "unknown",
+      qualityWarnings: (recebimentoGuiado.qualityWarnings || []).join(",") || "none",
+      selectedVariant: resultadoAnaliseGuiada?.evidencias?.[0]?.ocr?.selectedVariant ||
+        resultadoAnaliseGuiada?.entrada?.pipeline?.selectedVariant || "unknown"
     })
     if (recebimentoGuiado.confirmEvidence) {
       confirmacaoCanonicaGuiada = await confirmarDocumentoCanonicoSeguro(u, arquivo.id, {

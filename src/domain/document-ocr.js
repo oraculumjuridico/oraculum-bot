@@ -1,4 +1,5 @@
 const { createWorker, OEM } = require("tesseract.js")
+const portugueseLanguage = require("@tesseract.js-data/por")
 
 const SUPPORTED_OCR_IMAGE_MIME_TYPES = new Set([
   "image/png",
@@ -81,17 +82,24 @@ async function executarOCRImagem(input, options = {}) {
   const startTime = Date.now()
   const avisos = []
   let worker = null
+  let recognitionTimeout = null
 
   try {
     const source = normalizarEntradaOCR(input, options)
-    const language = options.language || options.lang || "por"
+    const language = options.language || options.lang || portugueseLanguage.code || "por"
     const workerFactory = options.createWorker || createWorker
     const oem = options.oem || OEM.LSTM_ONLY
+    const workerOptions = {
+      langPath: portugueseLanguage.langPath,
+      gzip: portugueseLanguage.gzip,
+      cacheMethod: "none",
+      ...(options.workerOptions || {})
+    }
 
     worker = await workerFactory(
       language,
       oem,
-      options.workerOptions || {},
+      workerOptions,
       options.workerConfig || {}
     )
 
@@ -99,12 +107,14 @@ async function executarOCRImagem(input, options = {}) {
       await worker.setParameters(options.parameters)
     }
 
-    const result = await worker.recognize(
-      source.buffer,
-      options.recognizeOptions || {},
-      options.output,
-      options.jobId
-    )
+    const timeoutMs = Math.max(1000, Math.min(30000, Number(options.timeoutMs || 18000)))
+    const recognition = worker.recognize(source.buffer, options.recognizeOptions || {}, options.output, options.jobId)
+    const timeout = new Promise((resolve, reject) => {
+      recognitionTimeout = setTimeout(() => reject(Object.assign(new Error("tempo limite do OCR excedido"), { code: "OCR_TIMEOUT" })), timeoutMs)
+    })
+    const result = await Promise.race([recognition, timeout])
+    clearTimeout(recognitionTimeout)
+    recognitionTimeout = null
     const data = result?.data || {}
     const textoCompleto = typeof data.text === "string" ? data.text : ""
     const confianca = Number.isFinite(data.confidence) ? data.confidence : null
@@ -130,6 +140,7 @@ async function executarOCRImagem(input, options = {}) {
       erros: [serializarErroOCR(error)]
     })
   } finally {
+    if (recognitionTimeout) clearTimeout(recognitionTimeout)
     await encerrarWorkerOCR(worker, avisos)
   }
 }
