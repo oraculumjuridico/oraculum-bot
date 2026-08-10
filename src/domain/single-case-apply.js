@@ -15,7 +15,7 @@ const STEP_DEFINITIONS = Object.freeze({
 const STATES = new Set(["pending", "running", "completed", "failed"])
 const TRANSITIONS = Object.freeze({ pending: ["running"], running: ["running", "completed", "failed"], failed: ["running"], completed: [] })
 const REQUIRED_METHODS = Object.freeze({
-  plans: ["loadByCaseImportId"], authorizations: ["loadForCase", "consumeAuthorizations"], coordination: ["acquireLease", "renewLease", "loadCheckpoint", "compareAndSetCheckpoint", "releaseLease"],
+  plans: ["loadByCaseImportId"], authorizations: ["loadForCase", "loadForCheckpoint", "consumeAuthorizations"], coordination: ["acquireLease", "renewLease", "loadCheckpoint", "initializeCheckpoint", "compareAndSetCheckpoint", "releaseLease"],
   reservation: ["verify"], contacts: ["findContactsByCpf", "findContactsByPhone", "create", "verify"],
   deals: ["findByCaseNumber", "create", "verify"], associations: ["find", "create", "verify"],
   drive: ["findAreaFolders", "createAreaFolder", "findCaseFolders", "createCaseFolder", "verifyFolder", "findFilesByHash", "upload", "verifyUpload"],
@@ -156,6 +156,7 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
     const reservationContext = deepFreeze({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, checkpointVersion: 0, authorizablePlanHash: hash, caseNumber: plan.dealPlan.caseNumber, authorizationIds: [], idempotencyKey: `${caseImportId}:reservation-preflight`, deadline: lease.expiresAt })
     verifiedReservation = await adapters.reservation.verify(caseImportId, plan.dealPlan.caseNumber, reservationContext)
     if (!verifiedReservation || verifiedReservation.verified !== true || verifiedReservation.caseImportId !== caseImportId || verifiedReservation.caseNumber !== plan.dealPlan.caseNumber) fail("RESERVATION_INVALID")
+    const authQuery = deepFreeze({ caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash, manifestHash, reservationEvidenceHash: reservationEvidenceHash(verifiedReservation), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: authorizationScopesForExecution(executionScope), executionScope })
     // Branch: REBIND resume mode vs normal mode
     if (resumeMode === "REBIND") {
       // REBIND RESUME PATH: Records obtained from verifyResumeProof, already consumed by atomic rebind
@@ -203,19 +204,6 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       const records = resumeProof.authorizationRecords
       if (!Array.isArray(records) || records.length !== 2) fail("REBIND_RESUME_PROOF_INVALID")
 
-      const authQuery = deepFreeze({
-        caseImportId,
-        caseFingerprint: plan.caseFingerprint,
-        caseNumber: plan.dealPlan.caseNumber,
-        authorizablePlanHash: hash,
-        planHash,
-        manifestHash,
-        reservationEvidenceHash: reservationEvidenceHash(verifiedReservation),
-        schemaVersion: AUTHORIZATION_SCHEMA_VERSION,
-        requiredScopes: authorizationScopesForExecution(executionScope),
-        executionScope
-      })
-
       const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
 
       const validatedIds = validated.map(r => r.authorizationId).sort()
@@ -230,16 +218,21 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
 
       prepareCheckpointForExecution(checkpoint)
     } else {
-      // NORMAL PATH: Original flow with loadForCase + consumeAuthorizations
-      const authQuery = deepFreeze({ caseImportId, caseFingerprint: plan.caseFingerprint, caseNumber: plan.dealPlan.caseNumber, authorizablePlanHash: hash, planHash, manifestHash, reservationEvidenceHash: reservationEvidenceHash(verifiedReservation), schemaVersion: AUTHORIZATION_SCHEMA_VERSION, requiredScopes: authorizationScopesForExecution(executionScope), executionScope })
-      const records = await adapters.authorizations.loadForCase(authQuery)
+      // NORMAL PATH: resume an existing consumed pair, or atomically initialize a new execution.
+      checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId))
+      const records = checkpoint
+        ? await adapters.authorizations.loadForCheckpoint({ ...authQuery, authorizationIds: checkpoint.authorizationIds })
+        : await adapters.authorizations.loadForCase(authQuery)
       const validated = validateAuthorizations(records, authQuery, authorizationVerifier, now())
       decision = makeDecision(plan, hash, validated, now(), executionScope)
-      checkpoint = deepClone(await adapters.coordination.loadCheckpoint(caseImportId) || newCheckpoint(decision))
+      if (!checkpoint) checkpoint = newCheckpoint(decision)
       validateCheckpoint(checkpoint, decision)
       prepareCheckpointForExecution(checkpoint)
-      const consumed = await adapters.authorizations.consumeAuthorizations({ ...authQuery, authorizationIds: decision.authorizationIds, consumedBy: `executor:${lease.leaseId}`, now: now() })
-      if (consumed?.status !== "consumed") fail(`AUTHORIZATION_CONSUME_${String(consumed?.status || "unknown_result").toUpperCase()}`)
+      if (checkpoint.version === 0) {
+        const initialized = await adapters.coordination.initializeCheckpoint({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, checkpoint: deepClone(checkpoint), authorization: authQuery })
+        if (!initialized || initialized.saved !== true || initialized.version !== 1 || initialized.authorizationConsumedBy !== `executor:${lease.leaseId}`) fail("CHECKPOINT_INITIALIZATION_FAILED")
+        checkpoint.version = initialized.version
+      }
     }
     const save = async () => {
       const renewed = await adapters.coordination.renewLease({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, now: now() })

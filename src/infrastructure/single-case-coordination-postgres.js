@@ -3,9 +3,10 @@
 const crypto = require("node:crypto")
 const { deepClone, deepFreeze } = require("../domain/single-case-apply-contracts")
 const { validateCheckpoint } = require("../domain/single-case-apply")
-const { canonicalSqlExpression, normalizeDefault } = require("./single-case-authorization-postgres")
+const { canonicalSqlExpression, normalizeDefault, consumeAuthorizationsWith } = require("./single-case-authorization-postgres")
 
 const MIGRATION_ID = "single-case-apply-coordination-v1"
+const PROVENANCE_MIGRATION_ID = "single-case-apply-coordination-v2-authorization-provenance"
 const LEASE_TABLE = "single_case_apply_leases"
 const CHECKPOINT_TABLE = "single_case_apply_checkpoints"
 const FENCING_SEQUENCE = "single_case_apply_fencing_token_seq"
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS ${CHECKPOINT_TABLE} (
   lease_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
+  authorization_consumed_by TEXT,
   CONSTRAINT single_case_checkpoint_case_check CHECK (case_import_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$'),
   CONSTRAINT single_case_checkpoint_schema_check CHECK (schema_version = 2),
   CONSTRAINT single_case_checkpoint_version_check CHECK (checkpoint_version > 0),
@@ -68,7 +70,7 @@ CREATE TABLE IF NOT EXISTS ${CHECKPOINT_TABLE} (
 const column = (name,type,udt,nullable=false,defaultValue=null) => Object.freeze({name,type,udt,nullable,defaultValue})
 const EXPECTED_COLUMNS = Object.freeze({
   [LEASE_TABLE]: [column("case_import_id","text","text"),column("lease_id","text","text"),column("fencing_token","bigint","int8"),column("owner_id","text","text"),column("acquired_at","timestamp with time zone","timestamptz"),column("expires_at","timestamp with time zone","timestamptz"),column("released_at","timestamp with time zone","timestamptz",true),column("version","bigint","int8"),column("created_at","timestamp with time zone","timestamptz"),column("updated_at","timestamp with time zone","timestamptz")],
-  [CHECKPOINT_TABLE]: [column("case_import_id","text","text"),column("schema_version","integer","int4"),column("checkpoint_version","bigint","int8"),column("authorizable_plan_hash","text","text"),column("case_number","text","text"),column("case_fingerprint","text","text"),column("authorization_ids","jsonb","jsonb"),column("global_status","text","text"),column("checkpoint_payload","jsonb","jsonb"),column("fencing_token","bigint","int8"),column("lease_id","text","text"),column("created_at","timestamp with time zone","timestamptz"),column("updated_at","timestamp with time zone","timestamptz")]
+  [CHECKPOINT_TABLE]: [column("case_import_id","text","text"),column("schema_version","integer","int4"),column("checkpoint_version","bigint","int8"),column("authorizable_plan_hash","text","text"),column("case_number","text","text"),column("case_fingerprint","text","text"),column("authorization_ids","jsonb","jsonb"),column("global_status","text","text"),column("checkpoint_payload","jsonb","jsonb"),column("fencing_token","bigint","int8"),column("lease_id","text","text"),column("created_at","timestamp with time zone","timestamptz"),column("updated_at","timestamp with time zone","timestamptz"),column("authorization_consumed_by","text","text",true)]
 })
 const REQUIRED_CHECKS = Object.freeze({
   [LEASE_TABLE]: ["single_case_lease_case_check", "single_case_lease_id_check", "single_case_lease_owner_check", "single_case_lease_token_check", "single_case_lease_version_check", "single_case_lease_dates_check", "single_case_lease_release_check"],
@@ -96,7 +98,13 @@ const LEGITIMATE_ERROR_CODES = new Set([
   "CAS_CONFLICT",
   "POSTGRES_UNAVAILABLE",
   "POSTGRES_TRANSACTION_FAILED",
-  "SCHEMA_INCOMPATIBLE"
+  "SCHEMA_INCOMPATIBLE",
+  "INITIAL_CHECKPOINT_EXISTS",
+  "AUTHORIZATION_CONSUME_NOT_FOUND",
+  "AUTHORIZATION_CONSUME_EXPIRED",
+  "AUTHORIZATION_CONSUME_REVOKED",
+  "AUTHORIZATION_CONSUME_ALREADY_CONSUMED",
+  "AUTHORIZATION_CONSUME_BINDING_MISMATCH"
 ])
 const mapError = error => {
   const message = error?.message || ""
@@ -175,6 +183,27 @@ function createSingleCaseCoordinationRepository({ pool, ownerId, now = () => new
       if (!ID.test(caseImportId || "")) fail("INVALID_CHECKPOINT")
       try { const result = await pool.query(`SELECT * FROM ${CHECKPOINT_TABLE} WHERE case_import_id=$1`, [caseImportId]); if (!result || result.rowCount > 1) fail("INVALID_CHECKPOINT"); return result.rowCount ? validateStoredCheckpoint(result.rows[0]) : null }
       catch (error) { throw mapError(error) }
+    },
+    async initializeCheckpoint(request = {}) {
+      if (!validRequest(request) || !request.checkpoint || !request.authorization) fail("INVALID_CHECKPOINT")
+      const at = instant(now()), payload = deepClone(request.checkpoint), consumedBy = `executor:${request.leaseId}`
+      if (payload.caseImportId !== request.caseImportId || payload.version !== 0 || payload.status !== "pending") fail("CHECKPOINT_BINDING_MISMATCH")
+      try { validateCheckpoint(payload, { caseImportId: payload.caseImportId, caseFingerprint: payload.caseFingerprint, caseNumber: payload.caseNumber, authorizablePlanHash: payload.authorizablePlanHash, authorizationIds: payload.authorizationIds }) } catch { fail("INVALID_CHECKPOINT") }
+      return transaction(pool, async client => {
+        const lease = await client.query(`SELECT * FROM ${LEASE_TABLE} WHERE case_import_id=$1 FOR UPDATE`, [request.caseImportId])
+        if (!lease.rowCount || lease.rows[0].lease_id !== request.leaseId) fail("LEASE_NOT_FOUND")
+        if (lease.rows[0].owner_id !== ownerId) fail("LEASE_OWNER_MISMATCH")
+        if (Number(lease.rows[0].fencing_token) !== request.fencingToken) fail("FENCING_REJECTED")
+        if (lease.rows[0].released_at || Date.parse(lease.rows[0].expires_at) <= Date.parse(at)) fail("LEASE_EXPIRED")
+        const current = await client.query(`SELECT * FROM ${CHECKPOINT_TABLE} WHERE case_import_id=$1 FOR UPDATE`, [request.caseImportId])
+        if (current.rowCount) fail("INITIAL_CHECKPOINT_EXISTS")
+        const consumed = await consumeAuthorizationsWith(client, { ...request.authorization, authorizationIds: payload.authorizationIds, consumedBy, now: at })
+        if (consumed.status !== "consumed") fail(`AUTHORIZATION_CONSUME_${consumed.status.toUpperCase()}`)
+        payload.version = 1
+        const values = [payload.caseImportId,payload.schemaVersion,1,payload.authorizablePlanHash,payload.caseNumber,payload.caseFingerprint,JSON.stringify(payload.authorizationIds),payload.status,JSON.stringify(payload),request.fencingToken,request.leaseId,at,consumedBy]
+        await client.query(`INSERT INTO ${CHECKPOINT_TABLE}(case_import_id,schema_version,checkpoint_version,authorizable_plan_hash,case_number,case_fingerprint,authorization_ids,global_status,checkpoint_payload,fencing_token,lease_id,created_at,updated_at,authorization_consumed_by) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$12,$13)`, values)
+        return { saved: true, version: 1, authorizationConsumedBy: consumedBy }
+      })
     },
     async compareAndSetCheckpoint(request = {}) {
       if (!validRequest(request) || !Number.isInteger(request.expectedVersion) || request.expectedVersion < 0 || !request.checkpoint) fail("INVALID_CHECKPOINT")
@@ -283,11 +312,14 @@ async function migrateSingleCaseCoordination(pool) {
     if (!registry.rows[0]?.table_name) fail("SCHEMA_INCOMPATIBLE")
     const prior = await client.query("SELECT migration_id FROM oraculum_state_migrations WHERE migration_id=$1", [MIGRATION_ID])
     if (!prior.rowCount) await client.query(CREATE_SCHEMA_SQL)
+    const provenancePrior = await client.query("SELECT migration_id FROM oraculum_state_migrations WHERE migration_id=$1", [PROVENANCE_MIGRATION_ID])
+    if (!provenancePrior.rowCount) await client.query(`ALTER TABLE ${CHECKPOINT_TABLE} ADD COLUMN IF NOT EXISTS authorization_consumed_by TEXT`)
     const schema = await validateSingleCaseCoordinationSchema(client)
     if (!schema.ok) fail("SCHEMA_INCOMPATIBLE")
     if (!prior.rowCount) await client.query("INSERT INTO oraculum_state_migrations(migration_id,details,applied_at) VALUES($1,$2,CURRENT_TIMESTAMP)", [MIGRATION_ID, JSON.stringify({ leases: LEASE_TABLE, checkpoints: CHECKPOINT_TABLE, schemaVersion: 1 })])
-    return { ok: true, migrationId: MIGRATION_ID, applied: !prior.rowCount, schema }
+    if (!provenancePrior.rowCount) await client.query("INSERT INTO oraculum_state_migrations(migration_id,details,applied_at) VALUES($1,$2,CURRENT_TIMESTAMP)", [PROVENANCE_MIGRATION_ID, JSON.stringify({ table: CHECKPOINT_TABLE, nullableColumn: "authorization_consumed_by", compatibility: "legacy-checkpoints-fail-closed-on-resume" })])
+    return { ok: true, migrationId: PROVENANCE_MIGRATION_ID, applied: !prior.rowCount || !provenancePrior.rowCount, schema }
   })
 }
 
-module.exports = { MIGRATION_ID, LEASE_TABLE, CHECKPOINT_TABLE, FENCING_SEQUENCE, SEQUENCE_SPEC, CREATE_SCHEMA_SQL, EXPECTED_COLUMNS, REQUIRED_CHECKS, CHECK_EXPRESSIONS, CHECK_COLUMNS, mapError, createSingleCaseCoordinationRepository, validateSingleCaseCoordinationSchema, migrateSingleCaseCoordination, validateStoredCheckpoint }
+module.exports = { MIGRATION_ID, PROVENANCE_MIGRATION_ID, LEASE_TABLE, CHECKPOINT_TABLE, FENCING_SEQUENCE, SEQUENCE_SPEC, CREATE_SCHEMA_SQL, EXPECTED_COLUMNS, REQUIRED_CHECKS, CHECK_EXPRESSIONS, CHECK_COLUMNS, mapError, createSingleCaseCoordinationRepository, validateSingleCaseCoordinationSchema, migrateSingleCaseCoordination, validateStoredCheckpoint }

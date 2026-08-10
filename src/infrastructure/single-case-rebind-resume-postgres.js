@@ -25,6 +25,8 @@ const LEGITIMATE_ERROR_CODES = new Set([
   "REBIND_RESUME_AUTHORIZATION_RECORD_INVALID",
   "REBIND_RESUME_BINDINGS_MISMATCH",
   "REBIND_RESUME_CONSUMPTION_MISMATCH",
+  "REBIND_RESUME_CONSUMPTION_PROVENANCE_MISSING",
+  "REBIND_RESUME_CONSUMPTION_PROVENANCE_MISMATCH",
   "REBIND_RESUME_CONSUMED_BY_INVALID",
   "POSTGRES_UNAVAILABLE",
   "POSTGRES_READ_FAILED"
@@ -88,7 +90,7 @@ function createSingleCaseRebindResumeVerifier({ pool }) {
 
         // 1. Consultar checkpoint atual (sem FOR UPDATE - somente leitura)
         const checkpointResult = await pool.query(
-          `SELECT case_import_id, checkpoint_version, authorization_ids, checkpoint_payload
+          `SELECT case_import_id, checkpoint_version, authorization_ids, checkpoint_payload, authorization_consumed_by
            FROM ${CHECKPOINT_TABLE}
            WHERE case_import_id = $1`,
           [caseImportId]
@@ -313,6 +315,8 @@ function createSingleCaseRebindResumeVerifier({ pool }) {
 
         const consumedByRebindId = consumedBy.substring('rebind:'.length)
         if (consumedByRebindId !== rebindId) fail("REBIND_RESUME_CONSUMED_BY_INVALID")
+        if (!checkpointRow.authorization_consumed_by) fail("REBIND_RESUME_CONSUMPTION_PROVENANCE_MISSING")
+        if (consumedBy !== checkpointRow.authorization_consumed_by) fail("REBIND_RESUME_CONSUMPTION_PROVENANCE_MISMATCH")
 
         // Construir authorization records congelados (formato completo para validateAuthorizations)
         const authorizationRecords = authorizations.map(auth => {

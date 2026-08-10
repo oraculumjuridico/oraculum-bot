@@ -196,11 +196,11 @@ function mockPool(state = {}) {
 
           // UPDATE checkpoint - now uses EXISTS for lease validation
           if (text.includes("UPDATE single_case_apply_checkpoints")) {
-            const caseImportId = params[6]
-            const expectedVersion = params[7]
-            const expectedLeaseId = params[8]
-            const expectedFencingToken = params[9]
-            const ownerId = params[10]
+            const caseImportId = params[7]
+            const expectedVersion = params[8]
+            const expectedLeaseId = params[9]
+            const expectedFencingToken = params[10]
+            const ownerId = params[11]
 
             const checkpoint = poolState.checkpoints.get(caseImportId)
             if (!checkpoint) return { rows: [], rowCount: 0 }
@@ -224,6 +224,7 @@ function mockPool(state = {}) {
             checkpoint.checkpoint_payload = JSON.parse(params[3])
             checkpoint.fencing_token = params[4]
             checkpoint.lease_id = params[5]
+            checkpoint.authorization_consumed_by = params[6]
             checkpoint.updated_at = NOW
 
             return { rows: [{ checkpoint_version: params[0] }], rowCount: 1 }
@@ -338,6 +339,7 @@ function createCheckpoint(overrides = {}) {
     checkpoint_payload: payload,
     fencing_token: FENCING_TOKEN,
     lease_id: LEASE_ID,
+    authorization_consumed_by: `executor:${LEASE_ID}`,
     ...overrides
   }
 }
@@ -504,7 +506,7 @@ test("fixture histórico é aceito quando audit prova caso, checkpoint, conjunto
   const request = fixture(), legacyId = HISTORICAL_CONSUMED_BY_FIXTURE.operationId
   const legacyAudit = { rebind_id: legacyId, case_import_id: CASE_IMPORT_ID, source_checkpoint_version: 4, rebound_checkpoint_version: 5, current_authorization_set_hash: request.oldAuthorizationSetHash, lease_id: LEASE_ID }
   const pool = mockPool({
-    leases: new Map([[CASE_IMPORT_ID, createLease()]]), checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]), audits: new Map([[legacyId, legacyAudit]]),
+    leases: new Map([[CASE_IMPORT_ID, createLease()]]), checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ authorization_consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })]]), audits: new Map([[legacyId, legacyAudit]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
       [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
@@ -519,7 +521,7 @@ test("fixture histórico é aceito quando audit prova caso, checkpoint, conjunto
 test("legado sem prova completa é rejeitado sem consumo, checkpoint ou audit novo", async () => {
   const request = fixture()
   const pool = mockPool({
-    leases: new Map([[CASE_IMPORT_ID, createLease()]]), checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint()]]),
+    leases: new Map([[CASE_IMPORT_ID, createLease()]]), checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ authorization_consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
       [OLD_AUTH_2, createAuthorization(OLD_AUTH_2, "EXTERNAL_WRITES_AUTHORIZATION", { consumed_at: NOW, consumed_by: HISTORICAL_CONSUMED_BY_FIXTURE.consumedBy })],
@@ -626,7 +628,7 @@ test("consumed_by com lease divergente falha", async () => {
   const repository = createSingleCaseRebindPostgresRepository({ pool, ownerId: OWNER_ID, now: () => NOW })
   await assert.rejects(
     () => repository.executeRebind(request),
-    /REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH/
+    /REBIND_OLD_CONSUMPTION_PROVENANCE_MISMATCH/
   )
 })
 
@@ -1134,6 +1136,7 @@ function createCheckpointForPlanRebind(overrides = {}) {
     checkpoint_payload: payload,
     fencing_token: FENCING_TOKEN,
     lease_id: LEASE_ID,
+    authorization_consumed_by: `executor:${LEASE_ID}`,
     ...overrides
   }
 }
@@ -1208,18 +1211,18 @@ function mockPoolForPlanRebind(state = {}) {
           }
 
           if (text.includes("UPDATE single_case_apply_checkpoints")) {
-            const cp = poolState.checkpoints.get(params[6])
+            const cp = poolState.checkpoints.get(params[7])
             if (!cp) return { rows: [], rowCount: 0 }
 
             // Validate CAS conditions
-            if (Number(cp.checkpoint_version) !== params[7]) return { rows: [], rowCount: 0 }
-            if (cp.lease_id !== params[8]) return { rows: [], rowCount: 0 }
-            if (Number(cp.fencing_token) !== params[9]) return { rows: [], rowCount: 0 }
+            if (Number(cp.checkpoint_version) !== params[8]) return { rows: [], rowCount: 0 }
+            if (cp.lease_id !== params[9]) return { rows: [], rowCount: 0 }
+            if (Number(cp.fencing_token) !== params[10]) return { rows: [], rowCount: 0 }
 
             // Validate EXISTS condition (new lease vigente)
             const newLease = poolState.leases.get(cp.case_import_id)
             if (!newLease) return { rows: [], rowCount: 0 }
-            if (newLease.owner_id !== params[10]) return { rows: [], rowCount: 0 }
+            if (newLease.owner_id !== params[11]) return { rows: [], rowCount: 0 }
             if (newLease.released_at) return { rows: [], rowCount: 0 }
             if (Date.parse(newLease.expires_at) <= Date.parse(NOW)) return { rows: [], rowCount: 0 }
 
@@ -1231,8 +1234,9 @@ function mockPoolForPlanRebind(state = {}) {
             cp.checkpoint_payload.authorizationIds = JSON.parse(params[2])
             cp.fencing_token = params[4]
             cp.lease_id = params[5]
+            cp.authorization_consumed_by = params[6]
             cp.updated_at = NOW
-            poolState.checkpoints.set(params[6], cp)
+            poolState.checkpoints.set(params[7], cp)
 
             return { rows: [{ checkpoint_version: params[0] }], rowCount: 1 }
           }
@@ -2488,7 +2492,7 @@ test("transição de lease antigo para lease novo preserva par antigo ligado ao 
 
   const pool = mockPool({
     leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE_ID, fencing_token: NEW_FENCING })]]),
-    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: OLD_FENCING })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: OLD_FENCING, authorization_consumed_by: `executor:${OLD_LEASE_ID}` })]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
         consumed_at: NOW,
@@ -2561,7 +2565,7 @@ test("checkpoint já não possui mais o lease antigo esperado → CAS falha", as
   // Deve falhar porque consumed_by aponta para OLD_LEASE_ID mas checkpoint tem WRONG_LEASE_ID
   await assert.rejects(
     () => repository.executeRebind(request),
-    /REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH/
+    /REBIND_OLD_CONSUMPTION_PROVENANCE_MISMATCH/
   )
 
   assert.equal(pool.state.committed, false)
@@ -2581,6 +2585,7 @@ test("CAS do checkpoint falha quando vínculo antigo foi alterado concorrentemen
   const initialCheckpoint = createCheckpoint({
     lease_id: OLD_LEASE_ID,
     fencing_token: OLD_FENCING,
+    authorization_consumed_by: `executor:${OLD_LEASE_ID}`,
     checkpoint_version: 5
   })
 
@@ -2657,9 +2662,9 @@ test("CAS do checkpoint falha quando vínculo antigo foi alterado concorrentemen
             // Verificar que os parâmetros estão corretos
             assert.equal(params[4], NEW_FENCING, "param[4] deve ser fencing novo")
             assert.equal(params[5], NEW_LEASE_ID, "param[5] deve ser lease novo")
-            assert.equal(params[7], 5, "param[7] deve ser sourceCheckpointVersion")
-            assert.equal(params[8], OLD_LEASE_ID, "param[8] deve ser lease antigo")
-            assert.equal(params[9], OLD_FENCING, "param[9] deve ser fencing antigo")
+            assert.equal(params[8], 5, "param[8] deve ser sourceCheckpointVersion")
+            assert.equal(params[9], OLD_LEASE_ID, "param[9] deve ser lease antigo")
+            assert.equal(params[10], OLD_FENCING, "param[10] deve ser fencing antigo")
 
             // O WHERE não encontra mais o checkpoint porque foi alterado concorrentemente
             return { rows: [], rowCount: 0 }
@@ -2713,7 +2718,7 @@ test("novo lease está liberado → falha fechada", async () => {
       fencing_token: 101,
       released_at: "2026-07-17T12:30:00.000Z"  // Lease liberado
     })]]),
-    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50, authorization_consumed_by: `executor:${OLD_LEASE_ID}` })]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
         consumed_at: NOW,
@@ -2750,7 +2755,7 @@ test("novo lease está expirado → falha fechada", async () => {
       fencing_token: 101,
       expires_at: "2026-07-17T11:00:00.000Z"  // Lease expirado
     })]]),
-    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50, authorization_consumed_by: `executor:${OLD_LEASE_ID}` })]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
         consumed_at: NOW,
@@ -2787,7 +2792,7 @@ test("owner do novo lease diverge → falha", async () => {
       fencing_token: 101,
       owner_id: "other-owner-002"  // Owner divergente
     })]]),
-    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50, authorization_consumed_by: `executor:${OLD_LEASE_ID}` })]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
         consumed_at: NOW,
@@ -2846,7 +2851,7 @@ test("fencing do novo lease diverge → falha", async () => {
 
           // Checkpoint FOR UPDATE - lease antigo
           if (text.includes("FROM single_case_apply_checkpoints") && text.includes("FOR UPDATE")) {
-            return { rows: [createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })], rowCount: 1 }
+            return { rows: [createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50, authorization_consumed_by: `executor:${OLD_LEASE_ID}` })], rowCount: 1 }
           }
 
           // Audit SELECT
@@ -2907,7 +2912,7 @@ test("o par antigo foi consumido por lease diferente do lease antigo do checkpoi
 
   const pool = mockPool({
     leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE, fencing_token: 101 })]]),
-    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_CHECKPOINT_LEASE, fencing_token: 50 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_CHECKPOINT_LEASE, fencing_token: 50, authorization_consumed_by: `executor:${OLD_CHECKPOINT_LEASE}` })]]),
     authorizations: new Map([
       // Par antigo consumido por lease diferente
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
@@ -2927,7 +2932,7 @@ test("o par antigo foi consumido por lease diferente do lease antigo do checkpoi
 
   await assert.rejects(
     () => repository.executeRebind(request),
-    /REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH/
+    /REBIND_OLD_CONSUMPTION_PROVENANCE_MISMATCH/
   )
 
   assert.equal(pool.state.committed, false)
@@ -2941,7 +2946,7 @@ test("UPDATE checkpoint valida lease novo no EXISTS e lease antigo no WHERE", as
 
   const pool = mockPool({
     leases: new Map([[CASE_IMPORT_ID, createLease({ lease_id: NEW_LEASE_ID, fencing_token: 101 })]]),
-    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50 })]]),
+    checkpoints: new Map([[CASE_IMPORT_ID, createCheckpoint({ lease_id: OLD_LEASE_ID, fencing_token: 50, authorization_consumed_by: `executor:${OLD_LEASE_ID}` })]]),
     authorizations: new Map([
       [OLD_AUTH_1, createAuthorization(OLD_AUTH_1, "EXPLICIT_APPLY_AUTHORIZATION", {
         consumed_at: NOW,
@@ -2966,15 +2971,16 @@ test("UPDATE checkpoint valida lease novo no EXISTS e lease antigo no WHERE", as
   // Verificar parâmetros:
   // params[4] = lease.fencing_token (101) → usado no SET e no EXISTS
   // params[5] = lease.lease_id (NEW_LEASE_ID) → usado no SET e no EXISTS
-  // params[7] = request.sourceCheckpointVersion (5)
-  // params[8] = checkpointRow.lease_id (OLD_LEASE_ID) → usado no WHERE
-  // params[9] = checkpointRow.fencing_token (50) → usado no WHERE
+  // params[6] = authorization_consumed_by do novo par
+  // params[8] = request.sourceCheckpointVersion (5)
+  // params[9] = checkpointRow.lease_id (OLD_LEASE_ID) → usado no WHERE
+  // params[10] = checkpointRow.fencing_token (50) → usado no WHERE
 
   assert.equal(updateQuery.params[4], 101)
   assert.equal(updateQuery.params[5], NEW_LEASE_ID)
-  assert.equal(updateQuery.params[7], 5)
-  assert.equal(updateQuery.params[8], OLD_LEASE_ID)
-  assert.equal(updateQuery.params[9], 50)
+  assert.equal(updateQuery.params[8], 5)
+  assert.equal(updateQuery.params[9], OLD_LEASE_ID)
+  assert.equal(updateQuery.params[10], 50)
 
   assert.equal(pool.state.committed, true)
 })

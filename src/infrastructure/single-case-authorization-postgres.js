@@ -168,6 +168,19 @@ function validateExpectedQuery(expected) {
   if (JSON.stringify(Object.keys(expected.requiredScopes || {}).sort()) !== JSON.stringify([...TYPES].sort())) throw new Error("AUTHORIZATION_QUERY_INVALID")
 }
 
+function validateConsumeRequest(expected) {
+  validateExpectedQuery(expected)
+  if (!Array.isArray(expected.authorizationIds) || expected.authorizationIds.length !== TYPES.length || new Set(expected.authorizationIds).size !== TYPES.length || expected.authorizationIds.some(value => !/^[A-Za-z0-9._:-]{8,128}$/.test(value)) || !/^[A-Za-z0-9._:-]{3,128}$/.test(expected.consumedBy || "") || !Number.isFinite(Date.parse(expected.now || ""))) throw new Error("AUTHORIZATION_CONSUME_INVALID")
+}
+
+async function consumeAuthorizationsWith(queryable, expected) {
+  validateConsumeRequest(expected)
+  const result = await queryable.query(`WITH locked AS (SELECT authorization_id,authorization_type,case_import_id,case_fingerprint,case_number,authorizable_plan_hash,plan_hash,manifest_hash,reservation_evidence_hash,expires_at,revoked,consumed_at FROM ${TABLE_NAME} WHERE authorization_id = ANY($1::text[]) FOR UPDATE), updated AS (UPDATE ${TABLE_NAME} a SET consumed_at=$2::timestamptz,consumed_by=$3 FROM locked l WHERE a.authorization_id=l.authorization_id AND l.authorization_type = ANY($4::text[]) AND l.case_import_id=$5 AND l.case_fingerprint=$6 AND l.case_number=$7 AND l.authorizable_plan_hash=$8 AND l.plan_hash=$9 AND l.manifest_hash=$10 AND l.reservation_evidence_hash=$11 AND l.revoked=FALSE AND l.expires_at>$2::timestamptz AND l.consumed_at IS NULL RETURNING a.authorization_id) SELECT CASE WHEN (SELECT count(*) FROM updated)=$12 THEN 'consumed' WHEN (SELECT count(*) FROM locked)=0 THEN 'not_found' WHEN EXISTS(SELECT 1 FROM locked WHERE consumed_at IS NOT NULL) THEN 'already_consumed' WHEN EXISTS(SELECT 1 FROM locked WHERE revoked=TRUE) THEN 'revoked' WHEN EXISTS(SELECT 1 FROM locked WHERE expires_at<=$2::timestamptz) THEN 'expired' ELSE 'binding_mismatch' END AS status`, [[...expected.authorizationIds].sort(), expected.now, expected.consumedBy, [...TYPES].sort(), expected.caseImportId, expected.caseFingerprint, expected.caseNumber, expected.authorizablePlanHash, expected.planHash, expected.manifestHash, expected.reservationEvidenceHash, TYPES.length])
+  const status = result?.rows?.[0]?.status
+  if (!["consumed", "not_found", "expired", "revoked", "already_consumed", "binding_mismatch"].includes(status)) throw new Error("AUTHORIZATION_CONSUME_UNKNOWN_RESULT")
+  return Object.freeze({ status })
+}
+
 function validSignature(value) { if (typeof value !== "string" || !SIGNATURE_PATTERN.test(value)) return false; try { return Buffer.from(value, "base64").length === 64 && Buffer.from(value, "base64").toString("base64") === value } catch { return false } }
 function mapRow(row) {
   const required = ["authorization_id", "schema_version", "authorization_type", "case_import_id", "case_fingerprint", "case_number", "authorizable_plan_hash", "plan_hash", "manifest_hash", "reservation_evidence_hash", "scope", "issuer", "issued_at", "expires_at", "revoked", "signature", "signature_algorithm", "operational_status"]
@@ -205,16 +218,22 @@ function createSingleCaseAuthorizationRepository({ pool }) {
     const rows = result.rows.map(mapRow), ids = new Set(), types = new Set()
     for (const row of rows) { if (ids.has(row.authorizationId) || types.has(row.type)) throw new Error("AUTHORIZATION_REPOSITORY_AMBIGUOUS"); ids.add(row.authorizationId); types.add(row.type) }
     return Object.freeze(rows)
-  }, async consumeAuthorizations(expected) {
+  }, async loadForCheckpoint(expected) {
     validateExpectedQuery(expected)
-    if (!Array.isArray(expected.authorizationIds) || expected.authorizationIds.length !== TYPES.length || new Set(expected.authorizationIds).size !== TYPES.length || expected.authorizationIds.some(value => !/^[A-Za-z0-9._:-]{8,128}$/.test(value)) || !/^[A-Za-z0-9._:-]{3,128}$/.test(expected.consumedBy || "") || !Number.isFinite(Date.parse(expected.now || ""))) throw new Error("AUTHORIZATION_CONSUME_INVALID")
-    let result
-    try {
-      result = await pool.query(`WITH locked AS (SELECT authorization_id,authorization_type,case_import_id,case_fingerprint,case_number,authorizable_plan_hash,plan_hash,manifest_hash,reservation_evidence_hash,expires_at,revoked,consumed_at FROM ${TABLE_NAME} WHERE authorization_id = ANY($1::text[]) FOR UPDATE), updated AS (UPDATE ${TABLE_NAME} a SET consumed_at=$2::timestamptz,consumed_by=$3 FROM locked l WHERE a.authorization_id=l.authorization_id AND l.authorization_type = ANY($4::text[]) AND l.case_import_id=$5 AND l.case_fingerprint=$6 AND l.case_number=$7 AND l.authorizable_plan_hash=$8 AND l.plan_hash=$9 AND l.manifest_hash=$10 AND l.reservation_evidence_hash=$11 AND l.revoked=FALSE AND l.expires_at>$2::timestamptz AND l.consumed_at IS NULL RETURNING a.authorization_id) SELECT CASE WHEN (SELECT count(*) FROM updated)=$12 THEN 'consumed' WHEN (SELECT count(*) FROM locked)=0 THEN 'not_found' WHEN EXISTS(SELECT 1 FROM locked WHERE consumed_at IS NOT NULL) THEN 'already_consumed' WHEN EXISTS(SELECT 1 FROM locked WHERE revoked=TRUE) THEN 'revoked' WHEN EXISTS(SELECT 1 FROM locked WHERE expires_at<=$2::timestamptz) THEN 'expired' ELSE 'binding_mismatch' END AS status`, [[...expected.authorizationIds].sort(), expected.now, expected.consumedBy, [...TYPES].sort(), expected.caseImportId, expected.caseFingerprint, expected.caseNumber, expected.authorizablePlanHash, expected.planHash, expected.manifestHash, expected.reservationEvidenceHash, TYPES.length])
-    } catch { throw new Error("AUTHORIZATION_CONSUME_UNKNOWN_RESULT") }
-    const status = result?.rows?.[0]?.status
-    if (!["consumed", "not_found", "expired", "revoked", "already_consumed", "binding_mismatch"].includes(status)) throw new Error("AUTHORIZATION_CONSUME_UNKNOWN_RESULT")
-    return Object.freeze({ status })
+    if (!Array.isArray(expected.authorizationIds) || expected.authorizationIds.length !== TYPES.length || new Set(expected.authorizationIds).size !== TYPES.length || expected.authorizationIds.some(value => !/^[A-Za-z0-9._:-]{8,128}$/.test(value))) throw new Error("AUTHORIZATION_CHECKPOINT_QUERY_INVALID")
+    const result = await pool.query(`SELECT a.authorization_id,a.schema_version,a.authorization_type,a.case_import_id,a.case_fingerprint,a.case_number,a.authorizable_plan_hash,a.plan_hash,a.manifest_hash,a.reservation_evidence_hash,a.scope,a.issuer,a.issued_at,a.expires_at,a.revoked,a.revoked_at,a.revocation_reason,a.consumed_at,a.consumed_by,a.signature,a.signature_algorithm,a.operational_status,c.authorization_ids AS checkpoint_authorization_ids,c.authorization_consumed_by AS checkpoint_authorization_consumed_by FROM ${TABLE_NAME} a JOIN single_case_apply_checkpoints c ON c.case_import_id=a.case_import_id WHERE c.case_import_id=$1 AND a.authorization_id = ANY($2::text[]) ORDER BY a.authorization_type,a.authorization_id`, [expected.caseImportId, [...expected.authorizationIds].sort()])
+    if (!result || !Array.isArray(result.rows) || result.rows.length !== TYPES.length) throw new Error("AUTHORIZATION_CHECKPOINT_PAIR_INVALID")
+    const checkpointIds = ensureStringArray(result.rows[0]?.checkpoint_authorization_ids, "AUTHORIZATION_CHECKPOINT_IDS_INVALID").sort()
+    if (JSON.stringify(checkpointIds) !== JSON.stringify([...expected.authorizationIds].sort()) || result.rows.some(row => JSON.stringify(ensureStringArray(row.checkpoint_authorization_ids, "AUTHORIZATION_CHECKPOINT_IDS_INVALID").sort()) !== JSON.stringify(checkpointIds))) throw new Error("AUTHORIZATION_CHECKPOINT_IDS_INVALID")
+    const provenance = result.rows[0]?.checkpoint_authorization_consumed_by
+    if (typeof provenance !== "string" || !/^(?:executor:[A-Za-z0-9][A-Za-z0-9._:-]{2,127}|rebind:[a-f0-9]{64})$/.test(provenance)) throw new Error("AUTHORIZATION_CONSUMPTION_PROVENANCE_MISSING")
+    if (result.rows.some(row => row.checkpoint_authorization_consumed_by !== provenance || row.consumed_by !== provenance || !row.consumed_at)) throw new Error("AUTHORIZATION_CONSUMPTION_PROVENANCE_MISMATCH")
+    const rows = result.rows.map(mapRow), ids = new Set(), types = new Set()
+    for (const row of rows) { if (ids.has(row.authorizationId) || types.has(row.type)) throw new Error("AUTHORIZATION_REPOSITORY_AMBIGUOUS"); ids.add(row.authorizationId); types.add(row.type) }
+    return Object.freeze(rows)
+  }, async consumeAuthorizations(expected) {
+    try { return await consumeAuthorizationsWith(pool, expected) }
+    catch (error) { if (String(error?.message || "").startsWith("AUTHORIZATION_CONSUME_") && error.message !== "AUTHORIZATION_CONSUME_UNKNOWN_RESULT") throw error; throw new Error("AUTHORIZATION_CONSUME_UNKNOWN_RESULT") }
   } })
 }
 
@@ -289,4 +308,4 @@ async function migrateSingleCaseAuthorizations(pool) {
   } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error } finally { client.release() }
 }
 
-module.exports = { MIGRATION_ID, TABLE_NAME, ALGORITHM, TYPES, ACTIVE_INDEX, ACTIVE_INDEX_COLUMNS, ACTIVE_INDEX_PREDICATE, ISSUER_PATTERN, SIGNATURE_PATTERN, CHECK_SQL, CREATE_TABLE_SQL, EXPECTED_COLUMNS, CHECK_COLUMNS, sqlTokens, parseSqlExpression, canonicalSqlExpression, normalizeSql, normalizeDefault, validateExpectedQuery, validSignature, mapRow, createSingleCaseAuthorizationRepository, validateSingleCaseAuthorizationSchema, migrateSingleCaseAuthorizations }
+module.exports = { MIGRATION_ID, TABLE_NAME, ALGORITHM, TYPES, ACTIVE_INDEX, ACTIVE_INDEX_COLUMNS, ACTIVE_INDEX_PREDICATE, ISSUER_PATTERN, SIGNATURE_PATTERN, CHECK_SQL, CREATE_TABLE_SQL, EXPECTED_COLUMNS, CHECK_COLUMNS, sqlTokens, parseSqlExpression, canonicalSqlExpression, normalizeSql, normalizeDefault, validateExpectedQuery, validateConsumeRequest, consumeAuthorizationsWith, validSignature, mapRow, createSingleCaseAuthorizationRepository, validateSingleCaseAuthorizationSchema, migrateSingleCaseAuthorizations }

@@ -8,7 +8,7 @@ const applyCli = require("../scripts/apply-single-case")
 
 const METHODS = {
   drive: ["findAreaFolders", "createAreaFolder", "findCaseFolders", "createCaseFolder", "verifyFolder", "findFilesByHash", "upload", "verifyUpload"],
-  coordination: ["acquireLease", "renewLease", "loadCheckpoint", "compareAndSetCheckpoint", "releaseLease"]
+  coordination: ["acquireLease", "renewLease", "loadCheckpoint", "initializeCheckpoint", "compareAndSetCheckpoint", "releaseLease"]
 }
 const port = methods => Object.freeze(Object.fromEntries(methods.map(name => [name, async () => { throw new Error(`UNEXPECTED_CALL:${name}`) }])))
 
@@ -54,7 +54,7 @@ for (const [name, change, pattern] of [
 ]) test(name, () => { const f = fixture(change); assert.throws(() => createSingleCaseRealComposition(f.value), pattern); assert.deepEqual(f.calls, []) })
 
 test("verifier ausente falha fechado", () => {
-  const f = fixture({ componentFactories: { authorization: () => ({ authorizationRepository: port(["loadForCase", "consumeAuthorizations"]) }) } })
+  const f = fixture({ componentFactories: { authorization: () => ({ authorizationRepository: port(["loadForCase", "loadForCheckpoint", "consumeAuthorizations"]) }) } })
   assert.throws(() => createSingleCaseRealComposition(f.value), /AUTHORIZATION_VERIFIER_MISSING/)
   assert.deepEqual(f.calls, [])
 })
