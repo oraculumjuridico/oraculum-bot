@@ -36,7 +36,7 @@ function authorizationRecords(plan, mutate = record => record, executionScope = 
 function fakeSystem(plan = fixture(), options = {}) {
   const log = [], counts = {}, records = options.records || authorizationRecords(plan)
   const expectedAuthorizationIds = records.map(item => item.authorizationId).sort()
-  const state = { checkpoint: options.checkpoint || null, checkpointVersion: options.checkpoint?.version || 0, lease: null, token: 0, contacts: [], deals: [], associations: [], areas: [], folders: [], files: new Map() }
+  const state = { checkpoint: options.checkpoint || null, checkpointVersion: options.checkpoint?.version || 0, authorizationConsumedBy: options.authorizationConsumedBy || (options.checkpoint ? "executor:lease-original" : null), lease: null, token: 0, contacts: [], deals: [], associations: [], areas: [], folders: [], files: new Map() }
   const count = name => { log.push(name); counts[name] = (counts[name] || 0) + 1 }
   const id = (prefix, length) => `${prefix}-${String(length + 1).padStart(3, "0")}`
   const maybeTimeout = name => { if (options.timeout === name) throw new Error("SIMULATED_TIMEOUT") }
@@ -55,6 +55,17 @@ function fakeSystem(plan = fixture(), options = {}) {
     },
     renewLease: async request => { if (!state.lease || request.fencingToken !== state.lease.fencingToken || Date.parse(state.lease.expiresAt) <= Date.parse(request.now)) throw new Error("FENCING_TOKEN_STALE"); state.lease.expiresAt = new Date(Date.parse(request.now) + 60000).toISOString(); return clone(state.lease) },
     loadCheckpoint: async () => clone(state.checkpoint),
+    initializeCheckpoint: async request => {
+      count("auth.consume")
+      if (state.checkpoint) throw new Error("INITIAL_CHECKPOINT_EXISTS")
+      if ((options.consumeStatus || "consumed") !== "consumed") throw new Error(`AUTHORIZATION_CONSUME_${options.consumeStatus.toUpperCase()}`)
+      state.authorizationConsumedBy = `executor:${request.leaseId}`
+      state.checkpointVersion = 1
+      state.checkpoint = clone(request.checkpoint)
+      state.checkpoint.version = 1
+      if (options.crashAfterAtomicCommit && !options.atomicCrashed) { options.atomicCrashed = true; throw new Error("SIMULATED_CRASH_AFTER_ATOMIC_COMMIT") }
+      return { saved: true, version: 1, authorizationConsumedBy: state.authorizationConsumedBy }
+    },
     compareAndSetCheckpoint: async request => {
       if (!state.lease || request.leaseId !== state.lease.leaseId || request.fencingToken !== state.lease.fencingToken) throw new Error("FENCING_TOKEN_STALE")
       if (request.expectedVersion !== state.checkpointVersion) throw new Error("CAS_VERSION_DIVERGENCE")
@@ -67,7 +78,11 @@ function fakeSystem(plan = fixture(), options = {}) {
   }
   const adapters = {
     plans: { loadByCaseImportId: async caseImportId => { count(`plan:${caseImportId}`); return options.wrongPlan ? { ...clone(plan), caseImportId: "fixture-other" } : clone(plan) } },
-    authorizations: { loadForCase: async query => { count("auth.load"); if (options.nullAuth) return null; return clone(options.currentRecords || records) }, consumeAuthorizations: async () => { count("auth.consume"); return { status: options.consumeStatus || "consumed" } } },
+    authorizations: {
+      loadForCase: async query => { count("auth.load"); if (options.nullAuth) return null; return clone(options.currentRecords || records) },
+      loadForCheckpoint: async ({ authorizationIds }) => { count("auth.loadCheckpoint"); if (!state.authorizationConsumedBy || options.resumeConsumedByMismatch) throw new Error("AUTHORIZATION_CONSUMPTION_PROVENANCE_MISMATCH"); const selected=(options.currentRecords || records).filter(record=>authorizationIds.includes(record.authorizationId)).map(record=>({ ...clone(record), consumedAt: NOW, consumedBy: state.authorizationConsumedBy })); return selected },
+      consumeAuthorizations: async () => { count("auth.consume.legacy"); return { status: options.consumeStatus || "consumed" } }
+    },
     coordination,
     reservation: { verify: async (caseImportId, caseNumber, context) => { validateContext(context); if (options.reservationGate) await options.reservationGate; return { verified: true, caseImportId, caseNumber, evidenceId: "reservation-proof" } } },
     contacts: {
@@ -296,6 +311,7 @@ test("autorização expirada após lease bloqueia antes de efeito", async () => 
 test("autorização revogada após lease bloqueia antes de efeito", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,revoked:true}));const s=fakeSystem(p,{afterLease:o=>{o.currentRecords=invalid}});await assert.rejects(()=>run(s),/AUTH_REVOKED/);assert.equal(s.counts["contact.create"],undefined) })
 test("autorização substituída após lease bloqueia", async () => { const p=fixture(),invalid=authorizationRecords(p,r=>({...r,caseImportId:"other-case"}));const s=fakeSystem(p,{afterLease:o=>{o.currentRecords=invalid}});await assert.rejects(()=>run(s),/AUTH_BINDING_INVALID/) })
 test("autorização consumida não é relida durante uploads", async () => { const s=fakeSystem();await run(s);assert.equal(s.counts["auth.load"],1);assert.equal(s.counts["auth.consume"],1);assert.equal(s.state.files.size,11) })
+test("crash após inicialização atômica retoma com novo lease sem novo consumo",async()=>{const options={crashAfterAtomicCommit:true},system=fakeSystem(fixture(),options);await assert.rejects(()=>run(system),/SIMULATED_CRASH_AFTER_ATOMIC_COMMIT/);assert.equal(system.state.checkpoint.version,1);assert.equal(system.state.checkpoint.status,"pending");const provenance=system.state.authorizationConsumedBy;options.crashAfterAtomicCommit=false;const result=await run(system);assert.equal(result.completed,true);assert.equal(system.counts["auth.consume"],1);assert.equal(system.counts["auth.load"],1);assert.equal(system.counts["auth.loadCheckpoint"],1);assert.equal(system.state.authorizationConsumedBy,provenance);assert.equal(system.state.token,2)})
 test("lease malformado com ID é liberado", async () => { const s=fakeSystem(fixture(),{malformedLease:{caseImportId:fixture().caseImportId,leaseId:"lease-bad",fencingToken:"bad",version:1,expiresAt:NOW}});await assert.rejects(()=>run(s),/LEASE_ACQUIRE_FAILED/);assert.equal(s.counts["lease.release"],1) })
 test("falha de liberação após sucesso gera warning sanitizado", async () => { const s=fakeSystem(fixture(),{releaseFail:true});const result=await run(s);assert.deepEqual(result.operationalWarnings,["LEASE_RELEASE_FAILED"]) })
 test("erro principal é preservado quando liberação também falha", async () => { const s=fakeSystem(fixture(),{releaseFail:true,multiDeals:true});await assert.rejects(()=>run(s),/DEAL_AMBIGUOUS/);assert.equal(s.state.checkpoint.steps.deal.errorCode,"ADAPTER_AMBIGUOUS_RESULT") })

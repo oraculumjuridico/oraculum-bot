@@ -70,6 +70,7 @@ function createCheckpoint(overrides = {}) {
     case_import_id: CASE_IMPORT_ID,
     checkpoint_version: 2,
     authorization_ids: [AUTH_1, AUTH_2],
+    authorization_consumed_by: `rebind:${REBIND_ID}`,
     checkpoint_payload: JSON.stringify({
       version: 2,
       authorizationIds: [AUTH_1, AUTH_2],

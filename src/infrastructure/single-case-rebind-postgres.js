@@ -221,6 +221,8 @@ const LEGITIMATE_ERROR_CODES = new Set([
   "REBIND_OLD_CONSUMED_BY_INVALID_FORMAT",
   "REBIND_OLD_LEGACY_CONSUMPTION_PROOF_INVALID",
   "REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH",
+  "REBIND_OLD_CONSUMPTION_PROVENANCE_MISSING",
+  "REBIND_OLD_CONSUMPTION_PROVENANCE_MISMATCH",
   "REBIND_OLD_PAIR_TYPES_INVALID",
   "REBIND_OLD_CHECKPOINT_IDS_MISMATCH",
   "REBIND_OLD_BINDINGS_MISMATCH",
@@ -447,7 +449,7 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
         const checkpointResult = await client.query(
           `SELECT case_import_id, schema_version, checkpoint_version, case_fingerprint, case_number,
                   authorizable_plan_hash, authorization_ids, global_status, checkpoint_payload,
-                  fencing_token, lease_id
+                  fencing_token, lease_id, authorization_consumed_by
            FROM single_case_apply_checkpoints
            WHERE case_import_id = $1
            FOR UPDATE`,
@@ -536,9 +538,9 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
         const consumedBy = oldAuths[0].consumed_by
         const consumedByProof = parseConsumedBy(consumedBy)
         if (!consumedByProof) fail("REBIND_OLD_CONSUMED_BY_INVALID_FORMAT")
-        if (consumedByProof.kind === "executor") {
-          if (consumedByProof.operationId !== checkpointRow.lease_id) fail("REBIND_OLD_CONSUMED_BY_LEASE_MISMATCH")
-        } else {
+        if (!checkpointRow.authorization_consumed_by) fail("REBIND_OLD_CONSUMPTION_PROVENANCE_MISSING")
+        if (consumedBy !== checkpointRow.authorization_consumed_by) fail("REBIND_OLD_CONSUMPTION_PROVENANCE_MISMATCH")
+        if (consumedByProof.kind === "rebind") {
           const legacyAuditResult = await client.query(
             `SELECT rebind_id, case_import_id, source_checkpoint_version, rebound_checkpoint_version,
                     current_authorization_set_hash, lease_id
@@ -733,19 +735,20 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
            SET checkpoint_version = $1,
                authorizable_plan_hash = $2,
                authorization_ids = $3::jsonb,
-               checkpoint_payload = $4::jsonb,
-               fencing_token = $5,
-               lease_id = $6,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE case_import_id = $7
-             AND checkpoint_version = $8
-             AND lease_id = $9
-             AND fencing_token = $10
+                checkpoint_payload = $4::jsonb,
+                fencing_token = $5,
+                lease_id = $6,
+                authorization_consumed_by = $7,
+                updated_at = CURRENT_TIMESTAMP
+           WHERE case_import_id = $8
+             AND checkpoint_version = $9
+             AND lease_id = $10
+             AND fencing_token = $11
              AND EXISTS (
                SELECT 1 FROM single_case_apply_leases
-               WHERE case_import_id = $7
+               WHERE case_import_id = $8
                  AND lease_id = $6
-                 AND owner_id = $11
+                 AND owner_id = $12
                  AND fencing_token = $5
                  AND released_at IS NULL
                  AND expires_at > CURRENT_TIMESTAMP
@@ -758,6 +761,7 @@ function createSingleCaseRebindPostgresRepository({ pool, ownerId, expectedLease
             JSON.stringify(updatedCheckpoint),
             lease.fencing_token,
             lease.lease_id,
+            `rebind:${rebindId}`,
             request.caseImportId,
             request.sourceCheckpointVersion,
             checkpointRow.lease_id,

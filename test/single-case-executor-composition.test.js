@@ -105,11 +105,12 @@ function system(options = {}) {
   }
   const dependencies = {
     plans: { loadByCaseImportId: async id => { count(`plans.load:${id}`); return clone(options.wrongCase ? { ...value, caseImportId: "fixture-other-case" } : value) } },
-    authorizations: { loadForCase: async () => clone(records), consumeAuthorizations: async () => ({ status: options.consumeStatus || "consumed" }) },
+    authorizations: { loadForCase: async () => clone(records), loadForCheckpoint: async () => clone(records), consumeAuthorizations: async () => ({ status: options.consumeStatus || "consumed" }) },
     coordination: {
       acquireLease: async ({ caseImportId }) => { state.lease = { caseImportId, leaseId: "lease-fixture", fencingToken: 1, version: 1, expiresAt: "2026-07-15T12:01:00.000Z" }; return clone(state.lease) },
       renewLease: async () => { if (options.rejectFencing) throw new Error("FENCING_TOKEN_STALE"); return clone(state.lease) },
       loadCheckpoint: async () => clone(state.checkpoint),
+      initializeCheckpoint: async ({ checkpoint }) => { if (options.consumeStatus && options.consumeStatus !== "consumed") throw new Error(`AUTHORIZATION_CONSUME_${options.consumeStatus.toUpperCase()}`);state.version=1;state.checkpoint=clone(checkpoint);state.checkpoint.version=1;return{saved:true,version:1,authorizationConsumedBy:"executor:lease-fixture"} },
       compareAndSetCheckpoint: async ({ expectedVersion, checkpoint }) => { if (expectedVersion !== state.version) throw new Error("CAS_VERSION_DIVERGENCE"); state.version += 1; state.checkpoint = clone(checkpoint); state.checkpoint.version = state.version; return { saved: true, version: state.version } },
       releaseLease: async () => { state.lease = null; return { released: true } }
     },
