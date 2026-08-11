@@ -25,9 +25,9 @@ function numeroPositivo(valor, padrao) {
 
 function normalizarTextoParaFala(texto) {
   const siglas = {
-    INSS: "i ene esse esse",
-    CPF: "cê pê efe",
-    RG: "erre gê",
+    INSS: "ieneésseésse",
+    CPF: "cêpêéfe",
+    RG: "érre-gê",
     BPC: "bê pê cê",
     PVR: "pê vê erre",
     DER: "dê e erre",
