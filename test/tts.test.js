@@ -67,7 +67,7 @@ async function main() {
   assert.equal(perfilDaAtendente("Isabela").attendant, "Isabela")
   assert.equal(perfilDaAtendente("Mariana").attendant, "Mariana")
 
-  assert.equal(normalizarTextoParaFala("INSS, CPF e PVR."), "i ene esse esse, cê pê efe e pê vê erre.")
+  assert.equal(normalizarTextoParaFala("INSS, CPF e PVR."), "ieneésseésse, cêpêéfe e pê vê erre.")
   assert.equal(normalizarTextoParaFala("INSSalubre CPF123"), "INSSalubre CPF123")
 
   const textoEscrito = "INSS e CPF"
@@ -79,7 +79,7 @@ async function main() {
   assert.equal(textoEscrito, "INSS e CPF")
   assert.equal(principal.http.chamadas[0].tipo, "post")
   assert.equal(principal.http.chamadas[0].url, "https://lightning.example/tts")
-  assert.deepEqual(principal.http.chamadas[0].body, { text: "i ene esse esse e cê pê efe" })
+  assert.deepEqual(principal.http.chamadas[0].body, { text: "ieneésseésse e cêpêéfe" })
   assert.equal(principal.http.chamadas.some(chamada => chamada.tipo === "get"), false)
   assert.equal(principal.comandos[0].includes("libopus"), true)
   assert.equal(eventosTts.some(([prefixo, evento]) =>
