@@ -79,7 +79,7 @@ async function main() {
   assert.equal(textoEscrito, "INSS e CPF")
   assert.equal(principal.http.chamadas[0].tipo, "post")
   assert.equal(principal.http.chamadas[0].url, "https://lightning.example/tts")
-  assert.deepEqual(principal.http.chamadas[0].body, { text: "i ene esse esse e cê pê efe", voice: "F4", lang: "pt" })
+  assert.deepEqual(principal.http.chamadas[0].body, { text: "i ene esse esse e cê pê efe" })
   assert.equal(principal.http.chamadas.some(chamada => chamada.tipo === "get"), false)
   assert.equal(principal.comandos[0].includes("libopus"), true)
   assert.equal(eventosTts.some(([prefixo, evento]) =>
