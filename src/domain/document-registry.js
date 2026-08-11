@@ -1,4 +1,11 @@
 const crypto = require("crypto")
+const {
+  normalizarContratoEvidencias,
+  registrarEvidenciaDocumental,
+  registrarConfirmacaoDocumental,
+  registrarDivergenciaDocumental,
+  registrarDecisaoDocumental
+} = require("./document-evidence-model")
 
 const DOCUMENT_REGISTRY_VERSION = "document-registry-v1"
 
@@ -138,6 +145,9 @@ function criarRegistroVazio() {
     pdfs: [],
     pendencias: [],
     divergencias: [],
+    evidencias: [],
+    confirmacoes: [],
+    decisoes: [],
     estatisticas: {},
     metadados: {
       criadoEm: null,
@@ -148,7 +158,7 @@ function criarRegistroVazio() {
 }
 
 function clonarRegistry(registry = {}) {
-  return JSON.parse(JSON.stringify({
+  return JSON.parse(JSON.stringify(normalizarContratoEvidencias({
     ...criarRegistroVazio(),
     ...registry,
     documentos: normalizarArray(registry.documentos),
@@ -161,7 +171,7 @@ function clonarRegistry(registry = {}) {
       ...(registry.metadados || {}),
       historicoProcessamento: normalizarArray(registry.metadados?.historicoProcessamento)
     }
-  }))
+  })))
 }
 
 function criarVersaoDocumento(entrada = {}, options = {}) {
@@ -431,7 +441,7 @@ function aplicarDuplicidades(registry = {}) {
 }
 
 function detectarDivergencias(registry = {}) {
-  const divergencias = []
+  const divergencias = normalizarArray(registry.divergencias).filter(item => item?.divergenceId)
   const gruposDuplicados = detectarDuplicidades(registry.documentos)
   for (const grupo of gruposDuplicados) {
     divergencias.push({
@@ -625,5 +635,10 @@ module.exports = {
   atualizarDocumentRegistry,
   registrarDocumento,
   registrarPdfs,
-  calcularEstatisticas
+  calcularEstatisticas,
+  normalizarContratoEvidencias,
+  registrarEvidenciaDocumental,
+  registrarConfirmacaoDocumental,
+  registrarDivergenciaDocumental,
+  registrarDecisaoDocumental
 }

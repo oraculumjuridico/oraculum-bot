@@ -4,6 +4,8 @@ const assert = require("node:assert/strict")
 const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
+const vm = require("node:vm")
+const { createRequire } = require("node:module")
 const { PostHumanCycleRepository } = require("../src/domain/post-human-cycle-model")
 const { analisarEstadoDocumental, STATES } = require("../src/domain/post-human-document-analyzer")
 const { construirSolicitacao } = require("../src/domain/post-human-solicitation-builder")
@@ -13,6 +15,48 @@ const { tratarRespostaClientePosAtendimento, resolverCiclo } = require("../src/d
 const { sanitizeSensitive } = require("../src/domain/post-human-safe-log")
 const { montarBotaoAtendimentoRealizado, handleAtendimentoRealizadoConfirmation } = require("../src/domain/admin-post-human-complementation")
 const { META_TEMPLATES } = require("../src/domain/meta-templates")
+
+const root = path.join(__dirname, "..")
+const serverPath = path.join(root, "server.js")
+const serverRequire = createRequire(serverPath)
+
+function carregarPoliticaRealPosHumana() {
+  const axios = serverRequire("axios")
+  const reads = []
+  const source = fs.readFileSync(serverPath, "utf8").replace(
+    "module.exports = {\n  app,",
+    "module.exports = {\n  complementoPosHumanoEstaCompleto,\n  criarVerificadorCompletudePosHumana,\n  carregarPendenciasComplementaresPosHumanas,\n  app,"
+  )
+  const sandbox = {
+    __dirname: root, __filename: serverPath, Buffer, URL, clearImmediate, clearInterval, clearTimeout,
+    console, global, module: { exports: {} }, process, setImmediate, setInterval, setTimeout,
+    require: request => request === "axios" ? {
+      ...axios,
+      get: async url => {
+        reads.push(url)
+        if (url.includes("/associations/contacts")) return { data: { results: [{ id: "P-REAL" }] } }
+        if (url.includes("/objects/contacts/")) return { data: { id: "P-REAL", properties: {} } }
+        if (url.includes("/objects/deals/")) return { data: { id: "D-REAL", properties: {} } }
+        throw new Error(`leitura CRM inesperada: ${url}`)
+      }
+    } : serverRequire(request)
+  }
+  sandbox.exports = sandbox.module.exports
+  vm.runInNewContext(source, sandbox, { filename: serverPath })
+  return { ...sandbox.module.exports, reads }
+}
+
+function usuarioRealCompleto(overrides = {}) {
+  return {
+    negocioId: "D-REAL", contatoId: "P-REAL", numeroCaso: "REAL",
+    telefoneNormalizado: "5511999999999", pastaDriveId: "DRIVE-EXISTENTE",
+    nome: "Ana Silva", whatsappContato: "5511999999999", cidade: "Recife", uf: "PE",
+    area: "Outros", tipoCaso: "orientacao", descricao: "Relato juridico suficientemente detalhado.",
+    listaDocumental: ["RG"], docsEntregues: ["RG"], docsAusentes: [], docsParciais: [],
+    revisaoDocumentalNecessaria: false, ultimaMsg: Date.now(),
+    ...overrides
+  }
+}
 
 let passed = 0
 async function test(name, fn) {
@@ -68,11 +112,118 @@ async function makeRepo() {
   })
 
   await test("decisao nao solicita recebido e pergunta uma informacao por vez", async () => {
-    const partial = construirSolicitacao({ estado: STATES.DOCUMENTOS_PARCIAIS, recebidos: ["RG"], ausentes: ["CPF"], parciais: [] })
+    const partial = construirSolicitacao({ estado: STATES.DOCUMENTOS_PARCIAIS, recebidos: ["RG"], ausentes: ["CPF"], parciais: [] }, { numeroCaso: "C" })
     assert.match(partial.texto, /CPF/); assert.doesNotMatch(partial.texto, /Ainda precisamos de:\n.*RG/)
     const info = construirSolicitacao({ estado: STATES.INFORMACOES_COMPLEMENTARES_PENDENTES, camposPendentes: ["cidade", "estado"] })
     assert.equal(info.campo, "cidade"); assert.doesNotMatch(info.texto, /estado/)
     assert.equal(construirSolicitacao({ estado: STATES.INFORMACOES_COMPLEMENTARES_PENDENTES, camposPendentes: ["campo_inventado"] }).tipo, "revisao")
+  })
+
+  await test("solicitacao documental usa nomes canonicos, negrito e preserva quantidade e ordem", async () => {
+    const usuario = { numeroCaso: "PRV.260801.813", area: "Previdenciário", tipo: "revisão" }
+    const casos = [
+      ["doc_rg"],
+      ["doc_rg", "doc_cpf", "doc_res"],
+      ["doc_rg", "doc_cpf", "doc_res", "doc_indf", "doc_ant"]
+    ]
+    const labels = {
+      doc_rg: "RG ou CNH",
+      doc_cpf: "CPF",
+      doc_res: "Comprovante de Residência",
+      doc_indf: "Carta de Indeferimento do INSS",
+      doc_ant: "Documentos do Pedido Anterior"
+    }
+    for (const ids of casos) {
+      const solicitacao = construirSolicitacao({
+        estado: STATES.SEM_DOCUMENTOS,
+        ausentes: ids,
+        listaDocumental: ids
+      }, usuario)
+      assert.doesNotMatch(solicitacao.texto, /\bdoc_[a-z0-9_]+\b/i)
+      assert.equal((solicitacao.texto.match(/^📎 /gm) || []).length, ids.length)
+      assert.deepEqual(solicitacao.texto.match(/^📎 \*.*\*$/gm), ids.map(id => `📎 *${labels[id]}*`))
+      assert.match(solicitacao.texto, /📁 \*Caso: PRV\.260801\.813\*/)
+      assert.doesNotMatch(solicitacao.texto, /advogad[oa]|orienta(?:ção|cao) anterior/i)
+    }
+    const real = construirSolicitacao({
+      estado: STATES.SEM_DOCUMENTOS,
+      ausentes: casos[2],
+      listaDocumental: casos[2]
+    }, usuario)
+    assert.equal(real.texto, [
+      "👋 Olá! Para dar continuidade ao seu atendimento, identificamos alguns documentos que ainda estão pendentes.",
+      "",
+      "📄 *DOCUMENTOS PENDENTES*",
+      "",
+      "📎 *RG ou CNH*",
+      "📎 *CPF*",
+      "📎 *Comprovante de Residência*",
+      "📎 *Carta de Indeferimento do INSS*",
+      "📎 *Documentos do Pedido Anterior*",
+      "",
+      "Você pode enviar os documentos que já possui e completar os demais posteriormente.",
+      "",
+      "📁 *Caso: PRV.260801.813*",
+      "",
+      "👇 Para enviar documentos ou continuar seu atendimento, acesse o *Menu do Cliente* abaixo."
+    ].join("\n"))
+  })
+
+  await test("documentos apresentam um unico Menu do Cliente somente dentro da janela de 24h", async () => {
+    for (const open of [true, false]) {
+      const repo = await makeRepo()
+      const cycle = await repo.createCycle({ negocioId: open ? "DMO" : "DMF", numeroCaso: "C" })
+      const calls = []
+      const documentos = [
+        { id: "doc_rg", label: "RG ou CNH" },
+        { id: "doc_cpf", label: "CPF" },
+        { id: "doc_res", label: "Comprovante de Residência" },
+        { id: "doc_indf", label: "Carta de Indeferimento do INSS" },
+        { id: "doc_ant", label: "Documentos do Pedido Anterior" }
+      ]
+      const result = await processPostHumanCycle({
+        cycle,
+        repository: repo,
+        usuario: {
+          negocioId: cycle.negocioId,
+          numeroCaso: "C",
+          telefoneNormalizado: "5511",
+          ultimaMsg: open ? Date.now() : 1,
+          listaDocumental: documentos.map(({ id }) => id),
+          docsEntregues: []
+        },
+        deps: {
+          resolverListaDocumental: () => documentos,
+          sendFree: async (_to, text) => (calls.push(["free", text]), { id: "m1" }),
+          presentClientMenu: async () => { calls.push(["menu"]); return true },
+          sendTemplate: async (_to, name, params) => (calls.push(["template", name, params]), { id: "m2" }),
+          templateConfig: {
+            nome: "caso_atualizacao_v3", idioma: "pt_BR", contratoVerificado: true,
+            headerImageUrl: "https://example.invalid/approved-header.png",
+            parametrosEsperados: 1,
+            componentes: [
+              { tipo: "HEADER", formato: "IMAGE" },
+              { tipo: "BODY", parametros: [{ tipo: "text", ordem: 1 }] },
+              { tipo: "FOOTER" }
+            ]
+          },
+          buildTemplateParams: solicitation => [solicitation.texto]
+        }
+      })
+      assert.equal(result.tipoEnvio, open ? "livre" : "template")
+      assert.equal(calls.filter(([kind]) => kind === "menu").length, open ? 1 : 0)
+      assert.equal(result.clientMenuPresented, open)
+      if (open) {
+        assert.deepEqual(calls.map(([kind]) => kind), ["free", "menu"])
+        assert.doesNotMatch(calls[0][1], /\bdoc_[a-z0-9_]+\b/i)
+        assert.deepEqual(calls[0][1].match(/^📎 \*.*\*$/gm), documentos.map(({ label }) => `📎 *${label}*`))
+      }
+      else assert.deepEqual(calls.map(([kind]) => kind), ["template"])
+    }
+    const integrations = fs.readFileSync(serverPath, "utf8")
+    assert.equal((integrations.match(/presentClientMenu: \(to\) => apresentarMenuClientePosHumano\(to, /g) || []).length, 3)
+    assert.match(integrations, /async function apresentarMenuClientePosHumano[\s\S]*menuClienteComAudio\(from, u\)/)
+    assert.match(integrations, /postHumanCycleRepository && !ehCallbackCliente/)
   })
 
   await test("hubspot preenche vazio, mantem igual, anota divergencia e preserva negocio", async () => {
@@ -137,16 +288,52 @@ async function makeRepo() {
     const repo = await makeRepo()
     const cycle = await repo.createCycle({ negocioId: "DL", numeroCaso: "C" })
     let transport = ""
+    const fixedLatest = Date.now() - 60000
     const latestResult = await processPostHumanCycle({
       cycle, repository: repo,
       usuario: { negocioId: "DL", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: 1, listaDocumental: ["RG"], docsEntregues: ["RG"] },
       deps: {
-        getLatestCustomerMessage: async () => Date.now(),
+        getLatestCustomerMessage: async () => fixedLatest,
         sendFree: async () => (transport = "free", { id: "latest" }),
         sendTemplate: async () => (transport = "template", { id: "wrong" })
       }
     })
     assert.equal(transport, "free"); assert.equal(latestResult.tipoEnvio, "livre")
+  })
+
+  await test("nova atividade do cliente durante a analise aborta o envio e preserva o ciclo em ready_to_send", async () => {
+    const repo = await makeRepo()
+    const cycle = await repo.createCycle({ negocioId: "DL-NEW", numeroCaso: "C" })
+    const calls = []
+    const startUltimaMsg = 1000
+    const latest = 2000
+    let getLatestCallCount = 0
+    const result = await processPostHumanCycle({
+      cycle, repository: repo,
+      usuario: { negocioId: "DL-NEW", numeroCaso: "C", telefoneNormalizado: "5511", listaDocumental: ["RG"], docsEntregues: ["RG"] },
+      deps: {
+        getLatestCustomerMessage: async () => (getLatestCallCount++ === 0 ? startUltimaMsg : latest),
+        sendFree: async () => (calls.push("free"), { id: "m1" }),
+        sendTemplate: async () => (calls.push("template"), { id: "m2" }),
+        templateConfig: {
+          nome: "caso_atualizacao_v3", idioma: "pt_BR", contratoVerificado: true,
+          headerImageUrl: "https://example.invalid/approved-header.png",
+          parametrosEsperados: 1,
+          componentes: [
+            { tipo: "HEADER", formato: "IMAGE" },
+            { tipo: "BODY", parametros: [{ tipo: "text", ordem: 1 }] },
+            { tipo: "FOOTER" }
+          ]
+        },
+        buildTemplateParams: solicitation => [solicitation.texto]
+      }
+    })
+    assert.equal(result.skipped, true)
+    assert.equal(result.reason, "nova_atividade_cliente")
+    assert.equal(result.cycle.status, "ready_to_send")
+    assert.equal(calls.length, 0)
+    const refreshed = await repo.getCycle(cycle.cycleId)
+    assert.equal(refreshed.status, "ready_to_send")
   })
 
   await test("ligacao telefonica e evento agenda nao atualizam janela", async () => {
@@ -188,7 +375,7 @@ async function makeRepo() {
     assert.equal(calls.filter(c => c === "free").length, 0, "sendFree NÃO foi chamado")
   })
 
-  await test("falha Meta e configuracao incompleta falham seguro sem retry apos reinicio", async () => {
+  await test("falhas de outbound distinguem pre-transporte, rejeicao, incerteza e falha pos-transporte", async () => {
     const repo = await makeRepo()
     const cycle = await repo.createCycle({ negocioId: "D", numeroCaso: "C" })
     const result = await processPostHumanCycle({
@@ -196,6 +383,9 @@ async function makeRepo() {
       deps: { sendFree: async () => { throw new Error("token=abc telefone 11999999999") } }
     })
     assert.equal(result.failed, true)
+    assert.equal(result.transportInvoked, true)
+    assert.equal(result.retryableBeforeSend, false)
+    assert.equal(result.failurePhase, "after_transport_without_acceptance")
     assert.equal((await repo.listRecoverable()).length, 0)
     assert.doesNotMatch(result.error, /abc|11999999999/)
     const uncertainRepo = await makeRepo()
@@ -207,7 +397,57 @@ async function makeRepo() {
       deps: { sendFree: async () => { throw uncertainError } }
     })
     assert.equal(uncertain.uncertain, true)
+    assert.equal(uncertain.retryableBeforeSend, false)
+    assert.equal(uncertain.failurePhase, "after_transport_without_acceptance")
     assert.equal((await uncertainRepo.getCycle(uncertainCycle.cycleId)).resultadoEnvio, "incerto")
+
+    const beforeRepo = await makeRepo()
+    const beforeCycle = await beforeRepo.createCycle({ negocioId: "DB", numeroCaso: "C" })
+    let templateTransport = 0
+    const beforeTransport = await processPostHumanCycle({
+      cycle: beforeCycle, repository: beforeRepo,
+      usuario: { negocioId: "DB", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: 1, listaDocumental: ["RG"] },
+      deps: { sendTemplate: async () => { templateTransport++ } }
+    })
+    assert.equal(beforeTransport.failed, true)
+    assert.equal(beforeTransport.transportInvoked, false)
+    assert.equal(beforeTransport.retryableBeforeSend, true)
+    assert.equal(templateTransport, 0)
+    assert.equal((await beforeRepo.getCycle(beforeCycle.cycleId)).resultadoEnvio, "nao_enviado")
+    assert.equal((await beforeRepo.listRecoverable()).length, 1)
+
+    const rejectedRepo = await makeRepo()
+    const rejectedCycle = await rejectedRepo.createCycle({ negocioId: "DR", numeroCaso: "C" })
+    const rejectedError = new Error("provider rejeitou"); rejectedError.sendOutcomeKnownRejected = true
+    const rejected = await processPostHumanCycle({
+      cycle: rejectedCycle, repository: rejectedRepo,
+      usuario: { negocioId: "DR", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: Date.now(), listaDocumental: ["RG"] },
+      deps: { sendFree: async () => { throw rejectedError } }
+    })
+    assert.equal(rejected.knownRejected, true)
+    assert.equal(rejected.retryableBeforeSend, true)
+    assert.equal((await rejectedRepo.getCycle(rejectedCycle.cycleId)).resultadoEnvio, "rejeitado")
+    assert.equal((await rejectedRepo.listRecoverable()).length, 1)
+
+    const acceptedButNotPersistedRepo = await makeRepo()
+    const acceptedButNotPersistedCycle = await acceptedButNotPersistedRepo.createCycle({ negocioId: "DA", numeroCaso: "C" })
+    const realUpdateStatus = acceptedButNotPersistedRepo.updateStatus.bind(acceptedButNotPersistedRepo)
+    let messageSentPersistenceAttempts = 0
+    acceptedButNotPersistedRepo.updateStatus = async (cycleId, status, extras, options) => {
+      if (status === "message_sent" && messageSentPersistenceAttempts++ === 0) throw new Error("persistencia indisponivel")
+      return realUpdateStatus(cycleId, status, extras, options)
+    }
+    const acceptedButNotPersisted = await processPostHumanCycle({
+      cycle: acceptedButNotPersistedCycle, repository: acceptedButNotPersistedRepo,
+      usuario: { negocioId: "DA", numeroCaso: "C", telefoneNormalizado: "5511", ultimaMsg: Date.now(), listaDocumental: ["RG"] },
+      deps: { sendFree: async () => ({ id: "provider-accepted-id" }) }
+    })
+    assert.equal(acceptedButNotPersisted.failed, true)
+    assert.equal(acceptedButNotPersisted.providerAccepted, true)
+    assert.equal(acceptedButNotPersisted.providerMessageId, "provider-accepted-id")
+    assert.equal(acceptedButNotPersisted.failurePhase, "after_provider_acceptance")
+    assert.equal((await acceptedButNotPersistedRepo.getCycle(acceptedButNotPersistedCycle.cycleId)).status, "failed_terminal")
+    assert.equal((await acceptedButNotPersistedRepo.listRecoverable()).length, 0)
   })
 
   await test("resposta parcial, respondo depois e isolamento de negocios", async () => {
@@ -228,6 +468,110 @@ async function makeRepo() {
     assert.equal(later.deferred, true)
   })
 
+  await test("atendimento realizado completo exerce a politica real e encerra somente o ciclo", async () => {
+    const repo = await makeRepo()
+    const {
+      complementoPosHumanoEstaCompleto,
+      criarVerificadorCompletudePosHumana,
+      carregarPendenciasComplementaresPosHumanas,
+      reads
+    } = carregarPoliticaRealPosHumana()
+    process.env.POST_HUMAN_PILOT_CASES = "REAL"
+    const usuario = usuarioRealCompleto()
+    const policy = criarVerificadorCompletudePosHumana(usuario, repo)
+    const button = montarBotaoAtendimentoRealizado(usuario.negocioId, usuario.numeroCaso, {
+      adminId: "ADMIN", contatoId: usuario.contatoId, customerPhone: usuario.telefoneNormalizado, customerPhoneConfirmed: true
+    })
+    const sends = []
+    const hubspotUpdateAttempts = []
+    const result = await handleAtendimentoRealizadoConfirmation({
+      from: "ADMIN", interactionId: button.id, usuario, isAdmin: value => value === "ADMIN", repository: repo,
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle, usuario: currentUser, repository: repo,
+        deps: {
+          camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario: currentUser, cycle, repository: repo }),
+          isComplete: policy,
+          applySafeHubspotUpdates: async input => {
+            hubspotUpdateAttempts.push(input)
+            return { humanReviewRequired: false, divergences: [] }
+          },
+          sendFree: async () => { sends.push("free") },
+          sendTemplate: async () => { sends.push("template") }
+        }
+      })
+    })
+    assert.equal(result.cycle.status, "completed")
+    assert.match(result.text, /Atendimento humano registrado.*não há complementação pendente/i)
+    assert.deepEqual(sends, [])
+    assert.equal(result.cycle.negocioId, usuario.negocioId)
+    assert.equal(result.cycle.contatoId, usuario.contatoId)
+    assert.equal(result.cycle.numeroCaso, usuario.numeroCaso)
+    assert.equal(await repo.findActiveByBusiness(usuario.negocioId), null)
+    assert.equal(await complementoPosHumanoEstaCompleto({ cycle: result.cycle, usuario, repository: repo }), true)
+    assert.equal(await policy(result.cycle), true)
+    assert.equal(reads.length >= 6, true, "politica real deve ler contato, negocio e associacao")
+    assert.equal(hubspotUpdateAttempts.length, 1, "o unico updater permitido e o de complemento seguro")
+    assert.equal(
+      hubspotUpdateAttempts.some(({ incoming = {} }) =>
+        incoming.dealstage || incoming.numero_de_caso || incoming.cliente_aceito ||
+        incoming.accepted_client || incoming.status === "completed"),
+      false,
+      "completed do ciclo nao pode comandar conclusao juridica, aceite ou alteracao do caso"
+    )
+  })
+
+  async function confirmarAtendimentoComPendencia({ nome, alteracoes, pergunta }) {
+    process.env.POST_HUMAN_PILOT_CASES = "REAL"
+    const { complementoPosHumanoEstaCompleto, criarVerificadorCompletudePosHumana, carregarPendenciasComplementaresPosHumanas } = carregarPoliticaRealPosHumana()
+    const repo = await makeRepo()
+    const usuario = usuarioRealCompleto(alteracoes)
+    const policy = criarVerificadorCompletudePosHumana(usuario, repo)
+    const button = montarBotaoAtendimentoRealizado(usuario.negocioId, usuario.numeroCaso, {
+      adminId: "ADMIN", contatoId: usuario.contatoId, customerPhone: usuario.telefoneNormalizado, customerPhoneConfirmed: true
+    })
+    const sends = []
+    const result = await handleAtendimentoRealizadoConfirmation({
+      from: "ADMIN", interactionId: button.id, usuario, isAdmin: value => value === "ADMIN", repository: repo,
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle, usuario: currentUser, repository: repo,
+        deps: {
+          camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario: currentUser, cycle, repository: repo }),
+          isComplete: policy,
+          sendFree: async (_to, text) => { sends.push(text); return { id: "mock" } },
+          sendTemplate: async () => { throw new Error("template nao esperado") }
+        }
+      })
+    })
+    const cycle = await repo.findActiveByBusiness(usuario.negocioId)
+    assert.equal(result.existing, false)
+    assert.equal(cycle.negocioId, usuario.negocioId)
+    assert.equal(cycle.contatoId, usuario.contatoId)
+    assert.equal(cycle.numeroCaso, usuario.numeroCaso)
+    assert.equal(cycle.status, "awaiting_response")
+    assert.equal(sends.length, 1, `${nome} deve fazer somente uma pergunta`)
+    assert.equal(await complementoPosHumanoEstaCompleto({ cycle, usuario, repository: repo }), false, `pendencia ${nome} deve reprovar politica real`)
+    assert.equal(await policy(cycle), false, `verificador real deve reprovar pendencia ${nome}`)
+    assert.match(sends[0], pergunta)
+    return sends[0]
+  }
+
+  await test("atendimento realizado com pendencia cadastral seleciona uma pergunta cadastral", async () => {
+    const pergunta = await confirmarAtendimentoComPendencia({ nome: "cadastral", alteracoes: { cidade: "" }, pergunta: /Em qual cidade/i })
+    assert.doesNotMatch(pergunta, /Tipo do caso|envie/i)
+  })
+
+  await test("atendimento realizado com pendencia juridica seleciona uma pergunta juridica", async () => {
+    const pergunta = await confirmarAtendimentoComPendencia({ nome: "juridica", alteracoes: { tipoCaso: "" }, pergunta: /Tipo do caso/i })
+    assert.doesNotMatch(pergunta, /Em qual cidade|envie/i)
+  })
+
+  await test("atendimento realizado com pendencia documental preserva o fluxo documental", async () => {
+    const pergunta = await confirmarAtendimentoComPendencia({
+      nome: "documental", alteracoes: { docsEntregues: [], docsAusentes: ["RG"] }, pergunta: /documentos.*pendentes|enviar/is
+    })
+    assert.doesNotMatch(pergunta, /Em qual cidade|Tipo do caso/i)
+  })
+
   await test("flag, piloto, admin autorizado e template mapeado", async () => {
     const prior = process.env.POST_HUMAN_COMPLEMENTATION_ENABLED
     process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "false"
@@ -235,7 +579,7 @@ async function makeRepo() {
     process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = "true"
     process.env.POST_HUMAN_PILOT_CASES = "C"
     assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["OTHER"] }), null)
-    assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["C"], adminId: "A", contatoId: "P", customerPhone: "5511999999999", customerPhoneConfirmed: true }).title, "Enviar ao cliente")
+    assert.equal(montarBotaoAtendimentoRealizado("D", "C", { allowedCases: ["C"], adminId: "A", contatoId: "P", customerPhone: "5511999999999", customerPhoneConfirmed: true }).title, "✅ Atendimento realizado")
     const repo = await makeRepo()
     const unauthorized = await handleAtendimentoRealizadoConfirmation({ from: "x", interactionId: "admin_post_human_completed:D:C", usuario: { negocioId: "D", numeroCaso: "C" }, isAdmin: () => false, repository: repo })
     assert.match(unauthorized.text, /administrador/)
@@ -248,7 +592,7 @@ async function makeRepo() {
     assert.doesNotMatch(output, /529|99999|abc/)
   })
 
-  console.log(`RESULT ${passed}/11 passed`)
+  console.log(`RESULT ${passed} passed`)
   if (originalEnabled === undefined) delete process.env.POST_HUMAN_COMPLEMENTATION_ENABLED
   else process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = originalEnabled
   if (originalCases === undefined) delete process.env.POST_HUMAN_PILOT_CASES

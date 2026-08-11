@@ -28,6 +28,11 @@ const {
   criarQuestionarioAdminAssistido
 } = require("./admin-assisted-questionnaire")
 const { normalizeUf, classifyInssDemand, reconcileDocuments, registrationStatus } = require("./admin-assisted-intake-catalog")
+const { ADDRESS_FIELDS, buildAddressAnswerResult } = require("./address-facts")
+const {
+  resolveLegalCaseNomenclature,
+  projectLegalCaseNomenclature
+} = require("./legal-case-nomenclature")
 
 const ADMIN_ASSISTIDO_ORIGEM = "admin_assistido_ia"
 const ADMIN_ASSISTIDO_ETAPA_INICIAL = "aguardando_relato"
@@ -507,7 +512,7 @@ function gerarResumoAdminAssistido(sessao = {}) {
     "*Ficha completa do atendimento*",
     "",
     ...secao("Identificação", ["nomeCompleto", "apelido", "cpf", "dataNascimento", "idade", "estadoCivil"]),
-    ...secao("Contato", ["telefone", "email", "endereco", "numeroEndereco", "complementoEndereco", "bairro", "cidade", "uf", "cep"]),
+    ...secao("Contato", ["telefone", "email", "endereco", "numeroEndereco", "complementoEndereco", "bairro", "cidade", "uf", "cep", "referenciaEndereco"]),
     ...secao("Caso", ["areaJuridica", "tipoCaso", "descricao", "objetivo", "urgencia", ...especificos]),
     ...secao("Documentos", ["documentosMencionados", "documentosMedicos"]),
     "*Pendências*",
@@ -650,18 +655,21 @@ async function atualizarCampoPendente(adminAssistido = {}, texto = "", dadosBase
     }
     return dadosAtuais
   }
-  if (campo === "uf") {
-    const uf = normalizeUf(texto)
-    return { ...dadosAtuais, uf: uf ? criarCampoAdminAssistido(uf, "confirmado") : criarCampoAdminAssistido(texto, "invalido") }
-  }
-  if (campo === "cidade" && typeof deps.resolverLocalizacaoAdminAssistido === "function") {
-    const localizacao = await deps.resolverLocalizacaoAdminAssistido(texto)
-    if (!localizacao || localizacao.multiplos) return { ...dadosAtuais, cidade: criarCampoAdminAssistido(texto, "precisa_conferir") }
-    return {
-      ...dadosAtuais,
-      cidade: localizacao.cidade ? criarCampoAdminAssistido(localizacao.cidade, "confirmado") : dadosAtuais.cidade,
-      uf: localizacao.uf ? criarCampoAdminAssistido(localizacao.uf, "confirmado") : dadosAtuais.uf,
-      ...(localizacao.cep ? { cep: criarCampoAdminAssistido(localizacao.cep, "confirmado") } : {})
+  if (ADDRESS_FIELDS.has(campo)) {
+    // Mantém compatibilidade com consumidores legados que ainda não injetam o
+    // resolvedor. No runtime real, cidade sempre passa pelo geosearch injetado.
+    if (campo === "cidade" && typeof deps.resolverLocalizacaoAdminAssistido !== "function") {
+      return { ...dadosAtuais, cidade: normalizarCampoAdminAssistido("cidade", texto, "confirmado") }
+    }
+    const result = await buildAddressAnswerResult(campo, texto, {
+      previousAnswers: dadosAtuais,
+      known: Object.fromEntries(Object.entries(dadosAtuais).map(([key, item]) => [key, item?.valor])),
+      resolveLocation: deps.resolverLocalizacaoAdminAssistido
+    })
+    if (Object.keys(result?.canonicalAnswers || {}).length) return { ...dadosAtuais, ...result.canonicalAnswers }
+    if (campo === "uf") {
+      const uf = normalizeUf(texto)
+      return { ...dadosAtuais, uf: uf ? criarCampoAdminAssistido(uf, "confirmado") : criarCampoAdminAssistido(texto, "invalido") }
     }
   }
   return {
@@ -889,6 +897,7 @@ function resumoDadosComplementaresAdminAssistido(dados = {}) {
     "complementoEndereco",
     "bairro",
     "cep",
+    "referenciaEndereco",
     "apelido",
     "conflitoInteresses",
     "acidenteTrabalho",
@@ -944,6 +953,14 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
   const tipo = textoCampo(dados, "tipoCaso") || adminAssistido.analise?.tipoCaso || "outros"
   const descricao = montarDescricaoAdminAssistido(dados)
   const nome = textoCampo(dados, "nomeCompleto") || textoCampo(dados, "clientePrincipal")
+  const nomenclaturaJuridica = resolveLegalCaseNomenclature({
+    current: adminAssistido.nomenclaturaJuridica,
+    narrative: [descricao, textoCampo(dados, "objetivo")],
+    answered: dados,
+    usuario: { area, tipo, descricao, objetivo: textoCampo(dados, "objetivo") },
+    classification: adminAssistido.analise
+  })
+  const projecaoJuridica = projectLegalCaseNomenclature(nomenclaturaJuridica)
 
   return {
     stage: "confirmacao",
@@ -967,6 +984,7 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     complementoEndereco: textoCampo(dados, "complementoEndereco") || null,
     bairro: textoCampo(dados, "bairro") || null,
     cep: textoCampo(dados, "cep") || null,
+    referenciaEndereco: textoCampo(dados, "referenciaEndereco") || null,
     apelido: textoCampo(dados, "apelido") || null,
     beneficio: textoCampo(dados, "beneficio"),
     beneficioInteresse: textoCampo(dados, "beneficio"),
@@ -975,12 +993,13 @@ function montarUsuarioFinalizacaoAdminAssistido(from, adminAssistido = {}, deps 
     regiao: null,
     cidade: textoCampo(dados, "cidade"),
     uf: textoCampo(dados, "uf"),
-    area,
-    tipo,
-    situacao: textoCampo(dados, "situacao") || tipo,
-    subTipo: textoCampo(dados, "motivo") || null,
+    area: projecaoJuridica.area || area,
+    tipo: projecaoJuridica.tipoCaso || tipo,
+    situacao: projecaoJuridica.situacao || textoCampo(dados, "situacao") || tipo,
+    subTipo: projecaoJuridica.subTipo || null,
     detalhe: textoCampo(dados, "problema") || textoCampo(dados, "objetivo") || null,
-    objetivo: textoCampo(dados, "objetivo") || null,
+    objetivo: projecaoJuridica.objetivo || textoCampo(dados, "objetivo") || null,
+    nomenclaturaJuridica,
     acidenteTrabalho: valorCampo(dados, "acidenteTrabalho"),
     limitacoesAtuais: textoCampo(dados, "limitacoesAtuais") || null,
     motivoEncerramentoVinculo: textoCampo(dados, "motivoEncerramentoVinculo") || null,
@@ -1899,5 +1918,6 @@ module.exports = {
   acaoRevisaoEmailAdminAssistidoHandler,
   telaRevisaoEmailAdminAssistido,
   labelInvariante,
-  criarPayloadLogAdminAssistido
+  criarPayloadLogAdminAssistido,
+  atualizarCampoPendente
 }

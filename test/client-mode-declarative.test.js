@@ -58,7 +58,7 @@ assert.doesNotMatch(apresentador, /const opcoes =/)
 for (const trecho of [
   "setStage(u, STAGES.ACOLHIMENTO_MODO)",
   "const modoAtendimento = detectarModoAtendimento(text)",
-  'u.modoTexto = modoAtendimento === "texto"',
+  'definirPreferenciaComunicacao(u, from, modoAtendimento === "texto" ? "texto" : "audio_sempre", "pre_atendimento")',
   "return await telaParaQuem(from, u)",
   "return await telaEscolhaModo(from, u, { comAudio: true })"
 ]) {

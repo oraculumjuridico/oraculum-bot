@@ -48,7 +48,12 @@ async function validatePublicImageUrl(url, options = {}) {
       maxRedirects: 0,
       maxContentLength: maxBytes,
       maxBodyLength: maxBytes,
-      validateStatus: status => status === 200
+      validateStatus: status => status === 200,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; OraculumBot/1.0)",
+        Accept: "image/*",
+        ...options.headers
+      }
     })
     const mimeType = String(response.headers?.["content-type"] || "").split(";", 1)[0].trim().toLowerCase()
     const buffer = Buffer.from(response.data || [])

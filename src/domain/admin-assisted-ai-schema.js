@@ -112,6 +112,11 @@ function valorENormalizadoInvalido(valor, campoNome) {
       if (!/^[A-Z]{2}$/i.test(valor.trim())) return true
       break
     }
+    case "cep": {
+      const digits = valor.replace(/\D/g, "")
+      if (digits.length !== 8 || /^(\d)\1{7}$/.test(digits)) return true
+      break
+    }
     case "email": {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
       if (!emailRegex.test(valor.trim())) return true
@@ -234,6 +239,7 @@ const CAMPOS_ADMIN_ASSISTIDO = {
   complementoEndereco: { label: "Complemento", pergunta: "Há complemento no endereço?" },
   bairro: { label: "Bairro", pergunta: "Qual é o bairro?" },
   cep: { label: "CEP", pergunta: "Qual é o CEP?" },
+  referenciaEndereco: { label: "Referência", pergunta: "Há algum ponto de referência para localizar o endereço?" },
   apelido: { label: "Apelido", pergunta: "Há nome social ou apelido relevante?" },
   conflitoInteresses: { label: "Conflito de interesses", pergunta: "Existe conflito de interesses conhecido?" },
   acidenteTrabalho: { label: "Acidente de trabalho", pergunta: "Houve acidente de trabalho?" },
@@ -242,8 +248,23 @@ const CAMPOS_ADMIN_ASSISTIDO = {
   composicaoFamiliar: { label: "Composição familiar", pergunta: "Qual é a composição familiar informada?" },
   rendaAtual: { label: "Renda atual", pergunta: "Qual é a renda atual informada?" },
   beneficioAnterior: { label: "Benefício anterior", pergunta: "Houve benefício anterior?" },
+  bpcRequerenteTipo: { label: "Requerente do BPC", pergunta: "O pedido de BPC é para uma criança, uma pessoa adulta ou uma pessoa idosa?" },
+  bpcDeficiencia: { label: "Deficiência ou condição relevante", pergunta: "Qual deficiência ou condição relevante foi informada para o requerente do BPC?" },
+  bpcImpedimentoLongoPrazo: { label: "Impedimento de longo prazo", pergunta: "Essa condição causa impedimentos de longo prazo?" },
+  bpcComposicaoFamiliar: { label: "Composição familiar do BPC", pergunta: "Quem mora com o requerente na mesma casa?" },
+  bpcDespesas: { label: "Despesas relevantes do BPC", pergunta: "Há gastos importantes relacionados à saúde ou à deficiência que pesam no orçamento da família?" },
+  bpcCadUnico: { label: "CadÚnico", pergunta: "O requerente possui CadÚnico? Se souber, informe também se está atualizado." },
+  bpcSituacaoAdministrativa: { label: "Situação administrativa do BPC", pergunta: "Já houve pedido de BPC? Se houve, ele foi concedido, negado ou ainda está em análise?" },
   dataRequerimento: { label: "Data do requerimento", pergunta: "Qual é a data exata do requerimento?" },
   resultadoPericia: { label: "Resultado da perícia", pergunta: "Qual foi o resultado informado da perícia?" },
+  houvePericia: { label: "Perícia", pergunta: "Você passou por perícia do INSS?" },
+  dataPericia: { label: "Data da perícia", pergunta: "Qual foi a data da perícia?" },
+  inicioIncapacidade: { label: "Início da incapacidade", pergunta: "Quando começou a incapacidade para o trabalho?" },
+  incapacidadeAtual: { label: "Incapacidade atual", pergunta: "A incapacidade para o trabalho continua atualmente?" },
+  vinculosContribuicoes: { label: "Vínculos e contribuições", pergunta: "Há algum problema nos vínculos ou contribuições do CNIS?" },
+  protocoloRequerimento: { label: "Protocolo", pergunta: "Qual é o protocolo do requerimento, se houver?" },
+  cartaDecisaoAdministrativa: { label: "Carta ou decisão", pergunta: "Você recebeu a carta ou decisão administrativa do INSS?" },
+  recursoAdministrativo: { label: "Recurso administrativo", pergunta: "Foi apresentado recurso administrativo?" },
   documentosMedicos: { label: "Documentos médicos", pergunta: "Quais documentos médicos estão disponíveis?" },
   motivoEncerramentoVinculo: { label: "Encerramento do vínculo", pergunta: "Qual foi o motivo do encerramento do vínculo?" },
   naturezaDemanda: { label: "Natureza da demanda", pergunta: "Qual é a natureza específica da demanda?" },
@@ -440,6 +461,18 @@ function proximoCampoObrigatorioAdminAssistido(dados = {}, area = "") {
 }
 
 function perguntaCampoAdminAssistido(campo) {
+  if (String(campo || "").startsWith("bpcDetalhesMembro__")) {
+    const labels = {
+      requerente: "requerente",
+      mae: "mãe",
+      pai: "pai",
+      marido: "marido",
+      esposa: "esposa"
+    }
+    const id = String(campo).slice("bpcDetalhesMembro__".length)
+    const pessoa = labels[id] || "próxima pessoa adulta"
+    return `Qual é a situação de trabalho, renda ou benefício do ${pessoa} que mora com o requerente?`
+  }
   return CAMPOS_ADMIN_ASSISTIDO[campo]?.pergunta || "Qual informação falta para completar o cadastro?"
 }
 

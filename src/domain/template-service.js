@@ -1,4 +1,4 @@
-const { enviar, enviarTemplateWhatsApp } = require("./whatsapp-transport")
+const { enviar, enviarComResultado, enviarTemplateWhatsApp, enviarTemplateComResultado, enviarImagemComResultado } = require("./whatsapp-transport")
 const { META_TEMPLATES } = require("./meta-templates")
 const { normalizarContextoConversa } = require("./conversation-context")
 
@@ -99,21 +99,20 @@ async function atualizacaoCasoSegura(to, {
 } = {}, options = {}) {
   const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
   if (conversaDentroJanela24h(ultimaMsg, agora)) {
-    return {
-      sent: Boolean(await enviar(to, texto)),
-      channel: "freeform"
-    }
+    const imageResult = await enviarImagemComResultado(to, META_TEMPLATES.casoAtualizacao.headerImageUrl, texto)
+    if (imageResult.accepted) return { ...imageResult, sent: true, channel: "freeform_image", fallback: false }
+    const textResult = await enviarComResultado(to, texto)
+    return { ...textResult, sent: textResult.accepted, channel: "freeform_text", fallback: true, fallbackReason: imageResult.immediateError || "image_send_failed" }
   }
   const resumo = String(resumoTemplate || texto || "").trim()
   if (!resumo) return { sent: false, channel: "template", reason: "template_param_missing" }
-  const sent = await casoAtualizacao(to, [resumo], {
-    ...options,
-    usuario
-  })
+  const template = META_TEMPLATES.casoAtualizacao
+  const result = await enviarTemplateComResultado(to, template.nome, [resumo], template.idioma, opcoesTemplate(template))
   return {
-    sent: Boolean(sent),
+    ...result,
+    sent: result.accepted,
     channel: "template",
-    reason: sent ? null : "template_send_failed"
+    reason: result.accepted ? null : "template_send_failed"
   }
 }
 

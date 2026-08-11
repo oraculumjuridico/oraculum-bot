@@ -5,9 +5,15 @@ const {
   salvarJsonEmSubpastaDrive
 } = require("./drive-files")
 const {
-  atualizarEstadoDocumental
+  atualizarEstadoDocumental,
+  carregarEstadoDocumental
 } = require("./document-state-repository")
-const { logDebug, logErro } = require("../utils/logging")
+const { normalizarEntradaDocumental, sha256 } = require("./document-input-normalizer")
+const {
+  registrarEvidenciaDocumental,
+  registrarDivergenciaDocumental
+} = require("./document-evidence-model")
+const { logDebug, logInfo, logErro } = require("../utils/logging")
 
 const DOCUMENT_ANALYSIS_FOLDER = "00_ADMIN"
 const DOCUMENT_ANALYSIS_FILE = "document-analysis.json"
@@ -77,6 +83,89 @@ function arquivoJaProcessadoComSucesso(analise = {}, fileId) {
   return Boolean(fileId && analise.analises.some(item => item?.arquivo?.fileId === fileId && item?.status === "concluido"))
 }
 
+function coverageFrom(tipoDocumento, contexto = {}, pageNumber = null) {
+  const type = String(tipoDocumento || "").toLowerCase()
+  const folha = String(contexto.folha || "").toLowerCase()
+  if (type === "rg frente") return ["front"]
+  if (type === "rg verso") return ["back"]
+  if (pageNumber !== null) return []
+  if (/frente/.test(folha) && !/verso/.test(folha)) return ["front"]
+  if (/verso/.test(folha) && !/frente/.test(folha)) return ["back"]
+  return []
+}
+
+function ocrConfidenceBucket(value) {
+  const confidence = Number(value)
+  if (!Number.isFinite(confidence)) return "unavailable"
+  if (confidence < 60) return "low"
+  if (confidence < 80) return "medium"
+  return "high"
+}
+
+function recognizedSidesFromType(type) {
+  const value = String(type || "").trim().toLowerCase()
+  if (value === "rg frente") return "front"
+  if (value === "rg verso") return "back"
+  return "none"
+}
+
+function emitirLogsDocumentaisSeguros({ logger, pipeline, contexto, evidenceStatus, partyResolution }) {
+  const attempts = Array.isArray(pipeline?.tentativas) && pipeline.tentativas.length
+    ? pipeline.tentativas : [{
+      retryAttempt: 0,
+      preprocessingProfile: pipeline?.preprocessamento?.profile || "standard",
+      classificationType: pipeline?.classificacao?.tipoDocumento || null,
+      classificationConfidence: pipeline?.classificacao?.confianca || 0,
+      ocrHasText: Boolean(String(pipeline?.ocr?.textoCompleto || "").trim()),
+      ocrConfidence: pipeline?.ocr?.confianca,
+      qualityWarnings: pipeline?.qualidade?.warnings || [],
+      errorCodes: coletarEventos(pipeline, "erros").map(item => item.code || "DOCUMENT_PIPELINE_ERROR"),
+      safe: false
+    }]
+  for (let index = 0; index < attempts.length; index++) {
+    const attempt = attempts[index]
+    const selected = pipeline?.selectedVariant
+      ? attempt.preprocessingProfile === pipeline.selectedVariant
+      : index === 0
+    const reasonCode = selected
+      ? partyResolution?.reasonCode || attempt.errorCodes?.[0] ||
+        (evidenceStatus === "analyzed" ? "analysis_completed" : attempt.safe ? "safe_result_selected" : "insufficient_result_selected")
+      : attempt.errorCodes?.[0] || "variant_not_selected"
+    try {
+      logger({
+        event: "document.analysis_attempt",
+        status: selected ? evidenceStatus : "attempted",
+        classificationType: attempt.classificationType || "unknown",
+        classificationConfidence: attempt.classificationConfidence,
+        ocrHasText: Boolean(attempt.ocrHasText),
+        ocrConfidenceBucket: ocrConfidenceBucket(attempt.ocrConfidence),
+        preprocessingProfile: attempt.preprocessingProfile || "standard",
+        requestedSide: String(contexto?.folha || "none").toLowerCase(),
+        recognizedSides: recognizedSidesFromType(attempt.classificationType),
+        evidenceStatus,
+        partyResolutionStatus: partyResolution?.status || "not_applicable",
+        reasonCode,
+        qualityWarnings: (attempt.qualityWarnings || []).join(",") || "none",
+        retryAttempt: attempt.retryAttempt || 0,
+        selectedVariant: pipeline?.selectedVariant || "standard"
+      })
+    } catch {}
+  }
+}
+
+function nextEvidenceVersion(registry = {}, evidenceId) {
+  return Math.max(0, ...(registry.evidencias || [])
+    .filter(item => item.evidenceId === evidenceId)
+    .map(item => Number(item.version || 0))) + 1
+}
+
+function registrarDivergenciaSeNova(registry, input) {
+  const signature = [...(input.evidenceIds || [])].sort().join("|")
+  const exists = (registry.divergencias || []).some(item => item.code === input.code &&
+    [...(item.evidenceIds || [])].sort().join("|") === signature)
+  return exists ? registry : registrarDivergenciaDocumental(registry, input)
+}
+
 function montarEntradaSucesso({ arquivo, mimeType, nomeOriginal, pipeline, agrupamentos, contexto }) {
   const errosPipeline = coletarEventos(pipeline, "erros")
   const avisosPipeline = coletarEventos(pipeline, "avisos")
@@ -130,7 +219,8 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
     buffer,
     mimeType,
     nomeOriginal,
-    contexto
+    contexto,
+    resolvePartyRole
   } = input
 
   const dependencias = {
@@ -139,7 +229,10 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
     lerJsonEmSubpastaDrive: deps.lerJsonEmSubpastaDrive || lerJsonEmSubpastaDrive,
     salvarJsonEmSubpastaDrive: deps.salvarJsonEmSubpastaDrive || salvarJsonEmSubpastaDrive,
     atualizarEstadoDocumental: deps.atualizarEstadoDocumental || atualizarEstadoDocumental,
+    carregarEstadoDocumental: deps.carregarEstadoDocumental || carregarEstadoDocumental,
+    normalizarEntradaDocumental: deps.normalizarEntradaDocumental || normalizarEntradaDocumental,
     logDebug: deps.logDebug || logDebug,
+    logInfo: deps.logInfo || logInfo,
     logErro: deps.logErro || logErro
   }
 
@@ -154,7 +247,11 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
   )
   const analise = normalizarAnaliseExistente(existente?.dados || {})
 
-  if (arquivoJaProcessadoComSucesso(analise, arquivo.id)) {
+  const estadoAnterior = await dependencias.carregarEstadoDocumental(pastaDriveId, dependencias)
+  let registry = estadoAnterior?.registry || {}
+  const physicalSha256 = sha256(buffer)
+  if (arquivoJaProcessadoComSucesso(analise, arquivo.id) &&
+      (registry.evidencias || []).some(item => item.fileId === arquivo.id && item.sha256 === physicalSha256)) {
     dependencias.logDebug(`[DOCUMENT_ANALYSIS] Arquivo ja processado: ${arquivo.id}`)
     await dependencias.atualizarEstadoDocumental(pastaDriveId, { analysis: analise }, dependencias)
     return { ok: true, skipped: true, reason: "arquivo ja processado" }
@@ -162,12 +259,100 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
 
   let entrada
   try {
-    const pipeline = await dependencias.executarPipelineDocumental(
-      { buffer, mimeType },
-      { mimeType }
-    )
-    const documentoProcessado = criarDocumentoProcessado(arquivo, pipeline)
-    const agrupamentos = dependencias.agruparDocumentosProcessados([documentoProcessado])
+    const normalizedInput = await dependencias.normalizarEntradaDocumental({
+      fileId: arquivo.id, buffer, mimeType
+    }, deps)
+    const unitResults = []
+    for (const unit of normalizedInput.units) {
+      try {
+        const pipeline = await dependencias.executarPipelineDocumental(
+          { buffer: unit.buffer, mimeType: unit.mimeType },
+          { mimeType: unit.mimeType }
+        )
+        const erros = coletarEventos(pipeline, "erros")
+        const avisos = coletarEventos(pipeline, "avisos")
+        const identityDocument = /^(rg(?: frente| verso)?|cnh)$/i.test(String(pipeline.classificacao?.tipoDocumento || "").trim())
+        const partyResolution = typeof resolvePartyRole === "function" && identityDocument
+          ? await resolvePartyRole({ pipeline, registry, contexto: contexto || {}, fileId: arquivo.id, evidenceId: unit.evidenceId })
+          : { status: contexto?.partyRole || null, reasonCode: null }
+        const scopedPairCandidate = partyResolution?.status === "scoped_pair_candidate"
+        const identityUnsafe = identityDocument && typeof resolvePartyRole === "function" &&
+          partyResolution?.status !== "titular" && !scopedPairCandidate
+        const status = normalizedInput.reviewRequired || erros.length || identityUnsafe ? "review" : "analyzed"
+        emitirLogsDocumentaisSeguros({
+          logger: dependencias.logInfo,
+          pipeline,
+          contexto,
+          evidenceStatus: status,
+          partyResolution
+        })
+        registry = registrarEvidenciaDocumental(registry, {
+          evidenceId: unit.evidenceId,
+          fileId: arquivo.id,
+          sha256: normalizedInput.sha256,
+          mimeType: normalizedInput.mimeType,
+          pageNumber: unit.pageNumber,
+          tipoDocumento: pipeline.classificacao?.tipoDocumento,
+          ocr: pipeline.ocr,
+          quality: pipeline.qualidade,
+          classificacao: pipeline.classificacao,
+          extracao: pipeline.extracao,
+          coverage: coverageFrom(pipeline.classificacao?.tipoDocumento, contexto, unit.pageNumber),
+          requirementId: contexto?.documentoId || null,
+          partyRole: partyResolution?.status === "titular" || partyResolution?.status === "terceiro"
+            ? partyResolution.status : null,
+          partyResolutionStatus: partyResolution?.status || null,
+          status,
+          avisos: [...avisos, ...normalizedInput.warnings],
+          erros: [...erros, ...normalizedInput.errors],
+          version: nextEvidenceVersion(registry, unit.evidenceId)
+        })
+        if (identityUnsafe) {
+          registry = registrarDivergenciaSeNova(registry, {
+            code: partyResolution?.status === "terceiro"
+              ? "document_holder_identity_mismatch"
+              : "document_holder_identity_unverified",
+            evidenceIds: [unit.evidenceId],
+            status: "open",
+            createdAt: new Date().toISOString(),
+            details: { reasonCode: partyResolution?.reasonCode || "strong_identity_insufficient" }
+          })
+        }
+        unitResults.push({ unit: { ...unit, buffer: undefined }, pipeline })
+      } catch (unitError) {
+        dependencias.logErro("document_analysis", `pipeline documental falhou para ${arquivo.id}: ${unitError.message}`, unitError)
+        registry = registrarEvidenciaDocumental(registry, {
+          evidenceId: unit.evidenceId, fileId: arquivo.id, sha256: normalizedInput.sha256,
+          mimeType: normalizedInput.mimeType, pageNumber: unit.pageNumber, status: "review",
+          erros: [serializarErro(unitError)], version: nextEvidenceVersion(registry, unit.evidenceId)
+        })
+        unitResults.push({ unit: { ...unit, buffer: undefined }, error: serializarErro(unitError) })
+      }
+    }
+    if (!normalizedInput.units.length) {
+      registry = registrarEvidenciaDocumental(registry, {
+        fileId: arquivo.id, sha256: normalizedInput.sha256, mimeType: normalizedInput.mimeType,
+        status: "review", erros: normalizedInput.errors, avisos: normalizedInput.warnings,
+        version: nextEvidenceVersion(registry, arquivo.id)
+      })
+    }
+    if (normalizedInput.reviewRequired) {
+      registry = registrarDivergenciaSeNova(registry, {
+        code: "document_input_requires_review",
+        evidenceIds: (registry.evidencias || []).filter(item => item.fileId === arquivo.id).map(item => item.evidenceId),
+        status: "open",
+        createdAt: new Date().toISOString(),
+        details: { errors: normalizedInput.errors, warnings: normalizedInput.warnings }
+      })
+    }
+    const documentosProcessados = unitResults.filter(item => item.pipeline)
+      .map(item => criarDocumentoProcessado(arquivo, item.pipeline))
+    const agrupamentos = documentosProcessados.length
+      ? dependencias.agruparDocumentosProcessados(documentosProcessados)
+      : { avisos: [], erros: [] }
+    const pipeline = unitResults.length === 1
+      ? unitResults[0].pipeline
+      : { units: unitResults.map(removerBuffers), reviewRequired: normalizedInput.reviewRequired }
     entrada = montarEntradaSucesso({
       arquivo,
       mimeType,
@@ -176,8 +361,29 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
       agrupamentos,
       contexto
     })
+    const unitErrors = unitResults.filter(item => item.error).map(item => item.error)
+    if (unitErrors.length || normalizedInput.reviewRequired) {
+      entrada.status = "erro"
+      entrada.erros = [...entrada.erros, ...unitErrors, ...normalizedInput.errors]
+      entrada.avisos = [...entrada.avisos, ...normalizedInput.warnings]
+    }
   } catch (error) {
     dependencias.logErro("document_analysis", `pipeline documental falhou para ${arquivo.id}: ${error.message}`, error)
+    registry = registrarEvidenciaDocumental(registry, {
+      fileId: arquivo.id,
+      sha256: physicalSha256,
+      mimeType: mimeType || null,
+      status: "review",
+      erros: [serializarErro(error)],
+      version: nextEvidenceVersion(registry, arquivo.id)
+    })
+    registry = registrarDivergenciaSeNova(registry, {
+      code: "document_analysis_requires_review",
+      evidenceIds: [arquivo.id],
+      status: "open",
+      createdAt: new Date().toISOString(),
+      details: { errorCode: error.code || "DOCUMENT_ANALYSIS_ERROR" }
+    })
     entrada = montarEntradaErro({ arquivo, mimeType, nomeOriginal, contexto, error })
   }
 
@@ -209,7 +415,7 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
 
   const estadoDocumental = await dependencias.atualizarEstadoDocumental(
     pastaDriveId,
-    { analysis: analise },
+    { analysis: analise, registry },
     dependencias
   )
 
@@ -219,7 +425,10 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
     status: entrada.status,
     arquivoAnalise: salvo,
     arquivoEstadoDocumental: estadoDocumental?.arquivo || null,
-    entrada
+    entrada,
+    registry: estadoDocumental?.estado?.registry || registry,
+    evidencias: (estadoDocumental?.estado?.registry?.evidencias || registry.evidencias || [])
+      .filter(item => item.fileId === arquivo.id)
   }
 }
 
@@ -228,5 +437,7 @@ module.exports = {
   DOCUMENT_ANALYSIS_FILE,
   DOCUMENT_PIPELINE_VERSION,
   processarAnaliseDocumentalPosUpload,
-  removerBuffers
+  removerBuffers,
+  emitirLogsDocumentaisSeguros,
+  ocrConfidenceBucket
 }

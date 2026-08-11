@@ -174,7 +174,9 @@ function restaurarEstadoNegocioHubSpot(u, negocio) {
     restaurado.processing = false
     restaurado.timer = null
     restaurado.timerIncentivoDescricao = null
-    restaurado.ultimaMsg = u.ultimaMsg || Date.now()
+    // A janela de 24h pertence exclusivamente a uma mensagem real do cliente.
+    // Restaurar um snapshot do HubSpot nunca deve fabricar atividade recente.
+    restaurado.ultimaMsg = u.ultimaMsg || estadoSnapshot.ultimaMsg || null
 
     Object.assign(u, restaurado)
   }
@@ -285,6 +287,46 @@ async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
   }
 }
 
+async function hsBuscarNegociosComCasoDoContato(contactId) {
+  if (!contactId) return { casosOficiais: [], leads: [], finalizados: [] }
+  try {
+    const dealIds = await hsBuscarNegociosDoContato(contactId)
+    if (!dealIds.length) return { casosOficiais: [], leads: [], finalizados: [] }
+
+    const casosOficiais = []
+    const leads = []
+    const finalizados = []
+
+    for (const dealId of dealIds) {
+      try {
+        const res = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=dealstage,dealname,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso`,
+          { headers: HS() }
+        )
+        const props = res.data?.properties || {}
+        const stage = props.dealstage
+        const numeroCaso = sanitizarTextoEntrada(props.numero_de_caso) || null
+        const info = { id: dealId, stageId: stage, dealname: props.dealname || null, properties: props }
+
+        if (!stage || HS_STAGES_FINALIZADOS.has(stage)) {
+          finalizados.push(info)
+        } else if (numeroCaso) {
+          casosOficiais.push({ ...info, numeroCaso })
+        } else {
+          leads.push(info)
+        }
+      } catch (e) {
+        logErroHubSpot(e, { operation: "buscarNegocioComCaso", contactId, dealId })
+      }
+    }
+
+    return { casosOficiais, leads, finalizados }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "buscarNegociosComCaso", contactId })
+    return { casosOficiais: [], leads: [], finalizados: [] }
+  }
+}
+
 async function hsListarNegociosAtivosDoContato(contactId) {
   try {
     const dealIds = await hsBuscarNegociosDoContato(contactId)
@@ -320,6 +362,54 @@ async function hsListarNegociosAtivosDoContato(contactId) {
   } catch (e) {
     logErroHubSpot(e, { operation: "listarNegociosAtivos", contactId })
     return []
+  }
+}
+
+const ADMIN_ACTIVE_DEAL_PROPERTIES = "dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso"
+
+// Consulta administrativa: ao contrário do helper legado acima, falhas de
+// associação/leitura não podem ser confundidas com um contato sem negócios.
+async function hsListarNegociosAtivosDoContatoEstrito(contactId) {
+  try {
+    const associacoes = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(contactId)}/associations/deals`,
+      { headers: HS() }
+    )
+    if (!Array.isArray(associacoes?.data?.results)) {
+      return { ok: false, deals: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+    }
+    const dealIds = associacoes.data.results.map(item => item?.id).filter(Boolean)
+    if (dealIds.length !== associacoes.data.results.length) {
+      return { ok: false, deals: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+    }
+
+    const negocios = []
+    for (const dealId of dealIds) {
+      const res = await axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(dealId)}?properties=${ADMIN_ACTIVE_DEAL_PROPERTIES}`,
+        { headers: HS() }
+      )
+      if (!res?.data || typeof res.data !== "object" || !res.data.properties || typeof res.data.properties !== "object") {
+        return { ok: false, deals: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+      }
+      const stage = res.data.properties.dealstage
+      if (typeof stage !== "string" || !stage.trim()) {
+        return { ok: false, deals: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+      }
+      if (!HS_STAGES_FINALIZADOS.has(stage)) {
+        negocios.push({
+          id: String(res.data.id || dealId),
+          stageId: stage,
+          dealname: res.data.properties.dealname || null,
+          createdate: res.data.properties.createdate || null,
+          properties: res.data.properties
+        })
+      }
+    }
+    return { ok: true, deals: negocios.sort((a, b) => String(b.createdate || "").localeCompare(String(a.createdate || ""))) }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "listarNegociosAtivosEstrito", contactId })
+    return { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED") }
   }
 }
 
@@ -362,7 +452,9 @@ module.exports = {
   hsBuscarNegociosDoContato,
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
+  hsBuscarNegociosComCasoDoContato,
   hsListarNegociosAtivosDoContato,
+  hsListarNegociosAtivosDoContatoEstrito,
   hsAtualizarEtapaNegocio,
   hsMoverStage,
   hsMoverStageSeguro

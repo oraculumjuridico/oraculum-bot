@@ -1,7 +1,7 @@
 "use strict"
 
 const CONTACT_UPDATE_FIELDS = new Set([
-  "firstname", "email", "work_email", "phone", "cpf_do_cliente", "date_of_birth", "city", "state"
+  "firstname", "email", "work_email", "phone", "cpf_do_cliente", "date_of_birth", "city", "state", "address", "zip"
 ])
 const DEAL_UPDATE_FIELDS = new Set([
   "description", "descricao_completa", "resumo_cliente", "area_juridica", "tipo_de_caso",

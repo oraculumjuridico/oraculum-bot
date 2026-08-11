@@ -5,6 +5,7 @@ const { construirSolicitacao } = require("./post-human-solicitation-builder")
 const { enviarSolicitacaoAdaptativa } = require("./post-human-adaptive-sender")
 
 async function processPostHumanCycle({ cycle, usuario, repository, deps }) {
+  const startUltimaMsg = Number(await Promise.resolve(deps.getLatestCustomerMessage?.()) || 0)
   await repository.updateStatus(cycle.cycleId, "analyzing")
   const analysis = await analisarEstadoDocumental(usuario, cycle.negocioId, deps)
   if (analysis.estado === STATES.REVISAO_HUMANA_NECESSARIA) {
@@ -35,11 +36,11 @@ async function processPostHumanCycle({ cycle, usuario, repository, deps }) {
     ultimaPerguntaCliente: solicitation.texto,
     statusCadastro: solicitation.tipo === "documentos" ? "aguardando_documentos" : "aguardando_complementacao"
   })
-  const sent = await enviarSolicitacaoAdaptativa({ telefone: usuario.telefoneNormalizado, solicitacao: solicitation, usuario, cycle: ready, repository, deps })
+  const sent = await enviarSolicitacaoAdaptativa({ telefone: usuario.telefoneNormalizado, solicitacao: solicitation, usuario, cycle: ready, repository, deps: { ...deps, startUltimaMsg } })
   if (sent?.cycle?.status === "message_sent") {
     sent.cycle = await repository.updateStatus(cycle.cycleId, "awaiting_response")
   }
-  return sent
+  return sent?.cycle ? sent : { ...sent, cycle: ready }
 }
 
 module.exports = { processPostHumanCycle }

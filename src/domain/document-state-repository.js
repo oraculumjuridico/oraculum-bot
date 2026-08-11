@@ -2,6 +2,7 @@ const {
   lerJsonEmSubpastaDrive,
   salvarJsonEmSubpastaDrive
 } = require("./drive-files")
+const { normalizarContratoEvidencias } = require("./document-evidence-model")
 
 const DOCUMENT_STATE_FOLDER = "00_ADMIN"
 const DOCUMENT_STATE_FILE = "document-state.json"
@@ -22,7 +23,7 @@ function normalizarArray(valor) {
 function estadoVazio(options = {}) {
   return {
     analysis: {},
-    registry: {},
+    registry: normalizarContratoEvidencias({}),
     checklist: {},
     divergences: {},
     dossier: {},
@@ -37,7 +38,7 @@ function normalizarEstadoDocumental(estado = {}, options = {}) {
   const entrada = objeto(estado)
   return {
     analysis: objeto(entrada.analysis),
-    registry: objeto(entrada.registry),
+    registry: normalizarContratoEvidencias(objeto(entrada.registry)),
     checklist: objeto(entrada.checklist),
     divergences: objeto(entrada.divergences),
     dossier: objeto(entrada.dossier),

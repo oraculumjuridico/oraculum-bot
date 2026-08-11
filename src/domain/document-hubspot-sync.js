@@ -1,16 +1,24 @@
 const crypto = require("crypto")
 const {
   hsAtualizarContato,
-  hsAtualizarNegocio
+  hsAtualizarNegocio,
+  montarPropsContatoHubSpot
 } = require("./hubspot-core")
 const {
   CONTACT_WRITE_PROPERTIES,
-  DEAL_WRITE_PROPERTIES
+  DEAL_WRITE_PROPERTIES,
+  normalizeCpfHubSpot
 } = require("./hubspot-contract")
+const {
+  normalizarContratoEvidencias,
+  registrarDivergenciaDocumental
+} = require("./document-evidence-model")
 const { sanitizarTextoEntrada } = require("../utils/text")
 
 const DOCUMENT_HUBSPOT_SYNC_VERSION = "document-hubspot-sync-v1"
 const DEFAULT_MIN_CONFIDENCE = 0.85
+const CANONICAL_DOCUMENT_HUBSPOT_SYNC_VERSION = "document-hubspot-sync-v2-canonical"
+const canonicalSyncInFlight = new Map()
 
 const BLOCKED_FIELDS = new Set([
   "rg",
@@ -334,7 +342,274 @@ function montarPlanoObjeto({ tipoObjeto, registro, candidatos, minConfidence, as
   }
 }
 
+const CANONICAL_CONTACT_FIELDS = Object.freeze({
+  nome: { hubspotField: "firstname", userField: "nome", kind: "name" },
+  nome_completo: { hubspotField: "firstname", userField: "nome", kind: "name" },
+  cpf: { hubspotField: "cpf_do_cliente", userField: "cpf", kind: "cpf" },
+  data_nascimento: { hubspotField: "date_of_birth", userField: "dataNascimento", kind: "date" },
+  data_de_nascimento: { hubspotField: "date_of_birth", userField: "dataNascimento", kind: "date" },
+  nascimento: { hubspotField: "date_of_birth", userField: "dataNascimento", kind: "date" },
+  datanascimento: { hubspotField: "date_of_birth", userField: "dataNascimento", kind: "date" }
+})
+
+function normalizarNome(valor) {
+  const nome = sanitizarTextoEntrada(valor).replace(/\s+/g, " ").trim()
+  return nome.length >= 2 && /[A-Za-zÀ-ÿ]/.test(nome) ? nome : null
+}
+
+function normalizarData(valor) {
+  const texto = sanitizarTextoEntrada(valor)
+  const match = texto.match(/^(\d{4})-(\d{2})-(\d{2})$/) || texto.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (!match) return null
+  const year = match[1].length === 4 ? Number(match[1]) : Number(match[3])
+  const month = match[1].length === 4 ? Number(match[2]) : Number(match[2])
+  const day = match[1].length === 4 ? Number(match[3]) : Number(match[1])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (year < 1900 || year > new Date().getUTCFullYear() ||
+      date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+}
+
+function normalizarValorCanonico(kind, valor) {
+  if (kind === "cpf") return normalizeCpfHubSpot(String(valor || ""))
+  if (kind === "date") return normalizarData(valor)
+  if (kind === "name") return normalizarNome(valor)
+  return null
+}
+
+function compararValorCanonico(kind, left, right) {
+  const a = normalizarValorCanonico(kind, left)
+  const b = normalizarValorCanonico(kind, right)
+  if (!a || !b) return false
+  if (kind === "name") return normalizarTexto(a) === normalizarTexto(b)
+  return a === b
+}
+
+function evidenceRefKey(ref = {}) {
+  return `${ref.evidenceId}:${Number(ref.version)}:${ref.sha256 || ""}`
+}
+
+function obterDecisaoCanonica(input = {}, registry = {}) {
+  if (input.decision) return input.decision
+  return normalizarArray(registry.decisoes)
+    .filter(item => item.requirementId === "doc_rg")
+    .sort((left, right) => Number(right.revision) - Number(left.revision))[0] || null
+}
+
+function resolverEvidenciasExatas(registry, decision) {
+  if (!normalizarArray(decision?.evidenceRefs).length) {
+    return { evidencias: [], bloqueio: "legacy_decision_without_versioned_refs" }
+  }
+  const evidencias = []
+  for (const ref of decision.evidenceRefs) {
+    const encontrada = normalizarArray(registry.evidencias).find(item =>
+      item.evidenceId === ref.evidenceId && Number(item.version) === Number(ref.version) &&
+      (!ref.sha256 || item.sha256 === ref.sha256))
+    if (!encontrada) return { evidencias: [], bloqueio: "versioned_evidence_not_found" }
+    evidencias.push(encontrada)
+  }
+  return { evidencias, bloqueio: null }
+}
+
+function operacoesCanonicas(registry = {}) {
+  return normalizarArray(registry.metadados?.hubspotDocumentSync?.operacoes)
+}
+
+function idOperacaoCanonica({ objectId, decision, field, evidenceRefs }) {
+  return `document-hubspot:${crypto.createHash("sha256").update(JSON.stringify({
+    objectId: String(objectId || ""), requirementId: decision.requirementId,
+    revision: Number(decision.revision), field,
+    evidenceRefs: normalizarArray(evidenceRefs).map(evidenceRefKey).sort()
+  })).digest("hex").slice(0, 40)}`
+}
+
+function registrarDivergenciaSeNova(registry, input) {
+  const evidenceIds = [...new Set(normalizarArray(input.evidenceIds))].sort()
+  const fields = [...new Set(normalizarArray(input.details?.fields))].sort()
+  const existente = normalizarArray(registry.divergencias).some(item =>
+    item.code === input.code &&
+    JSON.stringify([...(item.evidenceIds || [])].sort()) === JSON.stringify(evidenceIds) &&
+    JSON.stringify([...(item.details?.fields || [])].sort()) === JSON.stringify(fields))
+  return existente ? registry : registrarDivergenciaDocumental(registry, { ...input, evidenceIds })
+}
+
+function planoCanonicoBloqueado(registry, decision, motivo, detalhes = {}) {
+  return {
+    versao: CANONICAL_DOCUMENT_HUBSPOT_SYNC_VERSION,
+    canonical: true,
+    decision,
+    registry,
+    contato: { objectId: null, props: {}, auditoria: [], bloqueados: [{ motivo, ...detalhes }], idempotente: false },
+    negocio: { objectId: null, props: {}, auditoria: [], bloqueados: [], idempotente: true },
+    trustedUserPatch: {},
+    auditoria: [],
+    bloqueados: [{ motivo, ...detalhes }]
+  }
+}
+
+function planejarSincronizacaoDocumentalCanonicaHubSpot(input = {}, options = {}) {
+  let registry = normalizarContratoEvidencias(input.registry || input.documentRegistry || {})
+  const decision = obterDecisaoCanonica(input, registry)
+  const contato = input.contato || input.contact || {}
+  const usuario = input.usuario || input.user || {}
+  const objectId = obterId(contato, ["contactId", "contatoId"])
+  const minConfidence = Number(options.minConfidence || DEFAULT_MIN_CONFIDENCE)
+  if (!decision || decision.requirementId !== "doc_rg") return planoCanonicoBloqueado(registry, decision, "canonical_decision_missing")
+  if (decision.status !== "delivered" || normalizarArray(decision.divergenceIds).length) {
+    return planoCanonicoBloqueado(registry, decision, decision.status === "review" ? "canonical_decision_in_review" : "canonical_decision_not_delivered")
+  }
+  if (!objectId) return planoCanonicoBloqueado(registry, decision, "contact_identity_missing")
+  const exact = resolverEvidenciasExatas(registry, decision)
+  if (exact.bloqueio) return planoCanonicoBloqueado(registry, decision, exact.bloqueio)
+  const evidenceIds = exact.evidencias.map(item => item.evidenceId)
+  const evidenceUnsafe = exact.evidencias.some(item =>
+    normalizarTexto(item.partyRole) !== "titular" ||
+    ["review", "error", "erro", "quarantined"].includes(normalizarTexto(item.status)) ||
+    normalizarArray(item.erros).length)
+  if (evidenceUnsafe) {
+    registry = registrarDivergenciaSeNova(registry, {
+      code: "hubspot_document_party_or_evidence_unsafe", evidenceIds, status: "open",
+      createdAt: nowISO(options), details: { requirementId: decision.requirementId, revision: decision.revision }
+    })
+    return planoCanonicoBloqueado(registry, decision, "party_or_evidence_unsafe")
+  }
+
+  const byField = new Map()
+  for (const evidence of exact.evidencias) {
+    const fields = evidence.extracao?.camposExtraidos || {}
+    for (const [original, rawValue] of Object.entries(fields)) {
+      const mapping = CANONICAL_CONTACT_FIELDS[normalizarTexto(original)]
+      if (!mapping) continue
+      const value = normalizarValorCanonico(mapping.kind, rawValue)
+      const confidence = confiancaCampo(normalizarTexto(original), evidence)
+      if (!value) continue
+      const evidenceRef = { evidenceId: evidence.evidenceId, version: evidence.version, sha256: evidence.sha256 }
+      const destinations = mapping.kind === "name"
+        ? Object.entries(montarPropsContatoHubSpot("", { nome: value }))
+          .filter(([field, part]) => ["firstname", "lastname"].includes(field) && !valorVazio(part))
+          .map(([hubspotField, part]) => ({ ...mapping, hubspotField, value: part, userValue: value }))
+        : [{ ...mapping, value, userValue: value }]
+      for (const destination of destinations) {
+        const candidates = byField.get(destination.hubspotField) || []
+        candidates.push({ ...destination, confidence, evidenceRef })
+        byField.set(destination.hubspotField, candidates)
+      }
+    }
+  }
+
+  const identityConflictFields = []
+  for (const [field, candidates] of byField) {
+    if (!["firstname", "lastname", "cpf_do_cliente"].includes(field)) continue
+    const kind = candidates[0].kind
+    const distinct = new Set(candidates.map(item => kind === 'name' ? normalizarTexto(item.value) : item.value))
+    if (distinct.size > 1) identityConflictFields.push(field)
+  }
+  if (identityConflictFields.length) {
+    registry = registrarDivergenciaSeNova(registry, {
+      code: "hubspot_document_identity_conflict", evidenceIds, status: "open",
+      createdAt: nowISO(options), details: {
+        fields: identityConflictFields.sort(), requirementId: decision.requirementId, revision: decision.revision
+      }
+    })
+    return planoCanonicoBloqueado(registry, decision, "document_identity_conflict", {
+      campos: identityConflictFields.sort()
+    })
+  }
+
+  const props = {}
+  const auditoria = []
+  const bloqueados = []
+  const trustedUserPatch = {}
+  const nameCandidates = [...(byField.get("firstname") || []), ...(byField.get("lastname") || [])]
+  const canonicalFullName = nameCandidates[0]?.userValue || null
+  const nameBlocked = Boolean(canonicalFullName && (
+    (!valorVazio(usuario.nome) && !compararValorCanonico("name", usuario.nome, canonicalFullName)) ||
+    ["firstname", "lastname"].some(field => {
+      const expected = (byField.get(field) || [])[0]?.value
+      const current = obterProperties(contato)[field]
+      return !valorVazio(current) && expected && !compararValorCanonico("name", current, expected)
+    }) ||
+    ["firstname", "lastname"].some(field => campoManual(contato, field))
+  ))
+  if (nameBlocked) {
+    bloqueados.push({ campo: "firstname/lastname", motivo: "name_value_conflict" })
+    registry = registrarDivergenciaSeNova(registry, {
+      code: "hubspot_document_existing_value_conflict", evidenceIds, status: "open", createdAt: nowISO(options),
+      details: { fields: ["firstname", "lastname"], requirementId: decision.requirementId, revision: decision.revision }
+    })
+  }
+  const existingOperations = new Set(operacoesCanonicas(registry)
+    .filter(item => ["applied", "equal"].includes(item.outcome)).map(item => item.operationId))
+  for (const [field, candidates] of byField) {
+    if (nameBlocked && ["firstname", "lastname"].includes(field)) continue
+    const mapping = candidates[0]
+    const distinct = new Map(candidates.map(item => [
+      mapping.kind === "name" ? normalizarTexto(item.value) : item.value, item
+    ]))
+    if (distinct.size !== 1) {
+      bloqueados.push({ campo: field, motivo: "document_values_divergent" })
+      registry = registrarDivergenciaSeNova(registry, {
+        code: "hubspot_document_identity_conflict", evidenceIds, status: "open",
+        createdAt: nowISO(options), details: { fields: [field], requirementId: decision.requirementId, revision: decision.revision }
+      })
+      continue
+    }
+    const candidate = [...distinct.values()][0]
+    const confidence = Math.min(...candidates.map(item => Number(item.confidence || 0)))
+    const supportRefs = candidates.map(item => item.evidenceRef)
+    const operationId = idOperacaoCanonica({ objectId, decision, field, evidenceRefs: supportRefs })
+    if (confidence < minConfidence) {
+      bloqueados.push({ campo: field, motivo: "confidence_below_existing_threshold", confianca: confidence })
+      continue
+    }
+    if (campoManual(contato, field)) {
+      bloqueados.push({ campo: field, motivo: "manual_validado", confianca: confidence })
+      continue
+    }
+    const currentHubSpot = obterProperties(contato)[field]
+    const currentUser = usuario[mapping.userField]
+    const userValue = candidate.userValue || candidate.value
+    if (!valorVazio(currentUser) && !compararValorCanonico(mapping.kind, currentUser, userValue)) {
+      bloqueados.push({ campo: field, motivo: "user_value_conflict", confianca: confidence })
+      registry = registrarDivergenciaSeNova(registry, {
+        code: "hubspot_document_user_conflict", evidenceIds, status: "open", createdAt: nowISO(options),
+        details: { fields: [field], requirementId: decision.requirementId, revision: decision.revision }
+      })
+      continue
+    }
+    const alreadyApplied = existingOperations.has(operationId)
+    const equal = !valorVazio(currentHubSpot) && compararValorCanonico(mapping.kind, currentHubSpot, candidate.value)
+    if (!valorVazio(currentHubSpot) && !equal) {
+      bloqueados.push({ campo: field, motivo: "hubspot_value_conflict", confianca: confidence })
+      registry = registrarDivergenciaSeNova(registry, {
+        code: "hubspot_document_existing_value_conflict", evidenceIds, status: "open", createdAt: nowISO(options),
+        details: { fields: [field], requirementId: decision.requirementId, revision: decision.revision }
+      })
+      continue
+    }
+    if (!alreadyApplied && !equal) props[field] = candidate.value
+    trustedUserPatch[mapping.userField] = userValue
+    auditoria.push({
+      objeto: "contacts", objectId, campo: field, operationId, outcome: alreadyApplied ? "idempotent" : equal ? "equal" : "planned",
+      origemDocumental: { requirementId: decision.requirementId, revision: decision.revision, evidenceRefs: supportRefs },
+      confianca: confidence, automatico: true
+    })
+  }
+  return {
+    versao: CANONICAL_DOCUMENT_HUBSPOT_SYNC_VERSION,
+    canonical: true,
+    decision,
+    registry,
+    contato: { objectId, props: ordenarObjeto(props), auditoria, bloqueados, idempotente: auditoria.length > 0 && auditoria.every(item => item.outcome === "idempotent") },
+    negocio: { objectId: obterId(input.negocio || input.deal || {}, ["dealId", "negocioId"]), props: {}, auditoria: [], bloqueados: [], idempotente: true },
+    trustedUserPatch,
+    auditoria,
+    bloqueados
+  }
+}
+
 function planejarSincronizacaoDocumentalHubSpot(input = {}, options = {}) {
+  if (input?.decision) return planejarSincronizacaoDocumentalCanonicaHubSpot(input, options)
   const registry = input.registry || input.documentRegistry || input
   const contato = input.contato || input.contact || {}
   const negocio = input.negocio || input.deal || {}
@@ -401,6 +676,131 @@ function planejarSincronizacaoDocumentalHubSpot(input = {}, options = {}) {
   }
 }
 
+function registrarOperacoesCanonicas(registry = {}, operacoes = [], options = {}) {
+  const metadataAnterior = registry.metadados?.hubspotDocumentSync || {}
+  const existentes = normalizarArray(metadataAnterior.operacoes)
+  const ids = new Set(existentes.map(item => item?.operationId).filter(Boolean))
+  const novas = operacoes.filter(item => item?.operationId && !ids.has(item.operationId))
+  return {
+    ...registry,
+    metadados: {
+      ...(registry.metadados || {}),
+      hubspotDocumentSync: {
+        ...metadataAnterior,
+        versao: CANONICAL_DOCUMENT_HUBSPOT_SYNC_VERSION,
+        atualizadoEm: nowISO(options),
+        operacoes: [...existentes, ...novas]
+      }
+    }
+  }
+}
+
+function aplicarDadosDocumentaisConfiaveisAoUsuario(usuario = {}, patch = {}) {
+  const aplicados = {}
+  for (const [campo, valor] of Object.entries(patch || {})) {
+    if (valorVazio(valor)) continue
+    if (!valorVazio(usuario[campo]) && String(usuario[campo]).trim() !== String(valor).trim()) continue
+    usuario[campo] = valor
+    aplicados[campo] = valor
+  }
+  return aplicados
+}
+
+function normalizarNumeroCasoDocumental(value) {
+  return sanitizarTextoEntrada(value).toUpperCase().replace(/\s+/g, "")
+}
+
+function validarContextoDocumentalHubSpot({ usuario = {}, contato = {}, negocio = {}, associatedContactIds = [] } = {}) {
+  const expectedContactId = String(usuario.contatoId || "")
+  const expectedDealId = String(usuario.negocioId || "")
+  const expectedCase = normalizarNumeroCasoDocumental(usuario.numeroCaso)
+  const contactId = String(obterId(contato, ["contactId", "contatoId"]) || "")
+  const dealId = String(obterId(negocio, ["dealId", "negocioId"]) || "")
+  const dealCase = normalizarNumeroCasoDocumental(obterProperties(negocio).numero_de_caso)
+  const associated = normalizarArray(associatedContactIds).map(String)
+  if (!expectedContactId || !expectedDealId || !expectedCase) return { ok: false, reason: "expected_identity_missing" }
+  if (contactId !== expectedContactId) return { ok: false, reason: "contact_identity_mismatch" }
+  if (dealId !== expectedDealId) return { ok: false, reason: "deal_identity_mismatch" }
+  if (dealCase !== expectedCase) return { ok: false, reason: "case_identity_mismatch" }
+  if (associated.length !== 1 || associated[0] !== expectedContactId) return { ok: false, reason: "contact_deal_association_mismatch" }
+  return { ok: true, contactId, dealId, numeroCaso: expectedCase }
+}
+
+function operacaoPersistida(item = {}, outcome, options = {}) {
+  return {
+    operationId: item.operationId,
+    objectType: item.objeto,
+    objectId: item.objectId || null,
+    field: item.campo,
+    outcome,
+    requirementId: item.origemDocumental?.requirementId || null,
+    revision: Number(item.origemDocumental?.revision || 0),
+    evidenceRefs: normalizarArray(item.origemDocumental?.evidenceRefs).map(ref => ({
+      evidenceId: ref.evidenceId,
+      version: Number(ref.version),
+      sha256: ref.sha256
+    })),
+    confidence: Number(item.confianca || 0),
+    automatic: true,
+    updatedAt: nowISO(options)
+  }
+}
+
+async function executarSincronizacaoCanonica(input = {}, deps = {}, options = {}) {
+  const plano = planejarSincronizacaoDocumentalCanonicaHubSpot(input, options)
+  const atualizarContato = deps.hsAtualizarContato || hsAtualizarContato
+  const planejadas = plano.auditoria.filter(item => item.outcome === "planned")
+  const iguais = plano.auditoria.filter(item => item.outcome === "equal")
+  let registry = plano.registry
+
+  if (plano.contato.objectId && Object.keys(plano.contato.props).length) {
+    let atualizado = null
+    try {
+      atualizado = await atualizarContato(plano.contato.objectId, plano.contato.props)
+    } catch (error) {
+      return { ok: false, retryable: true, error: error?.message || String(error), plano, registry, trustedUserPatch: {} }
+    }
+    if (!atualizado) {
+      return { ok: false, retryable: true, error: "hubspot_contact_update_failed", plano, registry, trustedUserPatch: {} }
+    }
+  }
+
+  const concluidas = [
+    ...planejadas.map(item => operacaoPersistida(item, "applied", options)),
+    ...iguais.map(item => operacaoPersistida(item, "equal", options))
+  ]
+  registry = registrarOperacoesCanonicas(registry, concluidas, options)
+  return {
+    ok: true,
+    plano,
+    registry,
+    auditoria: plano.auditoria,
+    trustedUserPatch: plano.trustedUserPatch
+  }
+}
+
+function chaveSincronizacaoCanonica(input = {}) {
+  const decision = input.decision || {}
+  return crypto.createHash("sha256").update(JSON.stringify({
+    objectId: obterId(input.contato || input.contact || {}, ["contactId", "contatoId"]),
+    requirementId: decision.requirementId,
+    revision: decision.revision,
+    evidenceRefs: normalizarArray(decision.evidenceRefs).map(evidenceRefKey).sort()
+  })).digest("hex")
+}
+
+async function sincronizarDocumentosCanonicosHubSpot(input = {}, deps = {}, options = {}) {
+  const key = chaveSincronizacaoCanonica(input)
+  if (canonicalSyncInFlight.has(key)) return canonicalSyncInFlight.get(key)
+  const promise = executarSincronizacaoCanonica(input, deps, options)
+  canonicalSyncInFlight.set(key, promise)
+  try {
+    return await promise
+  } finally {
+    if (canonicalSyncInFlight.get(key) === promise) canonicalSyncInFlight.delete(key)
+  }
+}
+
 function registrarAssinaturas(registry = {}, assinaturas = [], options = {}) {
   const existentes = obterAssinaturas(registry)
   for (const assinatura of assinaturas.filter(Boolean)) existentes.add(assinatura)
@@ -418,6 +818,7 @@ function registrarAssinaturas(registry = {}, assinaturas = [], options = {}) {
 }
 
 async function sincronizarDocumentosHubSpot(input = {}, deps = {}, options = {}) {
+  if (input?.decision) return sincronizarDocumentosCanonicosHubSpot(input, deps, options)
   const registry = input.registry || input.documentRegistry || input
   const plano = planejarSincronizacaoDocumentalHubSpot(input, options)
   const atualizarContato = deps.hsAtualizarContato || hsAtualizarContato
@@ -447,8 +848,12 @@ async function sincronizarDocumentosHubSpot(input = {}, deps = {}, options = {})
 
 module.exports = {
   DOCUMENT_HUBSPOT_SYNC_VERSION,
+  CANONICAL_DOCUMENT_HUBSPOT_SYNC_VERSION,
   BLOCKED_FIELDS,
   planejarSincronizacaoDocumentalHubSpot,
+  planejarSincronizacaoDocumentalCanonicaHubSpot,
   sincronizarDocumentosHubSpot,
+  aplicarDadosDocumentaisConfiaveisAoUsuario,
+  validarContextoDocumentalHubSpot,
   assinaturaAtualizacao
 }

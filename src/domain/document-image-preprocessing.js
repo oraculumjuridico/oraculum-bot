@@ -1,5 +1,18 @@
 const sharp = require("sharp")
 
+const PREPROCESSING_PROFILES = Object.freeze({
+  standard: "standard",
+  grayscale_contrast: "grayscale_contrast",
+  text_enhanced: "text_enhanced"
+})
+
+const DEFAULT_IMAGE_LIMITS = Object.freeze({
+  maxPixels: 25 * 1000 * 1000,
+  maxDimension: 10000,
+  maxUpscaleWidth: 2200,
+  maxUpscaleFactor: 1.6
+})
+
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/jpg",
@@ -53,28 +66,75 @@ function montarOpcoes(options = {}) {
     brightness: Number.isFinite(options.brightness) ? options.brightness : 1.03,
     contrast,
     linearOffset: Number.isFinite(options.linearOffset) ? options.linearOffset : Math.round((1 - contrast) * 64),
-    sharpenSigma: Number.isFinite(options.sharpenSigma) ? options.sharpenSigma : 0.8
+    sharpenSigma: Number.isFinite(options.sharpenSigma) ? options.sharpenSigma : 0.8,
+    profile: PREPROCESSING_PROFILES[options.profile] || PREPROCESSING_PROFILES.standard,
+    limits: { ...DEFAULT_IMAGE_LIMITS, ...(options.limits || {}) }
   }
+}
+
+function validarDimensoes(metadata = {}, limits = DEFAULT_IMAGE_LIMITS) {
+  const width = Number(metadata.width || 0)
+  const height = Number(metadata.height || 0)
+  if (!width || !height || width > limits.maxDimension || height > limits.maxDimension || width * height > limits.maxPixels) {
+    throw criarErroPreprocessamento("dimensoes da imagem excedem o limite seguro", "DOCUMENT_IMAGE_DIMENSION_LIMIT")
+  }
+}
+
+function aplicarPerfil(image, metadata, processingOptions) {
+  const common = image
+    .rotate()
+    .flatten({ background: processingOptions.trimBackground })
+    .trim({ background: processingOptions.trimBackground, threshold: processingOptions.trimThreshold })
+
+  if (processingOptions.profile === PREPROCESSING_PROFILES.grayscale_contrast) {
+    return common
+      .grayscale()
+      .normalize()
+      .linear(1.2, Math.round((1 - 1.2) * 64))
+      .sharpen({ sigma: 1.05 })
+  }
+  if (processingOptions.profile === PREPROCESSING_PROFILES.text_enhanced) {
+    const width = Number(metadata.width || 0)
+    const targetWidth = Math.min(
+      processingOptions.limits.maxUpscaleWidth,
+      Math.max(width, Math.round(width * processingOptions.limits.maxUpscaleFactor))
+    )
+    let enhanced = common
+    if (targetWidth > width) enhanced = enhanced.resize({ width: targetWidth, fit: "inside", withoutEnlargement: false })
+    return enhanced
+      .grayscale()
+      .normalize()
+      .median(1)
+      .sharpen({ sigma: 1.2 })
+      .threshold(175)
+  }
+  return common
+    .normalize()
+    .modulate({ brightness: processingOptions.brightness })
+    .linear(processingOptions.contrast, processingOptions.linearOffset)
+    .sharpen({ sigma: processingOptions.sharpenSigma })
+}
+
+function passosPerfil(profile, resized) {
+  const common = ["copy_buffer", "auto_orientation", "flatten_background", "trim_borders"]
+  if (profile === PREPROCESSING_PROFILES.grayscale_contrast) {
+    return [...common, "grayscale", "normalize_levels", "strong_contrast", "sharpen_for_ocr", "png_derivative"]
+  }
+  if (profile === PREPROCESSING_PROFILES.text_enhanced) {
+    return [...common, ...(resized ? ["controlled_upscale"] : []), "grayscale", "normalize_levels", "median_noise_reduction", "sharpen_for_ocr", "binary_threshold", "png_derivative"]
+  }
+  return [...common, "normalize_levels", "brightness_adjustment", "contrast_adjustment", "sharpen_for_ocr", "png_derivative"]
 }
 
 async function preprocessarImagemDocumento(input, options = {}) {
   const source = normalizarEntradaImagem(input, options)
   const processingOptions = montarOpcoes(options)
 
-  let image = sharp(source.buffer, { failOn: "none" })
+  let image = sharp(source.buffer, { failOn: "none", limitInputPixels: processingOptions.limits.maxPixels })
   const originalMetadata = await image.metadata()
+  validarDimensoes(originalMetadata, processingOptions.limits)
 
-  image = image
-    .rotate()
-    .flatten({ background: processingOptions.trimBackground })
-    .trim({
-      background: processingOptions.trimBackground,
-      threshold: processingOptions.trimThreshold
-    })
-    .normalize()
-    .modulate({ brightness: processingOptions.brightness })
-    .linear(processingOptions.contrast, processingOptions.linearOffset)
-    .sharpen({ sigma: processingOptions.sharpenSigma })
+  image = aplicarPerfil(image, originalMetadata, processingOptions)
     .png({ compressionLevel: 9, adaptiveFiltering: true })
 
   const processedBuffer = await image.toBuffer()
@@ -84,6 +144,7 @@ async function preprocessarImagemDocumento(input, options = {}) {
     buffer: processedBuffer,
     mimeType: "image/png",
     extension: ".png",
+    profile: processingOptions.profile,
     original: {
       bytes: source.buffer.length,
       mimeType: source.mimeType,
@@ -98,22 +159,17 @@ async function preprocessarImagemDocumento(input, options = {}) {
       width: processedMetadata.width || null,
       height: processedMetadata.height || null
     },
-    steps: [
-      "copy_buffer",
-      "auto_orientation",
-      "flatten_background",
-      "trim_borders",
-      "normalize_levels",
-      "brightness_adjustment",
-      "contrast_adjustment",
-      "sharpen_for_ocr",
-      "png_derivative"
-    ]
+    steps: passosPerfil(
+      processingOptions.profile,
+      processingOptions.profile === PREPROCESSING_PROFILES.text_enhanced && processedMetadata.width > originalMetadata.width
+    )
   }
 }
 
 module.exports = {
   SUPPORTED_IMAGE_MIME_TYPES,
+  PREPROCESSING_PROFILES,
+  DEFAULT_IMAGE_LIMITS,
   isSupportedDocumentImage,
   preprocessarImagemDocumento
 }

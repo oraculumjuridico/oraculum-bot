@@ -17,8 +17,14 @@ const WEBHOOK_INBOX_SCHEMA_VERSION = 1
 const WEBHOOK_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const ADMIN_ASSISTED_SESSION_SCHEMA_VERSION = 1
 const ADMIN_ASSISTED_SESSION_TTL_MS = 24 * 60 * 60 * 1000
+const OUTBOUND_MESSAGES_SCHEMA_VERSION = 1
+const PENDING_DOCUMENT_REQUEST_AUDIO_SCHEMA_VERSION = 1
+const OUTBOUND_MESSAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
+const OUTBOUND_STATUS_ORDER = { accepted_by_meta: 0, sent: 1, delivered: 2, read: 3, failed: 4 }
 
 let webhookInbox = criarWebhookInboxVazia()
+let outboundMessages = { schemaVersion: OUTBOUND_MESSAGES_SCHEMA_VERSION, records: {} }
+let pendingDocumentRequestAudio = { schemaVersion: PENDING_DOCUMENT_REQUEST_AUDIO_SCHEMA_VERSION, records: {} }
 
 let deps = {
   DATA_DIR: "",
@@ -56,6 +62,180 @@ function arquivoWebhookInbox() {
 
 function arquivoSessoesAdminAssistidas() {
   return path.join(deps.DATA_DIR, "admin-assisted-sessions.json")
+}
+function arquivoMensagensOutbound() { return path.join(deps.DATA_DIR, "outbound-messages.json") }
+function arquivoPendenciasAudioPedidoDocumentos() { return path.join(deps.DATA_DIR, "pending-document-request-audio.json") }
+function carregarPendenciasAudioPedidoDocumentos() {
+  const file = arquivoPendenciasAudioPedidoDocumentos()
+  if (!fs.existsSync(file)) {
+    pendingDocumentRequestAudio = { schemaVersion: PENDING_DOCUMENT_REQUEST_AUDIO_SCHEMA_VERSION, records: {} }
+    return clonarJson(pendingDocumentRequestAudio)
+  }
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"))
+  if (parsed?.schemaVersion !== PENDING_DOCUMENT_REQUEST_AUDIO_SCHEMA_VERSION) throw new Error("schema de pendencias de audio incompativel")
+  pendingDocumentRequestAudio = { schemaVersion: PENDING_DOCUMENT_REQUEST_AUDIO_SCHEMA_VERSION, records: parsed.records || {} }
+  let recovered = false
+  for (const record of Object.values(pendingDocumentRequestAudio.records)) {
+    // Versão inicial usava operationId também como chave de equivalência.
+    // Preserve os registros já gravados, sem deixá-los bloquear novos ciclos.
+    if (!record.activeKey) record.activeKey = record.operationId
+    // Não é possível saber se a Meta aceitou o áudio antes de um crash entre o
+    // transporte e a persistência. Encerrar de forma conservadora evita replay
+    // duplicado e permite que um novo pedido administrativo abra outro ciclo.
+    if (record?.status === "sending") {
+      record.status = "uncertain"
+      record.updatedAt = new Date().toISOString()
+      record.completedAt = record.updatedAt
+      record.suppressionReason = "delivery_uncertain_after_restart"
+      recovered = true
+    }
+  }
+  if (recovered) persistirPendenciasAudioPedidoDocumentos()
+  return clonarJson(pendingDocumentRequestAudio)
+}
+function persistirPendenciasAudioPedidoDocumentos() {
+  gravarJsonAtomico(arquivoPendenciasAudioPedidoDocumentos(), pendingDocumentRequestAudio)
+}
+function textoSeguroPendencia(value) { return sanitizarTextoEntrada(value).replace(/[\r\n]+/g, " ").slice(0, 3000) || null }
+function chaveAtivaPendencia(record = {}) {
+  return sanitizarTextoEntrada(record.activeKey || record.operationId)
+}
+function operationIdPendencia() {
+  return `admin_document_request_audio:${crypto.randomUUID()}`
+}
+function criarPendenciaAudioPedidoDocumentos(record = {}) {
+  const activeKey = chaveAtivaPendencia(record)
+  if (!activeKey) throw new Error("chave ativa de pendencia obrigatoria")
+  const existente = Object.values(pendingDocumentRequestAudio.records).find(item =>
+    item?.activeKey === activeKey && ["pending", "sending"].includes(item.status)
+  )
+  if (existente) return clonarJson(existente)
+  let operationId = sanitizarTextoEntrada(record.operationId) || operationIdPendencia()
+  while (pendingDocumentRequestAudio.records[operationId]) operationId = operationIdPendencia()
+  const now = new Date().toISOString()
+  const proxima = {
+    operationId, activeKey, contactId: sanitizarTextoEntrada(record.contactId) || null,
+    phoneNormalized: sanitizarTextoEntrada(record.phoneNormalized).replace(/\D/g, "") || null,
+    dealId: sanitizarTextoEntrada(record.dealId) || null, numeroCaso: sanitizarTextoEntrada(record.numeroCaso) || null,
+    type: "admin_document_request_audio", action: "admin_document_request_audio", status: "pending", createdAt: now, updatedAt: now,
+    providerMessageId: sanitizarTextoEntrada(record.providerMessageId) || null,
+    audioText: textoSeguroPendencia(record.audioText), attempts: 0, lastFailure: null, sentProviderMessageId: null
+  }
+  pendingDocumentRequestAudio.records[operationId] = proxima
+  persistirPendenciasAudioPedidoDocumentos()
+  return clonarJson(proxima)
+}
+function identidadePendenciaConfere(record, identity = {}) {
+  const contactId = sanitizarTextoEntrada(identity.contactId)
+  const phone = sanitizarTextoEntrada(identity.phoneNormalized).replace(/\D/g, "")
+  const dealId = sanitizarTextoEntrada(identity.dealId)
+  const numeroCaso = sanitizarTextoEntrada(identity.numeroCaso)
+  if (record.contactId ? record.contactId !== contactId : record.phoneNormalized !== phone) return false
+  return record.dealId === dealId && record.numeroCaso === numeroCaso
+}
+function reservarPendenciaAudioPedidoDocumentos(identity = {}) {
+  const candidate = Object.values(pendingDocumentRequestAudio.records).find(record =>
+    record?.status === "pending" && identidadePendenciaConfere(record, identity)
+  )
+  if (!candidate) return null
+  candidate.status = "sending"
+  candidate.attempts = Number(candidate.attempts || 0) + 1
+  candidate.updatedAt = new Date().toISOString()
+  pendingDocumentRequestAudio.records[candidate.operationId] = candidate
+  persistirPendenciasAudioPedidoDocumentos()
+  return clonarJson(candidate)
+}
+function concluirPendenciaAudioPedidoDocumentos(operationId, { status, reason, providerMessageId } = {}) {
+  const record = pendingDocumentRequestAudio.records[sanitizarTextoEntrada(operationId)]
+  if (!record || record.status !== "sending") return null
+  if (!["sent", "suppressed", "pending"].includes(status)) throw new Error("status final de pendencia invalido")
+  record.status = status
+  record.updatedAt = new Date().toISOString()
+  record.completedAt = status === "pending" ? null : record.updatedAt
+  record.suppressionReason = status === "suppressed" ? sanitizarTextoEntrada(reason).slice(0, 80) || "preference_changed" : null
+  record.lastFailure = status === "pending" ? sanitizarTextoEntrada(reason).slice(0, 80) || "audio_send_failed" : null
+  record.sentProviderMessageId = status === "sent" ? sanitizarTextoEntrada(providerMessageId) || null : record.sentProviderMessageId || null
+  persistirPendenciasAudioPedidoDocumentos()
+  return clonarJson(record)
+}
+function carregarMensagensOutbound() {
+  const file = arquivoMensagensOutbound()
+  if (!fs.existsSync(file)) {
+    outboundMessages = { schemaVersion: OUTBOUND_MESSAGES_SCHEMA_VERSION, records: {} }
+    return clonarJson(outboundMessages)
+  }
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"))
+  if (parsed?.schemaVersion !== OUTBOUND_MESSAGES_SCHEMA_VERSION) throw new Error("schema de mensagens outbound incompativel")
+  outboundMessages = { schemaVersion: OUTBOUND_MESSAGES_SCHEMA_VERSION, records: parsed.records || {} }
+  if (limparMensagensOutboundExpiradas(outboundMessages)) persistirMensagensOutbound()
+  return clonarJson(outboundMessages)
+}
+function persistirMensagensOutbound() {
+  limparMensagensOutboundExpiradas(outboundMessages)
+  gravarJsonAtomico(arquivoMensagensOutbound(), outboundMessages)
+}
+function registrarMensagemOutbound(record = {}) {
+  const id = sanitizarTextoEntrada(record.providerMessageId)
+  if (!id) return null
+  const now = new Date().toISOString()
+  outboundMessages.records[id] = {
+    providerMessageId: id, numeroCaso: sanitizarTextoEntrada(record.numeroCaso) || null,
+    contactId: sanitizarTextoEntrada(record.contactId) || null, dealId: sanitizarTextoEntrada(record.dealId) || null,
+    action: sanitizarTextoEntrada(record.action) || null, channel: sanitizarTextoEntrada(record.channel) || null,
+    destinationMasked: sanitizarTextoEntrada(record.destinationMasked) || null,
+    status: "accepted_by_meta", acceptedAt: now, statusAt: now, failureCode: null, failureDescription: null,
+    statusHistory: [{ status: "accepted_by_meta", at: now }],
+    expiresAt: new Date(Date.now() + OUTBOUND_MESSAGE_RETENTION_MS).toISOString()
+  }
+  persistirMensagensOutbound()
+  return clonarJson(outboundMessages.records[id])
+}
+function atualizarStatusMensagemOutbound(providerMessageId, status, details = {}) {
+  const id = sanitizarTextoEntrada(providerMessageId)
+  const record = outboundMessages.records[id]
+  if (!record || !["sent", "delivered", "read", "failed"].includes(status)) return null
+  const at = details.timestamp || new Date().toISOString()
+  const historico = Array.isArray(record.statusHistory) ? record.statusHistory : [{ status: record.status || "accepted_by_meta", at: record.statusAt || record.acceptedAt || at }]
+  const jaRegistrado = historico.some(event => event?.status === status)
+  const statusAtual = record.status || "accepted_by_meta"
+  const podeAvancar = OUTBOUND_STATUS_ORDER[status] > (OUTBOUND_STATUS_ORDER[statusAtual] ?? 0)
+  let alterado = false
+  if (!jaRegistrado) {
+    historico.push({ status, at })
+    alterado = true
+  }
+  if (podeAvancar) {
+    record.status = status
+    record.statusAt = at
+    alterado = true
+  }
+  if (status === "failed") {
+    const failureCode = sanitizarTextoEntrada(details.failureCode) || null
+    const failureDescription = sanitizarTextoEntrada(details.failureDescription).replace(/[\r\n]/g, " ").slice(0, 300) || null
+    if (record.failureCode !== failureCode || record.failureDescription !== failureDescription) {
+      record.failureCode = failureCode
+      record.failureDescription = failureDescription
+      alterado = true
+    }
+  }
+  record.statusHistory = historico
+  if (alterado) persistirMensagensOutbound()
+  return clonarJson(record)
+}
+function limparMensagensOutboundExpiradas(store, agora = Date.now()) {
+  let alterado = false
+  for (const [id, record] of Object.entries(store.records || {})) {
+    const expiresAt = Date.parse(record?.expiresAt || "")
+    if (!Number.isFinite(expiresAt)) {
+      const acceptedAt = Date.parse(record?.acceptedAt || "")
+      record.expiresAt = new Date((Number.isFinite(acceptedAt) ? acceptedAt : agora) + OUTBOUND_MESSAGE_RETENTION_MS).toISOString()
+      alterado = true
+    } else if (expiresAt <= agora) {
+      delete store.records[id]
+      alterado = true
+    }
+  }
+  return alterado
 }
 
 function erroArquivoTemporariamenteIndisponivel(error) {
@@ -621,6 +801,13 @@ module.exports = {
   configurarStatePersistence,
   criarChaveWebhookDuravel,
   carregarWebhookInbox,
+  carregarMensagensOutbound,
+  registrarMensagemOutbound,
+  atualizarStatusMensagemOutbound,
+  carregarPendenciasAudioPedidoDocumentos,
+  criarPendenciaAudioPedidoDocumentos,
+  reservarPendenciaAudioPedidoDocumentos,
+  concluirPendenciaAudioPedidoDocumentos,
   registrarMensagensWebhook,
   listarWebhookPendentes,
   marcarWebhookProcessing,
@@ -638,4 +825,5 @@ module.exports = {
   carregarSessoesAdminAssistidasPersistidas,
   hidratarUsuarioPersistido,
   carregarUsersPersistidos
+  ,gravarJsonAtomico
 }

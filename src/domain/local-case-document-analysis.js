@@ -6,6 +6,7 @@ const crypto = require("node:crypto")
 const sharp = require("sharp")
 const { createWorker, OEM } = require("tesseract.js")
 const { executarPipelineDocumental } = require("./document-pipeline-orchestrator")
+const documentInput = require("./document-input-normalizer")
 
 // Shared file exclusion rule (must match import-real-cases.js)
 function shouldIgnoreInventoryFile(fileName) {
@@ -22,10 +23,8 @@ function getBlockingReviewReasons(reviewReasons = []) {
   ])
   return reviewReasons.filter(reason => !resolvableDuringApply.has(reason))
 }
-const ALLOWED_MIME_TYPES = new Set([
-  "image/jpeg", "image/png", "image/webp", "image/tiff", "image/heic", "image/heif", "application/pdf"
-])
-const DEFAULT_LIMITS = Object.freeze({ maxFileBytes: 20 * 1024 * 1024, maxFilesPerCase: 40, maxPdfPages: 12, maxPixels: 25 * 1000 * 1000, maxDimension: 10000, maxWidth: 10000, maxHeight: 10000, ocrTimeoutMs: 60 * 1000 })
+const ALLOWED_MIME_TYPES = documentInput.ALLOWED_MIME_TYPES
+const DEFAULT_LIMITS = documentInput.DEFAULT_LIMITS
 const CACHE_VERSION = 1
 const sha256 = buffer => crypto.createHash("sha256").update(buffer).digest("hex")
 const unique = values => [...new Set(values.filter(Boolean))]
@@ -62,79 +61,13 @@ function normalizeDate(value) {
   return match ? text : ""
 }
 function detectMime(buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return ""
-  if (buffer.subarray(0, 5).toString("ascii") === "%PDF-") return "application/pdf"
-  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg"
-  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png"
-  if (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp"
-  const header = buffer.subarray(0, 4).toString("hex")
-  if (header === "49492a00" || header === "4d4d002a") return "image/tiff"
-  if (buffer.subarray(4, 8).toString("ascii") === "ftyp") {
-    const brand = buffer.subarray(8, 12).toString("ascii").toLowerCase()
-    if (["heic", "heix", "hevc", "hevx"].includes(brand)) return "image/heic"
-    if (["heif", "heim", "heis", "mif1", "msf1"].includes(brand)) return "image/heif"
-  }
-  return ""
+  return documentInput.detectMime(buffer)
 }
 function extensionMatchesMime(file, mimeType) {
-  const extension = path.extname(file).toLowerCase()
-  const expected = {
-    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
-    ".tif": "image/tiff", ".tiff": "image/tiff", ".heic": "image/heic", ".heif": "image/heif", ".pdf": "application/pdf"
-  }[extension]
-  return expected === mimeType
+  return documentInput.extensionMatchesMime(file, mimeType)
 }
 async function renderPdfPages(buffer, maxPages, limits = DEFAULT_LIMITS, dependencies = {}) {
-  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs")
-  const createCanvas = dependencies.createCanvas || (await import("@napi-rs/canvas")).createCanvas
-  const document = await getDocument({ data: new Uint8Array(buffer), disableWorker: true, useSystemFonts: true }).promise
-  const pageCount = Math.min(document.numPages, maxPages)
-  const pages = []
-  const pageErrors = []
-  try {
-    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
-      let page
-      try {
-        try {
-          page = await document.getPage(pageNumber)
-          const viewport = page.getViewport({ scale: 1.7 })
-          if (viewport.width > limits.maxWidth || viewport.height > limits.maxHeight || viewport.width * viewport.height > limits.maxPixels) {
-            const error = new Error("pdf_page_dimension_limit")
-            error.code = "PDF_PAGE_DIMENSION_LIMIT"
-            error.pageNumber = pageNumber
-            throw error
-          }
-          const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
-          const context = canvas.getContext("2d")
-          context.fillStyle = "#ffffff"
-          context.fillRect(0, 0, canvas.width, canvas.height)
-          try {
-            await page.render({ canvasContext: context, viewport }).promise
-            pages.push(Buffer.from(await canvas.encode("png")))
-          } catch (renderError) {
-            // Falha no render, registra apenas código técnico
-            pageErrors.push({ pageNumber, code: renderError.message || "PDF_RENDER_ERROR" })
-          }
-        } finally {
-          if (page) page.cleanup()
-        }
-      } catch (pageError) {
-        // Falha na obtenção da página ou validação
-        pageErrors.push({ pageNumber, code: pageError.code || pageError.message || "PDF_PAGE_ERROR" })
-      }
-    }
-    // Se não conseguiu renderizar nenhuma página, considera erro total
-    if (pages.length === 0 && pageErrors.length > 0) {
-      const firstError = pageErrors[0]
-      const error = new Error(firstError.code)
-      error.code = firstError.code
-      error.pageNumber = firstError.pageNumber
-      throw error
-    }
-    return { pages, totalPages: document.numPages, truncated: document.numPages > maxPages, pageErrors: pageErrors.length > 0 ? pageErrors : undefined }
-  } finally {
-    await document.destroy()
-  }
+  return documentInput.renderPdfPages(buffer, maxPages, limits, dependencies)
 }
 async function ocrWithTimeout(input, options = {}) {
   let worker

@@ -215,11 +215,14 @@ const {
 } = require("./src/domain/admin-case-ui")
 const {
   montarBotaoAtendimentoRealizado,
+  waitForActionContextButton,
   handleAtendimentoRealizadoConfirmation,
-  isPilotCaseAllowed
+  isPilotCaseAllowed,
+  normalizeCaseNumber
 } = require("./src/domain/admin-post-human-complementation")
 const { isPostHumanComplementationEnabled } = require("./src/domain/post-human-feature-flag")
 const { PostHumanCycleRepository } = require("./src/domain/post-human-cycle-model")
+const { PostHumanActionContextRepository } = require("./src/domain/post-human-action-context-repository")
 const { processPostHumanCycle } = require("./src/domain/post-human-flow")
 const { createPostHumanDispatcher, recoverPostHumanCycles } = require("./src/domain/post-human-dispatcher")
 const { createLegacyDocumentPipeline } = require("./src/domain/post-human-document-pipeline")
@@ -229,6 +232,13 @@ const {
   resolveComplementaryContext,
   resolveComplementaryFields
 } = require("./src/domain/post-human-complementary-fields")
+const { buildInssLegalAnswerResult, isInssLegalField } = require("./src/domain/inss-legal-facts")
+const { buildBpcLegalAnswerResult, isBpcLegalField, isBpcCase } = require("./src/domain/bpc-legal-facts")
+const {
+  resolveLegalCaseNomenclature,
+  applyLegalCaseNomenclatureToUser
+} = require("./src/domain/legal-case-nomenclature")
+const { ADDRESS_FIELDS, buildAddressAnswerResult } = require("./src/domain/address-facts")
 const { atualizarHubSpotSeguro } = require("./src/domain/post-human-hubspot-updater")
 const { META_TEMPLATES } = require("./src/domain/meta-templates")
 const {
@@ -246,6 +256,9 @@ const {
 const {
   mapearNegociosHubSpotAdmin
 } = require("./src/domain/admin-hubspot-deal-mapper")
+const {
+  inspecionarRespostaBuscaHubSpotAdmin
+} = require("./src/domain/admin-hubspot-search-response")
 const {
   resolverUrgenciaAdmin,
   persistirUrgenciaAltaAdmin
@@ -286,6 +299,20 @@ const {
 const {
   processarAnaliseDocumentalPosUpload
 } = require("./src/domain/document-analysis-integration")
+const { confirmCanonicalDocument } = require("./src/domain/document-canonical-service")
+const { projectDocumentDecision } = require("./src/domain/document-checklist-projection")
+const { reevaluatePostHumanForDecision } = require("./src/domain/post-human-document-reevaluation")
+const {
+  sincronizarDocumentosHubSpot,
+  aplicarDadosDocumentaisConfiaveisAoUsuario,
+  validarContextoDocumentalHubSpot
+} = require("./src/domain/document-hubspot-sync")
+const { atualizarEstadoDocumental } = require("./src/domain/document-state-repository")
+const { resolveDocumentPartyIdentity } = require("./src/domain/document-party-identity")
+const {
+  evaluateGuidedDocumentReceipt,
+  applyGuidedDocumentReceipt
+} = require("./src/domain/document-guided-receipt")
 const { executarPipelineDocumental } = require("./src/domain/document-pipeline-orchestrator")
 const { createAdminAssistedMediaStaging, processExistingCaseAdminMedia } = require("./src/domain/admin-assisted-media")
 const { createLiveCaseFlow, buildCanonicalPlan } = require("./src/domain/live-case-executor-bridge")
@@ -306,7 +333,8 @@ const {
 const {
   digitando,
   enviar,
-  enviarAudio,
+  enviarAudio: enviarAudioTransport,
+  enviarAudioComResultado: enviarAudioTransportComResultado,
   enviarImagemWhatsApp,
   ultimosAudiosEnviados,
   validarDestinatarioWhatsApp,
@@ -314,6 +342,7 @@ const {
   validarOpcoesWhatsApp
 } = require("./src/domain/whatsapp-transport")
 const templateService = require("./src/domain/template-service")
+const { enviarAudioPedidoDocumentos } = require("./src/domain/admin-document-request-audio")
 const { validarMetaWabaNoBoot } = require("./src/domain/meta-waba-validator")
 const {
   validarAssinaturaMeta,
@@ -338,6 +367,7 @@ const {
   carregarSessoesAdminAssistidasPersistidas,
   hidratarUsuarioPersistido,
   carregarUsersPersistidos,
+  gravarJsonAtomico,
   criarChaveWebhookDuravel,
   carregarWebhookInbox,
   registrarMensagensWebhook,
@@ -345,8 +375,17 @@ const {
   marcarWebhookProcessing,
   marcarWebhookCompleted,
   marcarWebhookError,
-  obterEstadoWebhookInbox
+  obterEstadoWebhookInbox,
+  carregarMensagensOutbound,
+  registrarMensagemOutbound,
+  atualizarStatusMensagemOutbound,
+  carregarPendenciasAudioPedidoDocumentos,
+  criarPendenciaAudioPedidoDocumentos,
+  reservarPendenciaAudioPedidoDocumentos,
+  concluirPendenciaAudioPedidoDocumentos
 } = require("./src/domain/state-persistence")
+const { createCommunicationPreferences, applyPreferenceToUser } = require("./src/domain/communication-preferences")
+const api = { persistirUsersAgora }
 const {
   CALLBACK_IDEMPOTENCY_FILE,
   createCallbackKey,
@@ -376,6 +415,7 @@ const {
   HS,
   hsBuscarPorCpf,
   hsBuscarPorPhone,
+  hsBuscarContatoSeguro,
   hsCriarContato,
   hsCriarNegocio,
   hsAssociar,
@@ -398,11 +438,19 @@ const {
   sincronizarContatoNegocioHubSpot,
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
+  hsBuscarNegociosComCasoDoContato,
   hsListarNegociosAtivosDoContato,
+  hsListarNegociosAtivosDoContatoEstrito,
   hsAtualizarEtapaNegocio,
   hsMoverStage,
   hsMoverStageSeguro
 } = require("./src/domain/hubspot-sync")
+const {
+  telefoneCanonico,
+  definirContatoId,
+  definirNegocioId
+} = require("./src/domain/identity")
+const { normalizarTelefoneHubSpot } = require("./src/domain/phone-name")
 const {
   configurarGroqClientReplies,
   respostaIA,
@@ -636,6 +684,50 @@ app.use(
     fallthrough: false
   })
 )
+
+function validarAdminHttp(req, res, next) {
+  const senha = sanitizarTextoEntrada(req.headers["x-admin-password"] || req.body?.adminPassword || "")
+  if (!senhaAdminConfigurada() || !senhaAdminValida(senha)) {
+    logSegurancaAdmin(req.body?.phone || req.query?.phone || "-", "acesso http admin negado")
+    return res.sendStatus(401)
+  }
+  next()
+}
+
+app.post("/admin/limpar-usuario", validarAdminHttp, async (req, res) => {
+  try {
+    const telefone = normalizarNumeroWhatsAppEnvio(req.body?.phone || req.body?.numero || "")
+    const confirmar = sanitizarTextoEntrada(req.body?.confirmar || "")
+
+    if (!telefone) {
+      return res.status(400).json({ ok: false, motivo: "telefone_obrigatorio" })
+    }
+    if (confirmar !== "LIMPAR_USUARIO") {
+      return res.status(400).json({ ok: false, motivo: "confirmacao_invalida" })
+    }
+
+    const numeroMascarado = mascararTelefoneLog(telefone)
+    const tinha = Object.prototype.hasOwnProperty.call(users, telefone)
+    if (tinha) {
+      const anterior = { ...users[telefone] }
+      delete users[telefone]
+      try {
+        await api.persistirUsersAgora({ propagarErro: true })
+        logInfo(`[admin] usuario_removido phone=${numeroMascarado}`)
+      } catch (e) {
+        users[telefone] = anterior
+        throw e
+      }
+    } else {
+      logInfo(`[admin] usuario_nao_encontrado phone=${numeroMascarado}`)
+    }
+
+    return res.json({ ok: true, removido: tinha })
+  } catch (e) {
+    logErro("admin-limpar-usuario", e.message, e)
+    return res.sendStatus(500)
+  }
+})
 // ================================================================
 //  NOTIFICAÇÕES — WhatsApp pessoal + E-mail
 // ================================================================
@@ -831,6 +923,7 @@ const {
 
 const DATA_DIR = path.resolve(process.env.ORACULUM_DATA_DIR || path.join(__dirname, "data"))
 const USERS_STATE_FILE = path.join(DATA_DIR, "users-state.json")
+const communicationPreferences = createCommunicationPreferences({ dataDir: DATA_DIR, writeJsonAtomically: gravarJsonAtomico })
 
 const HS_PIPELINE = "default"
 
@@ -908,6 +1001,46 @@ const locksUsuarios = new Map()
 const sessoesAdminAutenticadas = new Map()
 const tentativasAdminWhatsApp = new Map()
 const revisoesCasosAdmin = new Map()
+
+function telefonePreferenciaComunicacao(u, from = "") {
+  return normalizarNumeroWhatsAppEnvio(u?.whatsappContato || u?._numero || from)
+}
+
+function obterPreferenciaComunicacao(u, from = "") {
+  const phoneNormalized = telefonePreferenciaComunicacao(u, from)
+  const record = communicationPreferences.resolve({
+    contactId: u?.contatoId,
+    phoneNormalized,
+    snapshotPreference: u?.communicationPreference,
+    modoTexto: u?.modoTexto
+  })
+  applyPreferenceToUser(u, record)
+  return record
+}
+
+function promoverPreferenciaComunicacao(u, from = "") {
+  const record = communicationPreferences.promote({ contactId: u?.contatoId, phoneNormalized: telefonePreferenciaComunicacao(u, from) })
+  if (record) applyPreferenceToUser(u, record)
+  return record
+}
+
+function definirPreferenciaComunicacao(u, from, preference, source) {
+  const record = communicationPreferences.set({
+    preference, source, contactId: u.contatoId, phoneNormalized: telefonePreferenciaComunicacao(u, from)
+  })
+  for (const [numero, usuario] of Object.entries(users)) {
+    if (String(usuario?.contatoId || "") === String(u.contatoId)) applyPreferenceToUser(usuario, record)
+  }
+  applyPreferenceToUser(u, record)
+  agendarPersistenciaUsers()
+  return record
+}
+
+function rotuloPreferenciaComunicacao(record) {
+  if (record?.preference === "texto") return "📝 Comunicação por texto"
+  if (record?.preference === "audio_sempre") return "🔊 Comunicação sempre por áudio"
+  return "❓ Comunicação não definida"
+}
 
 // Cache curto do resumo operacional para reduzir chamadas ao HubSpot
 const cacheResumoOperacional = {
@@ -1039,6 +1172,7 @@ function novoUsuario(nomeWA) {
     processing: false,
     modoDigitando: false,
     modoTexto: false,
+    communicationPreference: null,
     aguardandoResposta: false,
     _jaEsclareceuRelato: false,
     _jaAcolheuSofrimento: false,
@@ -1074,6 +1208,8 @@ function resolverNomeBriefing(u = {}) {
 }
 
 async function resolverUsuarioPorHubSpot(from, nomeWA) {
+  const telefone = telefoneCanonico(from) || from
+  from = telefone
   const sessaoAtual = users[from] || null
   let u = null
   
@@ -1092,7 +1228,11 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
   
   // Só consultar HubSpot se não consultou recentemente
   if (!jaConsultouHubSpot) {
-    contato = await hsBuscarPorPhone(from)
+    const resultadoBusca = await hsBuscarContatoSeguro(from)
+    if (resultadoBusca.status === "error" || resultadoBusca.status === "timeout") {
+      throw Object.assign(new Error("HUBSPOT_CONTACT_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_CONTACT_LOOKUP_UNCERTAIN" })
+    }
+    contato = resultadoBusca.contato
     if (sessaoAtual) {
       sessaoAtual._hubspotConsultadoEm = Date.now()
       sessaoAtual._hubspotResultadoId = contato?.id || null
@@ -1129,6 +1269,25 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     if (!u.nomeConfirmado && nomeHubspotCompleto) {
       u.nome = nomeHubspotCompleto
     }
+
+    // Restaurar contactId
+    definirContatoId(u, contato.id)
+
+    // Buscar negócios associados ao contato para localizar caso existente
+    const negociosHubSpot = await hsBuscarNegociosComCasoDoContato(contato.id)
+    if (negociosHubSpot) {
+      const casosComNumeroCaso = negociosHubSpot.casosOficiais
+      // Se houver exatamente um caso oficial, restaurar o negócio
+      if (casosComNumeroCaso.length === 1) {
+        const negocio = casosComNumeroCaso[0]
+        restaurarEstadoNegocioHubSpot(u, negocio.negocio || negocio)
+        definirNegocioId(u, negocio.id)
+      }
+      // Se houver múltiplos casos oficiais, reconhecer como cliente e armazenar a lista
+      if (casosComNumeroCaso.length > 1) {
+        u._casosDisponiveis = casosComNumeroCaso.map(c => ({ id: c.id, numeroCaso: c.numeroCaso, area: c.properties?.area_juridica, dealname: c.properties?.dealname || null }))
+      }
+    }
   } else if (podeReutilizarSessaoLocalSemHubSpot) {
     u = sessaoAtual
   } else {
@@ -1145,7 +1304,7 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotResultadoId = null
   }
 
-  if (!u._numero && from) u._numero = from
+  if (!u._numero && telefone) u._numero = telefone
   u.nomeWA = nomeBase
   u.nomePerfilWhatsApp = nomePerfilWhatsApp
   
@@ -1158,9 +1317,10 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     u._hubspotSemContato = true
   } else {
     u._hubspotSemContato = false
+    u.whatsappContato = telefone
   }
   
-  u._numero = from
+  u._numero = telefone
   agendarPersistenciaUsers()
 
   return { contato, u }
@@ -1382,16 +1542,18 @@ configurarStatePersistence({
 //  NOVO FLUXO HUMANIZADO - FUNÇÕES AUXILIARES
 // ================================================================
 
-async function telaConfirmarTranscricao(from, atendente, transcricao, area) {
+async function telaConfirmarTranscricao(from, u, transcricao, area) {
   const preview = String(transcricao || "").trim()
   const previewExibir = preview.slice(0, 360) + (preview.length > 360 ? "..." : "")
 
-  try {
-    const ogg = await gerarAudioAtendente(atendente,
-      `Recebi seu áudio. Ouvi o seguinte: "${preview.slice(0, 200)}${preview.length > 200 ? "..." : ""}". Está correto? Se estiver, toque em Confirmar envio. Se não estiver, toque em Enviar novo áudio ou em Corrigir digitando.`)
-    await enviarAudio(from, urlAudioAtendente(ogg))
-    await new Promise(r => setTimeout(r, 4000))
-  } catch (e) { logErro("tts", "Falha áudio confirmar transcrição", e) }
+  if (deveEnviarAudioAutomatico(u, from)) {
+    try {
+      const ogg = await gerarAudioAtendente(u?.atendente,
+        `Recebi seu áudio. Ouvi o seguinte: "${preview.slice(0, 200)}${preview.length > 200 ? "..." : ""}". Está correto? Se estiver, toque em Confirmar envio. Se não estiver, toque em Enviar novo áudio ou em Corrigir digitando.`)
+      await enviarAudio(from, urlAudioAtendente(ogg))
+      await new Promise(r => setTimeout(r, 4000))
+    } catch (e) { logErro("tts", "Falha áudio confirmar transcrição", e) }
+  }
 
   return {
     texto: `🎙️ *Recebi seu áudio!*\n\nIsto é o que entendi:\n\n_"${previewExibir}"_\n\nO que deseja fazer?`,
@@ -1403,13 +1565,15 @@ async function telaConfirmarTranscricao(from, atendente, transcricao, area) {
   }
 }
 
-async function telaConfirmarArea(from, atendente, area) {
-  try {
-    const ogg = await gerarAudioAtendente(atendente,
-      `Identifiquei que seu caso é sobre ${area}. Você tem duas opções. Primeira: Sim, está certo. Segunda: Explicar melhor a situação, se a área parecer errada.`)
-    await enviarAudio(from, urlAudioAtendente(ogg))
-    await new Promise(r => setTimeout(r, 4000))
-  } catch (e) { logErro("tts", "Falha áudio confirmar área", e) }
+async function telaConfirmarArea(from, u, area) {
+  if (deveEnviarAudioAutomatico(u, from)) {
+    try {
+      const ogg = await gerarAudioAtendente(u?.atendente,
+        `Identifiquei que seu caso é sobre ${area}. Você tem duas opções. Primeira: Sim, está certo. Segunda: Explicar melhor a situação, se a área parecer errada.`)
+      await enviarAudio(from, urlAudioAtendente(ogg))
+      await new Promise(r => setTimeout(r, 4000))
+    } catch (e) { logErro("tts", "Falha áudio confirmar área", e) }
+  }
 
   return {
     texto: `⚖️ Identifiquei que seu caso é sobre *${area || "Outros"}*.\n\nEstá correto?`,
@@ -1421,14 +1585,16 @@ async function telaConfirmarArea(from, atendente, area) {
 }
 
 async function telaConfirmarAreaAudio(from, u, origemTexto = false) {
-  try {
-    const textoAudio = origemTexto
-      ? `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação. Terceira opção: Corrigir o texto.`
-      : `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação.`
-    const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
-    await enviarAudio(from, urlAudioAtendente(ogg))
-    await new Promise(r => setTimeout(r, 4000))
-  } catch (e) { logErro("tts", "Falha áudio confirmar área audio", e) }
+  if (deveEnviarAudioAutomatico(u, from)) {
+    try {
+      const textoAudio = origemTexto
+        ? `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação. Terceira opção: Corrigir o texto.`
+        : `Identifiquei que seu caso é sobre ${u.area || "Outros"}. Está correto? Primeira opção: Sim, está certo. Segunda opção: Explicar melhor a situação.`
+      const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
+      await enviarAudio(from, urlAudioAtendente(ogg))
+      await new Promise(r => setTimeout(r, 4000))
+    } catch (e) { logErro("tts", "Falha áudio confirmar área audio", e) }
+  }
 
   const opcoes = origemTexto
     ? [
@@ -1696,7 +1862,7 @@ async function telaParaQuem(from, u) {
     ? `Só uma pergunta rápida antes de começar. Você está aqui para cuidar do seu próprio caso, ou vai abrir um atendimento para ${labelRelacao}? Primeira opção: É para mim. Segunda opção: É para ${labelRelacao}.`
     : `Só uma pergunta rápida antes de começar. Você está aqui para cuidar do seu próprio caso, ou vai abrir um atendimento para outra pessoa, como um familiar ou amigo? Primeira opção: É para mim. Segunda opção: É para outra pessoa.`
 
-  if (!u.modoTexto) {
+  if (deveEnviarAudioAutomatico(u, from)) {
     try {
       const ogg = await gerarAudioAtendente(u.atendente, textoAudio)
       await enviarAudio(from, urlAudioAtendente(ogg))
@@ -1725,7 +1891,7 @@ async function perguntarTitularNomePreCadastro(from, u, nomeLimpo, contexto = {}
 
   const alvo = contexto?.label || "outra pessoa"
   const textoAudio = `Só para eu preencher corretamente: ${nomeLimpo} é o seu nome, ou é o nome da pessoa atendida, ${alvo}? Se o nome estiver errado, me diga o nome correto agora.`
-  if (!u.modoTexto) {
+  if (deveEnviarAudioAutomatico(u, from)) {
     try {
       const ogg = await gerarAudioAtendente(u.atendente, `Só para eu preencher corretamente: ${nomeLimpo} é o seu nome, ou é o nome da pessoa atendida, ${alvo}? Primeira opção: é meu nome. Segunda opção: é o nome da pessoa atendida. Se o nome estiver errado, me diga o nome correto agora.`)
       await enviarAudio(from, urlAudioAtendente(ogg))
@@ -3053,7 +3219,8 @@ function migrarFluxoAntigoParaRelatoLivre(u) {
 }
 
 function podeMostrarMenuCliente(u) {
-  return Boolean(u?.numeroCaso)
+  return Boolean(u?.numeroCaso) ||
+    Boolean(Array.isArray(u?._casosDisponiveis) && u._casosDisponiveis.length)
 }
 
 function getNumeroCasoOficialDoNegocio(negocio) {
@@ -4160,6 +4327,7 @@ async function liberarAgendamentoERecalcularStage(u, motivo = "agendamento_liber
 
 
 let postHumanCycleRepository = null
+let postHumanActionContextRepository = null
 function labelStageAdmin(stage) {
   const mapa = {
     [HS_STAGE.LEAD]: "🟡 Lead",
@@ -4184,6 +4352,7 @@ const ADMIN_IDS = {
   casosNovos: "adm_casos_novos",
   casosAnalise: "adm_casos_analise",
   casosDocs: "adm_casos_docs",
+  casosAtivos: "adm_casos_ativos",
   alertasCriticos: "adm_alertas_criticos",
   alertasParados: "adm_alertas_parados",
   alertasDocs: "adm_alertas_docs",
@@ -4198,6 +4367,10 @@ const ADMIN_IDS = {
   casoCompletar: "adm_caso_completar",
   casoEnviarDocumento: "adm_caso_enviar_documento",
   casoAgendar: "adm_caso_agendar",
+  casoPreferenciaComunicacao: "adm_caso_preferencia_comunicacao",
+  preferenciaTexto: "adm_preferencia_texto",
+  preferenciaAudioSempre: "adm_preferencia_audio_sempre",
+  preferenciaNaoDefinida: "adm_preferencia_nao_definida",
   casoLinks: "adm_caso_links",
   casoPedirDocs: "adm_caso_pedir_docs",
   casoLembrete: "adm_caso_lembrete",
@@ -4279,13 +4452,14 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
 
 async function hsAdminContarNegociosPorStages(stages = []) {
   const valores = stages.filter(Boolean)
-  if (!valores.length) return { total: 0 }
+  if (!valores.length) return { ok: true, total: 0, errorCode: null, errorMessage: null }
   try {
-    const { total } = await hsAdminBuscarNegociosPorStages(valores, 1)
-    return { total }
+    const resultado = await hsAdminBuscarNegociosPorStages(valores, 1)
+    if (!resultado.ok) return { ok: false, total: 0, errorCode: resultado.errorCode, errorMessage: resultado.errorMessage }
+    return { ok: true, total: resultado.total, errorCode: null, errorMessage: null }
   } catch (e) {
     logErroHubSpot(e, { operation: "adminContarNegociosPorStages" })
-    return { total: 0 }
+    return { ok: false, total: 0, errorCode: "HUBSPOT_QUERY_FAILED", errorMessage: "hubspot_query_failed" }
   }
 }
 
@@ -4322,7 +4496,8 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
 
 async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = null) {
   const valores = stages.filter(Boolean)
-  if (!valores.length) return { deals: [], total: 0, after: null }
+  if (!valores.length) return { ok: true, deals: [], total: 0, after: null, errorCode: null, errorMessage: null }
+  const inicio = Date.now()
   try {
     return await executarComRetryHubSpot(
       async () => {
@@ -4343,11 +4518,30 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
           body,
           { headers: HS() }
         )
+        const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
+        logInfo({
+          event: "admin.hubspot.search",
+          status: inspecao.ok ? "success" : "invalid_response",
+          operation: "adminBuscarNegociosPorStages",
+          searchType: "stages",
+          ...inspecao.metadata,
+          durationMs: Date.now() - inicio
+        })
+        if (!inspecao.ok) {
+          return {
+            ok: false, deals: [], total: 0, after: null,
+            errorCode: "INVALID_HUBSPOT_RESPONSE",
+            errorMessage: inspecao.reason
+          }
+        }
         const deals = mapearNegociosHubSpotAdmin(res.data)
         return {
+          ok: true,
           deals,
           total: res.data?.total || 0,
-          after: res.data?.paging?.next?.after || null
+          after: res.data?.paging?.next?.after || null,
+          errorCode: null,
+          errorMessage: null
         }
       },
       {
@@ -4360,9 +4554,220 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
       }
     )
   } catch (e) {
+    logInfo({ event: "admin.hubspot.search", status: "error", operation: "adminBuscarNegociosPorStages", searchType: "stages", httpStatus: e?.response?.status, durationMs: Date.now() - inicio })
     logErroHubSpot(e, { operation: "adminBuscarNegociosPorStages" })
-    return { deals: [], total: 0, after: null }
+    return {
+      ok: false,
+      deals: [], total: 0, after: null,
+      errorCode: sanitizarTextoEntrada(e?.response?.data?.category || e?.response?.data?.errorType || e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED"),
+      errorMessage: sanitizarTextoEntrada(mascararErroHubSpot(e)).replace(/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?9?\d{4}[\s.-]?\d{4}\b/g, "[PHONE REDACTED]").slice(0, 300)
+    }
   }
+}
+
+async function hsAdminBuscarTodosNegociosPorStages(stages = [], queue = "ativos") {
+  const inicio = Date.now()
+  const deals = []
+  const dealIds = new Set()
+  const cursors = new Set()
+  let after = null
+  let total = 0
+  do {
+    const resultado = await hsAdminBuscarNegociosPorStages(stages, 100, after)
+    if (!resultado.ok) {
+      logInfo({ event: "admin.cases.query", status: "error", queue, stages: stages.join(","), errorCode: resultado.errorCode, durationMs: Date.now() - inicio })
+      return { ...resultado, deals: [] }
+    }
+    for (const deal of resultado.deals) {
+      if (deal?.id && !dealIds.has(String(deal.id))) {
+        dealIds.add(String(deal.id))
+        deals.push(deal)
+      }
+    }
+    total = resultado.total
+    after = resultado.after
+    if (after && cursors.has(String(after))) {
+      logInfo({ event: "admin.cases.query", status: "error", queue, stages: stages.join(","), errorCode: "PAGING_CURSOR_REPEATED", durationMs: Date.now() - inicio })
+      return { ok: false, deals: [], total, after: null, errorCode: "PAGING_CURSOR_REPEATED", errorMessage: "cursor de paginação repetido" }
+    }
+    if (after) cursors.add(String(after))
+    logInfo({ event: "admin.cases.query", status: "page", queue, stages: stages.join(","), receivedCount: resultado.deals.length, hubspotTotal: total, after: after || "", durationMs: Date.now() - inicio })
+  } while (after)
+  logInfo({ event: "admin.cases.query", status: deals.length ? "success" : "empty", queue, stages: stages.join(","), receivedCount: deals.length, hubspotTotal: total, durationMs: Date.now() - inicio })
+  return { ok: true, deals, total, after: null, errorCode: null, errorMessage: null }
+}
+
+async function hsAdminBuscarNegociosDireto(query, after = null) {
+  const texto = sanitizarTextoEntrada(query)
+  if (!texto) return { ok: true, deals: [], total: 0, after: null, errorCode: null, errorMessage: null }
+  const inicio = Date.now()
+  try {
+    const res = await executarComRetryHubSpot(async () => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
+      query: texto,
+      sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
+      properties: ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso"],
+      limit: 100,
+      ...(after ? { after } : {})
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarNegociosDireto", idempotente: true })
+    const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
+    logInfo({
+      event: "admin.hubspot.search",
+      status: inspecao.ok ? "success" : "invalid_response",
+      operation: "adminBuscarNegociosDireto",
+      searchType: "direct",
+      ...inspecao.metadata,
+      durationMs: Date.now() - inicio
+    })
+    if (!inspecao.ok) {
+      return { ok: false, deals: [], total: 0, after: null, errorCode: "INVALID_HUBSPOT_RESPONSE", errorMessage: inspecao.reason }
+    }
+    return { ok: true, deals: mapearNegociosHubSpotAdmin(res.data), total: res.data?.total || 0, after: res.data?.paging?.next?.after || null, errorCode: null, errorMessage: null }
+  } catch (e) {
+    logInfo({ event: "admin.hubspot.search", status: "error", operation: "adminBuscarNegociosDireto", searchType: "direct", httpStatus: e?.response?.status, durationMs: Date.now() - inicio })
+    logErroHubSpot(e, { operation: "adminBuscarNegociosDireto" })
+    return { ok: false, deals: [], total: 0, after: null, errorCode: sanitizarTextoEntrada(e?.response?.status || e?.code || "HUBSPOT_QUERY_FAILED"), errorMessage: sanitizarTextoEntrada(mascararErroHubSpot(e)).slice(0, 300) }
+  }
+}
+
+const ADMIN_DEAL_SEARCH_PROPERTIES = ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso"]
+
+function deduplicarDealsAdmin(deals = []) {
+  return [...new Map((Array.isArray(deals) ? deals : []).filter(deal => deal?.id).map(deal => [String(deal.id), deal])).values()]
+}
+
+async function hsAdminBuscarDealsPorNumeroCaso(numeroCaso) {
+  try {
+    const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
+      filterGroups: [{ filters: [{ propertyName: "numero_de_caso", operator: "EQ", value: numeroCaso }] }],
+      properties: ADMIN_DEAL_SEARCH_PROPERTIES,
+      limit: 100
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarDealPorNumeroCaso", idempotente: true })
+    const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
+    if (!inspecao.ok) return { ok: false, deals: [], errorCode: "INVALID_HUBSPOT_RESPONSE", errorMessage: inspecao.reason }
+    return { ok: true, deals: mapearNegociosHubSpotAdmin(res.data) }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarDealPorNumeroCaso" })
+    return { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED"), errorMessage: "hubspot_query_failed" }
+  }
+}
+
+// Read-only confirmation immediately before creating a post-human cycle.  The
+// rendered Admin snapshot is deliberately not a source of truth here.
+async function confirmarVinculoPosHumanoHubSpot(context) {
+  try {
+    const result = await hsAdminBuscarDealsPorNumeroCaso(context.numeroCaso)
+    if (!result?.ok || !Array.isArray(result.deals)) return { ok: false, reason: result?.errorCode === "INVALID_HUBSPOT_RESPONSE" ? "hubspot_invalid_response" : "hubspot_error" }
+    if (result.deals.length === 0) return { ok: false, reason: "hubspot_deal_not_found" }
+    if (result.deals.length !== 1) return { ok: false, reason: "hubspot_ambiguous" }
+    const deal = result.deals[0]
+    if (String(deal?.id) !== String(context.negocioId) || normalizeCaseNumber(deal?.numeroCaso || deal?.properties?.numero_de_caso) !== normalizeCaseNumber(context.numeroCaso)) return { ok: false, reason: "hubspot_deal_mismatch" }
+    const association = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(context.negocioId)}/associations/contacts`, { headers: HS() }
+    )
+    if (!Array.isArray(association?.data?.results)) return { ok: false, reason: "hubspot_invalid_response" }
+    const contacts = association.data.results.map(item => String(item?.id || "")).filter(Boolean)
+    if (contacts.length !== 1) return { ok: false, reason: contacts.length ? "hubspot_ambiguous" : "hubspot_contact_mismatch" }
+    return contacts[0] === String(context.contatoId) ? { ok: true } : { ok: false, reason: "hubspot_contact_mismatch" }
+  } catch (error) {
+    return { ok: false, reason: error?.response || error?.code ? "hubspot_error" : "hubspot_invalid_response" }
+  }
+}
+
+async function hsAdminBuscarContatosPorNome(nome) {
+  try {
+    const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+      query: nome, properties: ["firstname", "lastname", "phone", "mobilephone"], limit: 100
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarContatosPorNome", idempotente: true })
+    if (!Array.isArray(res?.data?.results)) return { ok: false, contatos: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+    return { ok: true, contatos: res.data.results }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarContatosPorNome" })
+    return { ok: false, contatos: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED") }
+  }
+}
+
+async function hsAdminBuscarContatosPorTelefone(telefone) {
+  try {
+    const phone = normalizarTelefoneHubSpot(telefone)
+    if (!phone) return { ok: true, contatos: [] }
+    const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+      filterGroups: [
+        { filters: [{ propertyName: "phone", operator: "EQ", value: phone }] },
+        { filters: [{ propertyName: "mobilephone", operator: "EQ", value: phone }] }
+      ],
+      properties: ["firstname", "lastname", "phone", "mobilephone"], limit: 100
+    }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarContatosPorTelefone", idempotente: true })
+    if (!Array.isArray(res?.data?.results)) return { ok: false, contatos: [], errorCode: "INVALID_HUBSPOT_RESPONSE" }
+    const contatos = [...new Map(res.data.results.filter(contato => contato?.id).map(contato => [String(contato.id), contato])).values()]
+    return { ok: true, contatos }
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarContatosPorTelefone" })
+    return { ok: false, contatos: [], errorCode: sanitizarTextoEntrada(e?.code || e?.response?.status || "HUBSPOT_QUERY_FAILED") }
+  }
+}
+
+function cpfValidoConsultaAdmin(valor) {
+  const cpf = String(valor || "").replace(/\D/g, "")
+  if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false
+  for (let tamanho = 9; tamanho <= 10; tamanho++) {
+    let soma = 0
+    for (let indice = 0; indice < tamanho; indice++) soma += Number(cpf[indice]) * (tamanho + 1 - indice)
+    const digito = (soma * 10) % 11 % 10
+    if (digito !== Number(cpf[tamanho])) return false
+  }
+  return true
+}
+
+function classificarConsultaCasoAdmin(texto) {
+  const valor = sanitizarTextoEntrada(texto)
+  const digitos = valor.replace(/\D/g, "")
+  if (/^[A-Za-z]{2,6}[.\-]\d{6}[.\-]\d{3,}$/i.test(valor)) return "case_number"
+  if (/^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(valor)) return "cpf"
+  if (/^\+?55[\s().-]*\d/.test(valor) || (/^[+()\d\s-]+$/.test(valor) && digitos.length >= 10 && digitos.length <= 13 && /[()\s-]/.test(valor))) return "phone"
+  if (digitos.length === 11) return cpfValidoConsultaAdmin(digitos) ? "cpf" : "phone"
+  if (digitos.length >= 10 && digitos.length <= 13) return "phone"
+  return "contact_name"
+}
+
+async function hsAdminListarDealsDosContatosEstrito(contatos = []) {
+  const resultados = await Promise.all(contatos.map(contato => hsListarNegociosAtivosDoContatoEstrito(contato.id)))
+  const falha = resultados.find(resultado => !resultado?.ok)
+  return falha ? { ok: false, deals: [], errorCode: falha.errorCode || "HUBSPOT_QUERY_FAILED" } : { ok: true, deals: resultados.flatMap(resultado => resultado.deals) }
+}
+
+async function resolverConsultaCasoAdmin(query, after = null) {
+  const texto = sanitizarTextoEntrada(query)
+  const inicio = Date.now()
+  const cpf = texto.replace(/\D/g, "")
+  let estrategia = classificarConsultaCasoAdmin(texto)
+  let resultado
+  if (estrategia === "case_number") {
+    resultado = await hsAdminBuscarDealsPorNumeroCaso(texto.toUpperCase())
+  } else if (estrategia === "cpf") {
+    try {
+      const contato = await hsBuscarPorCpf(cpf)
+      resultado = contato?.id ? await hsAdminListarDealsDosContatosEstrito([contato]) : { ok: true, deals: [] }
+    } catch (e) { resultado = { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || "HUBSPOT_QUERY_FAILED") } }
+  } else if (estrategia === "phone") {
+    const contatos = await hsAdminBuscarContatosPorTelefone(texto)
+    resultado = contatos.ok ? await hsAdminListarDealsDosContatosEstrito(contatos.contatos) : { ok: false, deals: [], errorCode: contatos.errorCode }
+  } else {
+    estrategia = "contact_name"
+    const contatos = await hsAdminBuscarContatosPorNome(texto)
+    if (!contatos.ok) resultado = { ok: false, deals: [], errorCode: contatos.errorCode }
+    else {
+      try {
+        const porContato = await hsAdminListarDealsDosContatosEstrito(contatos.contatos)
+        if (!porContato.ok) return { ok: false, deals: [], total: 0, after: null, errorCode: porContato.errorCode, errorMessage: null }
+        const fallback = await hsAdminBuscarNegociosDireto(texto, after)
+        if (!fallback.ok) resultado = fallback
+        else resultado = { ok: true, deals: [...porContato.deals, ...fallback.deals], total: fallback.total, after: fallback.after }
+      } catch (e) { resultado = { ok: false, deals: [], errorCode: sanitizarTextoEntrada(e?.code || "HUBSPOT_QUERY_FAILED") } }
+    }
+  }
+  const deals = deduplicarDealsAdmin(resultado?.deals)
+  logInfo({ event: "admin.cases.resolve", status: resultado?.ok ? (deals.length ? "success" : "empty") : "error", searchStrategy: estrategia, dealCount: deals.length, durationMs: Date.now() - inicio })
+  return { ok: Boolean(resultado?.ok), deals, total: resultado?.total ?? deals.length, after: resultado?.after || null, errorCode: resultado?.errorCode || null, errorMessage: resultado?.errorMessage || null }
 }
 
 async function mapearComLimite(itens = [], limite = 2, fn) {
@@ -4414,9 +4819,12 @@ async function hsAdminItensPorStages(stages = [], limit = 30, after = null) {
   const resultado = await hsAdminBuscarNegociosPorStages(stages, limit, after)
   const deals = resultado.deals || []
   return {
+    ok: resultado.ok,
     items: deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null)),
     total: resultado.total || 0,
-    nextAfter: resultado.after || null
+    nextAfter: resultado.after || null,
+    errorCode: resultado.errorCode || null,
+    errorMessage: resultado.errorMessage || null
   }
 }
 
@@ -4447,20 +4855,23 @@ async function hsAdminItemPorDealId(dealId) {
 
 async function adminItensAtivosHubSpot(limit = 100) {
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
-  const resultado = await hsAdminItensPorStages(stagesAtivos, limit)
-  return resultado.items
+  return await hsAdminItensPorStages(stagesAtivos, limit)
 }
 
 async function adminFonteCasos(filtro = () => true, stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), limit = 30, after = null) {
   const resultado = await hsAdminItensPorStages(stages, limit, after)
+  if (!resultado.ok) return { ok: false, items: [], total: 0, nextAfter: null, errorCode: resultado.errorCode, errorMessage: resultado.errorMessage }
   const itensHubSpot = resultado.items
   const vistos = new Set(itensHubSpot.map(item => String(item.u?.negocioId || item.negocio?.id || "")).filter(Boolean))
   const locais = usuariosAdminOrdenados(filtro).filter(item => {
     const id = String(item.u?.negocioId || "")
     return !id || !vistos.has(id)
   })
+  const items = [...itensHubSpot, ...locais].filter(({ u }) => u && filtro(u))
+  logInfo({ event: "admin.cases.queue", status: items.length ? "success" : "empty", queue: "filtered", stages: stages.join(","), receivedCount: itensHubSpot.length, hubspotTotal: resultado.total, filteredCount: items.length })
   return {
-    items: [...itensHubSpot, ...locais].filter(({ u }) => u && filtro(u)),
+    ok: true,
+    items,
     total: resultado.total + (after ? 0 : locais.length),
     nextAfter: resultado.nextAfter
   }
@@ -4474,10 +4885,16 @@ async function adminResumoOperacional() {
   }
 
   const stagesAtivos = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
-  const { total: totalAtivos } = await hsAdminContarNegociosPorStages(stagesAtivos)
-  const { total: totalAnalise } = await hsAdminContarNegociosPorStages([HS_STAGE.ANALISE])
+  const contagemAtivos = await hsAdminContarNegociosPorStages(stagesAtivos)
+  if (!contagemAtivos.ok) return { ok: false, errorCode: contagemAtivos.errorCode, errorMessage: contagemAtivos.errorMessage }
+  const contagemAnalise = await hsAdminContarNegociosPorStages([HS_STAGE.ANALISE])
+  if (!contagemAnalise.ok) return { ok: false, errorCode: contagemAnalise.errorCode, errorMessage: contagemAnalise.errorMessage }
+  const totalAtivos = contagemAtivos.total
+  const totalAnalise = contagemAnalise.total
 
-  const ativos = await adminItensAtivosHubSpot(Math.min(totalAtivos, 100))
+  const ativosResultado = await adminItensAtivosHubSpot(Math.min(totalAtivos, 100))
+  if (!ativosResultado.ok) return { ok: false, errorCode: ativosResultado.errorCode, errorMessage: ativosResultado.errorMessage }
+  const ativos = ativosResultado.items
   const memoria = usuariosAdminOrdenados()
   const todos = mesclarItensAdminPorIdentidade(ativos, memoria)
 
@@ -4486,6 +4903,7 @@ async function adminResumoOperacional() {
   const preAtendimentos = todos.filter(({ u }) => !u.numeroCaso)
 
   const resultado = {
+    ok: true,
     fonte: ativos.length ? "HubSpot + memoria local" : "memoria local",
     totalClientes: totalAtivos,
     totalCasosComNumero: casosComNumero.length,
@@ -4572,6 +4990,7 @@ function maiorAlertaOperacionalAdmin(item) {
 
 async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return resumo
   const briefings = resumo.todos
     .filter(({ u }) => Boolean(u))
     .map(({ from, u }) => {
@@ -4779,13 +5198,17 @@ function scorePrioridadeAdmin({ u }) {
 
 async function gerarPrioridadesAdmin(limite = 10) {
   const resumo = await adminResumoOperacional()
-  return resumo.todos
+  if (!resumo.ok) return { ok: false, items: [], errorCode: resumo.errorCode, errorMessage: resumo.errorMessage }
+  return {
+    ok: true,
+    items: resumo.todos
     .filter(({ u }) => Boolean(u))
     .map(item => ({ ...item, prioridadeScore: scorePrioridadeAdmin(item) }))
     .filter(item => !casoAdminRevisado(item))
     .filter(item => item.prioridadeScore > 0)
     .sort((a, b) => b.prioridadeScore - a.prioridadeScore)
     .slice(0, limite)
+  }
 }
 
 function resolverTelefoneInterfaceAdmin(item, adminAutenticado = false) {
@@ -4864,6 +5287,7 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
 
 async function telaAdminPrincipal() {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
   const semResposta = resumo.todos.filter(({ u }) => {
     const idade = Date.now() - Number(u.ultimaMsg || 0)
     return idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado && u.stage !== STAGES.CLIENTE
@@ -4903,7 +5327,19 @@ async function telaAdminPrincipal() {
 function iniciarConsultaCasoAdmin(from) {
   const chave = normalizarNumeroWhatsAppEnvio(from)
   const sessao = sessoesAdminWhatsApp.get(chave) || {}
-  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
+  const {
+    casos: _casos,
+    casoSelecionado: _casoSelecionado,
+    origemCasos: _origemCasos,
+    listaAtiva: _listaAtiva,
+    paginaAtual: _paginaAtual,
+    tamanhoPagina: _tamanhoPagina,
+    totalItens: _totalItens,
+    totalPaginas: _totalPaginas,
+    nextAfter: _nextAfter,
+    ...sessaoSemListaDeCasos
+  } = sessao
+  sessoesAdminWhatsApp.set(chave, { ...sessaoSemListaDeCasos, acaoCasoPendente: "consultar", ts: Date.now() })
   return {
     texto: "🔎 *Consultar caso*\n\nInforme o protocolo, nome, CPF ou telefone. Identificadores serão exibidos de forma mascarada.",
     opcoes: [
@@ -4914,15 +5350,47 @@ function iniciarConsultaCasoAdmin(from) {
   }
 }
 
+function encerrarConsultaPendenteAdmin(from) {
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  if (sessao.acaoCasoPendente !== "consultar") return
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: null, ts: Date.now() })
+}
+
 async function executarConsultaCasoAdmin(from, query) {
-  const resumo = await adminResumoOperacional()
-  const encontrados = searchAdminCases(resumo.todos || [], query)
+  // A consulta é pontual: qualquer resultado encerra a espera por texto.
+  encerrarConsultaPendenteAdmin(from)
+  const inicio = Date.now()
+  const deals = []
+  const dealIds = new Set()
+  const cursors = new Set()
+  let after = null
+  do {
+    const pagina = await resolverConsultaCasoAdmin(query, after)
+    if (!pagina.ok) {
+      logInfo({ event: "admin.cases.search", status: "error", queue: "consulta", errorCode: pagina.errorCode, durationMs: Date.now() - inicio })
+      return telaAdminFalhaHubSpot()
+    }
+    for (const deal of pagina.deals) {
+      if (deal?.id && !dealIds.has(String(deal.id))) {
+        dealIds.add(String(deal.id))
+        deals.push(deal)
+      }
+    }
+    after = pagina.after
+    if (after && cursors.has(String(after))) {
+      logInfo({ event: "admin.cases.search", status: "error", queue: "consulta", errorCode: "PAGING_CURSOR_REPEATED", durationMs: Date.now() - inicio })
+      return telaAdminFalhaHubSpot()
+    }
+    if (after) cursors.add(String(after))
+  } while (after)
+  const encontrados = searchAdminCases(deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null)), query)
+  logInfo({ event: "admin.cases.search", status: encontrados.length ? "success" : "empty", queue: "consulta", receivedCount: deals.length, filteredCount: encontrados.length, durationMs: Date.now() - inicio })
   const chave = normalizarNumeroWhatsAppEnvio(from)
   const sessao = sessoesAdminWhatsApp.get(chave) || {}
   if (!encontrados.length) {
-    sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "consultar", ts: Date.now() })
     return {
-      texto: "Nenhum caso encontrado. Confira o dado e tente novamente.",
+      texto: "Nenhum caso encontrado nesta fila. Confira o dado e tente novamente.",
       opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
       registrarPergunta: false
     }
@@ -5104,7 +5572,9 @@ async function executarAgendamentoCasoAdmin(from, text) {
 async function telaAdminPrioridades(from, pagina = 1) {
   try {
     const tamanhoPagina = 8
-    const itens = await gerarPrioridadesAdmin(100)
+    const prioridades = await gerarPrioridadesAdmin(100)
+    if (!prioridades.ok) return telaAdminFalhaHubSpot()
+    const itens = prioridades.items
     const totalItens = itens.length
     const totalPaginas = Math.max(1, Math.ceil(totalItens / tamanhoPagina))
     const inicio = (pagina - 1) * tamanhoPagina
@@ -5176,13 +5646,14 @@ async function telaAdminPrioridades(from, pagina = 1) {
 
 async function telaAdminCasos() {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
   const novos = resumo.todos.filter(({ u }) => [HS_STAGE.LEAD, HS_STAGE.CADASTRO].includes(u.negocioStageId) || (!u.numeroCaso && u.stage !== STAGES.CLIENTE)).length
   const analise = resumo.analise
   const docs = resumo.docsPendentes
 
   return {
     texto: [
-      "📂 *Casos*",
+      "📂 *Filas de casos*",
       "",
       `🆕 Novos/pre-cadastro: ${novos}`,
       `🔎 Em analise: ${analise}`,
@@ -5194,6 +5665,7 @@ async function telaAdminCasos() {
       { id: ADMIN_IDS.casosNovos, title: "🆕 Novos casos" },
       { id: ADMIN_IDS.casosAnalise, title: "🔎 Casos em análise" },
       { id: ADMIN_IDS.casosDocs, title: "📎 Documentos pendentes" },
+      { id: ADMIN_IDS.casosAtivos, title: "📋 Todos ativos" },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
@@ -5202,6 +5674,7 @@ async function telaAdminCasos() {
 
 async function telaAdminAlertas() {
   const resumo = await adminResumoOperacional()
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
   const criticos = resumo.todos.filter(({ u }) => {
     const emocional = scoreEmocional(u)
     return u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || emocional.nivel === "alto"
@@ -5283,30 +5756,56 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
   }
 }
 
+function telaAdminFalhaHubSpot() {
+  return {
+    texto: "Não foi possível consultar os casos no HubSpot agora. Tente novamente em alguns minutos.",
+    opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Filas de casos" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+    registrarPergunta: false
+  }
+}
+
 async function telaAdminCasosNovos(from) {
   const filtro = u => [HS_STAGE.LEAD, HS_STAGE.CADASTRO].includes(u.negocioStageId) || (!u.numeroCaso && u.stage !== STAGES.CLIENTE)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "🆕 *Novos casos e pre-cadastros*", itens, "✅ Nao encontrei novos casos ou pre-cadastros parados.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminCasosAnalise(from) {
   const filtro = u => u.negocioStageId === HS_STAGE.ANALISE && Boolean(u.numeroCaso)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "🔎 *Casos em analise*", itens, "✅ Nao encontrei casos em analise no HubSpot nem na memoria atual.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
 async function telaAdminCasosDocumentos(from) {
   const filtro = u => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "📎 *Casos com documentos pendentes*", itens, "✅ Nao encontrei casos com documentos criticos pendentes.", ADMIN_IDS.casos, 1, totalPaginas)
 }
 
+async function telaAdminCasosAtivos(from) {
+  const stages = Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL)
+  const resultado = await hsAdminBuscarTodosNegociosPorStages(stages, "todos_ativos")
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const hubspot = resultado.deals.map(negocio => normalizarItemAdminLocal("", null, negocio, null))
+  const itens = mesclarItensAdminPorIdentidade(hubspot, usuariosAdminOrdenados())
+  logInfo({ event: "admin.cases.session", status: itens.length ? "saved" : "empty", queue: "todos_ativos", receivedCount: hubspot.length, hubspotTotal: resultado.total, filteredCount: itens.length })
+  return telaAdminListaCasos(from, "📋 *Todos os casos ativos*", itens, "Nenhum caso encontrado nesta fila.", ADMIN_IDS.casos, 1, Math.max(1, Math.ceil(itens.length / 8)))
+}
+
 async function telaAdminAlertasUrgentes(from) {
   const filtro = u => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || scoreEmocional(u).nivel === "alto"
-  const { items: itens, total } = await adminFonteCasos(filtro, Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), 100)
+  const resultado = await adminFonteCasos(filtro, Object.values(HS_STAGE).filter(stage => stage !== HS_STAGE.FINAL), 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "🔥 *Alertas criticos*", itens, "✅ Nao encontrei alerta critico no HubSpot nem na memoria atual.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
@@ -5316,14 +5815,18 @@ async function telaAdminAlertasSemResposta(from) {
     const idade = Date.now() - Number(u.ultimaMsg || 0)
     return idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado && u.stage !== STAGES.CLIENTE
   }
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "⏳ *Casos parados*", itens, "✅ Nao encontrei pre-atendimentos parados ha mais de 2 horas.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
 
 async function telaAdminAlertasDocs(from) {
   const filtro = u => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)
-  const { items: itens, total } = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  const resultado = await adminFonteCasos(filtro, [HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.ANALISE, HS_STAGE.DOCS], 100)
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const { items: itens, total } = resultado
   const totalPaginas = Math.max(1, Math.ceil(total / 8))
   return telaAdminListaCasos(from, "📎 *Alertas de documentos*", itens, "✅ Nao encontrei documentos criticos pendentes.", ADMIN_IDS.alertas, 1, totalPaginas)
 }
@@ -5335,6 +5838,7 @@ async function telaAdminAlertasAgenda(from) {
 
 async function telaAdminResumoDiario() {
   const resumo = await gerarResumoDiarioOperacional({ limite: 10 })
+  if (!resumo.ok) return telaAdminFalhaHubSpot()
 
   return {
     texto: textoResumoDiarioOperacional(resumo),
@@ -5352,7 +5856,7 @@ function telaDetalheCasoAdmin(from, idx) {
   const item = obterCasoAdmin(from, idx)
   if (!item) {
     return {
-      texto: "Nao encontrei esse caso na lista atual. Abra *Prioridades* ou *Casos* para atualizar.",
+      texto: "A lista anterior expirou. Abra novamente Filas de casos e selecione o caso.",
       opcoes: [
         { id: ADMIN_IDS.prioridades, title: "Prioridades" },
         { id: ADMIN_IDS.casos, title: "Casos" }
@@ -5369,24 +5873,50 @@ function telaDetalheCasoAdmin(from, idx) {
     adminId: normalizarNumeroWhatsAppEnvio(from),
     contatoId: item.u?.contatoId,
     customerPhone: normalizarNumeroWhatsAppEnvio(item.from || item.u?._numero || item.u?.whatsappContato),
-    customerPhoneConfirmed: item.u?.telefoneEhDoCliente === true
+    customerPhoneConfirmed: item.u?.telefoneEhDoCliente === true,
+    actionContextRepository: postHumanActionContextRepository
   })
-  return {
-    texto: textoDetalheCasoAdmin(item, { adminAutenticado: true }),
+  const preferencia = obterPreferenciaComunicacao(item.u, item.from || from)
+  const montarTela = botao => ({
+    texto: `${textoDetalheCasoAdmin(item, { adminAutenticado: true })}\n\n${rotuloPreferenciaComunicacao(preferencia)}`,
     opcoes: [
-      botaoPosAtendimento,
+      botao,
       { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
       { id: ADMIN_IDS.casoEnviarAnalise, title: `📝 ${ADMIN_MENU_LABELS.registrarAnalise}` },
       { id: ADMIN_IDS.casoPedirDocs, title: `📎 ${ADMIN_MENU_LABELS.pedirDocumentos}` },
       { id: ADMIN_IDS.casoCompletar, title: "✏️ Completar dados" },
       { id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Anexar documento" },
       { id: ADMIN_IDS.casoAgendar, title: "📅 Agendar atendimento" },
+      { id: ADMIN_IDS.casoPreferenciaComunicacao, title: "💬 Preferência de comunicação" },
       { id: voltar, title: `⬅️ ${ADMIN_MENU_LABELS.voltarLista}` },
       { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
     registrarPergunta: false
+  })
+  return botaoPosAtendimento ? waitForActionContextButton(botaoPosAtendimento).then(montarTela) : montarTela(null)
+}
+
+function telaPreferenciaComunicacaoAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.contatoId) return { texto: "Este caso não possui contato confirmado. Nenhuma preferência foi alterada.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const atual = obterPreferenciaComunicacao(item.u, item.from || from)
+  return {
+    texto: `💬 *Preferência de comunicação*\n\nAtual: ${rotuloPreferenciaComunicacao(atual)}\n\nEscolha a preferência para todos os casos desta pessoa.`,
+    opcoes: [
+      { id: ADMIN_IDS.preferenciaTexto, title: "📝 Texto" },
+      { id: ADMIN_IDS.preferenciaAudioSempre, title: "🔊 Sempre com áudio" },
+      { id: ADMIN_IDS.preferenciaNaoDefinida, title: "❓ Não definida" },
+      { id: `admin_caso_${(sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}).casoSelecionado || 0}`, title: "⬅️ Voltar ao caso" }
+    ], registrarPergunta: false
   }
+}
+
+async function atualizarPreferenciaComunicacaoAdmin(from, preference) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.contatoId) return { texto: "Este caso não possui contato confirmado. Nenhuma preferência foi alterada.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  definirPreferenciaComunicacao(item.u, item.from || from, preference, "admin_manual")
+  return await telaDetalheCasoAdmin(from)
 }
 
 function telaLinksCasoAdmin(from) {
@@ -5458,6 +5988,63 @@ async function marcarCasoRevisadoAdmin(from) {
   }
 }
 
+function preferenciaAudioSempreCanonica(u, from) {
+  const record = communicationPreferences.resolve({
+    contactId: u?.contatoId,
+    phoneNormalized: telefonePreferenciaComunicacao(u, from),
+    snapshotPreference: u?.communicationPreference,
+    modoTexto: u?.modoTexto
+  })
+  return record?.preference === "audio_sempre" && record.source !== "migracao_legado" && Boolean(record.selectedAt)
+}
+
+function chaveAtivaAudioPedidoDocumentos(u, from) {
+  const contact = sanitizarTextoEntrada(u?.contatoId) || telefonePreferenciaComunicacao(u, from)
+  const deal = sanitizarTextoEntrada(u?.negocioId)
+  const caso = sanitizarTextoEntrada(u?.numeroCaso)
+  return `admin_document_request_audio:${contact}:${deal}:${caso}`
+}
+
+async function consumirPendenciaAudioPedidoDocumentos(from) {
+  const u = users[from]
+  if (!u || ehWhatsAppAdmin(from)) return false
+  const pendencia = reservarPendenciaAudioPedidoDocumentos({
+    contactId: u.contatoId,
+    phoneNormalized: telefonePreferenciaComunicacao(u, from),
+    dealId: u.negocioId,
+    numeroCaso: u.numeroCaso
+  })
+  if (!pendencia) return false
+
+  if (!preferenciaAudioSempreCanonica(u, from)) {
+    concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "suppressed", reason: "preference_changed" })
+    logInfo({ event: "admin.document_request_audio", status: "suppressed", reason: "preference_changed", action: "pedir_documentos" })
+    return false
+  }
+
+  try {
+    const ogg = await gerarAudioAtendente(u.atendente, pendencia.audioText)
+    const envio = await enviarAudioTransportComResultado(from, urlAudioAtendente(ogg))
+    if (!envio?.accepted) {
+      concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "pending", reason: envio?.immediateError || "audio_send_failed" })
+      logInfo({ event: "admin.document_request_audio", status: "failed", action: "pedir_documentos" })
+      return false
+    }
+    concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "sent", providerMessageId: envio.providerMessageId })
+    if (envio.providerMessageId) registrarMensagemOutbound({
+      providerMessageId: envio.providerMessageId, numeroCaso: u.numeroCaso, contactId: u.contatoId,
+      dealId: u.negocioId, action: "pedir_documentos_audio", channel: envio.channel,
+      destinationMasked: envio.destinationMasked
+    })
+    logInfo({ event: "admin.document_request_audio", status: "sent", action: "pedir_documentos" })
+    return true
+  } catch (error) {
+    concluirPendenciaAudioPedidoDocumentos(pendencia.operationId, { status: "pending", reason: "tts_failed" })
+    logErro("tts", "Falha áudio pendente pedir documentos admin", error)
+    return false
+  }
+}
+
 async function pedirDocsCasoAdmin(from) {
   invalidarCacheResumoOperacional()
   const item = obterCasoAdmin(from)
@@ -5504,6 +6091,42 @@ async function pedirDocsCasoAdmin(from) {
     usuario: u
   })
   const enviadoCliente = envioDocumentos.sent
+  // Fora da janela, atualizacaoCasoSegura preserva o template aprovado e não
+  // há áudio. Dentro da janela, o complemento fala somente com autorização
+  // canônica explícita (audio_sempre), após a imagem + legenda já aceita.
+  if (enviadoCliente) {
+    await enviarAudioPedidoDocumentos({
+      dentroJanela24h: templateService.conversaDentroJanela24h(u.ultimaMsg),
+      usuario: u,
+      from: destino,
+      texto: mensagemDocumentos,
+      deveEnviarAudioAutomatico,
+      gerarAudioAtendente,
+      urlAudioAtendente,
+      enviarAudio,
+      logInfo,
+      logErro
+    })
+  }
+  if (enviadoCliente && !templateService.conversaDentroJanela24h(u.ultimaMsg) && envioDocumentos.channel === "template" && preferenciaAudioSempreCanonica(u, destino)) {
+    criarPendenciaAudioPedidoDocumentos({
+      activeKey: chaveAtivaAudioPedidoDocumentos(u, destino), contactId: u.contatoId,
+      phoneNormalized: telefonePreferenciaComunicacao(u, destino), dealId: u.negocioId,
+      numeroCaso: u.numeroCaso, providerMessageId: envioDocumentos.providerMessageId,
+      audioText: mensagemDocumentos
+    })
+  }
+  if (enviadoCliente && envioDocumentos.providerMessageId) {
+    const outbound = registrarMensagemOutbound({
+      providerMessageId: envioDocumentos.providerMessageId,
+      numeroCaso: u.numeroCaso, contactId: u.contatoId, dealId: u.negocioId,
+      action: "pedir_documentos", channel: envioDocumentos.channel,
+      destinationMasked: envioDocumentos.destinationMasked
+    })
+    logInfo({ event: "outbound.accepted", status: "accepted_by_meta", providerMessageId: outbound.providerMessageId,
+      numeroCaso: outbound.numeroCaso, contactId: outbound.contactId, dealId: outbound.dealId,
+      action: outbound.action, channel: outbound.channel, fallback: Boolean(envioDocumentos.fallback), phoneMasked: outbound.destinationMasked })
+  }
 
   let notaContato = false
   let notaNegocio = false
@@ -5517,7 +6140,7 @@ async function pedirDocsCasoAdmin(from) {
     texto: [
       "*Pedido de documentos*",
       "",
-      `📨 Cliente avisado: ${enviadoCliente ? "✅ ok" : "❌ falhou"}`,
+      `📨 Solicitação aceita pela Meta: ${enviadoCliente ? "✅" : "❌ falhou"}`,
       `👤 Nota contato: ${notaContato ? "✅ ok" : "⚠️ nao registrada"}`,
       `📄 Nota negocio: ${notaNegocio ? "✅ ok" : "⚠️ nao registrada"}`,
       "",
@@ -6021,7 +6644,8 @@ async function cancelarEventoConsultaUsuario(u, motivo = "consulta_cancelada", e
 }
 
 async function processarAdminWhatsApp(from, text, msgObj = null) {
-  const comando = normalizarTextoGatilho(text)
+  const callbackPosHumano = sanitizarTextoEntrada(text)
+  const comando = /^admin_post_human_completed_[A-Za-z0-9_-]{24}$/.test(callbackPosHumano) ? callbackPosHumano : normalizarTextoGatilho(text)
 
   if (["sair", "bloquear", "logout"].includes(comando)) {
     bloquearAdminWhatsApp(from)
@@ -6107,6 +6731,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   }
 
   if (["admin_atendimento_assistido_ia", ADMIN_IDS.atendimentoAssistidoIa].includes(comando)) {
+    encerrarConsultaPendenteAdmin(from)
     return iniciarAtendimentoAssistidoAdmin(from, depsAtendimentoAssistido)
   }
 
@@ -6132,9 +6757,11 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
 
   const sessaoAcaoAdmin = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}
   const navegacaoAdmin = new Set(["menu", "inicio", "admin", "admin_menu", ADMIN_IDS.menu, "voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"])
-  if (sessaoAcaoAdmin.acaoCasoPendente === "consultar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
-    return executarConsultaCasoAdmin(from, text)
-  }
+  const consultaPendente = sessaoAcaoAdmin.acaoCasoPendente === "consultar"
+  let consultaConsumidaComoTexto = false
+  let iniciouNovaConsulta = false
+  let comandoNaoReconhecido = false
+  try {
   if (sessaoAcaoAdmin.acaoCasoPendente === "completar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
     return executarComplementacaoCasoAdmin(from, text)
   }
@@ -6168,38 +6795,54 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return await telaConsultasAdmin(from)
   }
 
-  if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) return iniciarConsultaCasoAdmin(from)
+  if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) {
+    iniciouNovaConsulta = true
+    return iniciarConsultaCasoAdmin(from)
+  }
 
-  if (["admin_casos", ADMIN_IDS.casos].includes(comando)) return await telaAdminCasos()
+  if (["admin_casos", ADMIN_IDS.casos, "casos", "filas de casos"].includes(comando)) return await telaAdminCasos()
   if (["completar informacoes", "completar informações", ADMIN_IDS.completarInformacoes].includes(comando)) return await telaAdminCasos()
   if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
   if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
   if (["agendar atendimento", ADMIN_IDS.casoAgendar].includes(comando)) return iniciarAgendamentoCasoAdmin(from)
+  if (["preferencia de comunicacao", "preferência de comunicação", ADMIN_IDS.casoPreferenciaComunicacao].includes(comando)) return telaPreferenciaComunicacaoAdmin(from)
+  if ([ADMIN_IDS.preferenciaTexto].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "texto")
+  if ([ADMIN_IDS.preferenciaAudioSempre].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "audio_sempre")
+  if ([ADMIN_IDS.preferenciaNaoDefinida].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "nao_definido")
   if (["admin_casos_novos", ADMIN_IDS.casosNovos].includes(comando)) return await telaAdminCasosNovos(from)
   if (["admin_casos_analise", ADMIN_IDS.casosAnalise].includes(comando)) return await telaAdminCasosAnalise(from)
   if (["admin_casos_docs", ADMIN_IDS.casosDocs].includes(comando)) return await telaAdminCasosDocumentos(from)
+  if (["admin_casos_ativos", ADMIN_IDS.casosAtivos].includes(comando)) return await telaAdminCasosAtivos(from)
 
-  if (["admin_alertas", ADMIN_IDS.alertas].includes(comando)) return await telaAdminAlertas()
+  if (["admin_alertas", ADMIN_IDS.alertas, "alertas"].includes(comando)) return await telaAdminAlertas()
   if (["admin_alertas_criticos", "admin_alertas_urgentes", ADMIN_IDS.alertasCriticos, ADMIN_IDS.alertasUrgentes].includes(comando)) return await telaAdminAlertasUrgentes(from)
   if (["admin_alertas_parados", "admin_alertas_sem_resposta", ADMIN_IDS.alertasParados, ADMIN_IDS.alertasSemResposta].includes(comando)) return await telaAdminAlertasSemResposta(from)
   if (["admin_alertas_docs", ADMIN_IDS.alertasDocs].includes(comando)) return await telaAdminAlertasDocs(from)
   if (["admin_alertas_agenda", ADMIN_IDS.alertasAgenda].includes(comando)) return await telaAdminAlertasAgenda(from)
   if (["admin_resumo_diario", ADMIN_IDS.resumo].includes(comando)) return await telaAdminResumoDiario()
 
+  // Telefones podem conter apenas dígitos. Em uma consulta pendente, texto livre
+  // deve ser resolvido antes de qualquer tentativa de seleção por índice.
+  const interacaoAdmin = comando.startsWith("admin_")
+  if (consultaPendente && sanitizarTextoEntrada(text) && !interacaoAdmin) {
+    consultaConsumidaComoTexto = true
+    return executarConsultaCasoAdmin(from, text)
+  }
+
   const matchConsulta = comando.match(/^admin_consulta_(\d+)$/)
   if (matchConsulta) return telaDetalheConsultaAdmin(from, Number(matchConsulta[1]))
 
   const matchCaso = comando.match(/^admin_caso_(\d+)$/)
-  if (matchCaso) return telaDetalheCasoAdmin(from, Number(matchCaso[1]))
+  if (matchCaso) return await telaDetalheCasoAdmin(from, Number(matchCaso[1]))
 
   if (/^\d+$/.test(comando)) {
     const sessaoAdmin = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from))
     if (sessaoAdmin?.listaAtiva === "casos") {
       const itemCaso = obterCasoAdmin(from, Number(comando) - 1)
-      if (itemCaso) return telaDetalheCasoAdmin(from)
+      if (itemCaso) return await telaDetalheCasoAdmin(from)
       return {
-        texto: "⚠️ Nao encontrei esse caso na lista atual.\n\nAbra *Prioridades* ou *Casos* para atualizar a lista.",
+      texto: "A lista anterior expirou. Abra novamente Filas de casos e selecione o caso.",
         opcoes: [
           { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
           { id: ADMIN_IDS.casos, title: "📂 Casos" },
@@ -6247,6 +6890,9 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       usuario,
       isAdmin: ehWhatsAppAdmin,
       repository: postHumanCycleRepository,
+      actionContextRepository: postHumanActionContextRepository,
+      confirmHubspotContext: confirmarVinculoPosHumanoHubSpot,
+      logger: logInfo,
       processCycle: (cycle, currentUser) => processPostHumanCycle({
         cycle,
         usuario: currentUser,
@@ -6263,7 +6909,9 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
           },
           getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(currentUser._numero || currentUser.whatsappContato)]?.ultimaMsg ?? currentUser.ultimaMsg,
           applySafeHubspotUpdates: async () => ({ humanReviewRequired: false, divergences: [] }),
+          isComplete: criarVerificadorCompletudePosHumana(currentUser, postHumanCycleRepository),
           sendFree: (to, text) => enviar(to, text),
+          presentClientMenu: (to) => apresentarMenuClientePosHumano(to, item.u),
           sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
           templateConfig: META_TEMPLATES.casoAtualizacao,
           buildTemplateParams: solicitacao => [solicitacao.texto]
@@ -6283,6 +6931,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["admin_caso_enviar_analise", ADMIN_IDS.casoEnviarAnalise].includes(comando)) return await enviarAnaliseCasoAdmin(from)
   if (["admin_caso_revisado", ADMIN_IDS.casoRevisado].includes(comando)) return await marcarCasoRevisadoAdmin(from)
 
+  comandoNaoReconhecido = true
   const menu = await telaAdminPrincipal()
   return {
     ...menu,
@@ -6291,6 +6940,13 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
       "",
       menu.texto
     ].join("\n")
+  }
+  } finally {
+    // A própria cadeia de rotas acima define o que é ação administrativa. Só o
+    // texto que chega ao fallback pode ser consumido como consulta pendente.
+    if (consultaPendente && !consultaConsumidaComoTexto && !iniciouNovaConsulta && !comandoNaoReconhecido) {
+      encerrarConsultaPendenteAdmin(from)
+    }
   }
 }
 
@@ -6856,6 +7512,7 @@ async function finalizarCadastro(from, u) {
     assertFinalizationOperation("hubspot_contact", contatoId)
     u.contatoId = contatoId
     if (contatoId) u._hubspotSemContato = false
+    promoverPreferenciaComunicacao(u, from)
     persistirUsersAgora({ propagarErro: true })
 
     let negocioId = u.negocioId || null
@@ -7334,16 +7991,44 @@ function telaAdvogadoCliente(u) {
   return telaConsultaAdvogado(cabecalhoCasoAtivo(u))
 }
 
-// Enquanto a preferência de canal ainda não foi definida (ACOLHIMENTO e
-// ACOLHIMENTO_MODO), o sistema deve sempre enviar áudio + texto, independente
-// de u.modoTexto — a preferência só é respeitada após a escolha em ACOLHIMENTO_MODO.
-function deveForcarAudioPreModo(u) {
+// A preferência canônica de comunicação controla o áudio automático.
+// Somente audio_sempre autoriza envio de áudio; texto e nao_definido bloqueiam.
+// Compatibilidade legada: modoTexto true conserva o bloqueio de texto;
+// modoTexto false nunca autoriza áudio sem escolha canônica explícita.
+// Durante o pré-atendimento (ACOLHIMENTO / ACOLHIMENTO_MODO), se não houver
+// preferência canônica nem legado, o áudio é forçado para a saudação inicial.
+function deveEnviarAudioAutomatico(u, from = "") {
+  if (!u) return false
+  const phone = telefonePreferenciaComunicacao(u, from)
+  const record = communicationPreferences.resolve({
+    contactId: u?.contatoId,
+    phoneNormalized: phone,
+    snapshotPreference: u?.communicationPreference,
+    modoTexto: u?.modoTexto
+  })
+  // A escolha somente é explícita quando tem uma origem canônica e data de
+  // seleção. Snapshots incompletos e a migração legada não autorizam áudio.
+  const isCanonical = record && record.source !== "migracao_legado" && Boolean(record.selectedAt)
+  if (isCanonical) {
+    return record.preference === "audio_sempre"
+  }
+  if (u?.modoTexto === true) return false
+  // modoTexto === false é apenas projeção legada: nunca é autorização.
   return u?.stage === STAGES.ACOLHIMENTO || u?.stage === STAGES.ACOLHIMENTO_MODO
+}
+
+// Última barreira para os fluxos legados que ainda chamam enviarAudio
+// diretamente. Ela mantém a exceção de apresentação no pré-atendimento e
+// impede que uma preferência canônica seja contornada por esses call sites.
+async function enviarAudio(from, audioUrl) {
+  const u = users[from]
+  if (u && !deveEnviarAudioAutomatico(u, from)) return
+  return enviarAudioTransport(from, audioUrl)
 }
 
 async function enviarAudioModoVoz(from, u, texto, contexto = "cliente") {
   if (!from || !u?.atendente) return
-  if (u?.modoTexto !== false && !deveForcarAudioPreModo(u)) return
+  if (!deveEnviarAudioAutomatico(u, from)) return
   try {
     const ogg = await gerarAudioAtendente(u.atendente, texto)
     await enviarAudio(from, urlAudioAtendente(ogg))
@@ -7366,8 +8051,7 @@ function ehContatoAdmin(from) {
 
 async function enviarAudioAutomaticoTela(from, u, payload, contexto = "tela") {
   if (!from || !u || !u.atendente || ehContatoAdmin(from)) return
-  const forcarPreModo = deveForcarAudioPreModo(u)
-  if (u.modoTexto !== false && !forcarPreModo) return
+  if (!deveEnviarAudioAutomatico(u, from)) return
   if (!payload?.texto) return
   if (payload.audio === false || payload.semAudio === true) return
   const agora = Date.now()
@@ -7407,28 +8091,9 @@ configurarClientMenuUi({
   textoAudioOpcoes
 })
 
-// Detecta gênero pelo nome via IA e retorna saudação adequada
-async function saudacaoGenero(nome) {
-  try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 10,
-        messages: [{
-          role: "user",
-          content: `Responda SOMENTE com a letra M (masculino) ou F (feminino) com base no primeiro nome: "${nome}". Sem nenhum outro texto.`
-        }]
-      })
-    })
-    const data = await resp.json()
-    const letra = (data?.content?.[0]?.text || "").trim().toUpperCase()
-    if (letra === "F") return "Seja bem-vinda"
-    return "Seja bem-vindo"
-  } catch (e) {
-    return "Seja bem-vindo"
-  }
+// Saudação inclusiva e determinística: o Menu não depende de inferência externa de gênero.
+function saudacaoGenero() {
+  return "Seja bem-vindo(a)"
 }
 
 async function menuClienteComAudio(from, u) {
@@ -7493,6 +8158,14 @@ async function menuClienteComAudio(from, u) {
   u._menuClienteBoasVindas = false
   u._menuClienteJaApresentado = true
   return null
+}
+
+async function apresentarMenuClientePosHumano(from, u) {
+  if (!u?.numeroCaso) return false
+  setStage(u, STAGES.CLIENTE)
+  iniciarTimer(from)
+  await menuClienteComAudio(from, u)
+  return true
 }
 
 async function abrirSelecaoCasoParaAcao(from, u, acao) {
@@ -9181,7 +9854,7 @@ async function flowAudioConfirmarTranscricao(u, ctx) {
     return iniciarFluxoRelatoLivre(from, u, { boasVindas: false })
   }
 
-  return telaConfirmarTranscricao(from, u.atendente, u._audioCanalTranscricao, u.area)
+  return telaConfirmarTranscricao(from, u, u._audioCanalTranscricao, u.area)
 }
 
 async function flowAudioConfirmarAreaCanal(u, ctx) {
@@ -9875,7 +10548,15 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
         tipo: u?.tipo || null,
         subTipo: u?.subTipo || null,
         ...contexto
-      }
+      },
+      resolvePartyRole: ({ pipeline, registry, contexto: analysisContext }) => resolveDocumentPartyIdentity({
+        extraction: pipeline?.extracao || {},
+        trustedUser: u || {},
+        registry,
+        documentType: pipeline?.classificacao?.tipoDocumento,
+        classificationConfidence: pipeline?.classificacao?.confianca,
+        requirementId: analysisContext?.documentoId || null
+      })
     })
     if (resultado?.reason && !resultado.skipped) {
       logErro("document_analysis", resultado.reason)
@@ -9884,6 +10565,111 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
   } catch (e) {
     logErro("document_analysis", `falha nao bloqueante: ${e.message}`, e)
     return { ok: false, skipped: false, reason: e.message }
+  }
+}
+
+function dependenciasReavaliacaoDocumentalPosHumana(usuario, cycle) {
+  return {
+    resolverListaDocumental: () => getDocumentosListaCaso(usuario),
+    listarArquivosDrive: async () => usuario.pastaDriveId ? listarArquivosDriveNaPasta(usuario.pastaDriveId) : [],
+    requiredSources: usuario.pastaDriveId ? ["drive"] : [],
+    camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({
+      usuario, cycle, repository: postHumanCycleRepository
+    }),
+    getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
+    sendFree: (to, message) => enviar(to, message),
+    presentClientMenu: to => apresentarMenuClientePosHumano(to, usuario),
+    sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
+    templateConfig: META_TEMPLATES.casoAtualizacao,
+    buildTemplateParams: solicitation => [solicitation.texto],
+    isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository)
+  }
+}
+
+async function sincronizarDecisaoDocumentalCanonicaHubSpotSeguro(u, canonical) {
+  if (!u?.contatoId || !u?.negocioId || !u?.numeroCaso || !u?.pastaDriveId ||
+      !canonical?.decision || !canonical?.registry) {
+    return { ok: false, skipped: true, reason: "canonical_hubspot_context_missing" }
+  }
+  try {
+    const contactProperties = ["firstname", "lastname", "cpf_do_cliente", "date_of_birth"]
+    const [contactResponse, dealResponse, associationResponse] = await Promise.all([
+      axios.get(
+        `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(u.contatoId)}?properties=${encodeURIComponent(contactProperties.join(","))}`,
+        { headers: HS() }
+      ),
+      axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(u.negocioId)}?properties=numero_de_caso`,
+        { headers: HS() }
+      ),
+      axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(u.negocioId)}/associations/contacts`,
+        { headers: HS() }
+      )
+    ])
+    const associatedIds = (associationResponse.data?.results || []).map(item => String(item.id))
+    const validContext = validarContextoDocumentalHubSpot({
+      usuario: u,
+      contato: { id: contactResponse.data?.id, properties: contactResponse.data?.properties || {} },
+      negocio: { id: dealResponse.data?.id, properties: dealResponse.data?.properties || {} },
+      associatedContactIds: associatedIds
+    })
+    if (!validContext.ok) return { ok: false, skipped: true, reason: validContext.reason }
+
+    const sync = await sincronizarDocumentosHubSpot({
+      registry: canonical.registry,
+      decision: canonical.decision,
+      usuario: u,
+      contato: { id: String(u.contatoId), properties: contactResponse.data?.properties || {} },
+      negocio: { id: String(u.negocioId), properties: dealResponse.data?.properties || {} }
+    }, { hsAtualizarContato })
+    if (sync.registry) {
+      const persisted = await atualizarEstadoDocumental(u.pastaDriveId, { registry: sync.registry })
+      if (!persisted?.arquivo) {
+        return { ...sync, ok: false, retryable: true, reason: "canonical_sync_provenance_persistence_failed", trustedUserPatch: {} }
+      }
+    }
+    if (sync.ok) aplicarDadosDocumentaisConfiaveisAoUsuario(u, sync.trustedUserPatch)
+    return sync
+  } catch (error) {
+    logErro("document_hubspot_sync", `falha nao bloqueante: ${error.code || error.name || "erro"}`)
+    return { ok: false, skipped: false, retryable: true, reason: "canonical_hubspot_sync_failed" }
+  }
+}
+
+async function confirmarDocumentoCanonicoSeguro(u, fileId, options = {}) {
+  if (!u?.pastaDriveId || !fileId) return { ok: false, skipped: true, reason: "case_or_file_missing" }
+  try {
+    const canonical = await confirmCanonicalDocument({
+      pastaDriveId: u.pastaDriveId,
+      fileId,
+      origem: options.origem || "client_callback",
+      assertion: options.assertion || null
+    })
+    if (!canonical.ok) return canonical
+    const projection = projectDocumentDecision(u, canonical.decision, marcarStatusDocumento)
+    const promotable = ["partial", "delivered"].includes(canonical.decision?.status)
+    if (!promotable) return { ...canonical, projection, reevaluation: { processed: false, reason: "decision_not_promoted" } }
+    const hubspotSync = canonical.decision?.status === "delivered"
+      ? await sincronizarDecisaoDocumentalCanonicaHubSpotSeguro(u, canonical)
+      : { ok: true, skipped: true, reason: "decision_not_delivered" }
+    await api.persistirUsersAgora({ propagarErro: true })
+    const reevaluation = await reevaluatePostHumanForDecision({
+      usuario: u,
+      decision: canonical.decision,
+      repository: postHumanCycleRepository
+    }, {
+      processCycle: (cycle, currentUser) => processPostHumanCycle({
+        cycle,
+        usuario: currentUser,
+        repository: postHumanCycleRepository,
+        deps: dependenciasReavaliacaoDocumentalPosHumana(currentUser, cycle)
+      })
+    })
+    return { ...canonical, projection, hubspotSync, reevaluation }
+  } catch (error) {
+    logErro("document_canonical", `falha nao bloqueante: ${error.code || error.name || "erro"}`)
+    return { ok: false, skipped: false, reason: error.code || "DOCUMENT_CANONICAL_ERROR" }
   }
 }
 
@@ -10118,7 +10904,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }))
   }
 
-  await processarAnaliseDocumentalSegura({
+  const resultadoAnaliseGuiada = await processarAnaliseDocumentalSegura({
     u,
     arquivo,
     buffer: midia.buffer,
@@ -10133,6 +10919,55 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     }
   })
   await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "guiado" })
+  let recebimentoGuiado = null
+  let confirmacaoCanonicaGuiada = null
+  if (docAtual?.id === "doc_rg") {
+    recebimentoGuiado = evaluateGuidedDocumentReceipt({
+      requirementId: docAtual.id,
+      folha,
+      analysisResult: resultadoAnaliseGuiada
+    })
+    logInfo({
+      event: "document.guided_receipt",
+      status: recebimentoGuiado.accepted ? "accepted" : "rejected",
+      requestedSide: folha,
+      recognizedSides: (recebimentoGuiado.recognizedSides || []).join(",") || "none",
+      reasonCode: recebimentoGuiado.reasonCode || "unknown",
+      qualityWarnings: (recebimentoGuiado.qualityWarnings || []).join(",") || "none",
+      selectedVariant: resultadoAnaliseGuiada?.evidencias?.[0]?.ocr?.selectedVariant ||
+        resultadoAnaliseGuiada?.entrada?.pipeline?.selectedVariant || "unknown"
+    })
+    if (recebimentoGuiado.confirmEvidence) {
+      confirmacaoCanonicaGuiada = await confirmarDocumentoCanonicoSeguro(u, arquivo.id, {
+        origem: "guided_matched_upload"
+      })
+    }
+    applyGuidedDocumentReceipt(u, recebimentoGuiado, {
+      requirementId: docAtual.id,
+      fileId: arquivo.id,
+      totalParts: folhas.length,
+      decisionStatus: confirmacaoCanonicaGuiada?.decision?.status || null
+    })
+    if (!recebimentoGuiado.accepted && confirmacaoCanonicaGuiada?.decision?.status !== "delivered") {
+      u.ultimoArqId = null
+      u.ultimoArqNome = null
+      salvarEtapa(u._numero, "documentos")
+      const telaReenvioDocumento = criarTela({
+        id: `documento_guiado_${recebimentoGuiado.reasonCode || "reenvio"}`,
+        titulo: "Precisamos de outro arquivo",
+        texto: recebimentoGuiado.message,
+        textoAudioBase: recebimentoGuiado.message,
+        acoes: [
+          { id: "docs_depois", label: "Continuar depois" },
+          { id: "m_inicio", label: "🏠 Menu do cliente" }
+        ]
+      })
+      await enviarGuiaDocs(from, u, telaReenvioDocumento)
+      registrarUltimaPergunta(u, telaReenvioDocumento)
+      iniciarTimer(from)
+      return {}
+    }
+  }
   u.ultimoArqId = arquivo.id
   u.ultimoArqNome = nArqFinal
   u.documentosEnviados = true
@@ -10155,9 +10990,11 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
 
   await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
 
-  u.docAtualIdx = arquivoEhPdf ? folhas.length : fIdx + 1
-  const rgAguardandoVerso = docAtual?.id === "doc_rg" && !arquivoEhPdf && u.docAtualIdx < folhas.length
-  const docAtualCompleto = arquivoEhPdf || u.docAtualIdx >= folhas.length
+  if (docAtual?.id !== "doc_rg") u.docAtualIdx = arquivoEhPdf ? folhas.length : fIdx + 1
+  const rgAguardandoVerso = docAtual?.id === "doc_rg" && u.docAtualIdx < folhas.length
+  const docAtualCompleto = docAtual?.id === "doc_rg"
+    ? u.docAtualIdx >= folhas.length
+    : arquivoEhPdf || u.docAtualIdx >= folhas.length
   const temProximoDoc = pendentes.length > 1
   const proximaAcaoTitle = !docAtualCompleto ? "Próxima página" : temProximoDoc ? "Próximo documento" : "Concluir envio"
   const statusRecebido = docAtualCompleto
@@ -10168,24 +11005,24 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     : temProximoDoc
       ? `Toque em *Próximo documento* quando estiver pronto.`
       : `Todos os documentos foram enviados. Toque em *Concluir envio* para finalizar.`
-  const textoAudioRecebido = arquivoEhPdf
-    ? `${lblD} recebido em PDF. Vou considerar este documento completo. Na tela, você pode ${temProximoDoc ? "seguir para o próximo documento" : "concluir o envio"} ou continuar depois.`
-    : rgAguardandoVerso
-      ? `${lblD}, ${folha}, recebido. Se o verso estiver nessa mesma imagem, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
+  const textoAudioRecebido = rgAguardandoVerso
+    ? `${lblD}, ${folha}, recebido. Se o verso estiver nesse mesmo arquivo, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
+    : arquivoEhPdf
+      ? `${lblD} recebido em PDF. Na tela, você pode ${temProximoDoc ? "seguir para o próximo documento" : "concluir o envio"} ou continuar depois.`
     : !docAtualCompleto
       ? `${lblD}, ${folha}, recebido. Envie a próxima parte quando estiver pronto ou toque em Continuar depois para parar por agora.`
       : temProximoDoc
         ? `${lblD} recebido. Na tela, você pode enviar complemento, seguir para o próximo documento ou continuar depois.`
         : `${lblD} recebido. Todos os documentos foram enviados. Toque em Concluir envio para finalizar ou em Continuar depois para parar por agora.`
-  const opcoesRecebido = arquivoEhPdf
+  const opcoesRecebido = rgAguardandoVerso
     ? [
-        { id:"docs_proxdoc", title: proximaAcaoTitle },
-        { id: "docs_depois", title: "Continuar depois" }
-      ]
-    : (rgAguardandoVerso
-      ? [
           { id:"docs_rg_verso_junto", title: "Usar mesma foto" },
           { id:"docs_rg_sem_verso", title: "Seguir sem verso" },
+          { id: "docs_depois", title: "Continuar depois" }
+        ]
+    : (arquivoEhPdf
+      ? [
+          { id:"docs_proxdoc", title: proximaAcaoTitle },
           { id: "docs_depois", title: "Continuar depois" }
         ]
       : (!docAtualCompleto
@@ -13828,7 +14665,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
     }
     iniciarTimer(from)
-    return responderComTimer(from, await telaConfirmarArea(from, u.atendente, u.area || "Outros"))
+    return responderComTimer(from, await telaConfirmarArea(from, u, u.area || "Outros"))
   }
 
   // ── ACOLHIMENTO_PARA_QUEM ────────────────────────────────────────────────
@@ -13837,7 +14674,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
   if (u.stage === STAGES.ACOLHIMENTO_MODO) {
     const modoAtendimento = detectarModoAtendimento(text)
     if (modoAtendimento) {
-      u.modoTexto = modoAtendimento === "texto"
+      definirPreferenciaComunicacao(u, from, modoAtendimento === "texto" ? "texto" : "audio_sempre", "pre_atendimento")
       iniciarTimer(from)
       return await telaParaQuem(from, u)
     }
@@ -15379,6 +16216,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         "DOCUMENTO ANEXADO AO CASO",
         `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinalDoc}${linkFinalDoc ? `\nDrive: ${linkFinalDoc}` : ""}`
       )
+      await confirmarDocumentoCanonicoSeguro(u, fileIdDoc, { origem: "doc_cliente_anexar" })
       u.documentosEnviados = true
       u._docsClienteGuiado = false
       u._docClientePendenteNome = null
@@ -15746,7 +16584,10 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.etapa = "documentos"
       const { doc: docRg } = getDocumentoAtualGuia(u)
       if (docRg?.id === "doc_rg") {
-        marcarStatusDocumento(u, docRg.id, "docsEntregues")
+        await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, {
+          origem: "docs_rg_verso_junto",
+          assertion: "front_and_back_same_image"
+        })
         await hsCriarNota(
           u.contatoId,
           "DOCUMENTO COMPLETO - FRENTE E VERSO NA MESMA IMAGEM",
@@ -15769,7 +16610,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.etapa = "documentos"
       const { doc: docRg, folha: folhaRg, fIdx: fIdxRg, folhas: folhasRg } = getDocumentoAtualGuia(u)
       if (docRg?.id === "doc_rg") {
-        marcarStatusDocumento(u, docRg.id, "docsParciais")
+        await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "docs_rg_sem_verso" })
         await hsCriarNota(
           u.contatoId,
           "DOCUMENTO PARCIAL - CLIENTE SEGUIU SEM VERSO",
@@ -15818,9 +16659,12 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const docAtual4 = pend4[0]
       const folhas4 = docAtual4?.folhas || ["Foto"]
       const fIdx4 = u.docAtualIdx || 0
+      if (docAtual4?.id === "doc_rg" && u.ultimoArqId) {
+        await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "docs_proxdoc" })
+      }
       if (fIdx4 >= folhas4.length) {
         // Todas as folhas do documento atual foram enviadas — avança para o próximo documento
-        if (docAtual4?.id) marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
+        if (docAtual4?.id && docAtual4.id !== "doc_rg") marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
         u.docAtualIdx = 0
       }
       if (getDocsPendentes(u).length === 0) {
@@ -15846,7 +16690,11 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         const fIdxDepois = u.docAtualIdx || 0
         const docCompletoDepois = fIdxDepois >= folhasDepois.length
         if (docCompletoDepois) {
-          marcarStatusDocumento(u, docAtualDepois.id, "docsEntregues")
+          if (docAtualDepois.id === "doc_rg" && u.ultimoArqId) {
+            await confirmarDocumentoCanonicoSeguro(u, u.ultimoArqId, { origem: "docs_depois" })
+          } else if (docAtualDepois.id !== "doc_rg") {
+            marcarStatusDocumento(u, docAtualDepois.id, "docsEntregues")
+          }
           u.docAtualIdx = 0
         }
       }
@@ -16066,6 +16914,20 @@ async function carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repo
   return context
 }
 
+async function complementoPosHumanoEstaCompleto({ cycle, usuario, repository }) {
+  if (!cycle?.cycleId || !usuario?.contatoId || !usuario?.negocioId || !usuario?.numeroCaso || !usuario?.pastaDriveId) return false
+  const context = await carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository })
+  return !context.humanReviewRequired && context.camposPendentes.length === 0 &&
+    !(usuario.docsAusentes || []).length && !(usuario.docsParciais || []).length && !usuario.revisaoDocumentalNecessaria
+}
+
+function criarVerificadorCompletudePosHumana(usuario, repository) {
+  return async input => {
+    const cycle = input?.cycle || input
+    return complementoPosHumanoEstaCompleto({ cycle, usuario: input?.usuario || usuario, repository })
+  }
+}
+
 function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
   return createPostHumanDispatcher({
     isEnabled: isPostHumanComplementationEnabled,
@@ -16083,13 +16945,76 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const caso = numeroCaso || contexto?.numeroCaso || current?.numeroCaso
       return negocioId && caso ? { validated: true, negocioId, numeroCaso: caso } : null
     },
+    transcribeInformationAudio: async ({ content }) => {
+      const mediaId = content?.audio?.id || content?.voice?.id
+      if (!mediaId) return null
+      const media = await baixarMidia(mediaId)
+      if (!media) return null
+      const transcription = await transcrever(media.buffer, media.mimeType, { origem: "post_human_legal_answer" })
+      return transcription ? normalizarTextoCRM(transcription) : null
+    },
     saveInformation: async ({ cycle, content }) => {
       const current = await postHumanCycleRepository.getCycle(cycle.cycleId)
       const field = current?.payload?.campoPendente || current?.campoPendente
       if (!field) return { persisted: true }
+      const previousAnswers = current?.payload?.respostas || {}
+      const previdenciario = /inss|previd/i.test(String(usuario.area || ""))
+      const bpcCase = previdenciario && isBpcCase({ ...usuario, ...previousAnswers })
+      const legalBpcField = bpcCase && isBpcLegalField(field)
+      const legalInssField = previdenciario && isInssLegalField(field)
+      const legalField = legalBpcField || legalInssField
+      const addressField = ADDRESS_FIELDS.has(field)
+      const legalResult = legalBpcField
+        ? buildBpcLegalAnswerResult(field, content, { previousAnswers })
+        : legalInssField
+          ? buildInssLegalAnswerResult(field, content, { previousAnswers })
+        : null
+      const addressResult = addressField
+        ? await buildAddressAnswerResult(field, content, {
+            previousAnswers,
+            known: usuario,
+            resolveLocation: async entrada => {
+              const texto = sanitizarTextoEntrada(entrada)
+              const cep = texto.replace(/\D/g, "")
+              return cep.length === 8 ? buscarPorCEP(cep) : buscarCidadePorNomeInteligente(texto)
+            }
+          })
+        : null
+      const canonicalResult = addressResult || legalResult
+      const legalAnswers = canonicalResult?.canonicalAnswers || null
+      const nomenclaturaJuridica = legalField && Object.values(legalAnswers || {}).some(item => item?.status === "confirmado")
+        ? resolveLegalCaseNomenclature({
+            current: usuario.nomenclaturaJuridica,
+            narrative: sanitizarTextoEntrada(content?.text || content),
+            answered: { ...previousAnswers, ...legalAnswers },
+            usuario,
+            explicitCorrection: Object.values(legalAnswers || {}).some(item => item?.correcao === true)
+          })
+        : null
+      const withLegalNomenclature = result => {
+        if (!nomenclaturaJuridica) return result
+        const existingPatch = result?.canonicalPatch || {}
+        const existingValues = existingPatch.values && typeof existingPatch.values === "object"
+          ? existingPatch.values
+          : existingPatch.field ? { [existingPatch.field]: existingPatch.value } : {}
+        const correctedFields = Object.entries(legalAnswers || {})
+          .filter(([, item]) => item?.correcao === true)
+          .map(([field]) => field)
+        return {
+          ...(result || {}),
+          canonicalPatch: {
+            values: { ...existingValues, nomenclaturaJuridica },
+            corrections: [...new Set([...(existingPatch.corrections || []), ...correctedFields])]
+          }
+        }
+      }
+      if (legalField && !Object.keys(legalAnswers).length) return withLegalNomenclature(legalResult)
+      if (addressField && !Object.keys(legalAnswers || {}).length) return addressResult
       const contactFields = {
         nomeCompleto: "firstname", cpf: "cpf_do_cliente", dataNascimento: "date_of_birth",
-        telefone: "phone", email: "email", cidade: "city", uf: "state"
+        telefone: "phone", email: "email", cidade: "city", uf: "state",
+        endereco: "address", numeroEndereco: "address", complementoEndereco: "address",
+        bairro: "address", cep: "zip"
       }
       const dealFields = {
         areaJuridica: "area_juridica", tipoCaso: "tipo_de_caso",
@@ -16099,8 +17024,41 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       const property = contactFields[field] || dealFields[field]
       const objectType = contactFields[field] ? "contact" : dealFields[field] ? "deal" : null
       const objectId = objectType === "contact" ? cycle.contatoId : cycle.negocioId
+      if (legalField && legalAnswers[field]?.status !== "confirmado") return withLegalNomenclature(legalResult)
+      if (legalField && (!property || !objectId)) return withLegalNomenclature(legalResult)
+      if (addressField) {
+        const confirmedValues = Object.fromEntries(Object.entries(legalAnswers)
+          .filter(([, item]) => item?.status === "confirmado")
+          .map(([key, item]) => [key, item.valor]))
+        const canonicalPatch = {
+          values: confirmedValues,
+          corrections: Object.keys(confirmedValues).filter(key => legalAnswers[key]?.correcao === true)
+        }
+        const existingContact = cycle.contatoId ? await hsBuscarPorPhone(from) : null
+        const currentProperties = existingContact?.properties || {}
+        const projected = montarPropsContatoHubSpot(from, { ...usuario, ...confirmedValues })
+        const requestedProperties = new Set([
+          ...(confirmedValues.cidade ? ["city"] : []),
+          ...(confirmedValues.uf ? ["state"] : []),
+          ...(confirmedValues.cep ? ["zip"] : []),
+          ...((confirmedValues.endereco || usuario.endereco || usuario.address) &&
+            Object.keys(confirmedValues).some(key => ["endereco", "numeroEndereco", "complementoEndereco", "bairro"].includes(key)) ? ["address"] : [])
+        ])
+        const incoming = Object.fromEntries(Object.entries(projected)
+          .filter(([key, value]) => requestedProperties.has(key) && sanitizarTextoEntrada(value)))
+        return {
+          ...addressResult,
+          canonicalPatch,
+          ...(cycle.contatoId && cycle.negocioId && Object.keys(incoming).length ? {
+            hubspot: {
+              objectType: "contact", objectId: cycle.contatoId, contactId: cycle.contatoId,
+              expectedDealId: cycle.negocioId, current: currentProperties, incoming
+            }
+          } : {})
+        }
+      }
       if (!property || !objectId || !cycle.contatoId || !cycle.negocioId) {
-        return { persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" }
+        return withLegalNomenclature({ persisted: true, humanReviewRequired: true, reviewReason: "contact_mapping_unavailable" })
       }
       let currentProperties = {}
       if (objectType === "contact") {
@@ -16113,14 +17071,16 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         )
         currentProperties = response.data?.properties || {}
       }
-      return {
+      const canonicalValue = legalField ? legalAnswers[field]?.valor : sanitizarTextoEntrada(content)
+      return withLegalNomenclature({
+        ...(legalResult || {}),
         persisted: true,
-        canonicalPatch: { field, value: sanitizarTextoEntrada(content) },
+        canonicalPatch: { field, value: canonicalValue },
         hubspot: {
           objectType, objectId, contactId: cycle.contatoId, expectedDealId: cycle.negocioId,
-          current: currentProperties, incoming: { [property]: sanitizarTextoEntrada(content) }
+          current: currentProperties, incoming: { [property]: canonicalValue }
         }
-      }
+      })
     },
     applySafeHubspotUpdates: async ({ cycle, objectType, objectId, contactId, expectedDealId, current, incoming }) =>
       atualizarHubSpotSeguro({
@@ -16144,26 +17104,36 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         }
       }),
     updateCanonicalState: async ({ patch }) => {
-      const field = patch?.field
-      const value = sanitizarTextoEntrada(patch?.value)
+      const values = patch?.values && typeof patch.values === "object"
+        ? patch.values
+        : patch?.field ? { [patch.field]: patch.value } : {}
       const userFields = {
         nomeCompleto: "nome", cpf: "cpf", dataNascimento: "dataNascimento", telefone: "whatsappContato",
         email: "email", cidade: "cidade", uf: "uf", areaJuridica: "area", tipoCaso: "tipoCaso",
-        descricao: "descricao", beneficio: "beneficio", motivo: "motivo", situacao: "situacao", nb: "nb"
+        descricao: "descricao", beneficio: "beneficio", motivo: "motivo", situacao: "situacao", nb: "nb",
+        endereco: "endereco", numeroEndereco: "numeroEndereco", complementoEndereco: "complementoEndereco",
+        bairro: "bairro", cep: "cep", referenciaEndereco: "referenciaEndereco"
       }
-      const target = userFields[field]
-      if (!target || !value) return false
-      if (!sanitizarTextoEntrada(usuario[target])) usuario[target] = value
+      let changed = false
+      const corrections = new Set(patch?.corrections || [])
+      for (const [field, rawValue] of Object.entries(values)) {
+        if (field === "nomenclaturaJuridica" && rawValue && typeof rawValue === "object") {
+          changed = applyLegalCaseNomenclatureToUser(usuario, rawValue) || changed
+          continue
+        }
+        const target = userFields[field]
+        const value = sanitizarTextoEntrada(rawValue)
+        if (!target || !value) continue
+        if (!sanitizarTextoEntrada(usuario[target]) || corrections.has(field)) {
+          usuario[target] = value
+          changed = true
+        }
+      }
+      if (!changed) return false
       agendarPersistenciaUsers()
       return true
     },
-    isComplete: async currentCycle => {
-      const cycle = currentCycle?.cycle || currentCycle
-      if (!cycle?.cycleId || !usuario?.contatoId || !usuario?.negocioId || !usuario?.numeroCaso || !usuario?.pastaDriveId) return false
-      const context = await carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository: postHumanCycleRepository })
-      return !context.humanReviewRequired && context.camposPendentes.length === 0 &&
-        !(usuario.docsAusentes || []).length && !(usuario.docsParciais || []).length && !usuario.revisaoDocumentalNecessaria
-    },
+    isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository),
     continueCycle: async ({ cycle }) => processPostHumanCycle({
       cycle,
       usuario,
@@ -16175,11 +17145,11 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         camposComplementaresPendentes: () => carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository: postHumanCycleRepository }),
         getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
         sendFree: (to, message) => enviar(to, message),
+        presentClientMenu: (to) => apresentarMenuClientePosHumano(to, usuario),
         sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
         templateConfig: META_TEMPLATES.casoAtualizacao,
         buildTemplateParams: solicitation => [solicitation.texto],
-        isComplete: async ({ analysis }) => !(analysis.camposPendentes || []).length && analysis.estado === "DOCUMENTOS_COMPLETOS" &&
-          Boolean(usuario.contatoId && usuario.negocioId && usuario.numeroCaso && usuario.pastaDriveId)
+        isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository)
       }
     }),
     legacyDocumentPipeline: createLegacyDocumentPipeline({
@@ -16193,6 +17163,9 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
 
 async function processarComLock(from, nomeWA, text, msgObj) {
   const textoSanitizado = sanitizarTextoEntrada(text)
+  const tipoEntrada = String(msgObj?.type || "").toLowerCase()
+  const ehCallbackCliente = ["interactive", "button"].includes(tipoEntrada) &&
+    /^(?:m_|docs_|doc_|cliente_|adv_|dir_|novo_caso_|nc_)/.test(textoSanitizado)
   let u = users[from] || null
 
   try {
@@ -16208,7 +17181,7 @@ async function processarComLock(from, nomeWA, text, msgObj) {
     }
     const estadoHubSpotAntes = serializarEstado(u)
 
-    if (postHumanCycleRepository) {
+    if (postHumanCycleRepository && !ehCallbackCliente) {
       const postHumanDispatch = await criarDispatcherPosHumano({ from, nomeWA: nomeWAEfetivo, usuario: u })({
         from,
         msgType: msgObj?.type,
@@ -16223,6 +17196,7 @@ async function processarComLock(from, nomeWA, text, msgObj) {
           return { texto: "Há mais de um caso aguardando complemento. Selecione o caso no Menu do Cliente para continuar.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         }
         if (postHumanResponse.deferred) return { texto: "Tudo bem. Seu progresso foi salvo e você pode responder depois.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
+        if (postHumanResponse.transcriptionFailed) return { texto: "Não consegui ouvir esse áudio com clareza. Pode enviar outro áudio ou responder por texto?", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         if (postHumanResponse.pipelineResponse) return postHumanResponse.pipelineResponse
         if (postHumanDispatch.humanReviewRequired) return { texto: "Recebi sua informação. Ela seguirá para revisão segura antes de qualquer atualização.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
         if (postHumanResponse.partial) return { texto: "Informação recebida e vinculada ao seu caso. Você pode continuar enviando os itens pendentes.", opcoes: [{ id: "m_inicio", title: "Menu cliente" }] }
@@ -16383,6 +17357,7 @@ app.get("/resumo-diario", validarWebhookInterno, async (req, res) => {
   try {
     const limite = Math.max(1, Math.min(30, Number(req.query?.limit || req.query?.limite || 10) || 10))
     const resumo = await gerarResumoDiarioOperacional({ limite })
+    if (!resumo.ok) return res.status(502).json({ ok: false, errorCode: resumo.errorCode || "HUBSPOT_QUERY_FAILED" })
     if (sanitizarTextoEntrada(req.query?.format).toLowerCase() === "text") {
       return res.type("text/plain").send(textoResumoDiarioOperacional(resumo))
     }
@@ -16398,7 +17373,8 @@ app.get("/webhook", (req, res) => {
 })
 async function processarMensagemWebhook(value, message) {
   const incomingMessageId = message.id || null
-  const from   = message.from
+  const fromRaw   = message.from
+  const from      = telefoneCanonico(fromRaw) || fromRaw
   if (users[from] && incomingMessageId) {
     digitando(from, incomingMessageId, "").catch(() => {})
   }
@@ -16406,6 +17382,10 @@ async function processarMensagemWebhook(value, message) {
   const nomeWA = contato?.profile?.name || "Cliente"
   const text   = sanitizarTextoEntrada(message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "")
   const resposta = await processar(from, nomeWA, text, message)
+  // A inbox durável já aceitou e reservou este inbound; a janela foi reaberta
+  // por processar(). Consuma antes do áudio automático da resposta para evitar
+  // dois áudios consecutivos para a mesma interação.
+  await consumirPendenciaAudioPedidoDocumentos(from)
   if (!resposta) return
   if (deveAtivarModoDigitando(resposta) && users[from]) {
     users[from].modoDigitando = true
@@ -16464,6 +17444,26 @@ app.post("/webhook", validarAssinaturaMeta, async (req, res) => {
     for (const entry of req.body?.entry || []) {
       for (const change of entry?.changes || []) {
         const value = change?.value
+        for (const status of value?.statuses || []) {
+          const providerMessageId = sanitizarTextoEntrada(status?.id)
+          const normalizedStatus = sanitizarTextoEntrada(status?.status).toLowerCase()
+          if (!["sent", "delivered", "read", "failed"].includes(normalizedStatus)) {
+            logInfo({ event: "outbound.status_ignored", status: normalizedStatus || "unknown", providerMessageId })
+            continue
+          }
+          const error = Array.isArray(status?.errors) ? status.errors[0] : null
+          const timestampMs = Number(status?.timestamp) * 1000
+          const outbound = atualizarStatusMensagemOutbound(providerMessageId, normalizedStatus, {
+            timestamp: Number.isFinite(timestampMs) && timestampMs > 0 ? new Date(timestampMs).toISOString() : null,
+            failureCode: error?.code,
+            failureDescription: error?.title || error?.message
+          })
+          logInfo({ event: "outbound.status", status: outbound?.status || normalizedStatus || "unknown",
+            providerMessageId, numeroCaso: outbound?.numeroCaso, contactId: outbound?.contactId,
+            dealId: outbound?.dealId, action: outbound?.action, channel: outbound?.channel,
+            phoneMasked: outbound?.destinationMasked, failureCode: outbound?.failureCode,
+            failureDescription: outbound?.failureDescription })
+        }
         for (const message of value?.messages || []) {
           const from = message.from
           const text = sanitizarTextoEntrada(message.text?.body || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || "")
@@ -17209,11 +18209,21 @@ async function iniciarServidor() {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
     console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)
     carregarUsersPersistidos()
+    communicationPreferences.load()
+    for (const [from, u] of Object.entries(users)) {
+      promoverPreferenciaComunicacao(u, from)
+      obterPreferenciaComunicacao(u, from)
+    }
     if (isPostHumanComplementationEnabled()) {
       postHumanCycleRepository = new PostHumanCycleRepository({
         pool: getPool(),
         mode: process.env.NODE_ENV === "production" ? "postgres" : (getPool() ? "postgres" : "local")
       })
+      postHumanActionContextRepository = new PostHumanActionContextRepository({
+        pool: getPool(),
+        mode: process.env.NODE_ENV === "production" ? "postgres" : (getPool() ? "postgres" : "local")
+      })
+      await postHumanActionContextRepository.initialize()
       await recoverPostHumanCycles({
         isEnabled: isPostHumanComplementationEnabled,
         repository: postHumanCycleRepository,
@@ -17235,15 +18245,19 @@ async function iniciarServidor() {
             },
             getLatestCustomerMessage: () => users[normalizarNumeroWhatsAppEnvio(usuario._numero || usuario.whatsappContato)]?.ultimaMsg ?? usuario.ultimaMsg,
             sendFree: (to, message) => enviar(to, message),
+            presentClientMenu: (to) => apresentarMenuClientePosHumano(to, usuario),
             sendTemplate: (to, name, params, language, options) => enviarTemplateWhatsApp(to, name, params, language, options),
             templateConfig: META_TEMPLATES.casoAtualizacao,
-            buildTemplateParams: solicitacao => [solicitacao.texto]
+            buildTemplateParams: solicitacao => [solicitacao.texto],
+            isComplete: criarVerificadorCompletudePosHumana(usuario, postHumanCycleRepository)
           }
         }),
         safeLogger: (event, error) => logErro("post_human", `${event}: ${error}`)
       })
     }
     carregarWebhookInbox()
+    carregarMensagensOutbound()
+    carregarPendenciasAudioPedidoDocumentos()
     carregarSessoesAdminAssistidasPersistidas(sessoesAdminWhatsApp)
     restaurarTimersPersistidos()
     await validarMetaWabaNoBoot()
@@ -17293,7 +18307,10 @@ module.exports = {
   flowRetomadaMenu,
   processarRetomadaOuReinicio,
   obterStageRetomadaOriginal,
-  STAGES
+  STAGES,
+  persistirUsersAgora,
+  api,
+  podeMostrarMenuCliente
 }
 
 if (require.main === module) iniciarServidor()

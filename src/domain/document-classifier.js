@@ -30,8 +30,15 @@ const TIPOS_DOCUMENTAIS = Object.freeze([
     tipoDocumento: "RG verso",
     categoria: CATEGORIAS_DOCUMENTAIS.PESSOAL,
     subtipo: "identidade",
-    fortes: ["assinatura do titular", "polegar direito", "via de identidade", "lei 7116"],
-    apoio: ["registro geral", "carteira de identidade", "data de expedicao", "secretaria de seguranca"]
+    fortes: [
+      "assinatura do titular", "polegar direito", "via de identidade", "lei 7116",
+      "valida em todo o territorio nacional", "valida em todo territorio nacional",
+      "assinatura do diretor", "data de expedicao", "secretaria de seguranca publica"
+    ],
+    apoio: [
+      "registro geral", "carteira de identidade", "orgao expedidor",
+      "instituto de identificacao", "secretaria de seguranca"
+    ]
   },
   {
     id: "cpf",
