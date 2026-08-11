@@ -113,9 +113,7 @@ async function baixarWavLightning(texto, profile, env = process.env) {
   const headers = { "Content-Type": "application/json" }
   if (String(env.LIGHTNING_TTS_TOKEN || "").trim()) headers.Authorization = `Bearer ${env.LIGHTNING_TTS_TOKEN.trim()}`
   const resposta = await clienteHttp.post(`${baseUrl}/tts`, {
-    text: texto,
-    voice: profile.voice,
-    lang: profile.lang
+    text: texto
   }, {
     timeout: numeroPositivo(env.LIGHTNING_TTS_TIMEOUT_MS, 20000),
     responseType: "arraybuffer",
