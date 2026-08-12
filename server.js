@@ -13970,18 +13970,14 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         return { texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n🎙️ Não consegui entender sua cidade. Digite o nome, informe o CEP ou envie outro áudio.`, opcoes: null }
       }
 
-      u.cidade = cidadeIdentificada
-      u.uf = localizacao.uf
-      u.regiao = localizacao.regiao
       u._cidadeAudioTemp = cidadeIdentificada
-      u._ufAudioTemp = u.uf
-      u._regiaoAudioTemp = u.regiao
-      await sincronizarContatoNegocioHubSpot(u)
-      await enviarAudioConfirmacaoLocalizacao(from, u.atendente, cidadeIdentificada, u.uf || "UF não identificada", u.regiao || "não identificada", "cidade")
+      u._ufAudioTemp = localizacao.uf
+      u._regiaoAudioTemp = localizacao.regiao
+      await enviarAudioConfirmacaoLocalizacao(from, u.atendente, cidadeIdentificada, localizacao.uf, localizacao.regiao, "cidade")
       iniciarTimer(from)
       // formato padrão "Cidade, UF" com vírgula
       return {
-        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${cidadeIdentificada}${u.uf ? `, ${u.uf}` : ""}* (${u.regiao || "não identificada"}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
+        texto: `●●●●●○ 📍 Etapa 5 de 6 · *CIDADE*\n\n✅ Localizei: *${cidadeIdentificada}, ${localizacao.uf}* (${localizacao.regiao}). Está correto? Se não estiver, é só me dizer a cidade correta agora. Pode falar ou digitar. 🎙️`,
         opcoes: [
           { id: "cidade_confirmar", title: "✅ Confirmar cidade" }
         ]

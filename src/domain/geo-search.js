@@ -6,6 +6,7 @@ const {
   limparTextoSomenteLetras
 } = require("../utils/text")
 const { logErro } = require("../utils/logging")
+const MUNICIPIOS_LOCAIS = require("./brazil-municipalities.json")
 
 const ESTADOS_EXTENSO = {
   AC: "Acre", AL: "Alagoas", AP: "Amapá", AM: "Amazonas",
@@ -177,6 +178,32 @@ function scoreMunicipioBusca(entrada, nomeMunicipio) {
   return distanciaLevenshtein(entrada, alvo)
 }
 
+function buscarCidadeNaBaseLocal(nomeCidade) {
+  const entradaOriginal = sanitizarTextoEntrada(nomeCidade)
+  const ufFiltro = extrairFiltroUFEstado(entradaOriginal)
+  const entrada = removerFiltroUFEstado(entradaOriginal) || normalizarNomeCidadeBusca(entradaOriginal)
+  if (entrada.length < 2) return null
+
+  const correspondencias = MUNICIPIOS_LOCAIS
+    .filter(municipio => !ufFiltro || municipio.uf === ufFiltro)
+    .map(municipio => ({ municipio, nome: normalizarNomeCidadeBusca(municipio.cidade) }))
+    .filter(item => item.nome === entrada || entrada.endsWith(` ${item.nome}`))
+
+  const maiorNome = Math.max(0, ...correspondencias.map(item => item.nome.length))
+  const candidatos = correspondencias
+    .filter(item => item.nome.length === maiorNome)
+    .map(({ municipio }) => ({
+    cidade: municipio.cidade,
+    uf: municipio.uf,
+    estado: municipio.uf,
+    regiao: municipio.regiao
+  }))
+
+  if (candidatos.length === 1) return candidatos[0]
+  if (candidatos.length > 1) return { multiplos: true, opcoes: candidatos }
+  return null
+}
+
 async function carregarMunicipiosIBGE() {
   const agora = Date.now()
   if (municipiosIBGECache && agora - municipiosIBGECacheTs < MUNICIPIOS_IBGE_CACHE_MS) return municipiosIBGECache
@@ -247,6 +274,9 @@ function abreviarCidadeBotao(cidade, uf) {
 }
 
 async function buscarCidadePorNome(nomeCidade) {
+  const local = buscarCidadeNaBaseLocal(nomeCidade)
+  if (local) return local
+
   try {
     const nomeLimpo = encodeURIComponent(String(nomeCidade || "").trim())
     const ibgeRes = await axios.get(
@@ -299,6 +329,7 @@ module.exports = {
   removerFiltroUFEstado,
   distanciaLevenshtein,
   scoreMunicipioBusca,
+  buscarCidadeNaBaseLocal,
   carregarMunicipiosIBGE,
   municipioIBGEParaLocalizacao,
   buscarCidadePorNomeInteligente,
