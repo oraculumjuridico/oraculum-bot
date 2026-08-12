@@ -49,6 +49,11 @@ function normalizarTemperaturaHubSpot(value = "") {
 function planoTitulo(deal = {}) {
   const props = deal.properties || {}
   const numeroCaso = numeroCasoNegocio(props)
+  const stagesCliente = new Set([
+    HS_STAGE.ANALISE, HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.DOCS,
+    HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL
+  ])
+  const exigeNumeroCaso = stagesCliente.has(sanitizarTextoEntrada(props.dealstage))
   const usuario = {
     area: props.area_juridica,
     numeroCaso,
@@ -79,10 +84,10 @@ function planoTitulo(deal = {}) {
     stage: props.dealstage
   })
   const motivos = []
-  if (!numeroCaso) motivos.push("caso_sem_numero_oficial")
-  if (!sanitizarTextoEntrada(props.area_juridica)) motivos.push("area_ausente")
-  if (!referencia) motivos.push("referencia_juridica_nao_determinada")
-  if (classificationConflict) motivos.push("classificacao_divergente")
+  if (exigeNumeroCaso && !numeroCaso) motivos.push("caso_sem_numero_oficial")
+  if (numeroCaso && !sanitizarTextoEntrada(props.area_juridica)) motivos.push("area_ausente")
+  if (numeroCaso && !referencia) motivos.push("referencia_juridica_nao_determinada")
+  if (numeroCaso && classificationConflict) motivos.push("classificacao_divergente")
   if (sanitizarTextoEntrada(props.dealname) !== tituloProposto) motivos.push("titulo_fora_do_padrao")
 
   const aplicavel = Boolean(numeroCaso && referencia && !classificationConflict)
@@ -102,7 +107,10 @@ function planoTitulo(deal = {}) {
     motivos,
     propriedades,
     aplicavel: aplicavel && Object.keys(propriedades).length > 0,
-    requerRevisaoHumana: !aplicavel
+    requerRevisaoHumana: motivos.some(item => [
+      "caso_sem_numero_oficial", "area_ausente",
+      "referencia_juridica_nao_determinada", "classificacao_divergente"
+    ].includes(item))
   }
 }
 

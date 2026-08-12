@@ -29,6 +29,14 @@ function main() {
   assert.equal(semNumero.requerRevisaoHumana, true)
   assert.deepEqual(semNumero.propriedades, {})
 
+  const leadSemNumero = planoTitulo(deal("105", {
+    dealname: "⚪ LF-Jur",
+    dealstage: "appointmentscheduled",
+    area_juridica: "Atendimento inicial"
+  }))
+  assert.deepEqual(leadSemNumero.motivos, [])
+  assert.equal(leadSemNumero.requerRevisaoHumana, false)
+
   const divergente = planoTitulo(deal("103", {
     dealname: "🟢 PRV.260812.011 - BPC LOAS Idoso",
     dealstage: "presentationscheduled",
