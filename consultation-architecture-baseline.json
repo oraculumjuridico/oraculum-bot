@@ -52,7 +52,7 @@
   ],
   "allowedDependencies": {
     "server.js": {
-      "consultation": ["assertConsultationArchitecture", "assertConsultationReleaseIntegrity", "getConsultaView", "listConsultasAtivasViews", "findConsultaCalendarEventInRange", "getConsultaCalendarEventState", "buscarHorariosDisponiveis", "criarEventoConsulta", "definirResultadoConsulta", "cancelarEventosAtivosDoDeal", "appendConsultaEvent"]
+      "consultation": ["assertConsultationArchitecture", "assertConsultationReleaseIntegrity", "getConsultaView", "listConsultasAtivasViews", "findConsultaCalendarEventInRange", "getConsultaCalendarEventState", "listConsultaCalendarEventsForReconciliation", "classificarEstadoCalendar", "buscarHorariosDisponiveis", "criarEventoConsulta", "definirResultadoConsulta", "cancelarEventosAtivosDoDeal", "appendConsultaEvent"]
     },
     "src/domain/consultation/index.js": {
       "consultation-read-model": ["*"],
@@ -138,7 +138,8 @@
     "/evento-cancelado",
     "/pos-consulta",
     "/consulta-status",
-    "/lembrete"
+    "/lembrete",
+    "/internal/processar-agendamentos"
   ],
   "scan": {
     "include": ["server.js", "src", "scripts"],

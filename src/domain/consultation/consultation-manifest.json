@@ -123,14 +123,14 @@
     "src/scripts/consultation-release-check.js": "436a327960ca45f089fec63522bdbbeb59badf6bbae81f4a2c24591821ed4789",
     "src/scripts/consultation-export-legal.js": "1b93711fedd9fbed571edeca4fafa442502dfdabd6f8733853ba3207488258bb",
     "src/scripts/consultation-export-dossier.js": "d510469965b0dce561f023efb60ef2828b858e73217b2739cd0800c9c7037534",
-    "consultation-architecture-baseline.json": "418b8b62ade2fff5786f7bf5f5bdace2a047a22e7cccb37e4a7e123229d08220",
+    "consultation-architecture-baseline.json": "23bf410aee6c609dfcb744e27966738b2843e56be8c6603521153942e9dd0662",
     "consultation-architecture-snapshot.json": "9bc25304b856f8fff9025289b433db477ede2c0f7c2ba3f7137c72d39e55f266"
   },
   "approval": {
     "approved": true,
-    "approvedBy": "pilot-readiness",
-    "approvedAt": "2026-07-10T10:30:00-03:00",
-    "changeId": "FREE-POSTGRES-STATE-MIRROR",
-    "structuralDigest": "78061237dd4f6c12cd6b22dbbf024b5b965f7490f226ade9e17a254f7a983b29"
+    "approvedBy": "user-requested-make-replacement",
+    "approvedAt": "2026-08-12T00:00:00-03:00",
+    "changeId": "INTERNAL-SCHEDULER-REPLACES-MAKE",
+    "structuralDigest": "1b711be23c58e572b2cbc5f7245f10b844d3ecef493afc9d015c73ff1fbec192"
   }
 }

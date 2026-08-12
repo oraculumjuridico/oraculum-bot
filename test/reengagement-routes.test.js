@@ -428,9 +428,11 @@ function totalCallbacksRegistrados() {
         const candidates = await postJson(disabledServer, "/reengagement-candidates", {})
         const data = await postJson(disabledServer, "/reengajamento-dados", { phone })
         const send = await postJson(disabledServer, "/reengajamento", { phone, tipoEvento: "abandono_2h", jobId: "x", scheduledFor: new Date().toISOString() })
+        const scheduler = await postJson(disabledServer, "/internal/processar-agendamentos", {})
         assert.equal(candidates.body.status, "disabled"); assert.deepEqual(candidates.body.candidates, [])
         assert.equal(data.body.status, "disabled"); assert.deepEqual(data.body.jobs, [])
         assert.equal(send.body.reason, "feature_disabled")
+        assert.equal(scheduler.status, 200); assert.equal(scheduler.body.status, "disabled")
       } finally {
         await fechar(disabledServer)
         process.env.AUTO_REENGAJAMENTO = "true"

@@ -273,6 +273,8 @@ const {
   listConsultasAtivasViews,
   findConsultaCalendarEventInRange,
   getConsultaCalendarEventState,
+  listConsultaCalendarEventsForReconciliation,
+  classificarEstadoCalendar,
   buscarHorariosDisponiveis,
   criarEventoConsulta,
   definirResultadoConsulta,
@@ -401,6 +403,16 @@ const {
   closeExternalStateRepository,
   getPool
 } = require("./src/infrastructure/external-state-repository")
+const {
+  initializeInternalScheduler,
+  createInternalSchedulerRepository
+} = require("./src/infrastructure/internal-scheduler-postgres")
+const { processInternalSchedule } = require("./src/domain/internal-scheduler")
+const {
+  consultationScope,
+  consultationLifecycleScope,
+  reengagementScope
+} = require("./src/domain/internal-scheduler-plans")
 const {
   dispatchConversationContext
 } = require("./src/domain/conversation-context-dispatcher")
@@ -617,7 +629,9 @@ const ROTAS_OBSERVADAS = new Set([
   "/reengajamento",
   "/agendamento",
   "/lembrete",
-  "/consulta-status"
+  "/consulta-status",
+  "/internal/processar-agendamentos",
+  "/internal/agendador-status"
 ])
 
 app.use((req, res, next) => {
@@ -651,7 +665,9 @@ app.use([
   "/evento-cancelado",
   "/pos-consulta",
   "/consulta-status",
-  "/lembrete"
+  "/lembrete",
+  "/internal/processar-agendamentos",
+  "/internal/agendador-status"
 ], limitarWebhookInterno)
 
 const AXIOS_TIMEOUT_MS = Number(process.env.AXIOS_TIMEOUT_MS || 15000)
@@ -17492,13 +17508,8 @@ app.post("/webhook", validarAssinaturaMeta, async (req, res) => {
 const PORT = process.env.PORT || 10000
 // ------------------------------------------------------------------
 // ROTA /agendamento — confirmação de ligação agendada
-// Como usar GRATUITAMENTE (sem pagar HubSpot):
-//   Opção 1: Make.com (gratuito, 1000 ops/mês):
-//     - Crie cenário: HubSpot "Meeting Booked" ? HTTP POST ? https://seu-dominio.onrender.com/agendamento
-//     - Body: { "phone": "{{contact.phone}}", "name": "{{contact.firstname}}", "eventId": "{{calendar.eventId}}", "datetime": "{{meeting.startTime}}" }
-//   Opção 2: n8n (auto-hospedado, 100% gratuito):
-//     - Trigger HubSpot ? HTTP Request para esta rota
-//   Opção 3: Zapier free tier (100 tarefas/mês)
+// Rota de compatibilidade para confirmação externa de uma consulta.
+// O planejamento e os disparos recorrentes pertencem ao agendador interno.
 // ------------------------------------------------------------------
 app.post("/agendamento", validarWebhookInterno, async (req, res) => {
   try {
@@ -17569,13 +17580,14 @@ app.post("/agendamento", validarWebhookInterno, async (req, res) => {
 })
 
 process.on("beforeExit", () => {
+  if (internalSchedulerTimer) clearInterval(internalSchedulerTimer)
   persistirUsersAgora()
   persistirSessoesAdminAssistidasAgora(sessoesAdminWhatsApp)
 })
 
 // ------------------------------------------------------------------
 // ROTA /buscar-contato-reuniao — recebe horário do evento do Calendar e retorna phone + name + tipo
-// Chamada pelo Make.com após detectar evento novo no Google Calendar
+// Compatibilidade para integrações que detectem evento novo no Google Calendar.
 // Body preferencial: { eventId: "google-calendar-event-id" }
 // Compatibilidade legada: { datetime: "2026-05-29T19:00:00" }
 // ------------------------------------------------------------------
@@ -17742,7 +17754,7 @@ app.post("/buscar-contato-reuniao", validarWebhookInterno, async (req, res) => {
 })
 
 // ------------------------------------------------------------------
-// ROTA /consulta-lembrete-dados - dados estaveis para o Make agendar lembretes
+// ROTA /consulta-lembrete-dados - dados estáveis para o agendador interno
 // Body: { eventId }
 // O envio continua exclusivo da rota /lembrete, chamada apenas no horario agendado.
 // ------------------------------------------------------------------
@@ -17815,7 +17827,7 @@ app.post("/reengagement-candidates", validarWebhookInterno, async (_req, res) =>
 })
 
 // ------------------------------------------------------------------
-// ROTA /reengajamento-dados - dados estaveis para o Make planejar reengajamentos
+// ROTA /reengajamento-dados - dados estáveis para planejar reengajamentos
 // Body aceito: { phone } ou { dealId }
 // Nao envia mensagens, nao chama templates e nao cria agendamentos.
 // ------------------------------------------------------------------
@@ -17868,7 +17880,7 @@ app.post("/reengajamento-dados", validarWebhookInterno, async (req, res) => {
 })
 
 // ------------------------------------------------------------------
-// ROTA /reengajamento - disparo de reengajamento chamado pelo Make
+// ROTA /reengajamento - disparo revalidado pelo agendador
 // Body: { phone, tipoEvento, jobId, dealId, scheduledFor }
 // Revalida elegibilidade e envia somente o template planejado.
 // ------------------------------------------------------------------
@@ -18010,7 +18022,7 @@ app.post("/reengajamento", validarWebhookInterno, async (req, res) => {
 })
 
 // ------------------------------------------------------------------
-// ROTA /evento-cancelado - encerra o vínculo ativo quando Calendar/Make avisa cancelamento
+// ROTA /evento-cancelado - encerra o vínculo ativo quando o Calendar avisa cancelamento
 // Body aceito: { eventId } ou { dealId } ou { phone }
 // ------------------------------------------------------------------
 app.post("/evento-cancelado", validarWebhookInterno, async (req, res) => {
@@ -18122,7 +18134,7 @@ app.post("/consulta-status", validarWebhookInterno, async (req, res) => {
 
 // ------------------------------------------------------------------
 // ROTA /lembrete - lembrete automatico antes da consulta
-// Chamar via Make.com somente no horario temporizado:
+// Chamar pelo agendador interno somente no horário temporizado:
 //   - 24h: POST /lembrete com { phone, name, eventId, datetime, tipo: "24h", scheduledFor }
 //   - hoje: POST /lembrete com { phone, name, eventId, datetime, tipo: "hoje", scheduledFor }
 //   - 1h:  POST /lembrete com { phone, name, eventId, datetime, tipo: "1h", scheduledFor }
@@ -18200,11 +18212,168 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
   } catch (e) { logErro("lembrete", e.message); return res.sendStatus(500) }
 })
 
+// ------------------------------------------------------------------
+// AGENDADOR INTERNO — substitui os Data Stores e triggers do Make.com.
+// Um cron externo gratuito pode apenas acordar este endpoint; todas as
+// regras, reservas, tentativas e resultados permanecem no Oráculum/Neon.
+// ------------------------------------------------------------------
+const INTERNAL_SCHEDULER_ENABLED =
+  String(process.env.INTERNAL_SCHEDULER_ENABLED || "false").trim().toLowerCase() === "true"
+const INTERNAL_SCHEDULER_INTERVAL_MS = Math.max(
+  60000,
+  Number(process.env.INTERNAL_SCHEDULER_INTERVAL_MS || 300000)
+)
+const INTERNAL_SCHEDULER_TODAY_HOUR = Math.max(
+  0,
+  Math.min(23, Number(process.env.CONSULTA_LEMBRETE_HOJE_HORA || 9))
+)
+let internalSchedulerRepository = null
+let internalSchedulerExecution = null
+let internalSchedulerTimer = null
+
+async function postRotaInterna(pathname, payload) {
+  const response = await axios.post(
+    `http://127.0.0.1:${PORT}${pathname}`,
+    payload || {},
+    {
+      headers: {
+        "content-type": "application/json",
+        "x-internal-secret": process.env.INTERNAL_WEBHOOK_SECRET
+      },
+      timeout: 120000,
+      validateStatus: () => true
+    }
+  )
+  return { status: response.status, body: response.data || {} }
+}
+
+async function planejarConsultasNoAgendador() {
+  const now = new Date()
+  const events = await listConsultaCalendarEventsForReconciliation({
+    timeMin: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    timeMax: new Date(now.getTime() + 370 * 24 * 60 * 60 * 1000).toISOString()
+  })
+  const scopes = []
+  for (const event of events) {
+    const state = classificarEstadoCalendar(event)
+    if (!state?.eventId) continue
+    let scope = null
+    if (state.status === "agendada") {
+      const response = await postRotaInterna("/consulta-lembrete-dados", { eventId: state.eventId })
+      if (response.status === 200) {
+        scope = consultationScope(
+          { ...response.body, end: state.fim || null },
+          { todayHour: INTERNAL_SCHEDULER_TODAY_HOUR, now }
+        )
+      }
+    } else if (state.status === "cancelada") {
+      scope = consultationLifecycleScope({
+        action: "cancel",
+        eventId: state.eventId,
+        dealId: state.metadata?.dealId,
+        scheduledFor: now
+      })
+    } else if (["encerrada", "realizada", "nao_compareceu"].includes(state.status)) {
+      scope = consultationLifecycleScope({
+        action: "complete",
+        eventId: state.eventId,
+        dealId: state.metadata?.dealId,
+        scheduledFor: state.fim || now
+      })
+    }
+    if (scope) scopes.push(scope)
+  }
+  return scopes
+}
+
+async function planejarReengajamentosNoAgendador() {
+  if (!AUTO_REENGAJAMENTO) return []
+  const scopes = []
+  for (const candidate of descobrirCandidatosReengajamento()) {
+    const response = await postRotaInterna("/reengajamento-dados", {
+      phone: candidate.phone,
+      dealId: candidate.dealId
+    })
+    if (response.status !== 200) continue
+    const scope = reengagementScope(response.body)
+    if (scope) scopes.push(scope)
+  }
+  return scopes
+}
+
+async function despacharRotaAgendada(pathname, payload) {
+  const response = await postRotaInterna(pathname, payload)
+  if (response.status >= 500) {
+    const error = new Error("INTERNAL_ROUTE_UNAVAILABLE")
+    error.retryable = true
+    throw error
+  }
+  if (response.status >= 400) {
+    return { outcome: "skipped", httpStatus: response.status, reason: response.body?.reason || response.body?.erro || "rejected" }
+  }
+  const skipped = response.body?.status === "skipped"
+  return {
+    outcome: skipped ? "skipped" : "sent",
+    httpStatus: response.status,
+    reason: response.body?.reason || null
+  }
+}
+
+async function executarAgendadorInterno() {
+  if (!INTERNAL_SCHEDULER_ENABLED) return { status: "disabled" }
+  if (!internalSchedulerRepository) throw new Error("INTERNAL_SCHEDULER_NOT_READY")
+  if (internalSchedulerExecution) return internalSchedulerExecution
+  internalSchedulerExecution = processInternalSchedule({
+    repository: internalSchedulerRepository,
+    planners: [planejarConsultasNoAgendador, planejarReengajamentosNoAgendador],
+    dispatchers: {
+      consultation_reminder: job => despacharRotaAgendada("/lembrete", job.payload),
+      consultation_lifecycle: job => despacharRotaAgendada(
+        job.payload?.action === "cancel" ? "/evento-cancelado" : "/pos-consulta",
+        job.payload
+      ),
+      reengagement: job => despacharRotaAgendada("/reengajamento", job.payload)
+    },
+    limit: Number(process.env.INTERNAL_SCHEDULER_BATCH_SIZE || 25),
+    logger: (event, data) => logInfo({ event, queue: "internal_scheduler", ...data })
+  }).finally(() => { internalSchedulerExecution = null })
+  return internalSchedulerExecution
+}
+
+app.post("/internal/processar-agendamentos", validarWebhookInterno, async (_req, res) => {
+  try {
+    if (!INTERNAL_SCHEDULER_ENABLED) return res.json({ status: "disabled" })
+    const result = await executarAgendadorInterno()
+    return res.json({ status: "ok", ...result })
+  } catch (error) {
+    logErro("internal_scheduler", error.message, error)
+    return res.status(503).json({ status: "unavailable" })
+  }
+})
+
+app.get("/internal/agendador-status", validarWebhookInterno, async (_req, res) => {
+  try {
+    if (!INTERNAL_SCHEDULER_ENABLED) return res.json({ enabled: false })
+    if (!internalSchedulerRepository) return res.status(503).json({ enabled: true, ready: false })
+    return res.json({ enabled: true, ready: true, jobs: await internalSchedulerRepository.health() })
+  } catch (error) {
+    logErro("internal_scheduler", error.message, error)
+    return res.status(503).json({ enabled: true, ready: false })
+  }
+})
+
 let httpServer = null
 async function iniciarServidor() {
   try {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
     console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)
+    if (INTERNAL_SCHEDULER_ENABLED) {
+      const schedulerPool = getPool()
+      if (!schedulerPool) throw new Error("INTERNAL_SCHEDULER_DATABASE_REQUIRED")
+      await initializeInternalScheduler(schedulerPool)
+      internalSchedulerRepository = createInternalSchedulerRepository({ pool: schedulerPool })
+      console.log("[AGENDADOR_INTERNO] enabled=true provider=postgres")
+    }
     carregarUsersPersistidos()
     communicationPreferences.load()
     for (const [from, u] of Object.entries(users)) {
@@ -18270,6 +18439,17 @@ async function iniciarServidor() {
 
   httpServer = app.listen(PORT, () => {
     console.log(`Oraculum v6.4 — porta ${PORT}`)
+    if (INTERNAL_SCHEDULER_ENABLED) {
+      setImmediate(() => executarAgendadorInterno().catch(error =>
+        logErro("internal_scheduler", error.message, error)
+      ))
+      internalSchedulerTimer = setInterval(() => {
+        executarAgendadorInterno().catch(error =>
+          logErro("internal_scheduler", error.message, error)
+        )
+      }, INTERNAL_SCHEDULER_INTERVAL_MS)
+      internalSchedulerTimer.unref()
+    }
     setImmediate(() => {
       drenarWebhookInbox().catch(err =>
         logErro("webhook_inbox", "Falha no replay da inbox: " + err.message, err)
