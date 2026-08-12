@@ -101,6 +101,13 @@ assert.deepEqual(
   telaDuracaoConsulta().acoes.map(acao => acao.id),
   ["dur_20", "dur_30", "dur_45", "dur_60", "m_inicio"]
 )
+const audioDuracao = gerarAudioDaTela(telaDuracaoConsulta())
+assert.match(audioDuracao, /Para trinta minutos, toque em trinta minutos/)
+assert.doesNotMatch(audioDuracao, /⏱|30 minutos/)
+assert.match(
+  gerarAudioDaTela(telaConfirmacaoConsulta({ duracao: "30 minutos" })),
+  /Tempo de atendimento: trinta minutos/
+)
 assert.deepEqual(
   telaConfirmacaoConsulta().acoes.map(acao => acao.id),
   ["ag_confirmar", "ag_outro_horario", "m_inicio"]

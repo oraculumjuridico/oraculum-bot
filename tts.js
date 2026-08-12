@@ -25,11 +25,19 @@ function numeroPositivo(valor, padrao) {
 
 function numerosParaFala(texto) {
   const nomes = ["zero", "um", "dois", "tr\u00eas", "quatro", "cinco", "seis", "sete", "oito", "nove"]
-  return String(texto || "").replace(/\b\d+(?:\s+\d+)*\b/g, sequencia => {
+  const numerosCompostos = {
+    10: "dez", 11: "onze", 12: "doze", 13: "treze", 14: "quatorze", 15: "quinze",
+    16: "dezesseis", 17: "dezessete", 18: "dezoito", 19: "dezenove", 20: "vinte",
+    30: "trinta", 40: "quarenta", 45: "quarenta e cinco", 50: "cinquenta", 60: "sessenta"
+  }
+  return String(texto || "")
+    .replace(/\b(10|11|12|13|14|15|16|17|18|19|20|30|40|45|50|60)(?=\s+(?:minutos?|horas?)\b)/gi,
+      numero => numerosCompostos[Number(numero)])
+    .replace(/\b\d+(?:\s+\d+)*\b/g, sequencia => {
     const digitos = sequencia.replace(/\D/g, "")
     const separador = digitos.length > 1 ? ", " : ""
     return digitos.split("").map(digito => nomes[Number(digito)]).join(separador)
-  })
+    })
 }
 
 function normalizarTextoParaFala(texto) {

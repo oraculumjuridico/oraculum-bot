@@ -70,10 +70,10 @@ function telaDuracaoConsulta({ dataHora = "", dataHoraAudio = dataHora, primeiro
     texto: `✅ *${dataHora}* selecionado!\n\nQual a duração da consulta?`,
     textoAudioBase: `Ótimo, ${primeiroNome}. Você selecionou ${dataHoraAudio}. Agora escolha a duração desejada`,
     acoes: [
-      { id: "dur_20", label: "⏱️ 20 minutos" },
-      { id: "dur_30", label: "⏱️ 30 minutos" },
-      { id: "dur_45", label: "⏱️ 45 minutos" },
-      { id: "dur_60", label: "⏱️ 1 hora" },
+      { id: "dur_20", label: "⏱️ 20 minutos", textoAudio: "Para vinte minutos, toque em vinte minutos" },
+      { id: "dur_30", label: "⏱️ 30 minutos", textoAudio: "Para trinta minutos, toque em trinta minutos" },
+      { id: "dur_45", label: "⏱️ 45 minutos", textoAudio: "Para quarenta e cinco minutos, toque em quarenta e cinco minutos" },
+      { id: "dur_60", label: "⏱️ 1 hora", textoAudio: "Para uma hora, toque em uma hora" },
       { id: "m_inicio", label: "🏠 Menu do cliente" }
     ]
   })
@@ -86,11 +86,17 @@ function telaConfirmacaoConsulta({
   nome = "Não informado",
   numeroCaso = "Não informado"
 } = {}) {
+  const duracaoAudio = ({
+    "20 minutos": "vinte minutos",
+    "30 minutos": "trinta minutos",
+    "45 minutos": "quarenta e cinco minutos",
+    "1 hora": "uma hora"
+  })[duracao] || duracao
   return createClientScreen({
     id: "consulta_confirmacao",
     titulo: "Confirmar consulta",
     texto: `📋 *Confirme sua consulta:*\n\n📅 Data: *${dataHora}*\n⏱️ Duração: *${duracao}*\n👤 Nome: *${nome}*\n📄 Caso: *${numeroCaso}*\n\nEstá correto?`,
-    textoAudioBase: `Confirme sua consulta. Data e horário: ${dataHoraAudio}. Duração: ${duracao}`,
+    textoAudioBase: `Confirme sua consulta. Data e horário: ${dataHoraAudio}. Tempo de atendimento: ${duracaoAudio}`,
     acoes: [
       { id: "ag_confirmar", label: "✅ Confirmar" },
       { id: "ag_outro_horario", label: "📅 Outro horário" },
@@ -120,11 +126,17 @@ function telaAgendamentoConfirmado({
   numeroCaso = "Não informado",
   primeiroNome = "você"
 } = {}) {
+  const duracaoAudio = ({
+    "20 minutos": "vinte minutos",
+    "30 minutos": "trinta minutos",
+    "45 minutos": "quarenta e cinco minutos",
+    "1 hora": "uma hora"
+  })[duracao] || duracao
   return createClientScreen({
     id: "consulta_agendada",
     titulo: "Consulta agendada",
     texto: `🎉 *Consulta agendada com sucesso!*\n\n📅 *${dataHora}*\n⏱️ Duração: *${duracao}*\n📄 Caso: *${numeroCaso}*\n\n📲 Fique atento ao WhatsApp no horário combinado. 😊`,
-    textoAudioBase: `Consulta agendada com sucesso, ${primeiroNome}. Sua consulta está marcada para ${dataHoraAudio}, com duração de ${duracao}. Fique atento ao WhatsApp no horário combinado`,
+    textoAudioBase: `Consulta agendada com sucesso, ${primeiroNome}. Sua consulta está marcada para ${dataHoraAudio}, com tempo de atendimento de ${duracaoAudio}. Fique atento ao WhatsApp no horário combinado`,
     acoes: [
       { id: "m_status", label: "📊 Status do meu caso" },
       { id: "m_docs", label: "📎 Enviar documentos" },

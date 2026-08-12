@@ -8394,7 +8394,14 @@ async function enviarAudioModoVoz(from, u, texto, contexto = "cliente") {
   if (!deveEnviarAudioAutomatico(u, from)) return
   try {
     const ogg = await gerarAudioAtendente(u.atendente, texto)
-    await enviarAudio(from, urlAudioAtendente(ogg))
+    const audioUrl = urlAudioAtendente(ogg)
+    let resultado = await enviarAudioTransportComResultado(from, audioUrl)
+    if (!resultado?.accepted) {
+      logErro("tts", `Envio de áudio ${contexto} recusado; repetindo uma vez`)
+      await new Promise(r => setTimeout(r, 750))
+      resultado = await enviarAudioTransportComResultado(from, audioUrl)
+    }
+    if (!resultado?.accepted) throw new Error("audio_whatsapp_nao_aceito")
     ultimosAudiosEnviados.set(String(from), Date.now())
     await new Promise(r => setTimeout(r, 2500))
   } catch (e) { logErro("tts", `Falha áudio ${contexto}`, e) }

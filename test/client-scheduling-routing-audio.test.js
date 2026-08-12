@@ -25,5 +25,7 @@ assert.match(server, /ehCallbackFluxoCliente/)
 assert.match(server, /if \(!ehCallbackCliente\) \{[\s\S]{0,160}dispatchConversationContext/)
 assert.match(server, /registrarUltimaPergunta\(u, \{ texto: telaHorarios\.texto, opcoes: opcoesHorarios \}\)/)
 assert.match(server, /telaHorariosConsulta\(\{[\s\S]{0,240}formatarSlot,[\s\S]{0,80}formatarSlotAudio/)
+assert.match(server, /let resultado = await enviarAudioTransportComResultado\(from, audioUrl\)/)
+assert.match(server, /if \(!resultado\?\.accepted\)[\s\S]{0,260}enviarAudioTransportComResultado\(from, audioUrl\)/)
 
 console.log("client-scheduling-routing-audio.test.js: ok")

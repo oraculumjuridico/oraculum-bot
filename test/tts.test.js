@@ -79,6 +79,8 @@ async function main() {
   assert.equal(numerosParaFala("Etapa 2 de 6"), "Etapa dois de seis")
   assert.equal(normalizarTextoParaFala("Opção 1. Caso 2026."), "Opção um. Caso dois, zero, dois, seis.")
   assert.equal(numerosParaFala("Caso 2 0 2 6"), "Caso dois, zero, dois, seis")
+  assert.equal(numerosParaFala("Tempo de atendimento: 30 minutos"), "Tempo de atendimento: trinta minutos")
+  assert.equal(numerosParaFala("45 minutos e 60 minutos"), "quarenta e cinco minutos e sessenta minutos")
   assert.equal(normalizarTextoParaFala("Para comecar, voce pode enviar audio ou informar o numero. Nao tem problema."), "Para começar, você pode enviar áudio ou informar o número. não tem problema.")
   assert.equal(normalizarTextoParaFala("O caso seguirá para analise."), "O caso seguirá para análise.")
   assert.equal(normalizarTextoParaFala("Analise os documentos."), "Analise os documentos.")
