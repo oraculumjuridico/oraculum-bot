@@ -19,6 +19,45 @@ const {
 } = process.env
 
 const TIMEZONE = "America/Sao_Paulo"
+const SLOT_MINIMO_ANTECEDENCIA_MS = 5 * 60 * 1000
+
+function horarioAindaPodeSerAgendado(dataHora, agora = new Date()) {
+  const slot = new Date(dataHora)
+  const referencia = new Date(agora)
+  return Number.isFinite(slot.getTime()) &&
+    Number.isFinite(referencia.getTime()) &&
+    slot.getTime() >= referencia.getTime() + SLOT_MINIMO_ANTECEDENCIA_MS
+}
+
+function partesNoFuso(dataHora) {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date(dataHora))
+  return Object.fromEntries(partes.map(parte => [parte.type, parte.value]))
+}
+
+function horarioDentroDoExpediente(dataHora, duracaoMin = 60) {
+  const inicio = new Date(dataHora)
+  const duracao = Number(duracaoMin)
+  if (!Number.isFinite(inicio.getTime()) || !Number.isFinite(duracao) || duracao <= 0) return false
+
+  const local = partesNoFuso(inicio)
+  const minutoInicio = Number(local.hour) * 60 + Number(local.minute)
+  const minutoFim = minutoInicio + duracao
+  const dia = local.weekday
+
+  if (["Mon", "Tue", "Wed", "Thu", "Fri"].includes(dia)) {
+    const dentroDaManha = minutoInicio >= 8 * 60 && minutoFim <= 12 * 60
+    const dentroDaTarde = minutoInicio >= 13 * 60 + 30 && minutoFim <= 18 * 60
+    return dentroDaManha || dentroDaTarde
+  }
+  if (dia === "Sat") return minutoInicio >= 9 * 60 && minutoFim <= 15 * 60
+  return false
+}
 
 function getCalendar() {
   const oauth2 = new google.auth.OAuth2(
@@ -48,23 +87,15 @@ async function buscarHorariosDisponiveis(pagina = 0) {
 
   const ocupados = freebusy.data.calendars[CALENDAR_ID]?.busy || []
 
-  // Agrupa slots por dia — máximo 3 por dia
+  // Agrupa os slots por dia; a paginação limita o volume exibido no WhatsApp.
   const slotsPorDia = {}
   const cursor = new Date(agora)
-  cursor.setMinutes(0, 0, 0)
-  cursor.setHours(cursor.getHours() + 1)
+  cursor.setSeconds(0, 0)
+  cursor.setMinutes(cursor.getMinutes() < 30 ? 30 : 0)
+  if (cursor <= agora) cursor.setMinutes(cursor.getMinutes() + 30)
 
   while (cursor < fim) {
-    const localStr = cursor.toLocaleString("en-US", { timeZone: TIMEZONE })
-    const local = new Date(localStr)
-    const diaSemana = local.getDay()
-    const hora = local.getHours()
-    const ehUtil = diaSemana >= 1 && diaSemana <= 5
-    const ehSabado = diaSemana === 6
-    const horaOk = (ehUtil && hora >= 9 && hora < 17) ||
-                   (ehSabado && hora >= 9 && hora < 15)
-
-    if (horaOk) {
+    if (horarioDentroDoExpediente(cursor, 60)) {
       const slotInicio = new Date(cursor)
       const slotFim = new Date(cursor.getTime() + 60 * 60 * 1000)
       const livre = !ocupados.some(ev => {
@@ -76,16 +107,16 @@ async function buscarHorariosDisponiveis(pagina = 0) {
       if (livre) {
         const diaKey = cursor.toLocaleString("en-CA", { timeZone: TIMEZONE }).slice(0, 10)
         if (!slotsPorDia[diaKey]) slotsPorDia[diaKey] = []
-        if (slotsPorDia[diaKey].length < 3) {
-          slotsPorDia[diaKey].push(new Date(cursor))
-        }
+        slotsPorDia[diaKey].push(new Date(cursor))
       }
     }
-    cursor.setHours(cursor.getHours() + 1)
+    cursor.setMinutes(cursor.getMinutes() + 30)
   }
 
   // Flatten — todos os slots organizados por dia
-  const todosSlots = Object.values(slotsPorDia).flat()
+  const todosSlots = Object.values(slotsPorDia)
+    .flat()
+    .filter(slot => horarioAindaPodeSerAgendado(slot, agora))
 
   // Paginação — 6 slots por página
   const porPagina = 6
@@ -138,6 +169,12 @@ async function criarEventoConsulta(cliente, dataHora, duracaoMin, opcoes = {}) {
   const fim = new Date(inicio.getTime() + duracaoMin * 60 * 1000)
   if (isNaN(inicio.getTime()) || !Number.isFinite(Number(duracaoMin))) {
     throw new Error("dataHora e duracaoMin validos sao obrigatorios")
+  }
+  if (!horarioAindaPodeSerAgendado(inicio)) {
+    throw new Error("horario de consulta ja venceu ou esta muito proximo")
+  }
+  if (!horarioDentroDoExpediente(inicio, duracaoMin)) {
+    throw new Error("horario de consulta fora do expediente")
   }
   const chaveIdempotencia = `${dealId}:${inicio.toISOString()}:${Number(duracaoMin)}`
   const eventosExistentes = await listarEventosConsultaPorDeal(dealId, { showDeleted: true, calendar })
@@ -454,6 +491,7 @@ async function vincularEventoConsulta(eventId, metadata = {}) {
 }
 
 module.exports = {
+  horarioDentroDoExpediente,
   configurarConsultaEventSink,
   buscarHorariosDisponiveis,
   criarEventoConsulta,

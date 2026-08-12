@@ -8292,6 +8292,14 @@ async function aplicarCorrecaoPendente(from, u) {
   return await voltarParaConfirmacao(from, u)
 }
 
+function horarioAindaPodeSerAgendado(dataHora, agora = new Date()) {
+  const slot = new Date(dataHora)
+  const referencia = new Date(agora)
+  return Number.isFinite(slot.getTime()) &&
+    Number.isFinite(referencia.getTime()) &&
+    slot.getTime() >= referencia.getTime() + 5 * 60 * 1000
+}
+
 async function iniciarAgendamento(from, u) {
   const telaBusca = telaBuscandoHorarios()
   await enviar(from, telaBusca.texto, gerarBotoesDaTela(telaBusca), false)
@@ -8301,7 +8309,7 @@ async function iniciarAgendamento(from, u) {
   let pagina = 0
   try {
     const resultado = await buscarHorariosDisponiveis(u._paginaSlots || 0)
-    slots = resultado.slots
+    slots = resultado.slots.filter(slot => horarioAindaPodeSerAgendado(slot))
     temMais = resultado.temMais
     pagina = resultado.pagina
   } catch (e) {
@@ -12614,7 +12622,10 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
       const slots = (u._slotsDisponiveis || []).map(s => new Date(s))
       const slotEscolhido = slots[idx]
 
-      if (!slotEscolhido) {
+      if (!slotEscolhido || !horarioAindaPodeSerAgendado(slotEscolhido)) {
+        delete u._slotsDisponiveis
+        delete u._slotEscolhido
+        u._paginaSlots = 0
         return await iniciarAgendamento(from, u)
       }
 
@@ -12687,6 +12698,14 @@ _Diga ou digite o que está errado. Por exemplo: "meu nome está errado", "a cid
 
     if (text === "ag_confirmar") {
       const slot = new Date(u._slotEscolhido)
+      if (!horarioAindaPodeSerAgendado(slot)) {
+        delete u._slotsDisponiveis
+        delete u._slotEscolhido
+        delete u._duracaoEscolhida
+        u._paginaSlots = 0
+        setStage(u, STAGES.AGENDAMENTO_HORARIO)
+        return await iniciarAgendamento(from, u)
+      }
       const duracao = u._duracaoEscolhida || 30
       const primeiroNome = primeiroNomeCliente(u) || "você"
       const duracaoLabel = duracao === 60 ? "1 hora" : `${duracao} minutos`

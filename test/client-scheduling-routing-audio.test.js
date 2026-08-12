@@ -7,7 +7,7 @@ const { formatarSlotAudio } = require("../src/domain/calendar-format")
 const { telaHorariosConsulta } = require("../src/domain/client-appointment-ui")
 const { gerarAudioDaTela } = require("../src/domain/declarative-screen-guard")
 
-const quinta = new Date(2027, 7, 12, 18, 0, 0)
+const quinta = new Date("2027-08-12T18:00:00-03:00")
 const audioData = formatarSlotAudio(quinta)
 assert.equal(audioData, "quinta feira, doze de agosto, às dezoito horas")
 

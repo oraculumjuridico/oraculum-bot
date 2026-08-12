@@ -3,7 +3,8 @@ const fs = require("node:fs")
 const path = require("node:path")
 const {
   classificarEstadoEvento,
-  selecionarEventoConsultaMaisRecente
+  selecionarEventoConsultaMaisRecente,
+  horarioDentroDoExpediente
 } = require("../src/domain/calendar-scheduling")
 const { calcularMetricasConsulta } = require("../src/domain/consultation-metrics")
 
@@ -20,6 +21,22 @@ const metadata = {
 const futuro1 = new Date(Date.now() + 60 * 60 * 1000).toISOString()
 const futuro2 = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
 const passado = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
+for (const [horario, duracao, esperado, descricao] of [
+  ["2026-08-12T08:00:00-03:00", 60, true, "inicio do expediente"],
+  ["2026-08-12T11:00:00-03:00", 60, true, "termina ao meio-dia"],
+  ["2026-08-12T11:30:00-03:00", 60, false, "nao atravessa o almoco"],
+  ["2026-08-12T12:00:00-03:00", 30, false, "almoco bloqueado"],
+  ["2026-08-12T13:30:00-03:00", 60, true, "retorno do almoco"],
+  ["2026-08-12T17:00:00-03:00", 60, true, "termina as dezoito"],
+  ["2026-08-12T17:30:00-03:00", 60, false, "nao ultrapassa as dezoito"],
+  ["2026-08-15T09:00:00-03:00", 60, true, "sabado preservado"],
+  ["2026-08-15T14:00:00-03:00", 60, true, "ultimo slot completo do sabado"],
+  ["2026-08-15T14:30:00-03:00", 60, false, "nao ultrapassa quinze no sabado"],
+  ["2026-08-16T09:00:00-03:00", 60, false, "domingo fechado"]
+]) {
+  assert.equal(horarioDentroDoExpediente(horario, duracao), esperado, descricao)
+}
 
 const novo = { id: "evt-1", status: "confirmed", start: { dateTime: futuro1 }, end: { dateTime: futuro1 }, extendedProperties: metadata }
 assert.equal(classificarEstadoEvento(novo).status, "agendada", "nova consulta")
@@ -57,6 +74,10 @@ assert.doesNotMatch(server, /HS_STAGE\.AGENDAMENTO/, "stage Consulta nao partici
 assert.doesNotMatch(calendarSource, /HUBSPOT|dealstage|1343040832/, "fonte central nao consulta HubSpot")
 assert.doesNotMatch(calendarSource, /cliente\._eventoCalendarId/, "criacao nao decide por eventId do snapshot")
 assert.match(calendarSource, /chaveIdempotencia/, "evento possui chave idempotente")
+assert.match(calendarSource, /\.filter\(slot => horarioAindaPodeSerAgendado\(slot, agora\)\)/, "fonte remove slots vencidos")
+assert.match(calendarSource, /horario de consulta ja venceu ou esta muito proximo/, "criacao rejeita horario vencido")
+assert.match(server, /slots = resultado\.slots\.filter\(slot => horarioAindaPodeSerAgendado\(slot\)\)/, "tela revalida slots antes de mostrar")
+assert.match(server, /!slotEscolhido \|\| !horarioAindaPodeSerAgendado\(slotEscolhido\)/, "clique em botao antigo atualiza horarios")
 
 const metricas = calcularMetricasConsulta([
   novo,

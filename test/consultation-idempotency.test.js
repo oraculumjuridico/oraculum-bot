@@ -39,8 +39,8 @@ async function main() {
     nome: "Cliente",
     numeroCaso: "CASO-1"
   }
-  const horario1 = new Date(Date.now() + 60 * 60 * 1000)
-  const horario2 = new Date(Date.now() + 2 * 60 * 60 * 1000)
+  const horario1 = new Date("2027-08-12T14:00:00-03:00")
+  const horario2 = new Date("2027-08-12T15:00:00-03:00")
 
   const primeiro = await criarEventoConsulta(cliente, horario1, 60, { calendar })
   const retry = await criarEventoConsulta(cliente, horario1, 60, { calendar })

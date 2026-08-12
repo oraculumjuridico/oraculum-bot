@@ -7,21 +7,38 @@ function numeroPorExtenso(n, genero = "masculino") {
   return String(n)
 }
 
+const TIMEZONE = "America/Sao_Paulo"
+
+function partesDataLocal(date) {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date)
+  return Object.fromEntries(partes.map(parte => [parte.type, parte.value]))
+}
+
 // Formata slot para exibição no WhatsApp
 function formatarSlot(date) {
-  const dias = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
+  const dias = { Sun: "Dom", Mon: "Seg", Tue: "Ter", Wed: "Qua", Thu: "Qui", Fri: "Sex", Sat: "Sáb" }
   const meses = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
-  const dia = dias[date.getDay()]
-  const num = date.getDate()
-  const mes = meses[date.getMonth()]
-  const hora = String(date.getHours()).padStart(2, "0")
+  const local = partesDataLocal(date)
+  const dia = dias[local.weekday]
+  const num = Number(local.day)
+  const mes = meses[Number(local.month) - 1]
+  const hora = local.hour
   return `${dia} ${num}/${mes} às ${hora}h`
 }
 
 // Formata slot para o áudio
 function horaPorExtensoAudio(date) {
-  const hora = date.getHours()
-  const minuto = date.getMinutes()
+  const local = partesDataLocal(date)
+  const hora = Number(local.hour)
+  const minuto = Number(local.minute)
   const mapaHoras = {
     0: "meia-noite",
     1: "uma hora",
@@ -54,13 +71,14 @@ function horaPorExtensoAudio(date) {
 }
 
 function formatarSlotAudio(date) {
-  const dias = ["domingo", "segunda feira", "terça feira",
-                "quarta feira", "quinta feira", "sexta feira", "sábado"]
+  const dias = { Sun: "domingo", Mon: "segunda feira", Tue: "terça feira",
+                 Wed: "quarta feira", Thu: "quinta feira", Fri: "sexta feira", Sat: "sábado" }
   const meses = ["janeiro","fevereiro","março","abril","maio","junho",
                  "julho","agosto","setembro","outubro","novembro","dezembro"]
-  const dia = dias[date.getDay()]
-  const num = date.getDate()
-  const mes = meses[date.getMonth()]
+  const local = partesDataLocal(date)
+  const dia = dias[local.weekday]
+  const num = Number(local.day)
+  const mes = meses[Number(local.month) - 1]
   return `${dia}, ${numeroPorExtenso(num)} de ${mes}, às ${horaPorExtensoAudio(date)}`
 }
 
