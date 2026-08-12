@@ -108,6 +108,16 @@ function main() {
   assert.equal(paginasMesmoPdf.ctps.length, 1)
   assert.deepEqual(paginasMesmoPdf.ctps[0].documentos.map(item => item.pageNumber), [1, 2])
 
+  const guiadosComOcrInconclusivo = agruparDocumentosProcessados([
+    { ...doc("Documento desconhecido", "outros", null, {}, "frente.jpg"), contexto: { fluxoDocumento: "guiado", documentoId: "doc_rg", documentoLabel: "RG ou CNH", folha: "Frente" } },
+    { ...doc("Documento desconhecido", "outros", null, {}, "verso.jpg"), contexto: { fluxoDocumento: "guiado", documentoId: "doc_rg", documentoLabel: "RG ou CNH", folha: "Verso" } },
+    { ...doc("Documento desconhecido", "outros", null, {}, "residencia.jpg"), contexto: { fluxoDocumento: "guiado", documentoId: "doc_res", documentoLabel: "Comprovante de Residência", folha: "Foto do documento" } }
+  ])
+  assert.equal(guiadosComOcrInconclusivo.documentosPessoais.length, 2)
+  assert.equal(guiadosComOcrInconclusivo.rgPares.length, 1)
+  assert.equal(guiadosComOcrInconclusivo.comprovantesResidencia.length, 1)
+  assert.equal(guiadosComOcrInconclusivo.outros.length, 0)
+
   const invalido = agruparDocumentosProcessados(null)
   assert.equal(invalido.erros[0].code, "DOCUMENT_GROUPER_INPUT_INVALID")
   assert.equal(invalido.documentosPessoais.length, 0)

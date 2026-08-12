@@ -23,16 +23,47 @@ function normalizarTexto(texto = "") {
     .trim()
 }
 
+function classificacaoGuiadaParaAgrupamento(documento = {}) {
+  const contexto = documento.contexto || documento.arquivo?.contexto || {}
+  if (normalizarTexto(contexto.fluxoDocumento) !== "guiado") return null
+  const id = normalizarTexto(contexto.documentoId)
+  const label = normalizarTexto(contexto.documentoLabel)
+  const folha = normalizarTexto(contexto.folha)
+  if (id === "doc_rg" || /\b(rg|cnh)\b/.test(label)) {
+    const lado = folha.includes("verso") ? "verso" : folha.includes("frente") ? "frente" : ""
+    return { tipoDocumento: lado ? `RG ${lado}` : "Documento de identidade", categoria: "documentos_pessoais", subtipo: "identidade" }
+  }
+  if (id === "doc_cpf" || label === "cpf") return { tipoDocumento: "CPF", categoria: "documentos_pessoais", subtipo: "cadastro_pessoa_fisica" }
+  if (id === "doc_res" || id === "doc_resid_filho" || label.includes("comprovante de residencia")) return { tipoDocumento: "Comprovante de residencia", categoria: "documentos_pessoais", subtipo: "endereco" }
+  if (id === "doc_ctps" || label.includes("carteira de trabalho")) return { tipoDocumento: "CTPS pagina", categoria: "documentos_pessoais", subtipo: "carteira_trabalho" }
+  if (id === "doc_hol" || /holerite|contracheque/.test(label)) return { tipoDocumento: "Holerite", categoria: "trabalhista", subtipo: "remuneracao" }
+  if (id === "doc_laudo" || label.includes("laudo")) return { tipoDocumento: "Laudo", categoria: "medico", subtipo: "laudo_medico" }
+  if (id === "doc_exam" || label.includes("exame")) return { tipoDocumento: "Exame", categoria: "medico", subtipo: "resultado_exame" }
+  if (/atestado/.test(label)) return { tipoDocumento: "Atestado", categoria: "medico", subtipo: "afastamento" }
+  if (/receita|prescricao/.test(label)) return { tipoDocumento: "Receita", categoria: "medico", subtipo: "prescricao" }
+  if (id === "doc_cnis" || label.includes("cnis")) return { tipoDocumento: "CNIS", categoria: "previdenciario", subtipo: "extrato_contribuicoes" }
+  if (/inss|indeferimento|suspensao/.test(label)) return { tipoDocumento: contexto.documentoLabel || "Documento do INSS", categoria: "previdenciario", subtipo: null }
+  if (/fgts|trct|contrato de trabalho|demissao|acidente/.test(label)) return { tipoDocumento: contexto.documentoLabel || "Documento trabalhista", categoria: "trabalhista", subtipo: null }
+  if (/certidao/.test(label)) return { tipoDocumento: contexto.documentoLabel || "Certidao", categoria: "documentos_pessoais", subtipo: "registro_civil" }
+  if (/peticao|sentenca|decisao judicial|andamento/.test(label)) return { tipoDocumento: contexto.documentoLabel || "Documento processual", categoria: "processual", subtipo: null }
+  return null
+}
+
 function normalizarDocumento(documento = {}, index = 0) {
   const classificacao = documento.classificacao || {}
+  const guiada = classificacaoGuiadaParaAgrupamento(documento) || {}
   const extracao = documento.extracao || {}
   const camposExtraidos = documento.camposExtraidos || extracao.camposExtraidos || {}
 
   return {
     ...documento,
-    tipoDocumento: documento.tipoDocumento || classificacao.tipoDocumento || null,
-    categoria: documento.categoria || classificacao.categoria || null,
-    subtipo: documento.subtipo || classificacao.subtipo || null,
+    tipoDocumento: documento.tipoDocumento && normalizarTexto(documento.tipoDocumento) !== "documento desconhecido"
+      ? documento.tipoDocumento
+      : guiada.tipoDocumento || classificacao.tipoDocumento || null,
+    categoria: documento.categoria && normalizarTexto(documento.categoria) !== "outros"
+      ? documento.categoria
+      : guiada.categoria || classificacao.categoria || null,
+    subtipo: documento.subtipo || guiada.subtipo || classificacao.subtipo || null,
     confianca: documento.confianca ?? classificacao.confianca ?? null,
     camposExtraidos,
     referenciaArquivoOriginal: documento.referenciaArquivoOriginal || documento.arquivoOriginal || documento.fileRef || documento.fileId || null,
@@ -46,6 +77,10 @@ function criarGruposVazios() {
 
 function chaveRG(documento) {
   const campos = documento.camposExtraidos || {}
+  const contexto = documento.contexto || documento.arquivo?.contexto || {}
+  if (normalizarTexto(contexto.fluxoDocumento) === "guiado" && normalizarTexto(contexto.documentoId) === "doc_rg") {
+    return `guiado:${normalizarTexto(contexto.numeroCaso || "caso")}:doc_rg`
+  }
   return normalizarTexto(campos.rg || campos.cpf || campos.nome || documento.referenciaArquivoOriginal || `indice-${documento.indiceEntrada}`)
 }
 
@@ -257,5 +292,6 @@ function agruparDocumentosProcessados(documentos = []) {
 
 module.exports = {
   GRUPOS_DOCUMENTAIS,
+  classificacaoGuiadaParaAgrupamento,
   agruparDocumentosProcessados
 }
