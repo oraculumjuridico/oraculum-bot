@@ -8132,14 +8132,14 @@ async function menuClienteComAudio(from, u) {
       await new Promise(r => setTimeout(r, 1000))
     }
   } else if (!temPainel && IMAGEM_MENU_CLIENTE_URL) {
-    const imagemEnviada = await enviarImagemWhatsApp(from, IMAGEM_MENU_CLIENTE_URL, tela.texto, null)
+    const imagemEnviada = await enviarImagemWhatsApp(from, IMAGEM_MENU_CLIENTE_URL, tela.texto, opcoesMenu)
     if (imagemEnviada) {
       menuEnviado = true
       await new Promise(r => setTimeout(r, 1000))
     }
   }
   if (!menuEnviado) {
-    await enviar(from, tela.texto, null, false)
+    await enviar(from, tela.texto, temPainel ? null : opcoesMenu, false)
     await new Promise(r => setTimeout(r, 500))
   }
   registrarUltimaPergunta(u, tela)
@@ -8147,11 +8147,8 @@ async function menuClienteComAudio(from, u) {
     await enviarAudioModoVoz(from, u, textoAudioMenu, "menu cliente")
     await new Promise(r => setTimeout(r, 5000))
   }
-  if (opcoesMenu.length) {
-    const chamadaOpcoes = temPainel
-      ? "📂 *Toque no caso sobre o qual deseja continuar.*"
-      : "👇 *Escolha uma opção abaixo para continuar com seu atendimento.*"
-    await enviar(from, chamadaOpcoes, opcoesMenu, false)
+  if (temPainel && opcoesMenu.length) {
+    await enviar(from, "📂 *Toque no caso sobre o qual deseja continuar.*", opcoesMenu, false)
     await new Promise(r => setTimeout(r, 500))
   }
   if (!temPainel) u._ultimoMenuClienteAt = Date.now()

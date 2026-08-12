@@ -94,6 +94,19 @@ const apresentador = server.slice(inicio, fim)
 
 assert.match(apresentador, /gerarAudioDaTela\(tela\)/)
 assert.match(apresentador, /gerarBotoesDaTela\(tela\)/)
+assert.match(
+  apresentador,
+  /enviarImagemWhatsApp\(from, IMAGEM_MENU_CLIENTE_URL, tela\.texto, opcoesMenu\)/
+)
+assert.match(
+  apresentador,
+  /enviar\(from, tela\.texto, temPainel \? null : opcoesMenu, false\)/
+)
+assert.match(apresentador, /if \(temPainel && opcoesMenu\.length\)/)
+assert.doesNotMatch(
+  apresentador,
+  /Escolha uma opção abaixo para continuar com seu atendimento/
+)
 assert.match(server, /function saudacaoGenero\(\)[\s\S]*?Seja bem-vindo\(a\)/)
 assert.doesNotMatch(server, /api\.anthropic\.com/)
 assert.doesNotMatch(apresentador, /textoAudioOpcoesMenuCliente/)
