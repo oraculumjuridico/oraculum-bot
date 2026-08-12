@@ -32,6 +32,7 @@ for (const [name, nextName] of [
   ]) {
     const sandbox = {
       HS_STAGE, STAGES: { AGUARDANDO_URGENTE: "urgent", CLIENTE: "client" }, Date,
+      ADMIN_CASE_PAGE_SIZE: 6,
       ADMIN_IDS: { alertas: "alertas" },
       scoreEmocional: () => ({ nivel: "baixo" }), calcularStatusDocumentos: () => ({ faltantesCriticos: [] }),
       adminFonteCasos: async () => result,
@@ -50,17 +51,17 @@ async function run() {
   await Promise.all(checks)
 
   const prioridade = loadFunction("telaAdminPrioridades", "async function telaAdminCasos", {
-    gerarPrioridadesAdmin: async () => ({ ok: false }), telaAdminFalhaHubSpot: () => failure
+    ADMIN_PRIORITY_PAGE_SIZE: 7, gerarPrioridadesAdmin: async () => ({ ok: false }), telaAdminFalhaHubSpot: () => failure, logErro: () => {}
   })
   assert.equal(await prioridade("admin"), failure)
 
   const fila = loadFunction("telaAdminCasosNovos", "async function telaAdminCasosAnalise", {
-    HS_STAGE, STAGES: { CLIENTE: "client" }, adminFonteCasos: async () => ({ ok: false }), telaAdminFalhaHubSpot: () => failure
+    HS_STAGE, STAGES: { CLIENTE: "client" }, ADMIN_CASE_PAGE_SIZE: 6, adminFonteCasos: async () => ({ ok: false }), telaAdminFalhaHubSpot: () => failure
   })
   assert.equal(await fila("admin"), failure)
 
   const todos = loadFunction("telaAdminCasosAtivos", "async function telaAdminAlertasUrgentes", {
-    HS_STAGE, hsAdminBuscarTodosNegociosPorStages: async () => ({ ok: false }), telaAdminFalhaHubSpot: () => failure
+    HS_STAGE, ADMIN_CASE_PAGE_SIZE: 6, hsAdminBuscarTodosNegociosPorStages: async () => ({ ok: false }), telaAdminFalhaHubSpot: () => failure
   })
   assert.equal(await todos("admin"), failure)
 

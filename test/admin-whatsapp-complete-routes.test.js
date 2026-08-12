@@ -9,8 +9,8 @@ const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
 
 test("menu Admin expõe todos os fluxos operacionais e handlers reais", () => {
   for (const token of [
-    "Prioridades", "Atendimento com IA", "Consultar caso", "Completar dados", "Enviar documentos",
-    "Agendar/consultas", "Alertas", "executarConsultaCasoAdmin", "executarComplementacaoCasoAdmin",
+    "Prioridades", "Novo atendimento IA", "Consultar caso", "Documentos", "Comunicação",
+    "Consultas", "Alertas", "executarConsultaCasoAdmin", "executarComplementacaoCasoAdmin",
     "processExistingCaseAdminMedia", "executarAgendamentoCasoAdmin"
   ]) assert.match(server, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
 })

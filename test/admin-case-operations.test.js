@@ -2,7 +2,7 @@
 
 const test = require("node:test")
 const assert = require("node:assert/strict")
-const { searchAdminCases, buildCaseComplement, applyComplementLocally, scheduleAdminCase } = require("../src/domain/admin-case-operations")
+const { searchAdminCases, normalizeAdminField, parseAdminScheduleDate, buildCaseComplement, applyComplementLocally, scheduleAdminCase } = require("../src/domain/admin-case-operations")
 
 const cases = [
   { from: "5581999990000", u: { nome: "Pessoa Alfa", cpf: "52998224725", whatsappContato: "5581999990000", numeroCaso: "CIV.001", contatoId: "c1", negocioId: "d1" } },
@@ -37,6 +37,22 @@ test("complementação altera um campo, preserva os demais e não cria Contato o
   assert.deepEqual(operation.contactPatch, { cidade: "Olinda" })
   assert.deepEqual(operation.dealPatch, {})
   assert.equal(usuario.adminUpdateHistory.length, 1)
+})
+
+test("campos administrativos aceitam nomes naturais sem aceitar credenciais", () => {
+  assert.equal(normalizeAdminField("data de nascimento"), "dataNascimento")
+  assert.equal(normalizeAdminField("endereço"), "endereco")
+  assert.equal(normalizeAdminField("situação profissional"), "situacaoProfissional")
+  assert.equal(normalizeAdminField("senha Meu INSS"), "")
+  const operation = buildCaseComplement({ usuario: cases[0].u, campo: "data de nascimento", valor: "15/04/1980", adminId: "admin" })
+  assert.deepEqual(operation.contactPatch, { dataNascimento: "15/04/1980" })
+})
+
+test("agenda administrativa aceita data brasileira e rejeita calendários inválidos", () => {
+  assert.equal(parseAdminScheduleDate("12/08/2026 14:30"), "2026-08-12T14:30:00-03:00")
+  assert.equal(parseAdminScheduleDate("31/02/2026 14:30"), null)
+  assert.equal(parseAdminScheduleDate("12/08/2026 25:00"), null)
+  assert.equal(parseAdminScheduleDate(""), null)
 })
 
 test("complementação rejeita ausência, placeholder e CPF inválido sem apagar valor", () => {

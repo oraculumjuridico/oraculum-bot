@@ -12,6 +12,7 @@ assert.ok(start >= 0 && end > start, "resolucao de telefone da interface Admin a
 assert.match(source, /function resolverTelefoneInterfaceAdmin/)
 
 const sandbox = {
+  sanitizarTextoEntrada: value => String(value || "").trim(),
   normalizarNumeroWhatsAppEnvio: value => String(value || "").replace(/\D/g, ""),
   gerarBriefingCaso: u => ({
     nome: u.nome || "Cliente",

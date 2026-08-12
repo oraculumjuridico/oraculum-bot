@@ -40,7 +40,7 @@ describe("Paginação", () => {
   })
 
   it("telaAdminListaCasos armazena estado de paginação completo na sessão", () => {
-    assert.match(source, /salvarListaCasosAdmin\(from,\s*itens,\s*voltar,\s*pagina,\s*tamanhoPagina,\s*itens\.length,\s*totalPaginas,/)
+    assert.match(source, /salvarListaCasosAdmin\(from,\s*itens,\s*rotaLista,\s*pagina,\s*tamanhoPagina,\s*itens\.length,\s*totalPaginas,\s*null,\s*voltar\)/)
   })
 
   it("telaAdminPrioridades exibe indicador Exibindo X–Y de Z", () => {

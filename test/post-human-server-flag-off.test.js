@@ -107,7 +107,7 @@ function loadServer() {
     }],
     casoIdx: 0
   })
-  const screen = loaded.telaDetalheCasoAdmin("5511999999999", 0)
+  const screen = await loaded.telaDetalheCasoAdmin("5511999999999", 0)
   assert.ok(!screen.opcoes.some(option => String(option?.id || "").startsWith("admin_post_human_completed_")))
 
   const { montarBotaoAtendimentoRealizado, _actionContextCountForTests } =

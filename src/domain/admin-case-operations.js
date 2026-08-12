@@ -14,9 +14,43 @@ const DEAL_FIELDS = Object.freeze(new Set([
   "limitacoesAtuais", "motivoEncerramentoVinculo", "composicaoFamiliar", "rendaAtual",
   "beneficio", "dataRequerimento", "dataNegativa", "resultadoPericia", "conflitoInteresses"
 ]))
+const FIELD_ALIASES = Object.freeze({
+  nome: "nome", "nome completo": "nome", email: "email", "e-mail": "email",
+  cpf: "cpf", nascimento: "dataNascimento", "data de nascimento": "dataNascimento",
+  telefone: "telefone", whatsapp: "telefone", endereco: "endereco", "endereço": "endereco",
+  numero: "numeroEndereco", "número": "numeroEndereco", complemento: "complementoEndereco",
+  bairro: "bairro", cidade: "cidade", estado: "uf", uf: "uf", cep: "cep",
+  "estado civil": "estadoCivil", profissao: "profissao", "profissão": "profissao",
+  "situacao profissional": "situacaoProfissional", "situação profissional": "situacaoProfissional",
+  apelido: "apelido", area: "area", "área": "area", tipo: "tipo",
+  situacao: "situacao", "situação": "situacao", objetivo: "objetivo",
+  urgencia: "urgencia", "urgência": "urgencia", descricao: "descricao", "descrição": "descricao"
+})
 
 function normalizeSearch(value = "") {
   return sanitizarTextoEntrada(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+}
+
+function normalizeAdminField(value = "") {
+  const raw = sanitizarTextoEntrada(value)
+  if (CONTACT_FIELDS.has(raw) || DEAL_FIELDS.has(raw)) return raw
+  const key = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim()
+  return FIELD_ALIASES[key] || ""
+}
+
+function parseAdminScheduleDate(value = "") {
+  const text = sanitizarTextoEntrada(value)
+  if (!text) return null
+  const br = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2})(?::(\d{2}))?)$/)
+  if (br) {
+    const [, day, month, year, hour, minute = "00"] = br
+    const validDay = Number(day) >= 1 && Number(day) <= new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate()
+    if (Number(month) < 1 || Number(month) > 12 || !validDay || Number(hour) > 23 || Number(minute) > 59) return null
+    const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute}:00-03:00`
+    return iso
+  }
+  const parsed = new Date(text)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
 function maskName(value = "") {
@@ -66,7 +100,7 @@ function searchAdminCases(items = [], query = "") {
 }
 
 function buildCaseComplement({ usuario = {}, campo, valor, adminId, now = new Date().toISOString() } = {}) {
-  const field = sanitizarTextoEntrada(campo)
+  const field = normalizeAdminField(campo)
   const cleanValue = sanitizarTextoEntrada(valor)
   if (!field || (!CONTACT_FIELDS.has(field) && !DEAL_FIELDS.has(field))) throw Object.assign(new Error("campo não permitido"), { code: "ADMIN_COMPLEMENT_FIELD_NOT_ALLOWED" })
   if (!cleanValue || isPlaceholderValue(cleanValue)) throw Object.assign(new Error("valor inválido"), { code: "ADMIN_COMPLEMENT_VALUE_INVALID" })
@@ -114,6 +148,8 @@ module.exports = {
   maskName,
   maskLast4,
   searchAdminCases,
+  normalizeAdminField,
+  parseAdminScheduleDate,
   buildCaseComplement,
   applyComplementLocally,
   scheduleAdminCase
