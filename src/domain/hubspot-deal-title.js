@@ -1,5 +1,6 @@
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { definirTemperatura } = require("./lead-temperature")
+const { resolveLegalCaseNomenclature } = require("./legal-case-nomenclature")
 
 const AREA_SIGLAS = [
   { sigla: "Prv", termos: ["inss", "previd", "aposentadoria", "beneficio"] },
@@ -54,17 +55,67 @@ const CASE_TYPE_LABELS = Object.freeze({
   incapacidade_permanente: "Aposentadoria por Incapacidade Permanente",
   auxilio_acidente: "Auxílio-acidente",
   pensao_morte: "Pensão por Morte",
-  salario_maternidade: "Salário-maternidade"
+  salario_maternidade: "Salário-maternidade",
+  trab_demissao: "Demissão / Verbas Rescisórias",
+  trab_direitos: "Direitos Trabalhistas",
+  trab_acidente: "Acidente de Trabalho",
+  trab_assedio: "Assédio no Trabalho",
+  trab_outros: "Demanda Trabalhista",
+  outros_revisao: "Revisão de Documentos",
+  outros_livre: "Demanda Jurídica"
 })
+
+const AREA_CASE_LABELS = Object.freeze({
+  prv: "Demanda Previdenciária",
+  trb: "Demanda Trabalhista",
+  cns: "Direito do Consumidor",
+  fam: "Direito de Família",
+  bnc: "Direito Bancário",
+  civ: "Direito Civil",
+  pnl: "Direito Penal",
+  imb: "Direito Imobiliário"
+})
+
+function rotuloAreaCasoNegocio(u = {}) {
+  const sigla = (siglaNumeroCaso(numeroCasoNegocio(u)) || siglaAreaNegocio(u.area || u.area_juridica || "")).toLowerCase()
+  return AREA_CASE_LABELS[sigla] || ""
+}
+
+function nomenclaturaJuridicaTitulo(u = {}) {
+  if (u.nomenclaturaJuridica && typeof u.nomenclaturaJuridica === "object") {
+    return u.nomenclaturaJuridica
+  }
+  const resolved = resolveLegalCaseNomenclature({
+    narrative: [u.descricao, u.assuntoResumo, u.detalhe, u.objetivo].filter(Boolean),
+    usuario: u,
+    classification: {
+      area: u.area || u.area_juridica,
+      tipo: u.tipo_de_caso || u.tipoCaso || u.tipo,
+      subTipo: u.oraculum_case_subtype || u.subTipo || u.subtipo,
+      situacao: u.situacao,
+      objetivo: u.objetivo
+    }
+  })
+  return resolved.divergences?.length ? null : resolved
+}
 
 function rotuloTipoCasoNegocio(u = {}) {
   const explicit = sanitizarTextoEntrada(
     u.nomenclaturaJuridica?.subtypeLabel || u.caseTypeLabel || u.rotuloTipoCaso || ""
   )
   if (explicit) return explicit
-  const subtype = sanitizarTextoEntrada(u.subtipo || u.caseSubtype || "").toLowerCase()
-  const type = sanitizarTextoEntrada(u.tipo_de_caso || u.tipoCaso || u.caseType || "").toLowerCase()
-  return CASE_TYPE_LABELS[subtype] || CASE_TYPE_LABELS[type] || ""
+  const subtype = sanitizarTextoEntrada(
+    u.oraculum_case_subtype || u.subTipo || u.subtipo || u.caseSubtype || ""
+  ).toLowerCase()
+  const type = sanitizarTextoEntrada(
+    u.tipo_de_caso || u.tipoCaso || u.caseType || ""
+  ).toLowerCase()
+  const mapped = CASE_TYPE_LABELS[subtype] || CASE_TYPE_LABELS[type]
+  if (mapped) return mapped
+  const nomenclatura = nomenclaturaJuridicaTitulo(u)
+  return sanitizarTextoEntrada(nomenclatura?.subtypeLabel || "") ||
+    CASE_TYPE_LABELS[nomenclatura?.subtype] || CASE_TYPE_LABELS[nomenclatura?.type] ||
+    rotuloAreaCasoNegocio(u)
 }
 
 function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = {}) {
@@ -118,6 +169,7 @@ module.exports = {
   siglaAreaNegocio,
   siglaNumeroCaso,
   siglaCanonicaNegocio,
+  rotuloAreaCasoNegocio,
   rotuloTipoCasoNegocio,
   numeroCasoNegocio,
   classificacaoTituloNegocio,

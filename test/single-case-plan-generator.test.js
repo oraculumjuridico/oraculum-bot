@@ -120,7 +120,7 @@ test("dealname não usa valor fixo do Piloto 1", () => {
   input.basePlan.dealPlan.properties.numero_de_caso = "CIV.260710.001"
   input.basePlan.dealPlan.properties.area_juridica = "Civil"
   const result = generateSingleCaseApplyPlan(input)
-  assert.equal(result.plan.dealPlan.properties.dealname, "🟢 CIV.260710.001")
+  assert.equal(result.plan.dealPlan.properties.dealname, "🟢 CIV.260710.001 - Direito Civil")
 })
 
 test("dealname preserva os outros campos do dealPlan.properties do plano base", () => {
@@ -138,14 +138,15 @@ test("dealname preserva os outros campos do dealPlan.properties do plano base", 
 
 test("dealname é compatível com diferentes áreas dos três pilotos", () => {
   const areas = [
-    { input: "Previdenciário (INSS)", expected: "Prv" },
-    { input: "Trabalhista", expected: "Trb" },
-    { input: "Consumidor", expected: "Cns" }
+    { input: "Previdenciário (INSS)", number: "PRV.260714.707", expected: "Demanda Previdenciária" },
+    { input: "Trabalhista", number: "TRB.260714.707", expected: "Demanda Trabalhista" },
+    { input: "Consumidor", number: "CNS.260714.707", expected: "Direito do Consumidor" }
   ]
-  for (const { input: area } of areas) {
-    const plan = { ...fixture().basePlan, dealPlan: { ...fixture().basePlan.dealPlan, properties: { ...fixture().basePlan.dealPlan.properties, area_juridica: area } } }
-    const result = generateSingleCaseApplyPlan({ ...fixture(), basePlan: plan })
-    assert.equal(result.plan.dealPlan.properties.dealname, `🟢 ${plan.dealPlan.caseNumber}`)
+  for (const { input: area, number, expected } of areas) {
+    const base = fixture()
+    const plan = { ...base.basePlan, dealPlan: { ...base.basePlan.dealPlan, caseNumber: number, properties: { ...base.basePlan.dealPlan.properties, numero_de_caso: number, area_juridica: area } } }
+    const result = generateSingleCaseApplyPlan({ ...base, caseNumber: number, basePlan: plan })
+    assert.equal(result.plan.dealPlan.properties.dealname, `🟢 ${number} - ${expected}`)
   }
 })
 

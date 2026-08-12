@@ -31,7 +31,7 @@ function main() {
       numeroCaso: "2026-00125",
       negocioStageId: HS_STAGE.LEAD
     }, { HS_STAGE }),
-    "🟢 Prv-2026-00125"
+    "🟢 Prv-2026-00125 - Demanda Previdenciária"
   )
 
   assert.equal(
@@ -67,7 +67,7 @@ function main() {
     {
       dealstage: HS_STAGE.ANALISE,
       area_juridica: "Família",
-      dealname: "🟢 CIV.260710.001"
+      dealname: "🟢 CIV.260710.001 - Direito Civil"
     }
   )
 
@@ -98,6 +98,30 @@ function main() {
   assert.equal(
     montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260725.431", tipo_de_caso: "inss_incapacidade", subtipo: "incapacidade_permanente" }),
     "🟢 PRV.260725.431 - Aposentadoria por Incapacidade Permanente"
+  )
+
+  assert.equal(
+    montarTituloNegocioHubSpot({
+      area: "INSS",
+      numeroCaso: "PRV.260812.001",
+      descricao: "Pedi auxílio-doença e ainda estou aguardando a análise."
+    }),
+    "🟢 PRV.260812.001 - Benefício por incapacidade temporária"
+  )
+
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "Trabalhista", numeroCaso: "TRB.260812.002", tipo_de_caso: "trab_demissao" }),
+    "🟢 TRB.260812.002 - Demissão / Verbas Rescisórias"
+  )
+
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "Família", numeroCaso: "FAM.260812.004" }),
+    "🟢 FAM.260812.004 - Direito de Família"
+  )
+
+  assert.equal(
+    montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260812.003", descricao: "Talvez seja algum benefício." }),
+    "🟢 PRV.260812.003 - Demanda Previdenciária"
   )
 
   console.log("hubspot-deal-title.test.js ok")

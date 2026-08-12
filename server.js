@@ -2077,7 +2077,27 @@ function restaurarTipoCasoHubSpot(valor) {
   }
 }
 
+function garantirNomenclaturaJuridicaUsuario(u = {}) {
+  if (!u || typeof u !== "object") return null
+  const model = resolveLegalCaseNomenclature({
+    current: u.nomenclaturaJuridica,
+    narrative: [u.descricao, u.assuntoResumo, u.detalhe, u.objetivo].filter(Boolean),
+    usuario: u,
+    classification: {
+      area: u.area,
+      tipo: u.tipo_de_caso || u.tipoCaso || u.tipo,
+      subTipo: u.oraculum_case_subtype || u.subTipo || u.subtipo,
+      situacao: u.situacao,
+      objetivo: u.objetivo
+    }
+  })
+  if (model.divergences?.length || (!model.area && !model.subtype)) return null
+  applyLegalCaseNomenclatureToUser(u, model)
+  return model
+}
+
 function getHubSpotDealStateProps(u) {
+  garantirNomenclaturaJuridicaUsuario(u)
   const temperatura = getTemperaturaLeadHubSpot(u)
   const stageBot = normalizarStageKey(u?.stage)
   const etapaBot = (stageBot === STAGES.AUDIO_AGUARDANDO && !usuarioTemRelatoParaRetomada(u))
@@ -2089,7 +2109,8 @@ function getHubSpotDealStateProps(u) {
     descricao_completa: getHubSpotDescricaoCompleta(u),
     estado_bot_snapshot: serializarEstado(u),
     etapa_do_bot: etapaBot,
-    tipo_de_caso: mapearTipoCaso(u),
+    tipo_de_caso: mapearTipoCaso(u) || u?.nomenclaturaJuridica?.type || "",
+    oraculum_case_subtype: u?.nomenclaturaJuridica?.subtype || u?.oraculum_case_subtype || u?.subTipo || u?.subtipo || "",
     temperatura_lead: mapearTemperatura(temperatura),
     hs_priority: mapearPrioridade(temperatura),
     // urgencia normalizada e consistente
@@ -4457,6 +4478,8 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     negocioStageId: negocio?.stageId || props.dealstage || snapshot.negocioStageId || u?.negocioStageId || null,
     numeroCaso: getNumeroCasoOficialDoNegocio(negocio) || snapshot.numeroCaso || u?.numeroCaso || null,
     area: snapshot.area || props.area_juridica || u?.area || null,
+    tipo: snapshot.tipo || props.tipo_de_caso || u?.tipo || null,
+    subTipo: snapshot.subTipo || snapshot.subtipo || props.oraculum_case_subtype || u?.subTipo || u?.subtipo || null,
     urgencia: resolverUrgenciaAdmin({
       hubspot: props.urgencia,
       snapshot: snapshot.urgencia,
@@ -4465,6 +4488,7 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     descricao: snapshot.descricao || props.description || props.descricao_completa || u?.descricao || null,
     assuntoResumo: snapshot.assuntoResumo || props.resumo_cliente || u?.assuntoResumo || null
   })
+  garantirNomenclaturaJuridicaUsuario(base)
   base._numero = telefone || from || null
   return { from: telefone || from || "", u: base, negocio, contato }
 }
@@ -4527,7 +4551,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
             "dealstage", "dealname", "createdate", "closedate", "description",
             "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot",
             "etapa_do_bot", "tipo_de_caso", "temperatura_lead", "hs_priority", "numero_de_caso",
-            "urgencia"
+            "urgencia", "oraculum_case_subtype"
           ],
           limit
         }
@@ -4854,7 +4878,7 @@ async function hsAdminItemPorDealId(dealId) {
   try {
     const res = await executarComRetryHubSpot(
       async () => axios.get(
-        `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso,urgencia`,
+        `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,oraculum_case_subtype,temperatura_lead,hs_priority,numero_de_caso,urgencia`,
         { headers: HS() }
       ),
       { operacao: "adminBuscarDealPorCalendar", maxTentativas: 3 }
@@ -7550,6 +7574,7 @@ async function finalizarCadastro(from, u) {
       }
     }
 
+    garantirNomenclaturaJuridicaUsuario(u)
     const dealnameFinal = montarTituloNegocioHubSpot(
       { ...u, numeroCaso, negocioStageId: HS_STAGE.ANALISE },
       { HS_STAGE, stage: HS_STAGE.ANALISE }
