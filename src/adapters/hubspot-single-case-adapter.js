@@ -118,6 +118,28 @@ function createHubSpotSingleCaseAdapters({ client, clock, timeoutMs = 30000, ret
       }
     },
 
+    findContactsByEmail: async (email) => {
+      if (!email || typeof email !== "string") return []
+      try {
+        const res = await withTimeout(
+          client.contacts.search({ propertyName: "email", value: String(email).trim().toLowerCase(), properties: CONTACT_SEARCH_PROPERTIES, limit: 2 }),
+          "findContactsByEmail"
+        )
+        const results = res?.results || []
+        if (!Array.isArray(results)) return []
+        const hasMore = (typeof res.total === "number" && res.total > results.length) || Boolean(res?.paging?.next)
+        if (hasMore) throw new Error("ADAPTER_AMBIGUOUS_RESULT")
+        const ids = results.map(result => String(result?.id || ""))
+        if (ids.some(id => id.length === 0)) throw new Error("INVALID_RESULT_ID")
+        return [...new Set(ids)].slice(0, 2).map(id => ({ id }))
+      } catch (error) {
+        if (/ADAPTER_AMBIGUOUS_RESULT|INVALID_RESULT_ID/.test(String(error.message || ""))) throw error
+        const sanitized = sanitizeError(error)
+        if (sanitized.safe) return []
+        throw new Error("HUBSPOT_EXTERNAL_ERROR")
+      }
+    },
+
     create: async ({ properties, context }) => {
       validateContext(context)
       if (!properties || typeof properties !== "object") throw new Error("PROPERTIES_INVALID")

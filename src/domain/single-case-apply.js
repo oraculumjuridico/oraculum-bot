@@ -40,6 +40,71 @@ const verifyDealEvidence = (value, id, properties, code = "DEAL_VERIFY_INVALID")
 const verifyAssociationEvidence = (value, id, contactId, dealId, type, code = "ASSOCIATION_VERIFY_INVALID") => { const verified = evidence(value, code); if (verified.id !== id || verified.contactId !== contactId || verified.dealId !== dealId || verified.relation !== type) fail("ASSOCIATION_DIVERGENCE"); return verified }
 const verifyFolderEvidence = (value, id, destination, parentId, code) => { const verified = evidence(value, code); if (verified.id !== id || verified.logicalId !== destination.logicalId || verified.name !== destination.name || verified.parentId !== parentId || verified.trashed !== false) fail("FOLDER_DIVERGENCE"); return verified }
 const verifyUploadEvidence = (value, id, document, parentId, size, code = "UPLOAD_VERIFY_INVALID") => { if (!value || value.verified !== true || value.id !== id || value.sha256 !== document.sha256 || value.contentDocumentId !== document.contentDocumentId || value.parentId !== parentId || value.size !== size || !Number.isInteger(value.size)) fail(code); return deepClone(value) }
+const PVR_CASE_NUMBER = /^PVR\.\d{6}\.\d{3}$/
+
+function requiresExistingResources(plan) {
+  return [plan?.contactPlan?.reusePolicy, plan?.dealPlan?.reusePolicy, plan?.drivePlan?.reusePolicy].some(value => String(value || "").startsWith("REQUIRE_EXISTING_"))
+}
+
+function validateRequiredExistingResourcesPlan(plan) {
+  if (!requiresExistingResources(plan)) return false
+  if (plan.contactPlan?.reusePolicy !== "REQUIRE_EXISTING_UNIQUE" || plan.dealPlan?.reusePolicy !== "REQUIRE_EXISTING_UNIQUE" || plan.drivePlan?.reusePolicy !== "REQUIRE_EXISTING_LOGICAL_ID") fail("EXISTING_RESOURCE_POLICY_INVALID")
+  if (!validId(plan.contactPlan.existingContactId) || !validId(plan.dealPlan.existingDealId)) fail("EXISTING_RESOURCE_ID_INVALID")
+  const key = `case-import:${plan.caseImportId}`
+  if (!PVR_CASE_NUMBER.test(plan.dealPlan?.caseNumber || "") || plan.caseNumber !== plan.dealPlan.caseNumber || plan.officialNumber !== plan.dealPlan.caseNumber || plan.safeToApply !== false || plan.caseNumberReservationSync?.source !== "OFFICIAL_POSTGRES_RESERVATION" || plan.caseNumberReservationSync?.status !== "SYNCHRONIZED" || plan.caseNumberReservationSync?.reservationKey !== key || plan.caseNumberReservationSync?.caseNumber !== plan.dealPlan.caseNumber) fail("PVR_EXECUTION_BINDING_INVALID")
+  return true
+}
+
+async function requiredContact({ plan, adapters, context }) {
+  const properties = deepClone(plan.contactPlan.properties), expectedId = plan.contactPlan.existingContactId
+  const byCpf = oneOrNone(await adapters.contacts.findContactsByCpf(properties.cpf_do_cliente), "PVR_CONTACT_AMBIGUOUS")
+  const byPhone = oneOrNone(await adapters.contacts.findContactsByPhone(properties.phone), "PVR_CONTACT_AMBIGUOUS")
+  let byEmail = null
+  if (typeof properties.email === "string" && properties.email.trim()) {
+    if (typeof adapters.contacts.findContactsByEmail !== "function") fail("PVR_CONTACT_EMAIL_LOOKUP_UNAVAILABLE")
+    byEmail = oneOrNone(await adapters.contacts.findContactsByEmail(properties.email), "PVR_CONTACT_AMBIGUOUS")
+  }
+  if (!byCpf || !byPhone || (byEmail === null ? false : byEmail.id !== expectedId) || byCpf.id !== expectedId || byPhone.id !== expectedId) fail("PVR_CONTACT_NOT_EXPECTED")
+  const verified = verifyContactEvidence(await adapters.contacts.verify(expectedId, deepFreeze(properties), context), expectedId, plan.caseImportId, properties, "PVR_CONTACT_VERIFY_INVALID")
+  return { id: expectedId, evidence: verified }
+}
+
+async function requiredDeal({ plan, adapters }) {
+  const expectedId = plan.dealPlan.existingDealId
+  const selected = oneOrNone(await adapters.deals.findByCaseNumber(plan.dealPlan.caseNumber), "PVR_DEAL_AMBIGUOUS")
+  if (!selected || selected.id !== expectedId) fail("PVR_DEAL_NOT_EXPECTED")
+  const verified = verifyDealEvidence(await adapters.deals.verify(expectedId, deepFreeze(deepClone(plan.dealPlan.properties))), expectedId, plan.dealPlan.properties, "PVR_DEAL_VERIFY_INVALID")
+  return { id: expectedId, evidence: verified }
+}
+
+async function requiredFolder({ find, verify, destination, parentId, absentCode, ambiguousCode, invalidCode }) {
+  const selected = oneOrNone(await find(destination, { logicalIdOnly: true }), ambiguousCode)
+  if (!selected) fail(absentCode)
+  let verified
+  try { verified = verifyFolderEvidence(await verify(selected.id), selected.id, destination, parentId, invalidCode) }
+  catch (error) { if (error?.message === "FOLDER_DIVERGENCE") fail(invalidCode); throw error }
+  return { id: selected.id, evidence: verified }
+}
+
+async function preflightRequiredExistingResources({ plan, adapters, reservation, context }) {
+  if (!validateRequiredExistingResourcesPlan(plan)) return null
+  const reservationKey = `case-import:${plan.caseImportId}`
+  if (reservation?.evidenceId !== reservationKey) fail("PVR_RESERVATION_EVIDENCE_INVALID")
+  if (typeof adapters.reservation.verifyPvrAdoption !== "function") fail("PVR_RESERVATION_PREFLIGHT_UNAVAILABLE")
+  const adoption = await adapters.reservation.verifyPvrAdoption(plan.caseImportId, plan.dealPlan.caseNumber)
+  if (!adoption || adoption.reservationKey !== reservationKey || adoption.status !== "reserved" || adoption.caseNumber !== plan.dealPlan.caseNumber) fail("PVR_RESERVATION_EVIDENCE_INVALID")
+  const contact = await requiredContact({ plan, adapters, context })
+  const deal = await requiredDeal({ plan, adapters })
+  const area = await requiredFolder({
+    find: (destination, options) => adapters.drive.findAreaFolders(destination, options), verify: id => adapters.drive.verifyFolder(id), destination: plan.drivePlan.area, parentId: "root",
+    absentCode: "PVR_AREA_LOGICAL_ID_NOT_FOUND", ambiguousCode: "PVR_AREA_LOGICAL_ID_AMBIGUOUS", invalidCode: "PVR_AREA_LOGICAL_ID_INVALID"
+  })
+  const folder = await requiredFolder({
+    find: (destination, options) => adapters.drive.findCaseFolders(area.id, destination, options), verify: id => adapters.drive.verifyFolder(id), destination: plan.drivePlan.case, parentId: area.id,
+    absentCode: "PVR_CASE_LOGICAL_ID_NOT_FOUND", ambiguousCode: "PVR_CASE_LOGICAL_ID_AMBIGUOUS", invalidCode: "PVR_CASE_LOGICAL_ID_INVALID"
+  })
+  return { contact, deal, area, folder }
+}
 
 function prepareCheckpointForExecution(checkpoint) {
   if (checkpoint.status === "completed") {
@@ -62,6 +127,7 @@ function validatePlan(plan, caseImportId) {
   try { validateCaseFingerprint(caseImportId, plan.caseFingerprint) } catch { fail("CASE_FINGERPRINT_INVALID") }
   if (!validateFormat(plan.dealPlan?.caseNumber) || plan.dealPlan?.properties?.numero_de_caso !== plan.dealPlan.caseNumber || plan.caseNumberReservationSync?.source !== "OFFICIAL_POSTGRES_RESERVATION") fail("PLAN_NOT_SYNCHRONIZED")
   if (!plan.contactPlan?.properties?.cpf_do_cliente || !plan.contactPlan?.properties?.phone) fail("CONTACT_IDENTITY_MISSING")
+  validateRequiredExistingResourcesPlan(plan)
   const documents = groupDocuments(plan)
   const eligible = documents.filter(item => item.eligible === true && item.kind === "document" && item.caseLinked === true)
   if (eligible.length !== plan.documentPlan.driveEligibleUniqueContents) fail("DOCUMENT_COUNT_MISMATCH")
@@ -216,6 +282,7 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
 
       validateCheckpoint(checkpoint, decision)
 
+      await preflightRequiredExistingResources({ plan, adapters, reservation: verifiedReservation, context: reservationContext })
       prepareCheckpointForExecution(checkpoint)
     } else {
       // NORMAL PATH: resume an existing consumed pair, or atomically initialize a new execution.
@@ -227,6 +294,9 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       decision = makeDecision(plan, hash, validated, now(), executionScope)
       if (!checkpoint) checkpoint = newCheckpoint(decision)
       validateCheckpoint(checkpoint, decision)
+      // Read-only PVR preflight happens after signed bindings are checked, but
+      // before authorization consumption/checkpoint initialization or writes.
+      await preflightRequiredExistingResources({ plan, adapters, reservation: verifiedReservation, context: reservationContext })
       prepareCheckpointForExecution(checkpoint)
       if (checkpoint.version === 0) {
         const initialized = await adapters.coordination.initializeCheckpoint({ caseImportId, leaseId: lease.leaseId, fencingToken: lease.fencingToken, checkpoint: deepClone(checkpoint), authorization: authQuery })
@@ -263,6 +333,11 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
     }
     const reservation = await run("reservation", async () => verifiedReservation)
     const contact = await run("contact", async () => {
+      if (requiresExistingResources(plan)) {
+        const selected = await requiredContact({ plan, adapters, context: await operationContext("contact-revalidate") })
+        checkpoint.resources.contactId = selected.id
+        return { id: selected.id, evidence: selected.evidence, decision: makeContactDecision({ contactId: selected.id, verified: true, fieldsHash: selected.evidence.fieldsHash, externalWriteRequired: false }) }
+      }
       const properties = deepClone(plan.contactPlan.properties)
       // Normalize person name before sending to HubSpot
       if (properties.firstname) {
@@ -281,6 +356,11 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       return { id: selected.id, evidence: verified, decision: contactDecision }
     })
     const deal = await run("deal", async () => {
+      if (requiresExistingResources(plan)) {
+        const selected = await requiredDeal({ plan, adapters })
+        checkpoint.resources.dealId = selected.id
+        return selected
+      }
       let selected = oneOrNone(await adapters.deals.findByCaseNumber(plan.dealPlan.caseNumber), "DEAL_AMBIGUOUS")
       if (!selected) selected = await adapters.deals.create({ properties: deepFreeze(deepClone(plan.dealPlan.properties)), context: await operationContext("deal") })
       if (!validId(selected?.id)) fail("DEAL_RESPONSE_INVALID")
@@ -309,6 +389,11 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       return outcome
     }
     const area = await run("area_folder", async () => {
+      if (requiresExistingResources(plan)) {
+        const selected = await requiredFolder({ find: (destination, options) => adapters.drive.findAreaFolders(destination, options), verify: id => adapters.drive.verifyFolder(id), destination: plan.drivePlan.area, parentId: "root", absentCode: "PVR_AREA_LOGICAL_ID_NOT_FOUND", ambiguousCode: "PVR_AREA_LOGICAL_ID_AMBIGUOUS", invalidCode: "PVR_AREA_LOGICAL_ID_INVALID" })
+        checkpoint.resources.areaFolderId = selected.id
+        return selected
+      }
       let selected = oneOrNone(await adapters.drive.findAreaFolders(deepClone(plan.drivePlan.area)), "AREA_FOLDER_AMBIGUOUS")
       if (!selected) selected = await adapters.drive.createAreaFolder({ destination: deepFreeze(deepClone(plan.drivePlan.area)), context: await operationContext("area") })
       const verified = verifyFolderEvidence(await adapters.drive.verifyFolder(selected?.id), selected?.id, plan.drivePlan.area, "root", "AREA_FOLDER_VERIFY_INVALID")
@@ -316,6 +401,11 @@ async function executeSingleCaseApplyInternal({ caseImportId, planHash, manifest
       return { id: selected.id, evidence: verified }
     })
     const folder = await run("case_folder", async () => {
+      if (requiresExistingResources(plan)) {
+        const selected = await requiredFolder({ find: (destination, options) => adapters.drive.findCaseFolders(area.id, destination, options), verify: id => adapters.drive.verifyFolder(id), destination: plan.drivePlan.case, parentId: area.id, absentCode: "PVR_CASE_LOGICAL_ID_NOT_FOUND", ambiguousCode: "PVR_CASE_LOGICAL_ID_AMBIGUOUS", invalidCode: "PVR_CASE_LOGICAL_ID_INVALID" })
+        checkpoint.resources.caseFolderId = selected.id
+        return selected
+      }
       let selected = oneOrNone(await adapters.drive.findCaseFolders(area.id, deepClone(plan.drivePlan.case)), "CASE_FOLDER_AMBIGUOUS")
       if (!selected) selected = await adapters.drive.createCaseFolder({ parentId: area.id, destination: deepFreeze(deepClone(plan.drivePlan.case)), context: await operationContext("case-folder") })
       const verified = verifyFolderEvidence(await adapters.drive.verifyFolder(selected?.id), selected?.id, plan.drivePlan.case, area.id, "CASE_FOLDER_VERIFY_INVALID")
@@ -387,4 +477,4 @@ function createSingleCaseApplyExecutor({ authorizationVerifier, rebindResumeVeri
   return Object.freeze(async args => executeSingleCaseApplyInternal({ ...args, authorizationVerifier, rebindResumeVerifier }))
 }
 
-module.exports = { STEP_DEFINITIONS, STATES, TRANSITIONS, REQUIRED_METHODS, validateAdapters, validatePlan, makeDecision, makeContactDecision, newCheckpoint, validateCheckpoint, createSingleCaseApplyExecutor, sanitizedErrorCode }
+module.exports = { STEP_DEFINITIONS, STATES, TRANSITIONS, REQUIRED_METHODS, validateAdapters, validatePlan, validateRequiredExistingResourcesPlan, preflightRequiredExistingResources, makeDecision, makeContactDecision, newCheckpoint, validateCheckpoint, createSingleCaseApplyExecutor, sanitizedErrorCode }

@@ -6,6 +6,7 @@ const path = require("node:path")
 const crypto = require("node:crypto")
 const { generateSingleCaseApplyPlan } = require("../src/domain/single-case-plan-generator")
 const { caseFingerprintFor } = require("../src/domain/single-case-target")
+const { buildContentFiles } = require("../src/domain/single-case-content-manifest")
 
 const sha256 = value => crypto.createHash("sha256").update(value).digest("hex")
 const fail = code => { throw new Error(code) }
@@ -55,21 +56,6 @@ function areaNameFor(value) {
   if (normalized.includes("consult")) return "Consulta Jurídica"
   if (normalized.includes("revis")) return "Revisão de documentos"
   return "Outros"
-}
-
-async function buildContentFiles(identityConfirmed, contentRoot) {
-  const configuredRoot = await fs.realpath(path.resolve(contentRoot)).catch(() => fail("CONTENT_ROOT_INVALID"))
-  const result = {}
-  for (const occurrence of identityConfirmed?.reviewedInventory?.physicalOccurrences || []) {
-    if (typeof occurrence.localReference !== "string") fail("CONTENT_REFERENCE_INVALID")
-    const candidate = await fs.realpath(path.resolve(occurrence.localReference)).catch(() => fail("CONTENT_REFERENCE_INVALID"))
-    if (candidate !== configuredRoot && !candidate.startsWith(`${configuredRoot}${path.sep}`)) fail("CONTENT_REFERENCE_OUTSIDE_ROOT")
-    const bytes = await fs.readFile(candidate).catch(() => fail("CONTENT_REFERENCE_INVALID"))
-    const relativePath = path.relative(configuredRoot, candidate)
-    if (!relativePath || path.isAbsolute(relativePath) || relativePath.split(path.sep).includes("..")) fail("CONTENT_REFERENCE_OUTSIDE_ROOT")
-    result[occurrence.physicalDocumentId] = { relativePath, sha256: sha256(bytes), size: bytes.length }
-  }
-  return result
 }
 
 async function main({ argv = process.argv.slice(2), output = console.log } = {}) {

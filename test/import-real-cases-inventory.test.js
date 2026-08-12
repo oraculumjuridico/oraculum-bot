@@ -62,8 +62,10 @@ console.log("  ✓ Only apply/resume trigger writes")
 
 // Test 7: Verify importId uses path hash
 console.log("\n✓ Test 7: ImportId stability")
-assert.match(scriptContent, /importId\s*=.*sha\(.*path\.relative.*folder/,
-  "importId should hash folder path")
+assert.match(scriptContent, /caseImportIdForRelativeFolder\(path\.relative\(root, folder\)\)/,
+  "importId should hash the stable relative folder path")
+assert.match(scriptContent, /function caseImportIdForRelativeFolder[\s\S]*sha\(String\(relativeFolder\)\.toLowerCase\(\)\)\.slice\(0, 20\)/,
+  "importId helper should preserve the existing SHA-256 path derivation")
 console.log("  ✓ importId based on stable path hash")
 
 // Test 8: Verify report generation

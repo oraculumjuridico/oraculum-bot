@@ -39,6 +39,7 @@ const usePilotSelection = String(option("use-pilot-selection") || "").trim().toL
 const pilotSelectionFile = option("pilot-selection-file") || path.join(STATE_DIR, "pilot-selection.json")
 
 const sha = value => crypto.createHash("sha256").update(String(value)).digest("hex")
+const INTERNAL_PVR_CASE = /^PVR\.\d{6}\.\d{3}$/
 const normalizeDigits = value => String(value || "").replace(/\D/g, "")
 const normalizeEmail = value => String(value || "").trim().toLowerCase()
 const mask = value => value ? `${String(value).slice(0, 2)}***${String(value).slice(-2)}` : ""
@@ -53,14 +54,24 @@ async function atomicWrite(file, value) {
   await fsp.rename(temporary, file)
 }
 
+function caseImportIdForRelativeFolder(relativeFolder) {
+  return `inss-${sha(String(relativeFolder).toLowerCase()).slice(0, 20)}`
+}
+
+function isExistingInternalPvrCaseNumber(value) {
+  return INTERNAL_PVR_CASE.test(String(value || ""))
+}
+
 function extractVerified(text) {
   const emails = [...new Set((text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map(normalizeEmail))]
   const digitRuns = text.match(/(?:\+?55\s*)?(?:\(?\d{2}\)?[\s.-]*)?9?\d{4}[\s.-]*\d{4}/g) || []
   const phones = [...new Set(digitRuns.map(normalizeDigits).map(v => v.startsWith("55") ? v : `55${v}`).filter(v => v.length >= 12 && v.length <= 13))]
   const cpfCandidates = text.match(/\b\d{3}[.-]?\d{3}[.-]?\d{3}-?\d{2}\b/g) || []
   const cpfs = [...new Set(cpfCandidates.map(normalizeDigits).filter(validCpf))]
-  const cases = [...new Set((text.match(/\b\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}\b/g) || []))]
-  return { emails, phones, cpfs, officialNumbers: cases }
+  const judicialCases = text.match(/\b\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}\b/g) || []
+  const internalPvrCases = text.match(/\bPVR\.\d{6}\.\d{3}\b/g) || []
+  const officialNumbers = [...new Set([...judicialCases, ...internalPvrCases])]
+  return { emails, phones, cpfs, officialNumbers }
 }
 
 function validCpf(value) {
@@ -127,7 +138,7 @@ async function inspectCase(folder) {
   const relativeNames = files.map(file => path.relative(folder, file))
   const evidenceText = [path.basename(folder), ...relativeNames].join("\n")
   const extracted = extractVerified(evidenceText)
-  const importId = `inss-${sha(path.relative(root, folder).toLowerCase()).slice(0, 20)}`
+  const importId = caseImportIdForRelativeFolder(path.relative(root, folder))
   const extensions = {}
   let bytes = 0
   for (const file of files) {
@@ -154,8 +165,24 @@ async function inspectCase(folder) {
   if (!record.name) record.reviewReasons.push("nome_nao_comprovado")
   if (!record.cpf && !record.phone && !record.email) record.reviewReasons.push("contato_sem_chave_segura")
   if (!record.officialNumber) record.reviewReasons.push("negocio_sem_numero_oficial")
+  if (isExistingInternalPvrCaseNumber(record.officialNumber)) record.reviewReasons.push("pvr_existing_resource_preflight_required")
   if (conflicts.length) record.reviewReasons.push("identificadores_conflitantes")
   return record
+}
+
+function selectSingleCaseImportRecord(records, caseImportId) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(caseImportId || "")) throw new Error("CASE_IMPORT_ID_INVALID")
+  if (!Array.isArray(records)) throw new Error("CASE_IMPORT_RECORDS_INVALID")
+  const matches = records.filter(record => record?.importId === caseImportId)
+  if (matches.length === 0) throw new Error("CASE_IMPORT_ID_NOT_FOUND")
+  if (matches.length !== 1) throw new Error("CASE_IMPORT_ID_AMBIGUOUS")
+  return matches[0]
+}
+
+function resolveCaseNumberForApply(item, checkpointRecord) {
+  if (item?.officialNumber) return { caseNumber: item.officialNumber, source: "official_number", requiresReservation: false }
+  if (checkpointRecord?.caseNumber) return { caseNumber: checkpointRecord.caseNumber, source: "checkpoint", requiresReservation: false }
+  return { caseNumber: null, source: "none", requiresReservation: true }
 }
 
 function isOrganizationalFolder(folderName) {
@@ -450,11 +477,9 @@ async function apply(results, checkpoint) {
     const blockingReasons = getBlockingReviewReasons(item.reviewReasons)
     if (item.error || blockingReasons.length || item.contact.status === "duplicate" || item.deal.status === "duplicate") continue
 
-    let numeroParaEnviar = item.officialNumber || null
-    if (!numeroParaEnviar && checkpoint.records[item.importId] && checkpoint.records[item.importId].caseNumber) {
-      numeroParaEnviar = checkpoint.records[item.importId].caseNumber
-    }
-    if (!numeroParaEnviar && caseNumberService) {
+    const numberDecision = resolveCaseNumberForApply(item, checkpoint.records[item.importId])
+    let numeroParaEnviar = numberDecision.caseNumber
+    if (numberDecision.requiresReservation && caseNumberService) {
       const key = item.importId
       const res = await caseNumberService.reserve({ key, area: item.area })
       if (!res || !res.reserved) throw new Error('case_number_reservation_failed')
@@ -775,7 +800,7 @@ async function main() {
   console.log(JSON.stringify({ ...report, cases: undefined, dryRunReport: undefined }, null, 2))
 }
 
-module.exports = { inventory, generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile, normalizePhoneForValidation, getBlockingReviewReasons }
+module.exports = { inventory, generateDryRunReport, applyPilotSelection, buildCanonicalDryRunReport, option, runDryRun, usePilotSelection, pilotSelectionFile, normalizePhoneForValidation, getBlockingReviewReasons, extractVerified, caseImportIdForRelativeFolder, isExistingInternalPvrCaseNumber, selectSingleCaseImportRecord, resolveCaseNumberForApply }
 
 if (require.main === module) {
   main().catch(error => { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1 })

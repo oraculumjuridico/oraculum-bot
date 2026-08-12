@@ -21,10 +21,10 @@ function signAuthorization(record) {
   return { ...record, proof: crypto.sign(null, Buffer.from(authorizationPayload(record)), keys.privateKey).toString("base64") }
 }
 
-function authorizationRecords(plan, mutate = record => record, executionScope = EXECUTION_SCOPE_NAMES.FULL) {
+function authorizationRecords(plan, mutate = record => record, executionScope = EXECUTION_SCOPE_NAMES.FULL, reservationEvidenceId = "reservation-proof") {
   const hash = authorizablePlanHash(plan)
   return Object.entries(authorizationScopesForExecution(executionScope)).map(([type, scope], index) => {
-    const evidence = { verified: true, caseImportId: plan.caseImportId, caseNumber: plan.dealPlan.caseNumber, evidenceId: "reservation-proof" }
+    const evidence = { verified: true, caseImportId: plan.caseImportId, caseNumber: plan.dealPlan.caseNumber, evidenceId: reservationEvidenceId }
     const authorizationId = executionScope === EXECUTION_SCOPE_NAMES.FULL
       ? `fixture-auth-${index + 1}`
       : `fixture-authority.${executionScope === EXECUTION_SCOPE_NAMES.HUBSPOT_ONLY ? "s-H" : "s-D"}.fixture-auth-${index + 1}`
@@ -34,7 +34,7 @@ function authorizationRecords(plan, mutate = record => record, executionScope = 
 }
 
 function fakeSystem(plan = fixture(), options = {}) {
-  const log = [], counts = {}, records = options.records || authorizationRecords(plan)
+  const log = [], counts = {}, reservationEvidenceId = options.reservationEvidenceId || "reservation-proof", records = options.records || authorizationRecords(plan, record => record, EXECUTION_SCOPE_NAMES.FULL, reservationEvidenceId)
   const expectedAuthorizationIds = records.map(item => item.authorizationId).sort()
   const state = { checkpoint: options.checkpoint || null, checkpointVersion: options.checkpoint?.version || 0, authorizationConsumedBy: options.authorizationConsumedBy || (options.checkpoint ? "executor:lease-original" : null), lease: null, token: 0, contacts: [], deals: [], associations: [], areas: [], folders: [], files: new Map() }
   const count = name => { log.push(name); counts[name] = (counts[name] || 0) + 1 }
@@ -84,10 +84,14 @@ function fakeSystem(plan = fixture(), options = {}) {
       consumeAuthorizations: async () => { count("auth.consume.legacy"); return { status: options.consumeStatus || "consumed" } }
     },
     coordination,
-    reservation: { verify: async (caseImportId, caseNumber, context) => { validateContext(context); if (options.reservationGate) await options.reservationGate; return { verified: true, caseImportId, caseNumber, evidenceId: "reservation-proof" } } },
+    reservation: { verify: async (caseImportId, caseNumber, context) => {
+      validateContext(context); if (options.reservationGate) await options.reservationGate
+      return { verified: true, caseImportId, caseNumber, evidenceId: reservationEvidenceId }
+    }, verifyPvrAdoption: async (caseImportId, caseNumber) => ({ reservationKey: options.reservationEvidence?.reservationKey || reservationEvidenceId, caseNumber, status: options.reservationEvidence?.status || "reserved" }) },
     contacts: {
       findContactsByCpf: async cpf => { maybeTimeout("contact"); return options.multiContacts ? [{ id: "contact-a" }, { id: "contact-b" }] : options.cpfContact ? [{ id: options.cpfContact }] : state.contacts.filter(item => item.properties.cpf_do_cliente === cpf).map(item => ({ id: item.id })) },
       findContactsByPhone: async phone => options.multiPhone ? [{ id: "phone-a" }, { id: "phone-b" }] : options.phoneContact ? [{ id: options.phoneContact }] : state.contacts.filter(item => item.properties.phone === phone).map(item => ({ id: item.id })),
+      findContactsByEmail: async email => options.multiEmail ? [{ id: "email-a" }, { id: "email-b" }] : options.emailContact ? [{ id: options.emailContact }] : state.contacts.filter(item => item.properties.email === email).map(item => ({ id: item.id })),
       create: async ({ properties, context }) => { validateContext(context); count("contact.create"); if (options.mutatePayload) { try { properties.phone = "mutated" } catch {} } if (options.emptyContactId) return { id: "" }; const item = { id: id("contact", state.contacts.length), properties: clone(properties), caseImportId: plan.caseImportId }; state.contacts.push(item); return { id: item.id } },
       verify: async contactId => { if (options.nullContactVerify) return null; const item = state.contacts.find(x => x.id === contactId); return item ? { verified: true, id: item.id, cpf: item.properties.cpf_do_cliente, phone: item.properties.phone, fieldsHash: sha256(canonicalize(item.properties)), caseImportId: item.caseImportId } : null }
     },
@@ -102,9 +106,9 @@ function fakeSystem(plan = fixture(), options = {}) {
       verify: async (associationId, contactId, dealId, type) => { const item = state.associations.find(x => x.id === associationId); return item ? { verified: item.contactId === contactId && item.dealId === dealId && item.type === type, id: item.id, contactId: item.contactId, dealId: item.dealId, relation: item.type } : null }
     },
     drive: {
-      findAreaFolders: async destination => { count("drive.findArea"); return options.multiAreas ? [{ id: "area-a" }, { id: "area-b" }] : state.areas.filter(item => item.logicalId === destination.logicalId && item.name === destination.name && item.parentId === "root").map(item => ({ id: item.id })) },
+      findAreaFolders: async (destination, lookup = {}) => { count("drive.findArea"); return options.multiAreas ? [{ id: "area-a" }, { id: "area-b" }] : state.areas.filter(item => item.logicalId === destination.logicalId && item.parentId === "root" && (lookup.logicalIdOnly === true || item.name === destination.name)).map(item => ({ id: item.id })) },
       createAreaFolder: async ({ destination, context }) => { validateContext(context); count("area.create"); const item = { id: id("area", state.areas.length), ...clone(destination), parentId: "root", trashed: false }; state.areas.push(item); return { id: item.id } },
-      findCaseFolders: async (parentId, destination) => { count("drive.findCase"); return options.multiFolders ? [{ id: "folder-a" }, { id: "folder-b" }] : state.folders.filter(item => item.parentId === parentId && item.logicalId === destination.logicalId && item.name === destination.name).map(item => ({ id: item.id })) },
+      findCaseFolders: async (parentId, destination, lookup = {}) => { count("drive.findCase"); return options.multiFolders ? [{ id: "folder-a" }, { id: "folder-b" }] : state.folders.filter(item => item.parentId === parentId && item.logicalId === destination.logicalId && (lookup.logicalIdOnly === true || item.name === destination.name)).map(item => ({ id: item.id })) },
       createCaseFolder: async ({ parentId, destination, context }) => { validateContext(context); count("folder.create"); const item = { id: id("folder", state.folders.length), ...clone(destination), parentId, trashed: false }; state.folders.push(item); return { id: item.id } },
       verifyFolder: async folderId => { const item = [...state.areas, ...state.folders].find(x => x.id === folderId); return item ? { verified: true, id: item.id, parentId: item.parentId, logicalId: item.logicalId, name: item.name, trashed: item.trashed } : null },
       findFilesByHash: async (folderId, hash) => [...state.files.values()].filter(item => item.parentId === folderId && item.sha256 === hash).map(item => ({ id: item.id })),
@@ -119,6 +123,38 @@ function fakeSystem(plan = fixture(), options = {}) {
 const run = system => executor({ caseImportId: fixture().caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, adapters: system.adapters, now: () => NOW })
 const runScoped = (system, executionScope) => executor({ caseImportId: fixture().caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, executionScope, adapters: system.adapters, now: () => NOW })
 const storedFileEntry = (system, hash) => [...system.state.files.entries()].find(([, item]) => item.sha256 === hash)
+
+function pvrPlan(options = {}) {
+  const plan = fixture(), caseNumber = "PVR.260801.813", reservationKey = `case-import:${plan.caseImportId}`
+  plan.safeToApply = false; plan.caseNumber = caseNumber; plan.officialNumber = caseNumber
+  plan.contactPlan.reusePolicy = "REQUIRE_EXISTING_UNIQUE"; plan.contactPlan.existingContactId = "contact-existing"
+  if (options.email) plan.contactPlan.properties.email = options.email
+  plan.dealPlan.reusePolicy = "REQUIRE_EXISTING_UNIQUE"; plan.dealPlan.existingDealId = "deal-existing"; plan.dealPlan.caseNumber = caseNumber; plan.dealPlan.properties.numero_de_caso = caseNumber
+  plan.drivePlan.reusePolicy = "REQUIRE_EXISTING_LOGICAL_ID"
+  plan.caseNumberReservationSync = { source: "OFFICIAL_POSTGRES_RESERVATION", status: "SYNCHRONIZED", reservationKey, caseNumber }
+  return plan
+}
+
+function pvrSystem(options = {}) {
+  const plan = pvrPlan(options), reservationKey = `case-import:${plan.caseImportId}`
+  const system = fakeSystem(plan, { ...options, reservationEvidenceId: options.reservationEvidenceId || reservationKey, reservationEvidence: { ...(options.reservationEvidence || {}) } })
+  if (!options.noContact) system.state.contacts.push({ id: "contact-existing", properties: clone(plan.contactPlan.properties), caseImportId: plan.caseImportId })
+  if (!options.noDeal) system.state.deals.push({ id: "deal-existing", properties: clone(plan.dealPlan.properties) })
+  if (!options.noArea) system.state.areas.push({ id: "area-existing", ...clone(plan.drivePlan.area), parentId: "root", trashed: false })
+  if (!options.noFolder) system.state.folders.push({ id: "folder-existing", ...clone(plan.drivePlan.case), parentId: "area-existing", trashed: false })
+  return { plan, system }
+}
+const runPvr = ({ plan, system }) => executor({ caseImportId: plan.caseImportId, planHash: PLAN_HASH, manifestHash: MANIFEST_HASH, adapters: system.adapters, now: () => NOW })
+
+test("PVR REQUIRE_EXISTING reuses exact resources without creation", async () => { const subject = pvrSystem(), result = await runPvr(subject); assert.equal(result.completed, true); for (const name of ["contact.create", "deal.create", "area.create", "folder.create"]) assert.equal(subject.system.counts[name], undefined); assert.equal(result.checkpoint.resources.contactId, "contact-existing"); assert.equal(result.checkpoint.resources.dealId, "deal-existing") })
+test("PVR missing or divergent contact fails closed before creation", async () => { for (const options of [{ noContact: true }, { cpfContact: "other-contact", phoneContact: "other-contact" }, { multiContacts: true }]) { const subject = pvrSystem(options); await assert.rejects(() => runPvr(subject), /PVR_CONTACT_(NOT_EXPECTED|AMBIGUOUS)/); assert.equal(subject.system.counts["contact.create"], undefined) } })
+test("PVR missing or divergent deal fails closed without fallback or creation", async () => { for (const options of [{ noDeal: true }, {}]) { const subject = pvrSystem(options); if (!options.noDeal) subject.plan.dealPlan.existingDealId = "different-deal"; await assert.rejects(() => runPvr(subject), /PVR_DEAL_NOT_EXPECTED/); assert.equal(subject.system.counts["deal.create"], undefined) } })
+test("PVR missing or ambiguous Drive logical resources fail closed", async () => { const missing = pvrSystem({ noArea: true }); await assert.rejects(() => runPvr(missing), /PVR_AREA_LOGICAL_ID_NOT_FOUND/); assert.equal(missing.system.counts["area.create"], undefined); const ambiguous = pvrSystem(); ambiguous.system.state.areas.push({ id: "area-second", ...clone(ambiguous.plan.drivePlan.area), parentId: "root", trashed: false }); await assert.rejects(() => runPvr(ambiguous), /PVR_AREA_LOGICAL_ID_AMBIGUOUS/); assert.equal(ambiguous.system.counts["area.create"], undefined) })
+test("PVR Drive lookup is logicalId-only and rejects a name divergence", async () => { const subject = pvrSystem(); subject.system.state.areas[0].name = "Nome externo divergente"; await assert.rejects(() => runPvr(subject), /PVR_AREA_LOGICAL_ID_INVALID/); assert.equal(subject.system.counts["area.create"], undefined) })
+test("PVR contact email must resolve to the expected unique contact", async () => { const subject = pvrSystem({ email: "fixture@example.test" }); subject.system.state.contacts[0].properties.email = "fixture@example.test"; subject.system.adapters.contacts.findContactsByEmail = async () => [{ id: "different-contact" }]; await assert.rejects(() => runPvr(subject), /PVR_CONTACT_NOT_EXPECTED/); assert.equal(subject.system.counts["contact.create"], undefined) })
+test("PVR ambiguous case folder fails closed without creation", async () => { const subject = pvrSystem({ multiFolders: true }); await assert.rejects(() => runPvr(subject), /PVR_CASE_LOGICAL_ID_AMBIGUOUS/); assert.equal(subject.system.counts["folder.create"], undefined) })
+test("PVR revalidates changes after preflight", async () => { const subject = pvrSystem(), original = subject.system.adapters.contacts.findContactsByCpf; let reads = 0; subject.system.adapters.contacts.findContactsByCpf = async value => (++reads === 2 ? [{ id: "other-contact" }] : original(value)); await assert.rejects(() => runPvr(subject), /PVR_CONTACT_NOT_EXPECTED/); assert.equal(subject.system.counts["contact.create"], undefined) })
+test("PVR reservation evidence requires the exact case-import key, number, and reserved status", async () => { for (const options of [{ reservationEvidenceId: "case-import:other" }, { reservationEvidence: { status: "released" } }, { reservationEvidence: { caseNumber: "PVR.260801.999" } }]) { const subject = pvrSystem(options); const original = subject.system.adapters.reservation.verifyPvrAdoption; subject.system.adapters.reservation.verifyPvrAdoption = async (caseImportId, caseNumber) => ({ ...(await original(caseImportId, caseNumber)), ...(options.reservationEvidence || {}) }); await assert.rejects(() => runPvr(subject), /PVR_RESERVATION_EVIDENCE_INVALID/); assert.equal(subject.system.counts["contact.create"], undefined) } })
 const effectContext = (plan, system, lease, overrides = {}) => Object.freeze({
   caseImportId: plan.caseImportId,
   leaseId: lease.leaseId,

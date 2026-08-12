@@ -15,6 +15,17 @@ const fail = code => { throw new Error(code) }
 const hash = value => crypto.createHash("sha256").update(String(value)).digest("hex")
 const clone = value => structuredClone(value)
 
+function documentPlanDeclarationFor(inventory) {
+  if (!inventory || !Array.isArray(inventory.contents) || !Array.isArray(inventory.physicalOccurrences)) fail("CONTENT_INVENTORY_INVALID")
+  const ignoredNonDocumentContents = inventory.contents.filter(item => item?.analysisStatus === "IGNORED" || item?.quarantined === true).length
+  return {
+    uniqueContents: inventory.contents.length,
+    physicalOccurrences: inventory.physicalOccurrences.length,
+    ignoredNonDocumentContents,
+    binaryDuplicateOccurrences: inventory.physicalOccurrences.length - inventory.contents.length
+  }
+}
+
 function validDestination(value) {
   return value && LOGICAL_ID.test(value.logicalId || "") && typeof value.name === "string" && value.name.trim() === value.name && value.name.length > 0 && value.name.length <= 200
 }
@@ -105,7 +116,7 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
   plan.caseFingerprint = fingerprint
   plan.safeToApply = false
   plan.pendingDependencies = ["EXPLICIT_APPLY_AUTHORIZATION", "EXTERNAL_WRITES_AUTHORIZATION"]
-  plan.drivePlan = { area, case: caseDestination }
+  plan.drivePlan = { ...(plan.drivePlan || {}), area, case: caseDestination }
   plan.associationPlan ||= { type: "deal_to_contact", primaryOnly: true }
   plan.deduplication ||= { contactKeys: ["cpf", "phone"], dealKey: "caseNumber", documentKey: "sha256" }
   plan.writeScope ||= ["HUBSPOT_CONTACT", "HUBSPOT_DEAL", "HUBSPOT_ASSOCIATION", "DRIVE_FOLDERS", "DRIVE_UPLOADS", "CHECKPOINT_WRITE"]
@@ -114,4 +125,4 @@ function generateSingleCaseApplyPlan({ identityConfirmed, basePlan, caseNumber, 
   return { plan, manifest }
 }
 
-module.exports = { generateSingleCaseApplyPlan }
+module.exports = { generateSingleCaseApplyPlan, documentPlanDeclarationFor }

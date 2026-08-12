@@ -7,7 +7,7 @@ const fail = code => { throw new Error(code) }
 function createSingleCaseReservationAdapter({ repository, expectedCaseNumber } = {}) {
   if (!repository || typeof repository.findByKey !== "function") fail("RESERVATION_REPOSITORY_MISSING")
   if (expectedCaseNumber !== undefined && !CASE_NUMBER.test(expectedCaseNumber)) fail("RESERVATION_CASE_NUMBER_CONFIGURATION_INVALID")
-  return Object.freeze({ async verify(caseImportId, caseNumber) {
+  const read = async (caseImportId, caseNumber) => {
     if (!ID.test(caseImportId || "")) fail("RESERVATION_CASE_INVALID")
     if (!CASE_NUMBER.test(caseNumber || "")) fail("RESERVATION_CASE_NUMBER_INVALID")
     if (expectedCaseNumber !== undefined && caseNumber !== expectedCaseNumber) fail("RESERVATION_CASE_NUMBER_MISMATCH")
@@ -17,8 +17,18 @@ function createSingleCaseReservationAdapter({ repository, expectedCaseNumber } =
     if (record.reservation_key !== `case-import:${caseImportId}`) fail("RESERVATION_CASE_MISMATCH")
     if (record.case_number !== caseNumber) fail("RESERVATION_CASE_NUMBER_MISMATCH")
     if (record.status !== "reserved") fail("RESERVATION_STATUS_INVALID")
-    return Object.freeze({ verified: true, caseImportId, caseNumber, evidenceId: `case-import:${caseImportId}` })
-  } })
+    return record
+  }
+  return Object.freeze({
+    async verify(caseImportId, caseNumber) {
+      await read(caseImportId, caseNumber)
+      return Object.freeze({ verified: true, caseImportId, caseNumber, evidenceId: `case-import:${caseImportId}` })
+    },
+    async verifyPvrAdoption(caseImportId, caseNumber) {
+      const record = await read(caseImportId, caseNumber)
+      return Object.freeze({ reservationKey: record.reservation_key, caseNumber: record.case_number, status: record.status })
+    }
+  })
 }
 
 module.exports = { createSingleCaseReservationAdapter }

@@ -3,6 +3,9 @@
 const MIGRATION_ID = "case-number-reservations-v1"
 const RECONCILIATION_MIGRATION_ID = "case-number-reservations-v2-reconcile-checks"
 const TABLE_NAME = "case_number_reservations"
+const PVR_CASE_NUMBER = /^PVR\.\d{6}\.\d{3}$/
+const CASE_IMPORT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/
+const PVR_ADOPTION_AREA = "INSS"
 const CHECKS = {
   case_number: {
     name: "case_number_reservations_number_format",
@@ -155,4 +158,51 @@ async function reconcileCaseNumberReservations(pool) {
   } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error } finally { client.release() }
 }
 
-module.exports = { MIGRATION_ID, RECONCILIATION_MIGRATION_ID, TABLE_NAME, CHECKS, CREATE_TABLE_SQL, normalizeExpression, checkMatches, validateBasicCaseNumberReservationSchema, validateCaseNumberReservationSchema, validateReservationData, planCaseNumberReservationReconciliation, migrateCaseNumberReservations, reconcileCaseNumberReservations }
+function pvrAdoptionKey(caseImportId) {
+  if (typeof caseImportId !== "string" || !CASE_IMPORT_ID.test(caseImportId) || caseImportId.includes("..") || /[\\/]/.test(caseImportId)) throw new Error("CASE_IMPORT_ID_INVALID")
+  return `case-import:${caseImportId}`
+}
+
+function validPvrReservation(row, key, caseNumber) {
+  return row && Object.getPrototypeOf(row) === Object.prototype && row.reservation_key === key && row.case_number === caseNumber && row.area === PVR_ADOPTION_AREA && row.status === "reserved"
+}
+
+async function selectPvrReservation(client, column, value) {
+  const result = await client.query(`SELECT reservation_key, case_number, area, status FROM ${TABLE_NAME} WHERE ${column}=$1 FOR UPDATE`, [value])
+  if (!result || !Number.isInteger(result.rowCount) || !Array.isArray(result.rows) || result.rowCount !== result.rows.length || result.rowCount > 1) throw new Error("PVR_ADOPTION_RESPONSE_INVALID")
+  return result.rowCount ? result.rows[0] : null
+}
+
+// The existing primary-key and unique-number constraints arbitrate absent-row races;
+// SELECT ... FOR UPDATE protects any matching persisted row through the transaction.
+async function adoptExistingPvrReservation({ pool, caseImportId, caseNumber, validateSchema = validateCaseNumberReservationSchema } = {}) {
+  const key = pvrAdoptionKey(caseImportId)
+  if (!PVR_CASE_NUMBER.test(caseNumber || "")) throw new Error("PVR_CASE_NUMBER_INVALID")
+  if (!pool || typeof pool.connect !== "function" || typeof validateSchema !== "function") throw new Error("PVR_ADOPTION_PORT_INVALID")
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+    const schema = await validateSchema(client)
+    if (!schema || schema.ok !== true || !Array.isArray(schema.codes) || schema.codes.length) throw new Error("PVR_ADOPTION_SCHEMA_INVALID")
+
+    const byKey = await selectPvrReservation(client, "reservation_key", key)
+    const byNumber = await selectPvrReservation(client, "case_number", caseNumber)
+    if (byKey && !validPvrReservation(byKey, key, caseNumber)) throw new Error(byKey.case_number !== caseNumber ? "PVR_ADOPTION_KEY_CONFLICT" : "PVR_ADOPTION_STATE_INVALID")
+    if (byNumber && !validPvrReservation(byNumber, key, caseNumber)) throw new Error(byNumber.reservation_key !== key ? "PVR_ADOPTION_NUMBER_CONFLICT" : "PVR_ADOPTION_STATE_INVALID")
+    if (byKey || byNumber) {
+      if (!byKey || !byNumber || byKey.reservation_key !== byNumber.reservation_key || byKey.case_number !== byNumber.case_number) throw new Error("PVR_ADOPTION_RESULT_INCONSISTENT")
+      await client.query("COMMIT")
+      return { reservation: byKey, created: false, reused: true }
+    }
+
+    const inserted = await client.query(`INSERT INTO ${TABLE_NAME}(reservation_key,case_number,area,status) VALUES($1,$2,$3,'reserved') ON CONFLICT DO NOTHING RETURNING reservation_key, case_number, area, status`, [key, caseNumber, PVR_ADOPTION_AREA])
+    if (!inserted || !Number.isInteger(inserted.rowCount) || !Array.isArray(inserted.rows) || inserted.rowCount !== inserted.rows.length || inserted.rowCount > 1) throw new Error("PVR_ADOPTION_RESPONSE_INVALID")
+    const finalByKey = await selectPvrReservation(client, "reservation_key", key)
+    const finalByNumber = await selectPvrReservation(client, "case_number", caseNumber)
+    if (!validPvrReservation(finalByKey, key, caseNumber) || !validPvrReservation(finalByNumber, key, caseNumber) || finalByKey.reservation_key !== finalByNumber.reservation_key) throw new Error("PVR_ADOPTION_CONFLICT")
+    await client.query("COMMIT")
+    return { reservation: finalByKey, created: inserted.rowCount === 1, reused: inserted.rowCount === 0 }
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error } finally { if (typeof client.release === "function") client.release() }
+}
+
+module.exports = { MIGRATION_ID, RECONCILIATION_MIGRATION_ID, TABLE_NAME, CHECKS, CREATE_TABLE_SQL, PVR_ADOPTION_AREA, normalizeExpression, checkMatches, validateBasicCaseNumberReservationSchema, validateCaseNumberReservationSchema, validateReservationData, planCaseNumberReservationReconciliation, migrateCaseNumberReservations, reconcileCaseNumberReservations, pvrAdoptionKey, adoptExistingPvrReservation }
