@@ -48,6 +48,11 @@ const CONTACT_SEARCH_PROPERTIES = [
   "work_email"
 ]
 
+// Serializa criacoes da mesma identidade dentro da instancia. A consulta ao
+// HubSpot continua sendo repetida dentro do lock para fechar a janela entre
+// "nao encontrado" e "criar contato".
+const contactCreationLocks = new Map()
+
 function normalizarAreaContatoHubSpot(area) {
   const texto = sanitizarTextoEntrada(area).toLowerCase()
   if (!texto) return ""
@@ -165,15 +170,26 @@ function montarPropsAusentesContatoHubSpot(contatoExistente = {}, props = {}) {
 async function hsBuscarPorPhone(phone) {
   try {
     const phoneNormalizado = normalizarTelefoneHubSpot(phone)
+    if (!phoneNormalizado) return null
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/contacts/search",
       {
-        filterGroups: [{ filters: [{ propertyName: "phone", operator: "EQ", value: phoneNormalizado }] }],
-        properties: CONTACT_SEARCH_PROPERTIES
+        filterGroups: [
+          { filters: [{ propertyName: "phone", operator: "EQ", value: phoneNormalizado }] },
+          { filters: [{ propertyName: "mobilephone", operator: "EQ", value: phoneNormalizado }] }
+        ],
+        properties: CONTACT_SEARCH_PROPERTIES,
+        limit: 100
       },
       { headers: HS() }
     )
-    return res.data.results?.[0] || null
+    const unicos = [...new Map((res.data?.results || []).filter(item => item?.id).map(item => [String(item.id), item])).values()]
+    if (unicos.length > 1) {
+      throw Object.assign(new Error("telefone corresponde a múltiplos contatos"), {
+        code: "HUBSPOT_CONTACT_PHONE_AMBIGUOUS"
+      })
+    }
+    return unicos[0] || null
   } catch (e) {
     logErroHubSpot(e, { operation: "buscarPorPhone" })
     throw e
@@ -221,13 +237,42 @@ async function hsBuscarPorCpf(cpf) {
 async function hsCriarContato(from, u) {
   const props = montarPropsContatoHubSpot(from, u)
   if (!Object.keys(props).length) return null
+  const telefone = normalizarTelefoneHubSpot(props.phone || props.mobilephone || from)
+  const cpf = normalizeCpfHubSpot(props.cpf_do_cliente || u?.cpf)
+  const chave = cpf ? `cpf:${cpf}` : telefone ? `phone:${telefone}` : ""
+  if (!chave) {
+    throw Object.assign(new Error("contato sem CPF ou telefone para deduplicação"), {
+      code: "HUBSPOT_CONTACT_IDENTITY_MISSING"
+    })
+  }
+  if (contactCreationLocks.has(chave)) return await contactCreationLocks.get(chave)
+
+  const criacao = (async () => {
+    try {
+      const porCpf = cpf ? await hsBuscarPorCpf(cpf) : null
+      const porTelefone = telefone ? await hsBuscarPorPhone(telefone) : null
+      if (porCpf?.id && porTelefone?.id && String(porCpf.id) !== String(porTelefone.id)) {
+        throw Object.assign(new Error("CPF e telefone pertencem a contatos diferentes"), {
+          code: "HUBSPOT_CONTACT_IDENTITY_CONFLICT"
+        })
+      }
+      const existente = porCpf || porTelefone
+      if (existente?.id) return String(existente.id)
+
+      const res = await axios.post("https://api.hubapi.com/crm/v3/objects/contacts", { properties: props }, { headers: HS() })
+      if (deps.monitor) deps.monitor.cadastros++
+      return res.data.id
+    } catch (e) {
+      logErroHubSpot(e, { operation: "criarContatoSemDuplicidade", properties: Object.keys(props) })
+      if (String(e?.code || "").startsWith("HUBSPOT_CONTACT_")) throw e
+      return null
+    }
+  })()
+  contactCreationLocks.set(chave, criacao)
   try {
-    const res = await axios.post("https://api.hubapi.com/crm/v3/objects/contacts", { properties: props }, { headers: HS() })
-    deps.monitor.cadastros++
-    return res.data.id
-  } catch (e) {
-    logErroHubSpot(e, { operation: "criarContato", properties: props })
-    return null
+    return await criacao
+  } finally {
+    if (contactCreationLocks.get(chave) === criacao) contactCreationLocks.delete(chave)
   }
 }
 

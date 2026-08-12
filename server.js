@@ -7432,21 +7432,8 @@ async function capturarLeadIncompleto(from, u) {
           operation: "capturarLeadCriarContato",
           properties: ["firstname", "phone", "city"]
         })
-        // segunda tentativa mínima — só telefone + nome fallback
-        try {
-          const res = await axios.post(
-            "https://api.hubapi.com/crm/v3/objects/contacts",
-            { properties: { firstname: nome, phone: telefone } },
-            { headers: HS() }
-          )
-          contatoId = res.data.id
-          monitor.cadastros++
-        } catch (e2) {
-          logErroHubSpot(e2, {
-            operation: "capturarLeadCriarContatoFallback",
-            properties: ["firstname", "phone"]
-          })
-        }
+        // Falha fechada: nunca contornar a deduplicação central com uma
+        // criação direta de contato.
       }
     } else {
       logDebug("Contato confirmado no HubSpot:", contatoId)
@@ -7906,7 +7893,7 @@ async function finalizarCadastro(from, u) {
     const existenteCpf = u.cpf ? await hsBuscarPorCpf(u.cpf) : null
     const existente = existenteCpf || await hsBuscarPorPhone(telefoneContato)
     const nomeExistenteCompleto = [existente?.properties?.firstname, existente?.properties?.lastname].filter(Boolean).join(" ")
-    if (!existenteCpf && existente?.id && nomeExistenteCompleto && u.nome && normalizarNomeComparacao(nomeExistenteCompleto) !== normalizarNomeComparacao(u.nome) && !(u.nomeConfirmado && !ehTerceiro)) {
+    if (!existenteCpf && existente?.id && nomeExistenteCompleto && u.nome && normalizarNomeComparacao(nomeExistenteCompleto) !== normalizarNomeComparacao(u.nome)) {
       throw Object.assign(new Error("telefone pertence a contato incompatível"), { code: "HUBSPOT_PHONE_IDENTITY_CONFLICT" })
     }
     if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname

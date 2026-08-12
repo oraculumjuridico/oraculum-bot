@@ -185,8 +185,7 @@ function createLiveCaseFlow(deps = {}) {
         existing = await hsBuscarPorPhone(plan.identity.phone)
         const existingName = comparableName([existing?.properties?.firstname, existing?.properties?.lastname].filter(Boolean).join(" "))
         const expectedName = comparableName(plan.identity?.name)
-        const nomeDeclaradoPodeCorrigirContato = usuario.nomeConfirmado === true && usuario.telefoneEhDoCliente !== false
-        if (existing?.id && existingName && expectedName && existingName !== expectedName && !nomeDeclaradoPodeCorrigirContato) {
+        if (existing?.id && existingName && expectedName && existingName !== expectedName) {
           throw Object.assign(new Error("telefone pertence a contato incompatível"), { code: "HUBSPOT_PHONE_IDENTITY_CONFLICT" })
         }
         contactId = existing?.id || null
