@@ -112,22 +112,36 @@ function textoAudioTelaDocumentoCaso(u) {
   const totalF = folhas.length
   const lista = getDocumentosListaCaso(u)
   const total = lista.length
-  const progresso = total > 0 ? `Você já enviou ${statusDocs.recebidos.length} de ${total} documentos.` : ""
+  const numerosDocumentais = ["zero", "um", "dois", "três", "quatro", "cinco", "seis", "sete"]
+  const numeroFalado = numero => numerosDocumentais[numero] || String(numero)
+  const progresso = total > 0
+    ? `Você já enviou ${numeroFalado(statusDocs.recebidos.length)} de ${numeroFalado(total)} documentos pessoais.`
+    : ""
   const bloco = doc.grupo ? `Estamos no bloco ${doc.grupo}.` : ""
   const parteFoto = fraseEnvioDocumentoAudio(doc, folha, fIdx, totalF)
   const aceita = doc.aceita ? `Pode enviar como ${doc.aceita}.` : "Pode enviar como foto ou PDF."
-  const opcional = doc.obrigatorio === false ? "Esse documento é opcional; se você não tiver, pode pular ou enviar depois." : ""
+  const opcional = doc.obrigatorio === false ? "Esse documento é opcional." : ""
   const dica = doc.audio || (doc.dica ? `Dica: ${limparTextoAudioDoc(doc.dica)}` : "")
 
   if (doc.id === "doc_rg") {
-    return `${progresso} ${bloco} ${parteFoto} ${aceita} ${dica} Se frente e verso já estiverem na mesma imagem, você poderá confirmar isso depois do envio. Também pode escolher não enviar este documento agora, continuar depois ou voltar ao menu do cliente.`
+    return `${progresso} Agora, envie a frente e o verso do RG ou da CNH. Pode ser uma foto ou um PDF. Se as duas partes estiverem na mesma imagem, tudo bem, desde que apareçam completas. Caso estejam separadas, envie uma foto por vez, sem reflexos e sem partes cortadas.`
   }
 
   if (doc.id === "doc_cpf") {
-    return `${progresso} ${bloco} ${parteFoto} ${aceita} ${dica} Se o CPF já aparece no RG ou CNH, você pode informar isso na tela. Também pode continuar depois ou voltar ao menu do cliente.`
+    return `${progresso} ${bloco} ${parteFoto} ${aceita} ${dica}`
   }
 
-  return `${progresso} ${bloco} ${parteFoto} ${aceita} ${opcional} ${dica} Na tela, você também pode escolher não enviar este documento agora, continuar depois ou voltar ao menu do cliente.`
+  return `${progresso} ${bloco} ${parteFoto} ${aceita} ${opcional} ${dica}`
+}
+
+function textoAudioAcaoDocumental(id) {
+  if (id === "docs_pular_doc") {
+    return "Se quiser deixar este documento para depois, escolha a opção: Não tenho este."
+  }
+  if (id === "docs_depois") {
+    return "Para continuar em outro momento, escolha a opção: Continuar depois."
+  }
+  return ""
 }
 
 function telaDocsPendentesComImagem(u) {
@@ -245,7 +259,11 @@ function telaEnvioDoc(u, enviarOpcoesPadrao) {
       textoAudioBase: textoAudioTelaDocumentoCaso(u),
       acoes: [
         { id: "doc_cpf_skip", label: "CPF no RG/CNH" },
-        { id: "docs_depois", label: "Continuar depois" },
+        {
+          id: "docs_depois",
+          label: "Continuar depois",
+          textoAudio: textoAudioAcaoDocumental("docs_depois")
+        },
         { id: "m_inicio", label: "🏠 Menu do cliente" }
       ]
     })
@@ -256,10 +274,14 @@ function telaEnvioDoc(u, enviarOpcoesPadrao) {
     titulo: "Documento atual",
     texto,
     textoAudioBase: textoAudioTelaDocumentoCaso(u),
-    acoes: enviarOpcoesPadrao(null).map(opcao => ({
-      id: opcao.id,
-      label: opcao.title
-    }))
+    acoes: enviarOpcoesPadrao(null).map(opcao => {
+      const textoAudio = textoAudioAcaoDocumental(opcao.id)
+      return {
+        id: opcao.id,
+        label: opcao.title,
+        ...(textoAudio ? { textoAudio } : {})
+      }
+    })
   })
 }
 

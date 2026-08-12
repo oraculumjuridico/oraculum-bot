@@ -19,7 +19,8 @@ function verificarParidade(tela) {
   )
   const audio = gerarAudioDaTela(tela)
   for (const acao of tela.acoes) {
-    assert.equal(audio.includes(`Para ${acao.label}, toque em ${acao.label}`), true)
+    const orientacao = acao.textoAudio || `Para ${acao.label}, toque em ${acao.label}`
+    assert.equal(audio.includes(orientacao.replace(/[.\s]+$/, "")), true)
   }
 }
 
@@ -35,11 +36,31 @@ const usuario = {
   docAtualIdx: 0
 }
 
-verificarParidade(telaEnvioDoc(usuario, () => [
+const telaDocumento = telaEnvioDoc({ ...usuario, tipo: "negado" }, () => [
   { id: "docs_pular_doc", title: "Não tenho este" },
   { id: "docs_depois", title: "Continuar depois" },
   { id: "m_inicio", title: "Menu do cliente" }
-]))
+])
+verificarParidade(telaDocumento)
+assert.deepEqual(gerarBotoesDaTela(telaDocumento).map(botao => botao.title), [
+  "Não tenho este",
+  "Continuar depois",
+  "Menu do cliente"
+])
+assert.equal(
+  telaDocumento.acoes.find(acao => acao.id === "docs_pular_doc").textoAudio,
+  "Se quiser deixar este documento para depois, escolha a opção: Não tenho este."
+)
+assert.equal(
+  telaDocumento.acoes.find(acao => acao.id === "docs_depois").textoAudio,
+  "Para continuar em outro momento, escolha a opção: Continuar depois."
+)
+const audioDocumento = gerarAudioDaTela(telaDocumento)
+assert.match(audioDocumento, /Você já enviou zero de cinco documentos pessoais\./)
+assert.match(audioDocumento, /Agora, envie a frente e o verso do RG ou da CNH\./)
+assert.doesNotMatch(audioDocumento, /Também pode escolher não enviar este documento agora/)
+assert.match(telaDocumento.texto, /📌 \*Agora:\* RG ou CNH/)
+assert.match(telaDocumento.texto, /📄 \*Envie:\* Frente \(1 de 2\)/)
 
 const pendente = {
   ...usuario,

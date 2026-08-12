@@ -28,6 +28,8 @@ function normalizarTextoParaFala(texto) {
     INSS: "ieneésseésse",
     CPF: "cêpêéfe",
     RG: "érre-gê",
+    PDF: "pê dê éfe",
+    CNH: "cê-ene-agá",
     BPC: "bê pê cê",
     PVR: "pê vê erre",
     DER: "dê e erre",
