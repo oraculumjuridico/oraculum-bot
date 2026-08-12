@@ -11591,6 +11591,14 @@ async function processarAudioCanalAtendimento(from, nomeWA, u, msgObj, tipo, ehA
   const classificacao = await classificarAreaAudio(u._audioCanalTranscricao)
   iniciarTimer(from)
 
+  // Relato inicial enviado depois de o nome já ter sido confirmado.
+  // Este não é um pedido de revalidação: preserve o nome e siga para a
+  // confirmação do entendimento do relato, como já ocorre no caminho textual.
+  if (u._revalidandoCampos && u._aguardandoRelatoAposNome) {
+    u._aguardandoRelatoAposNome = false
+    u._revalidandoCampos = false
+  }
+
   // "Recomeçar" — confirmação progressiva campo a campo
   if (u._revalidandoCampos) {
     aplicarClassificacaoJuridica(u, classificacao)
