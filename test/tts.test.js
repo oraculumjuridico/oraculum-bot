@@ -67,7 +67,7 @@ async function main() {
   assert.equal(perfilDaAtendente("Isabela").attendant, "Isabela")
   assert.equal(perfilDaAtendente("Mariana").attendant, "Mariana")
 
-  assert.equal(normalizarTextoParaFala("INSS, CPF e PVR."), "ieneésseésse, cêpêéfe e pê vê erre.")
+  assert.equal(normalizarTextoParaFala("INSS, CPF, PDF, CNH e PVR."), "ieneésseésse, cêpêéfe, pê dê éfe, cê-ene-agá e pê vê erre.")
   assert.equal(normalizarTextoParaFala("INSSalubre CPF123"), "INSSalubre CPF123")
 
   const textoEscrito = "INSS e CPF"

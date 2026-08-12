@@ -3,10 +3,14 @@ function normalizarAcoes(acoes = []) {
 
   return acoes
     .filter(Boolean)
-    .map((acao, index) => ({
-      id: acao.id || `acao_${index}`,
-      label: String(acao.label || "").trim()
-    }))
+    .map((acao, index) => {
+      const textoAudio = String(acao.textoAudio || "").trim()
+      return {
+        id: acao.id || `acao_${index}`,
+        label: String(acao.label || "").trim(),
+        ...(textoAudio ? { textoAudio } : {})
+      }
+    })
     .filter(acao => acao.label)
 }
 
@@ -45,7 +49,9 @@ function gerarBotoesDaTela(tela = {}) {
 function gerarAudioDaTela(tela = {}) {
   const textoBase = String(tela.textoAudioBase || "").trim().replace(/[.\s]+$/, "")
   const orientacoes = (tela.acoes || [])
-    .map(acao => `Para ${acao.label}, toque em ${acao.label}`)
+    .map(acao => acao.textoAudio
+      ? acao.textoAudio.replace(/[.\s]+$/, "")
+      : `Para ${acao.label}, toque em ${acao.label}`)
     .join(". ")
 
   if (!textoBase) return orientacoes ? `${orientacoes}.` : ""

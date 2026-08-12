@@ -30,6 +30,21 @@ for (const acao of tela.acoes) {
   assert.match(audio, new RegExp(`Para ${acao.label}, toque em ${acao.label}`))
 }
 
+const telaComAudioDaAcao = criarTela({
+  id: "acao_com_audio",
+  titulo: "Ação com áudio",
+  textoAudioBase: "Escolha uma opção",
+  acoes: [
+    { id: "comum", label: "Continuar" },
+    { id: "especial", label: "Não tenho este", textoAudio: "Escolha a opção: Não tenho este." }
+  ]
+})
+assert.equal(telaComAudioDaAcao.acoes[1].textoAudio, "Escolha a opção: Não tenho este.")
+assert.equal(
+  gerarAudioDaTela(telaComAudioDaAcao),
+  "Escolha uma opção. Para Continuar, toque em Continuar. Escolha a opção: Não tenho este."
+)
+
 assert.equal(
   criarTela({
     id: "filtrada",
