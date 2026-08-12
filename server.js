@@ -121,6 +121,7 @@ const {
   textoAudioAutomatico,
   textoTemMarcadorVisual
 } = require("./src/domain/text-utils")
+const { orientarTextoComAcoes } = require("./src/domain/action-guidance")
 const {
   textoNormalizadoPreAtendimento,
   pareceCasoParaTerceiroPreAtendimento,
@@ -8409,8 +8410,12 @@ async function enviarAudioModoVoz(from, u, texto, contexto = "cliente") {
 
 function aplicarEmojiTelaCliente(from, payload = {}) {
   if (!payload?.texto || ehContatoAdmin(from)) return payload
-  if (payload.semEmoji === true || textoTemMarcadorVisual(payload.texto)) return payload
-  return { ...payload, texto: `💬 ${payload.texto}` }
+  const acoes = Array.isArray(payload.opcoes)
+    ? payload.opcoes.map(opcao => ({ id: opcao.id, label: opcao.title }))
+    : []
+  const textoOrientado = orientarTextoComAcoes(payload.texto, acoes)
+  if (payload.semEmoji === true || textoTemMarcadorVisual(textoOrientado)) return { ...payload, texto: textoOrientado }
+  return { ...payload, texto: `💬 ${textoOrientado}` }
 }
 
 function ehContatoAdmin(from) {
@@ -11362,9 +11367,20 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   await hsCriarNota(u.contatoId, "DOCUMENTO RECEBIDO", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArquivo: ${nArqFinal}\nDrive: ${arquivo.webViewLink}`)
 
   if (docAtual?.id !== "doc_rg") u.docAtualIdx = arquivoEhPdf ? folhas.length : fIdx + 1
-  const rgAguardandoVerso = docAtual?.id === "doc_rg" && u.docAtualIdx < folhas.length
+  // O verso aceito encerra a coleta física do RG, mesmo quando a leitura
+  // automática ainda depender de revisão humana.
+  if (docAtual?.id === "doc_rg" && /verso/i.test(folha) && recebimentoGuiado?.accepted) {
+    u.docAtualIdx = folhas.length
+  }
+  const rgColetaCompleta = docAtual?.id === "doc_rg" && u.docAtualIdx >= folhas.length
+  if (rgColetaCompleta) {
+    marcarStatusDocumento(u, docAtual.id, "docsEntregues")
+    // O próximo clique deve começar o documento seguinte na primeira parte.
+    u.docAtualIdx = 0
+  }
+  const rgAguardandoVerso = docAtual?.id === "doc_rg" && !rgColetaCompleta
   const docAtualCompleto = docAtual?.id === "doc_rg"
-    ? u.docAtualIdx >= folhas.length
+    ? rgColetaCompleta
     : arquivoEhPdf || u.docAtualIdx >= folhas.length
   const temProximoDoc = pendentes.length > 1
   const proximaAcaoTitle = !docAtualCompleto ? "Próxima página" : temProximoDoc ? "Próximo documento" : "Concluir envio"
@@ -11372,12 +11388,14 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     ? montarStatusDocumentosVisual(u, { docConcluidoId: docAtual?.id || null })
     : montarStatusDocumentosVisual(u, { docEmAndamentoId: docAtual?.id || null })
   const textoFinalTela = !docAtualCompleto
-    ? `Envie a próxima parte quando estiver pronto.`
+    ? docAtual?.id === "doc_rg" && folha.toLowerCase().includes("frente")
+      ? `Agora envie o *verso* pelo WhatsApp. Não precisa tocar em um botão para anexá-lo. Se o verso já estiver nesta mesma foto ou se você não o tiver, use uma das opções abaixo.`
+      : `Agora envie a próxima parte pelo WhatsApp. Não precisa tocar em um botão para anexá-la. Se preferir outra ação, escolha uma das opções abaixo.`
     : temProximoDoc
       ? `Toque em *Próximo documento* quando estiver pronto.`
       : `Todos os documentos foram enviados. Toque em *Concluir envio* para finalizar.`
   const textoAudioRecebido = rgAguardandoVerso
-    ? `${lblD}, ${folha}, recebido${recebimentoGuiado?.pendingReview ? " e salvo para revisão" : ""}. Se o verso estiver nesse mesmo arquivo, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
+    ? `${lblD}, ${folha}, recebido${recebimentoGuiado?.pendingReview ? " e salvo para revisão" : ""}. Agora envie o verso. Se frente e verso já estiverem no mesmo arquivo, toque em Frente e verso juntos. Se não tiver o verso, toque em Não tenho o verso. Se preferir parar por agora, toque em Continuar depois.`
     : arquivoEhPdf
       ? `${lblD} recebido em PDF. Na tela, você pode ${temProximoDoc ? "seguir para o próximo documento" : "concluir o envio"} ou continuar depois.`
     : !docAtualCompleto
@@ -11387,8 +11405,8 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         : `${lblD} recebido. Todos os documentos foram enviados. Toque em Concluir envio para finalizar ou em Continuar depois para parar por agora.`
   const opcoesRecebido = rgAguardandoVerso
     ? [
-          { id:"docs_rg_verso_junto", title: "Usar mesma foto" },
-          { id:"docs_rg_sem_verso", title: "Seguir sem verso" },
+          { id:"docs_rg_verso_junto", title: "Frente e verso juntos" },
+          { id:"docs_rg_sem_verso", title: "Não tenho o verso" },
           { id: "docs_depois", title: "Continuar depois" }
         ]
     : (arquivoEhPdf
@@ -16986,6 +17004,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           "DOCUMENTO COMPLETO - FRENTE E VERSO NA MESMA IMAGEM",
           `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nDocumento: ${docRg.label}\nArquivo: ${u.ultimoArqNome || "-"}`
         )
+        marcarStatusDocumento(u, docRg.id, "docsEntregues")
       }
       u.docAtualIdx = 0
       u.ultimoArqId = null
@@ -17009,6 +17028,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           "DOCUMENTO PARCIAL - CLIENTE SEGUIU SEM VERSO",
           `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nDocumento: ${docRg.label}\nItem pendente: ${folhaRg}\nProgresso: ${fIdxRg} de ${folhasRg.length}`
         )
+        marcarStatusDocumento(u, docRg.id, "docsParciais")
       }
       u.docAtualIdx = 0
       u.ultimoArqId = null
@@ -17057,7 +17077,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
       if (fIdx4 >= folhas4.length) {
         // Todas as folhas do documento atual foram enviadas — avança para o próximo documento
-        if (docAtual4?.id && docAtual4.id !== "doc_rg") marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
+        if (docAtual4?.id) marcarStatusDocumento(u, docAtual4.id, "docsEntregues")
         u.docAtualIdx = 0
       }
       if (getDocsPendentes(u).length === 0) {

@@ -6,6 +6,7 @@ const {
   gerarAudioDaTela,
   gerarBotoesDaTela
 } = require("../src/domain/declarative-screen")
+const { orientarAudioAcao } = require("../src/domain/action-guidance")
 const {
   telaEnvioDoc,
   telaDocsPendentesComImagem
@@ -19,7 +20,7 @@ function verificarParidade(tela) {
   )
   const audio = gerarAudioDaTela(tela)
   for (const acao of tela.acoes) {
-    const orientacao = acao.textoAudio || `Para ${acao.label}, toque em ${acao.label}`
+    const orientacao = orientarAudioAcao(acao)
     assert.equal(audio.includes(orientacao.replace(/[.\s]+$/, "")), true)
   }
 }

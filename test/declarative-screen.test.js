@@ -7,6 +7,7 @@ const {
   gerarBotoesDaTela,
   gerarAudioDaTela
 } = require("../src/domain/declarative-screen")
+const { orientarAudioAcao } = require("../src/domain/action-guidance")
 
 const tela = criarTela({
   id: "status_cliente",
@@ -27,7 +28,7 @@ assert.deepEqual(gerarBotoesDaTela(tela), [
 
 const audio = gerarAudioDaTela(tela)
 for (const acao of tela.acoes) {
-  assert.match(audio, new RegExp(`Para ${acao.label}, toque em ${acao.label}`))
+  assert.ok(audio.includes(orientarAudioAcao(acao)))
 }
 
 const telaComAudioDaAcao = criarTela({

@@ -11,6 +11,7 @@ const {
   gerarBotoesDaTela,
   gerarAudioDaTela
 } = require("../src/domain/declarative-screen-guard")
+const { orientarAudioAcao } = require("../src/domain/action-guidance")
 
 configurarClientMenuUi({
   podeMostrarMenuCliente: () => true,
@@ -39,7 +40,7 @@ assert.deepEqual(menu.acoes.map(acao => acao.id), idsMenu)
 assert.deepEqual(gerarBotoesDaTela(menu).map(botao => botao.id), idsMenu)
 for (const acao of menu.acoes) {
   assert.equal(
-    gerarAudioDaTela(menu).includes(`Para ${acao.label}, toque em ${acao.label}`),
+    gerarAudioDaTela(menu).includes(orientarAudioAcao(acao)),
     true
   )
 }
@@ -73,7 +74,7 @@ assert.deepEqual(selecao.acoes.map(acao => acao.id), idsSelecao)
 assert.deepEqual(gerarBotoesDaTela(selecao).map(botao => botao.id), idsSelecao)
 for (const acao of selecao.acoes) {
   assert.equal(
-    gerarAudioDaTela(selecao).includes(`Para ${acao.label}, toque em ${acao.label}`),
+    gerarAudioDaTela(selecao).includes(orientarAudioAcao(acao)),
     true
   )
 }

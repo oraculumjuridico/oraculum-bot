@@ -1,3 +1,5 @@
+const { orientarTextoComAcoes, orientarAudioAcao } = require("./action-guidance")
+
 function normalizarAcoes(acoes = []) {
   if (!Array.isArray(acoes)) return []
 
@@ -5,10 +7,12 @@ function normalizarAcoes(acoes = []) {
     .filter(Boolean)
     .map((acao, index) => {
       const textoAudio = String(acao.textoAudio || "").trim()
+      const descricao = String(acao.descricao || "").trim()
       return {
         id: acao.id || `acao_${index}`,
         label: String(acao.label || "").trim(),
-        ...(textoAudio ? { textoAudio } : {})
+        ...(textoAudio ? { textoAudio } : {}),
+        ...(descricao ? { descricao } : {})
       }
     })
     .filter(acao => acao.label)
@@ -25,7 +29,7 @@ function criarTela({
   const tela = {
     id: id || "",
     titulo: titulo || "",
-    texto: String(texto || "").trim(),
+    texto: orientarTextoComAcoes(texto, normalizarAcoes(acoes)),
     textoAudioBase: String(textoAudioBase || "").trim(),
     acoes: normalizarAcoes(acoes),
     imagemUrl
@@ -49,9 +53,7 @@ function gerarBotoesDaTela(tela = {}) {
 function gerarAudioDaTela(tela = {}) {
   const textoBase = String(tela.textoAudioBase || "").trim().replace(/[.\s]+$/, "")
   const orientacoes = (tela.acoes || [])
-    .map(acao => acao.textoAudio
-      ? acao.textoAudio.replace(/[.\s]+$/, "")
-      : `Para ${acao.label}, toque em ${acao.label}`)
+    .map(orientarAudioAcao)
     .join(". ")
 
   if (!textoBase) return orientacoes ? `${orientacoes}.` : ""

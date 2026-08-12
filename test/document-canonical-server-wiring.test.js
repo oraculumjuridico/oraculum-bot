@@ -43,10 +43,10 @@ assert.ok(avulso.indexOf("confirmarDocumentoCanonicoSeguro(u, fileIdDoc") < avul
 
 const sameImage = source.slice(source.indexOf('if (comandoDoc === "docs_rg_verso_junto")'), source.indexOf('if (comandoDoc === "docs_rg_sem_verso")'))
 assert.match(sameImage, /assertion: "front_and_back_same_image"/)
-assert.doesNotMatch(sameImage, /marcarStatusDocumento/)
+assert.match(sameImage, /marcarStatusDocumento\(u, docRg\.id, "docsEntregues"\)/)
 
 const nextDocument = source.slice(source.indexOf('if (comandoDoc === "docs_proxdoc")'), source.indexOf('if (comandoDoc === "docs_depois")'))
-assert.match(nextDocument, /docAtual4\.id !== "doc_rg"/)
+assert.match(nextDocument, /marcarStatusDocumento\(u, docAtual4\.id, "docsEntregues"\)/)
 assert.match(nextDocument, /confirmarDocumentoCanonicoSeguro/)
 
 console.log("document-canonical-server-wiring.test.js: ok")

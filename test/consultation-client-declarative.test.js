@@ -7,6 +7,7 @@ const {
   gerarBotoesDaTela,
   gerarAudioDaTela
 } = require("../src/domain/declarative-screen-guard")
+const { orientarAudioAcao } = require("../src/domain/action-guidance")
 const {
   telaConsultaAdvogado,
   telaBuscandoHorarios,
@@ -75,7 +76,7 @@ for (const tela of telas) {
   )
   const audio = gerarAudioDaTela(tela)
   for (const acao of tela.acoes) {
-    const trechoEsperado = acao.textoAudio || `Para ${acao.label}, toque em ${acao.label}`
+    const trechoEsperado = orientarAudioAcao(acao)
     assert.equal(
       audio.includes(trechoEsperado),
       true,
