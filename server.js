@@ -4536,12 +4536,12 @@ function montarNotificacaoCancelamentoClienteAdmin({ from, u, dataHora, eventoId
     : "✅ *Nenhuma ação manual necessária.*\nO evento foi removido, o stage foi recalculado e o caso ficou na etapa correta."
 
   return [
-    precisaRevisar ? "⚠️ *Cancelamento precisa de revisão*" : "❌ *Consulta cancelada pelo cliente*",
+    precisaRevisar ? "⚠️ *Cancelamento precisa de revisão*" : "❌ *Agendamento cancelado pelo cliente*",
     "",
     `👤 ${u?.nome || "Cliente"}`,
     `📄 Caso: ${u?.numeroCaso || "-"}`,
     `⚖️ Área: ${u?.area || "-"}`,
-    `📅 Consulta: ${dataHora || "-"}`,
+    `📅 Agendamento: ${dataHora || "-"}`,
     `📱 WhatsApp: ${from || "-"}`,
     `📌 Novo status: ${labelStageAdmin(novoStage)}`,
     stageAnterior && stageAnterior !== novoStage ? `🔁 Antes: ${labelStageAdmin(stageAnterior)}` : "",
@@ -5128,7 +5128,7 @@ function gerarAlertasOperacionaisAdmin(item) {
     alertas.push({
       tipo: "consulta",
       peso: 45,
-      texto: "Consulta ativa",
+      texto: "Agendamento ativo",
       acao: "Conferir pauta, documentos e links antes do atendimento."
     })
   }
@@ -5200,6 +5200,7 @@ async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
     .slice(0, 3)
 
   return {
+    ok: true,
     geradoEm: new Date().toISOString(),
     fonte: resumo.fonte,
     totais: {
@@ -5443,7 +5444,7 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
     divergencias ? `⚠️ Divergencias: ${divergencias}` : "",
     tarefasAbertas ? `✅ Tarefas abertas: ${tarefasAbertas}` : "",
     consolidacao ? `📚 Consolidação: ${consolidacao}` : "",
-    `📅 Consulta: ${consulta}`,
+    `📅 Agendamento: ${consulta}`,
     alerta ? `🚨 Alerta: ${alerta.texto}` : "",
     revisao ? `✅ Revisado: até ${new Date(revisao.ate).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}` : "",
     briefing.hubspot ? `🔗 HubSpot: ${briefing.hubspot}` : "",
@@ -5477,7 +5478,7 @@ async function telaAdminPrincipal() {
       resumo.ok ? "" : "⚠️ Não foi possível atualizar os indicadores agora. O menu continua disponível.",
       `🚨 ${resumo.urgentes} urgente(s)`,
       `📎 ${resumo.docsPendentes} com docs pendentes`,
-      `📅 ${resumo.consultasAtivas} consulta(s) futura(s)`,
+      `📅 ${resumo.consultasAtivas} agendamento(s) futuro(s)`,
       `🔎 ${resumo.analise} em análise`,
       semResposta ? `⏳ ${semResposta} sem resposta há mais de 2h` : "✅ Sem fila parada acima de 2h",
       "",
@@ -5490,7 +5491,7 @@ async function telaAdminPrincipal() {
       { id: ADMIN_IDS.prioridades, title: "📌 Prioridades" },
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
       { id: ADMIN_IDS.consultarCaso, title: "🔎 Consultar caso" },
-      { id: ADMIN_IDS.agenda, title: "📅 Consultas" },
+      { id: ADMIN_IDS.agenda, title: "📅 Agendamentos" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
       { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
       { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Novo atendimento IA" }
@@ -5771,7 +5772,7 @@ async function executarAgendamentoCasoAdmin(from, text) {
   item.u.consultaEventoId = result.eventId
   item.u.consultaStatus = "agendada"
   agendarPersistenciaUsers()
-  return { texto: `✅ Agendamento confirmado. Evento: ${result.eventId}`, opcoes: [{ id: ADMIN_IDS.agenda, title: "📅 Ver consultas" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
+  return { texto: `✅ Agendamento confirmado. Evento: ${result.eventId}`, opcoes: [{ id: ADMIN_IDS.agenda, title: "📅 Ver agendamentos" }, { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }], registrarPergunta: false }
 }
 
 async function telaAdminPrioridades(from, pagina = 1) {
@@ -5916,7 +5917,7 @@ async function telaAdminAlertas() {
       { id: ADMIN_IDS.alertasCriticos, title: "🔥 Casos críticos" },
       { id: ADMIN_IDS.alertasParados, title: "⏳ Casos parados" },
       { id: ADMIN_IDS.alertasDocs, title: "📎 Documentos pendentes" },
-      { id: ADMIN_IDS.alertasAgenda, title: "📅 Consultas futuras" },
+      { id: ADMIN_IDS.alertasAgenda, title: "📅 Agendamentos" },
       { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
@@ -5993,6 +5994,9 @@ async function telaAdminCasosAnalise(from, pagina = 1) {
   const resultado = await adminFonteCasos(filtro, [HS_STAGE.ANALISE], 100)
   if (!resultado.ok) return telaAdminFalhaHubSpot()
   const { items: itens, total } = resultado
+  const inicio = (pagina - 1) * ADMIN_CASE_PAGE_SIZE
+  const itensPagina = await hidratarNomesPrioridadesAdmin(itens.slice(inicio, inicio + ADMIN_CASE_PAGE_SIZE))
+  itens.splice(inicio, itensPagina.length, ...itensPagina)
   const totalPaginas = Math.max(1, Math.ceil(total / ADMIN_CASE_PAGE_SIZE))
   return telaAdminListaCasos(from, "🔎 *Casos em análise*", itens, "✅ Não encontrei casos em análise no HubSpot nem na memória atual.", ADMIN_IDS.casos, pagina, totalPaginas, ADMIN_IDS.casosAnalise)
 }
@@ -6048,7 +6052,7 @@ async function telaAdminAlertasDocs(from, pagina = 1) {
 
 async function telaAdminAlertasAgenda(from, pagina = 1) {
   const itens = await obterConsultasAtivasAdmin()
-  return telaAdminListaCasos(from, "📅 *Alertas de agenda*", itens, "✅ Não encontrei consultas futuras ativas.", ADMIN_IDS.alertas, pagina, Math.max(1, Math.ceil(itens.length / ADMIN_CASE_PAGE_SIZE)), ADMIN_IDS.alertasAgenda)
+  return telaAdminListaCasos(from, "📅 *Alertas de agendamentos*", itens, "✅ Não encontrei agendamentos futuros ativos.", ADMIN_IDS.alertas, pagina, Math.max(1, Math.ceil(itens.length / ADMIN_CASE_PAGE_SIZE)), ADMIN_IDS.alertasAgenda)
 }
 
 async function telaAdminResumoDiario() {
@@ -6751,7 +6755,7 @@ async function telaConsultasAdmin(from) {
 
   if (!consultas.length) {
     return {
-      texto: "📅 *Consultas futuras*\n\n✅ Não encontrei consultas futuras ativas no Google Calendar.",
+      texto: "📅 *Agendamentos futuros*\n\n✅ Não encontrei agendamentos futuros ativos no Google Calendar.",
       opcoes: [
         { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` },
         { id: ADMIN_IDS.casos, title: "📂 Casos" }
@@ -6763,7 +6767,7 @@ async function telaConsultasAdmin(from) {
   const consultasExibidas = consultas.slice(0, 8)
   const linhas = consultasExibidas.map((item, idx) => resumoConsultaAdmin(item, idx + 1))
   return {
-    texto: ["📅 *Consultas futuras*", "", ...linhas, "", "Toque em uma consulta para ver as acoes."].join("\n"),
+    texto: ["📅 *Agendamentos futuros*", "", ...linhas].join("\n"),
     opcoes: [
       ...consultasExibidas.map((item, idx) => ({
         id: `admin_consulta_${idx}`,
@@ -6793,9 +6797,9 @@ function telaDetalheConsultaAdmin(from, idx) {
   const item = obterItemAdmin(from, idx)
   if (!item) {
     return {
-      texto: "Nao encontrei essa consulta na lista atual. Envie *consultas* para atualizar.",
+      texto: "Não encontrei esse agendamento na lista atual. Abra *Agendamentos* para atualizar.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar agenda" },
         { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
@@ -6805,7 +6809,7 @@ function telaDetalheConsultaAdmin(from, idx) {
   const u = item.u
   const dataHora = item.inicio ? formatarSlot(new Date(item.inicio)) : "horario nao encontrado"
   const texto = [
-    "📅 *Consulta selecionada*",
+    "📅 *Agendamento selecionado*",
     "",
     `👤 Cliente: ${u.nome || "Cliente"}`,
     `📄 Caso: ${u.numeroCaso || "-"}`,
@@ -6818,12 +6822,12 @@ function telaDetalheConsultaAdmin(from, idx) {
 
   const opcoes = item.eventId
     ? [
-      { id: ADMIN_IDS.cancelarConsulta, title: "❌ Cancelar consulta" },
-      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar consultas" },
+      { id: ADMIN_IDS.cancelarConsulta, title: "❌ Cancelar horário" },
+      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar agenda" },
       { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ]
     : [
-      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar consultas" },
+      { id: ADMIN_IDS.agenda, title: "🔄 Atualizar agenda" },
       { id: ADMIN_IDS.casos, title: "📂 Ver casos" },
       { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ]
@@ -6839,9 +6843,9 @@ function telaConfirmarCancelamentoAdmin(from) {
   const item = obterItemAdmin(from)
   if (!item) {
     return {
-      texto: "Nao encontrei a consulta selecionada. Envie *consultas* para atualizar.",
+      texto: "Não encontrei o agendamento selecionado. Abra *Agendamentos* para atualizar.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar agenda" },
         { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
@@ -6851,9 +6855,9 @@ function telaConfirmarCancelamentoAdmin(from) {
   const u = item.u
   if (!item.eventId) {
     return {
-      texto: "Essa consulta esta no HubSpot, mas nao encontrei o ID do evento Calendar para cancelar com seguranca. Abra o HubSpot ou atualize a agenda.",
+      texto: "Esse agendamento está no HubSpot, mas não encontrei o ID do evento Calendar para cancelar com segurança. Abra o HubSpot ou atualize a agenda.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar agenda" },
         { id: ADMIN_IDS.casos, title: "Ver casos" },
         { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
@@ -6862,10 +6866,10 @@ function telaConfirmarCancelamentoAdmin(from) {
   }
   const dataHora = item.inicio ? formatarSlot(new Date(item.inicio)) : "horario nao encontrado"
   return {
-    texto: `❌ *Confirmar cancelamento?*\n\n👤 Cliente: *${u.nome || "Cliente"}*\n🕒 Consulta: *${dataHora}*`,
+    texto: `❌ *Confirmar cancelamento?*\n\n👤 Cliente: *${u.nome || "Cliente"}*\n🕒 Agendamento: *${dataHora}*`,
     opcoes: [
       { id: ADMIN_IDS.cancelarSim, title: "❌ Confirmar cancelar" },
-      { id: ADMIN_IDS.cancelarNao, title: "⬅️ Voltar à consulta" },
+      { id: ADMIN_IDS.cancelarNao, title: "⬅️ Voltar ao horário" },
       { id: ADMIN_IDS.agenda, title: `📅 ${ADMIN_MENU_LABELS.verConsultas}` },
       { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
     ],
@@ -6877,9 +6881,9 @@ async function cancelarConsultaAdmin(from) {
   const item = obterItemAdmin(from)
   if (!item) {
     return {
-      texto: "Nao encontrei a consulta selecionada. Envie *consultas* para atualizar.",
+      texto: "Não encontrei o agendamento selecionado. Abra *Agendamentos* para atualizar.",
       opcoes: [
-        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar agenda" },
         { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
@@ -6900,7 +6904,7 @@ async function cancelarConsultaAdmin(from) {
       texto: "Nao consegui cancelar o evento no Google Calendar. Tente novamente em instantes.",
       opcoes: [
         { id: ADMIN_IDS.cancelarSim, title: "Tentar cancelar" },
-        { id: ADMIN_IDS.agenda, title: "Atualizar consultas" },
+        { id: ADMIN_IDS.agenda, title: "Atualizar agenda" },
         { id: ADMIN_IDS.menu, title: ADMIN_MENU_LABELS.voltarMenu }
       ],
       registrarPergunta: false
@@ -6931,7 +6935,7 @@ async function cancelarConsultaAdmin(from) {
 
   return {
     texto: [
-      "✅ *Consulta cancelada.*",
+      "✅ *Agendamento cancelado.*",
       "",
       `👤 Cliente: ${u.nome || "Cliente"}`,
       `📄 Caso: ${u.numeroCaso || "-"}`,

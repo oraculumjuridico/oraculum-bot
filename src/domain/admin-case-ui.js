@@ -16,7 +16,7 @@ const ADMIN_MENU_LABELS = Object.freeze({
   pedirDocumentos: "Pedir documentos",
   lembrarCliente: "Lembrar cliente",
   abrirLinksCaso: "Abrir links do caso",
-  verConsultas: "Ver consultas",
+  verConsultas: "Ver agendamentos",
   voltarLista: "Voltar à lista",
   voltarMenu: "Voltar ao menu admin"
 })
