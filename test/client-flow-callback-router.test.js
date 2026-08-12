@@ -60,7 +60,7 @@ assert.equal(callbackSemTela.stage, "audio_aguardando")
 
 const documentosAposReinicio = {
   stage: "audio_aguardando",
-  etapa: "documentos",
+  etapa: "audio_aguardando",
   numeroCaso: "CDC.260812.001",
   lastPerguntaPayload: null
 }

@@ -3313,6 +3313,19 @@ function podeMostrarMenuCliente(u) {
     Boolean(Array.isArray(u?._casosDisponiveis) && u._casosDisponiveis.length)
 }
 
+function etapaPermitidaComCasoOficial(stage) {
+  return new Set([
+    STAGES.CLIENTE,
+    STAGES.DOCUMENTOS,
+    STAGES.AGENDAMENTO_HORARIO,
+    STAGES.AGENDAMENTO_DURACAO,
+    STAGES.AGENDAMENTO_CONFIRMAR,
+    STAGES.AGUARDANDO_URGENTE,
+    STAGES.URGENTE_AUDIO_CONFIRMA,
+    STAGES.URGENTE_AUDIO_ERRO_TRANSCRICAO
+  ].map(normalizarStageKey)).has(normalizarStageKey(stage))
+}
+
 function getNumeroCasoOficialDoNegocio(negocio) {
   return sanitizarTextoEntrada(negocio?.properties?.numero_de_caso) || null
 }
@@ -7643,6 +7656,9 @@ async function enviarIntroDocumentos(from, u) {
     ]
   })
   const opcoes = gerarBotoesDaTela(telaIntro)
+  u._docsClienteGuiado = false
+  u.etapa = "documentos"
+  registrarUltimaPergunta(u, { texto: telaIntro.texto, opcoes })
   try {
     await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaIntro), "introducao documentos")
     const enviada = IMAGEM_GUIA_DOCS_URL
@@ -12945,6 +12961,17 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   const usuarioRespondendoAgora = Boolean(u.aguardandoResposta) && Boolean(text || buttonId || ehAudio || ehDoc)
   const ctx = criarCtx({ from, nomeWA, text, msgObj, buttonId, tipo, ehAudio, ehDoc, timestamp: Date.now() })
 
+  // Invariante global: um caso oficial jamais retorna ao pré-atendimento.
+  // Estados pós-cadastro legítimos são preservados; qualquer estado perdido,
+  // antigo ou incompatível é recuperado para o menu do cliente.
+  if (u.numeroCaso && !etapaPermitidaComCasoOficial(u.stage)) {
+    logDebug(`[CLIENTE_COM_CASO] ${u.stage || "-"} -> ${STAGES.CLIENTE} | CASO: ${u.numeroCaso}`)
+    Reflect.set(u, "stage", STAGES.CLIENTE)
+    u.etapa = STAGES.CLIENTE
+    u._stageRetomadaOriginal = null
+    u.aguardandoRetomada = false
+  }
+
   if (u._casoNaoReconhecido && u.numeroCaso) {
     return {
       texto: `⚠️ Este atendimento ficou marcado como *não reconhecido*.\n\nNossa equipe foi notificada para verificar o ocorrido. Você não precisa dar continuidade por aqui agora.`,
@@ -13161,6 +13188,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   const botoesClienteComCaso = new Set([
     "m_docs",
     "docs_pedido_admin",
+    "docs_intro_ok",
     "m_status",
     "m_adv",
     "dir_agendar",

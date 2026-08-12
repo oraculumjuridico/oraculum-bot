@@ -26,8 +26,7 @@ function alinharEtapaAoCallbackCliente(u, texto, stages = {}) {
     etapa = stages.CONFIRMACAO
   } else if (
     texto === "docs_intro_ok" &&
-    u.numeroCaso &&
-    (callbackEstavaNaTela || u.etapa === "documentos" || u._docsClienteGuiado)
+    u.numeroCaso
   ) {
     etapa = stages.CLIENTE
   }
