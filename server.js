@@ -99,6 +99,7 @@ const { handleConfirmEntryPhone } = require("./src/domain/stage-handlers/confirm
 const { handleConfirmEntryFinalAcceptance } = require("./src/domain/stage-handlers/confirm-entry-final-acceptance-handler")
 const { handleAudioIntake } = require("./src/domain/audio/audio-intake-pipeline-router")
 const { routeClientIntake } = require("./src/domain/client/client-intake-decision-router")
+const { ehCallbackFluxoCliente, alinharEtapaAoCallbackCliente } = require("./src/domain/client/client-flow-callback-router")
 const { NEXT_ACTIONS: CLIENT_POST_INTAKE_ACTIONS, routeClientPostIntake } = require("./src/domain/client/client-post-intake-decision-router")
 const { handle: handleRevalidateNameConfirm } = require("./src/domain/client/handlers/revalidate-name-confirm.handler")
 const { executarComRetryHubSpot, mascararErroHubSpot } = require("./src/utils/hubspot-retry")
@@ -1734,6 +1735,7 @@ async function telaConfirmarDadosAudio(from, u, opcoesAudio = {}) {
     { id: "audio_dados_corrigir", title: "✏️ Corrigir" },
     { id: "conf_menu", title: "⬅️ Voltar" }
   ]
+  registrarUltimaPergunta(u, { texto: textoConfirmacao, opcoes: opcoesConfirmacao })
   const imagemUrl = IMAGEM_CONFIRMACAO_URL
   try {
     const enviada = await enviarImagemWhatsApp(from, imagemUrl, textoConfirmacao, opcoesConfirmacao)
@@ -1956,7 +1958,7 @@ function gerarBriefingCaso(u = {}) {
     if (!u.numeroCaso) return "Concluir pre-atendimento e gerar caso."
     if (u.consultaStatus === "agendada") return "Acompanhar consulta agendada."
     if (statusDocs.faltantesCriticos.length > 0) return "Cobrar documentos faltantes."
-    if (stage === HS_STAGE.ANALISE) return "Revisar analise juridica inicial."
+    if (stage === HS_STAGE.ANALISE) return "Revisar análise jurídica inicial."
     if (stage === HS_STAGE.PROTOCOLO) return "Acompanhar protocolo."
     if (stage === HS_STAGE.PROCESSO) return "Acompanhar andamento processual."
     if (stage === HS_STAGE.FINAL) return "Caso encerrado."
@@ -3975,7 +3977,7 @@ function pedidoClienteJuridico(u = {}, briefing = gerarBriefingCaso(u)) {
     return "Avaliar direitos trabalhistas, valores pendentes e proxima medida."
   }
   if (/\b(pensao|guarda|divorcio|alimentos|filho|familia)\b/.test(relato)) {
-    return "Avaliar medida familiar cabivel e documentos para analise."
+    return "Avaliar medida familiar cabível e documentos para análise."
   }
   if (/\b(divida|cobranca|produto|servico|banco|negativacao|consumidor)\b/.test(relato)) {
     return "Analisar relacao de consumo, provas e possibilidade de solucao."
@@ -4003,9 +4005,9 @@ function documentosEssenciaisJuridico(briefing = {}) {
 }
 
 function proximaEtapaConfirmacao(u = {}, briefing = gerarBriefingCaso(u)) {
-  if (u.urgencia === "alta") return "nossa equipe sera avisada para priorizar a analise inicial"
+  if (u.urgencia === "alta") return "nossa equipe será avisada para priorizar a análise inicial"
   if ((briefing.documentos?.faltantesCriticos || []).length > 0) return "o caso sera registrado e voce podera enviar os documentos por aqui"
-  return "o caso sera registrado oficialmente para analise da equipe"
+  return "o caso será registrado oficialmente para análise da equipe"
 }
 
 // Estágios considerados "finalizados" no HubSpot — negócios nesses estágios são ignorados
@@ -5081,7 +5083,7 @@ function gerarAlertasOperacionaisAdmin(item) {
     alertas.push({
       tipo: "analise_parada",
       peso: 55,
-      texto: `Caso em analise sem revisao ha ${labelIdadeAdmin(idade)}`,
+      texto: `Caso em análise sem revisão há ${labelIdadeAdmin(idade)}`,
       acao: "Revisar briefing e marcar como revisado."
     })
   }
@@ -6534,7 +6536,7 @@ async function enviarAnaliseCasoAdmin(from) {
   const { u } = item
   const briefing = gerarBriefingCaso(u)
   const textoAnalise = [
-    `Analise operacional pelo admin`,
+    `Análise operacional pelo admin`,
     `Cliente: ${briefing.nome}`,
     `Caso: ${briefing.numeroCaso || "sem caso"}`,
     `Área: ${briefing.area || "-"}`,
@@ -8027,6 +8029,7 @@ async function tela_confirmacao(u) {
 
 async function telaConfirmacaoComImagem(from, u) {
   const tela = await tela_confirmacao(u)
+  registrarUltimaPergunta(u, tela)
   const imagemUrl = IMAGEM_CONFIRMACAO_URL
   await enviarAudioModoVoz(from, u, textoAudioConfirmacaoDados(u), "confirmacao dados")
   try {
@@ -8324,12 +8327,14 @@ async function iniciarAgendamento(from, u) {
 
   setStage(u, STAGES.AGENDAMENTO_HORARIO)
   iniciarTimer(from)
+  const opcoesHorarios = gerarBotoesDaTela(telaHorarios)
+  registrarUltimaPergunta(u, { texto: telaHorarios.texto, opcoes: opcoesHorarios })
 
   return await enviarTelaImagemOuTexto(
     from,
     IMAGEM_ADV_HORARIOS_URL,
     telaHorarios.texto,
-    gerarBotoesDaTela(telaHorarios),
+    opcoesHorarios,
     "📅 *Toque no melhor horário para você.*"
   )
 }
@@ -17521,14 +17526,14 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
 async function processarComLock(from, nomeWA, text, msgObj) {
   const textoSanitizado = sanitizarTextoEntrada(text)
   const tipoEntrada = String(msgObj?.type || "").toLowerCase()
-  const ehCallbackCliente = ["interactive", "button"].includes(tipoEntrada) &&
-    /^(?:m_|docs_|doc_|cliente_|adv_|dir_|novo_caso_|nc_|slot_|slots_|dur_|ag_)/.test(textoSanitizado)
+  const ehCallbackCliente = ehCallbackFluxoCliente({ tipo: tipoEntrada, texto: textoSanitizado })
   let u = users[from] || null
 
   try {
     const resolvido = await resolverUsuarioPorHubSpot(from, nomeWA)
     const contato = resolvido.contato
     u = resolvido.u
+    if (ehCallbackCliente) alinharEtapaAoCallbackCliente(u, textoSanitizado, STAGES)
     const { nome: nomeExibicao } = resolverNomeUnificado({ contato, u })
     const nomeWAEfetivo = nomeExibicao
     if (u.negocioId) {
@@ -17570,15 +17575,17 @@ async function processarComLock(from, nomeWA, text, msgObj) {
       receivedAt: new Date().toISOString()
     })
 
-    const contextoResultado = await dispatchConversationContext({
-      from,
-      nomeWA: nomeWAEfetivo,
-      text: textoSanitizado,
-      msgObj,
-      usuario: u
-    })
-    if (contextoResultado?.consumiu && !contextoResultado.seguirFluxoNormal) {
-      return contextoResultado.resposta
+    if (!ehCallbackCliente) {
+      const contextoResultado = await dispatchConversationContext({
+        from,
+        nomeWA: nomeWAEfetivo,
+        text: textoSanitizado,
+        msgObj,
+        usuario: u
+      })
+      if (contextoResultado?.consumiu && !contextoResultado.seguirFluxoNormal) {
+        return contextoResultado.resposta
+      }
     }
 
     const resposta = await processarInterno(from, nomeWAEfetivo, textoSanitizado, msgObj, u)

@@ -77,8 +77,11 @@ async function main() {
   assert.equal(normalizarTextoParaFala("INSS, CPF, PDF, CNH e PVR."), "ieneésseésse, cêpêéfe, pê dê éfe, cê-ene-agá e pê vê erre.")
   assert.equal(normalizarTextoParaFala("INSSalubre CPF123"), "INSSalubre CPF123")
   assert.equal(numerosParaFala("Etapa 2 de 6"), "Etapa dois de seis")
-  assert.equal(normalizarTextoParaFala("Opção 1. Caso 2026."), "Opção um. Caso dois zero dois seis.")
+  assert.equal(normalizarTextoParaFala("Opção 1. Caso 2026."), "Opção um. Caso dois, zero, dois, seis.")
+  assert.equal(numerosParaFala("Caso 2 0 2 6"), "Caso dois, zero, dois, seis")
   assert.equal(normalizarTextoParaFala("Para comecar, voce pode enviar audio ou informar o numero. Nao tem problema."), "Para começar, você pode enviar áudio ou informar o número. não tem problema.")
+  assert.equal(normalizarTextoParaFala("O caso seguirá para analise."), "O caso seguirá para análise.")
+  assert.equal(normalizarTextoParaFala("Analise os documentos."), "Analise os documentos.")
 
   const textoEscrito = "INSS e CPF"
   const eventosTts = []

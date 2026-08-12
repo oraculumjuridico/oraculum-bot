@@ -25,9 +25,11 @@ function numeroPositivo(valor, padrao) {
 
 function numerosParaFala(texto) {
   const nomes = ["zero", "um", "dois", "tr\u00eas", "quatro", "cinco", "seis", "sete", "oito", "nove"]
-  return String(texto || "").replace(/\b\d+\b/g, numero =>
-    numero.split("").map(digito => nomes[Number(digito)]).join(" ")
-  )
+  return String(texto || "").replace(/\b\d+(?:\s+\d+)*\b/g, sequencia => {
+    const digitos = sequencia.replace(/\D/g, "")
+    const separador = digitos.length > 1 ? ", " : ""
+    return digitos.split("").map(digito => nomes[Number(digito)]).join(separador)
+  })
 }
 
 function normalizarTextoParaFala(texto) {
@@ -57,6 +59,7 @@ function normalizarTextoParaFala(texto) {
   for (const [formaSemAcento, formaCorreta] of Object.entries(correcoesPronuncia)) {
     resultado = resultado.replace(new RegExp(`\\b${formaSemAcento}\\b`, "gi"), formaCorreta)
   }
+  resultado = resultado.replace(/\b(para|em|da|de|uma|a) analise\b/gi, (_, contexto) => `${contexto} análise`)
   return numerosParaFala(resultado)
 }
 

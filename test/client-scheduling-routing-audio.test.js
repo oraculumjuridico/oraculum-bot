@@ -21,7 +21,9 @@ assert.match(audioTela, /Para quinta feira, doze de agosto, às dezoito horas, t
 assert.doesNotMatch(audioTela, /12\/ago|18h/)
 
 const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
-assert.match(server, /\(\?:m_\|docs_\|doc_\|cliente_\|adv_\|dir_\|novo_caso_\|nc_\|slot_\|slots_\|dur_\|ag_\)/)
+assert.match(server, /ehCallbackFluxoCliente/)
+assert.match(server, /if \(!ehCallbackCliente\) \{[\s\S]{0,160}dispatchConversationContext/)
+assert.match(server, /registrarUltimaPergunta\(u, \{ texto: telaHorarios\.texto, opcoes: opcoesHorarios \}\)/)
 assert.match(server, /telaHorariosConsulta\(\{[\s\S]{0,240}formatarSlot,[\s\S]{0,80}formatarSlotAudio/)
 
 console.log("client-scheduling-routing-audio.test.js: ok")

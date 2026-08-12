@@ -70,7 +70,7 @@ function textoResumoDiarioOperacional(resumo) {
     "*Operacao*",
     `Casos ativos: ${resumo.totais.casosClientes}`,
     `Consultas futuras: ${resumo.totais.consultasAtivas}`,
-    `Em analise: ${resumo.totais.emAnalise}`,
+    `Em análise: ${resumo.totais.emAnalise}`,
     `Docs pendentes: ${resumo.totais.documentosPendentes}`,
     "",
     "*Riscos*",

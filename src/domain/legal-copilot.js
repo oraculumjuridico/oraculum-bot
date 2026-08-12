@@ -208,7 +208,7 @@ function identificarRiscos({ area, textoNormalizado, documentosJaInformados, doc
   const riscos = []
 
   if (documentosJaInformados.length < 2) adicionarRisco(riscos, "documentacao incompleta.")
-  if (documentosPendentes.length >= 4) adicionarRisco(riscos, "poucos documentos para analise inicial.")
+  if (documentosPendentes.length >= 4) adicionarRisco(riscos, "poucos documentos para análise inicial.")
   if (camposPendentes.length) adicionarRisco(riscos, "campos obrigatorios ainda sem confirmacao.")
   if (/\b(prescri|prazo venceu|muito tempo|anos atras)\b/.test(textoNormalizado)) adicionarRisco(riscos, "prescricao.")
   if (/\b(data conflitante|datas conflitantes|nao lembro a data|nao sei a data)\b/.test(textoNormalizado)) adicionarRisco(riscos, "datas conflitantes ou incompletas.")
