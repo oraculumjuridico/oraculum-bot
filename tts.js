@@ -47,6 +47,16 @@ function normalizarTextoParaFala(texto) {
   for (const [sigla, fala] of Object.entries(siglas)) {
     resultado = resultado.replace(new RegExp(`\\b${sigla}\\b`, "g"), fala)
   }
+  const correcoesPronuncia = {
+    comecar: "começar",
+    voce: "você",
+    audio: "áudio",
+    numero: "número",
+    nao: "não"
+  }
+  for (const [formaSemAcento, formaCorreta] of Object.entries(correcoesPronuncia)) {
+    resultado = resultado.replace(new RegExp(`\\b${formaSemAcento}\\b`, "gi"), formaCorreta)
+  }
   return numerosParaFala(resultado)
 }
 

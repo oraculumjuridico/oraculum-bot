@@ -3341,7 +3341,7 @@ async function perguntarNomeProprio(from, u) {
   }
   setStage(u, STAGES.ACOLHIMENTO_NOME)
   iniciarTimer(from)
-  const audioNome = `Entendido! Vou registrar o caso em seu nome. Para comecar, qual e o seu nome completo? Pode falar em audio ou digitar.`
+  const audioNome = `Entendido! Vou registrar o caso em seu nome. Para começar, qual é o seu nome completo? Pode falar em áudio ou digitar.`
   if (!u.modoTexto) {
     try {
       const ogg = await gerarAudioAtendente(u.atendente, audioNome)
