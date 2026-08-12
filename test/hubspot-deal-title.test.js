@@ -67,7 +67,7 @@ function main() {
     {
       dealstage: HS_STAGE.ANALISE,
       area_juridica: "Família",
-      dealname: "🟢 CIV.260710.001 - Direito Civil"
+      dealname: "🟢 CIV.260710.001 - Direito de Família"
     }
   )
 
@@ -122,6 +122,16 @@ function main() {
   assert.equal(
     montarTituloNegocioHubSpot({ area: "INSS", numeroCaso: "PRV.260812.003", descricao: "Talvez seja algum benefício." }),
     "🟢 PRV.260812.003 - Demanda Previdenciária"
+  )
+
+  assert.equal(
+    montarTituloNegocioHubSpot({
+      area: "Consumidor",
+      numeroCaso: "PRV.260812.999",
+      tipo_de_caso: "inss_outros",
+      nomenclaturaJuridica: { type: "inss_outros", subtypeLabel: "Demanda Previdenciária" }
+    }),
+    "🟢 PRV.260812.999 - Direito do Consumidor"
   )
 
   console.log("hubspot-deal-title.test.js ok")

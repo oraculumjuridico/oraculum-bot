@@ -11,7 +11,8 @@ const STAGES = {
   AUDIO_CONFIRMAR_DADOS: "audio_confirmar_dados",
   AGENDAMENTO_HORARIO: "agendamento_horario",
   AGENDAMENTO_DURACAO: "agendamento_duracao",
-  AGENDAMENTO_CONFIRMAR: "agendamento_confirmar"
+  AGENDAMENTO_CONFIRMAR: "agendamento_confirmar",
+  CLIENTE: "cliente"
 }
 
 for (const texto of ["conf_ok", "conf_corrigir", "audio_dados_confirmar", "audio_dados_corrigir", "slot_0", "dur_30", "ag_confirmar"]) {
@@ -56,5 +57,14 @@ assert.equal(antigo.stage, "cliente")
 const callbackSemTela = { stage: "audio_aguardando", lastPerguntaPayload: null }
 assert.equal(alinharEtapaAoCallbackCliente(callbackSemTela, "conf_ok", STAGES), false)
 assert.equal(callbackSemTela.stage, "audio_aguardando")
+
+const documentosAposReinicio = {
+  stage: "audio_aguardando",
+  etapa: "documentos",
+  numeroCaso: "CDC.260812.001",
+  lastPerguntaPayload: null
+}
+assert.equal(alinharEtapaAoCallbackCliente(documentosAposReinicio, "docs_intro_ok", STAGES), true)
+assert.equal(documentosAposReinicio.stage, STAGES.CLIENTE)
 
 console.log("client-flow-callback-router.test.js: ok")

@@ -24,6 +24,12 @@ function alinharEtapaAoCallbackCliente(u, texto, stages = {}) {
     etapa = stages.AUDIO_CONFIRMAR_DADOS
   } else if (/^(?:conf_ok|conf_corrigir)$/.test(texto) && callbackEstavaNaTela) {
     etapa = stages.CONFIRMACAO
+  } else if (
+    texto === "docs_intro_ok" &&
+    u.numeroCaso &&
+    (callbackEstavaNaTela || u.etapa === "documentos" || u._docsClienteGuiado)
+  ) {
+    etapa = stages.CLIENTE
   }
 
   if (!etapa || u.stage === etapa) return false

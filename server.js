@@ -1143,9 +1143,12 @@ function novoUsuario(nomeWA) {
     origemCaptacao: "whatsapp",
     nome: null, regiao: null, cidade: null, uf: null,
     area: null, tipo: null, situacao: null, subTipo: null, detalhe: null,
-    _docKey: null,
+    _areaDetectada: null, _docKey: null,
     urgencia: "normal", semReceber: false,
-    contribuicao: null, recebeBeneficio: null, descricao: null,
+    contribuicao: null, recebeBeneficio: null, recebe_beneficio: null, descricao: null,
+    _audioCanalTranscricao: null, _resumoDescricaoIA: null, _relatoAntecipadoPreAtendimento: null,
+    nomenclaturaJuridica: null, tipo_de_caso: null, tipoCaso: null,
+    oraculum_case_subtype: null, subtipo: null, objetivo: null,
     whatsappVerificado: false, telefoneEhDoCliente: null, whatsappContato: null,
     atendimentoParaTerceiro: false, relacaoComAtendido: null, papelContato: null,
     _nomeTitularPendente: null, _nomeTitularOrigem: null,
@@ -2283,6 +2286,13 @@ function criarSnapshotCasoCliente(u) {
     descricao: u.descricao || null,
     assuntoResumo: u.assuntoResumo || null,
     _audioCanalTranscricao: u._audioCanalTranscricao || null,
+    _resumoDescricaoIA: u._resumoDescricaoIA || null,
+    nomenclaturaJuridica: u.nomenclaturaJuridica || null,
+    tipo_de_caso: u.tipo_de_caso || null,
+    tipoCaso: u.tipoCaso || null,
+    oraculum_case_subtype: u.oraculum_case_subtype || null,
+    subtipo: u.subtipo || null,
+    objetivo: u.objetivo || null,
     whatsappVerificado: Boolean(u.whatsappVerificado),
     telefoneEhDoCliente: u.telefoneEhDoCliente ?? null,
     whatsappContato: u.whatsappContato || null,
@@ -2330,6 +2340,13 @@ function restaurarCasoAnteriorCliente(u, fromAtual = null) {
     descricao: caso.descricao || null,
     assuntoResumo: caso.assuntoResumo || null,
     _audioCanalTranscricao: caso._audioCanalTranscricao || null,
+    _resumoDescricaoIA: caso._resumoDescricaoIA || null,
+    nomenclaturaJuridica: caso.nomenclaturaJuridica || null,
+    tipo_de_caso: caso.tipo_de_caso || null,
+    tipoCaso: caso.tipoCaso || null,
+    oraculum_case_subtype: caso.oraculum_case_subtype || null,
+    subtipo: caso.subtipo || null,
+    objetivo: caso.objetivo || null,
     whatsappVerificado: Boolean(caso.whatsappVerificado),
     telefoneEhDoCliente: caso.telefoneEhDoCliente ?? null,
     whatsappContato: caso.whatsappContato || null,
@@ -2733,6 +2750,13 @@ function limparDadosCasoAtual(u, { preservarNome = true, marcarFluxoEncerrado = 
   const _urgenciaAntes = u.urgencia || null
   const _descricaoAntes = u.descricao || null
   const _audioCanalTranscricaoAntes = u._audioCanalTranscricao || null
+  const _resumoDescricaoIAAntes = u._resumoDescricaoIA || null
+  const _nomenclaturaJuridicaAntes = u.nomenclaturaJuridica || null
+  const _tipoDeCasoAntes = u.tipo_de_caso || null
+  const _tipoCasoAntes = u.tipoCaso || null
+  const _subtypeAntes = u.oraculum_case_subtype || null
+  const _subtipoAntes = u.subtipo || null
+  const _objetivoAntes = u.objetivo || null
   const _negocioIdAntes = u.negocioId || null
   const _contatoIdAntes = u.contatoId || null
   limparTimerIncentivoDescricao(u)
@@ -2742,9 +2766,12 @@ function limparDadosCasoAtual(u, { preservarNome = true, marcarFluxoEncerrado = 
     nome: nomePreservado,
     regiao: null, cidade: null, uf: null,
     area: null, tipo: null, situacao: null, subTipo: null, detalhe: null,
-    _docKey: null,
+    _areaDetectada: null, _docKey: null,
     urgencia: "normal", semReceber: false,
-    contribuicao: null, recebeBeneficio: null, descricao: null,
+    contribuicao: null, recebeBeneficio: null, recebe_beneficio: null, descricao: null,
+    _audioCanalTranscricao: null, _resumoDescricaoIA: null, _relatoAntecipadoPreAtendimento: null,
+    nomenclaturaJuridica: null, tipo_de_caso: null, tipoCaso: null,
+    oraculum_case_subtype: null, subtipo: null, objetivo: null,
     contatoId: null, negocioId: null, numeroCaso: null,
     pastaDriveId: null, pastaDriveLink: null,
     consultaStatus: "sem_consulta",
@@ -2806,6 +2833,13 @@ function limparDadosCasoAtual(u, { preservarNome = true, marcarFluxoEncerrado = 
     u.urgencia = _urgenciaAntes || "normal"
     u.descricao = _descricaoAntes
     u._audioCanalTranscricao = _audioCanalTranscricaoAntes
+    u._resumoDescricaoIA = _resumoDescricaoIAAntes
+    u.nomenclaturaJuridica = _nomenclaturaJuridicaAntes
+    u.tipo_de_caso = _tipoDeCasoAntes
+    u.tipoCaso = _tipoCasoAntes
+    u.oraculum_case_subtype = _subtypeAntes
+    u.subtipo = _subtipoAntes
+    u.objetivo = _objetivoAntes
     u.negocioId = _negocioIdAntes
     u.contatoId = _contatoIdAntes
   }
@@ -2819,9 +2853,12 @@ function limparDadosAtendimento(u) {
     etapa: STAGES.AUDIO_AGUARDANDO,
     regiao: null, cidade: null, uf: null,
     area: null, tipo: null, situacao: null, subTipo: null, detalhe: null,
-    _docKey: null,
+    _areaDetectada: null, _docKey: null,
     urgencia: "normal", semReceber: false,
-    contribuicao: null, recebeBeneficio: null, descricao: null,
+    contribuicao: null, recebeBeneficio: null, recebe_beneficio: null, descricao: null,
+    _audioCanalTranscricao: null, _resumoDescricaoIA: null, _relatoAntecipadoPreAtendimento: null,
+    nomenclaturaJuridica: null, tipo_de_caso: null, tipoCaso: null,
+    oraculum_case_subtype: null, subtipo: null, objetivo: null,
     pastaDriveId: null, pastaDriveLink: null,
     consultaStatus: "sem_consulta", tipoConsulta: "inicial",
     score: 0, documentosEnviados: false,

@@ -77,8 +77,18 @@ const AREA_CASE_LABELS = Object.freeze({
 })
 
 function rotuloAreaCasoNegocio(u = {}) {
-  const sigla = (siglaNumeroCaso(numeroCasoNegocio(u)) || siglaAreaNegocio(u.area || u.area_juridica || "")).toLowerCase()
+  const areaExplicita = sanitizarTextoEntrada(u.area || u.area_juridica || "")
+  const sigla = (areaExplicita ? siglaAreaNegocio(areaExplicita) : siglaNumeroCaso(numeroCasoNegocio(u))).toLowerCase()
   return AREA_CASE_LABELS[sigla] || ""
+}
+
+function tipoCompativelComArea(type = "", area = "") {
+  const tipo = sanitizarTextoEntrada(type).toLowerCase()
+  const sigla = siglaAreaNegocio(area).toLowerCase()
+  if (!tipo || !area) return true
+  if (tipo.startsWith("inss_") || ["bpc_idoso", "bpc_deficiencia", "incapacidade_temporaria", "incapacidade_permanente", "auxilio_acidente", "pensao_morte", "salario_maternidade"].includes(tipo)) return sigla === "prv"
+  if (tipo.startsWith("trab_")) return sigla === "trb"
+  return true
 }
 
 function nomenclaturaJuridicaTitulo(u = {}) {
@@ -101,21 +111,26 @@ function nomenclaturaJuridicaTitulo(u = {}) {
 }
 
 function rotuloTipoCasoNegocio(u = {}) {
+  const areaExplicita = sanitizarTextoEntrada(u.area || u.area_juridica || "")
   const explicit = sanitizarTextoEntrada(
     u.nomenclaturaJuridica?.subtypeLabel || u.caseTypeLabel || u.rotuloTipoCaso || ""
   )
-  if (explicit) return explicit
+  const explicitType = u.nomenclaturaJuridica?.type || u.tipo_de_caso || u.tipoCaso || u.caseType
+  if (explicit && tipoCompativelComArea(explicitType, areaExplicita)) return explicit
   const subtype = sanitizarTextoEntrada(
     u.oraculum_case_subtype || u.subTipo || u.subtipo || u.caseSubtype || ""
   ).toLowerCase()
   const type = sanitizarTextoEntrada(
     u.tipo_de_caso || u.tipoCaso || u.caseType || ""
   ).toLowerCase()
-  const mapped = CASE_TYPE_LABELS[subtype] || CASE_TYPE_LABELS[type]
+  const mapped = tipoCompativelComArea(subtype, areaExplicita) && tipoCompativelComArea(type, areaExplicita)
+    ? CASE_TYPE_LABELS[subtype] || CASE_TYPE_LABELS[type]
+    : null
   if (mapped) return mapped
   const nomenclatura = nomenclaturaJuridicaTitulo(u)
-  return sanitizarTextoEntrada(nomenclatura?.subtypeLabel || "") ||
-    CASE_TYPE_LABELS[nomenclatura?.subtype] || CASE_TYPE_LABELS[nomenclatura?.type] ||
+  const nomenclaturaCompativel = tipoCompativelComArea(nomenclatura?.type, areaExplicita)
+  return (nomenclaturaCompativel ? sanitizarTextoEntrada(nomenclatura?.subtypeLabel || "") : "") ||
+    (nomenclaturaCompativel ? CASE_TYPE_LABELS[nomenclatura?.subtype] || CASE_TYPE_LABELS[nomenclatura?.type] : null) ||
     rotuloAreaCasoNegocio(u)
 }
 
