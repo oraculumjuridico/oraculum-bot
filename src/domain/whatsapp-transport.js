@@ -343,7 +343,7 @@ async function enviarImagemComResultado(to, imageUrl, caption = "", opcoes = nul
     logDebug(`[IMAGEM] ? Enviada | message_id: ${providerMessageId}`)
     if (Array.isArray(opcoes) && opcoes.length > 3) {
       await new Promise(r => setTimeout(r, 500))
-      await enviar(to, "Escolha uma opção abaixo para continuar:", opcoes, false)
+      await enviar(to, "Opções", opcoes, false)
     }
     return resultadoEnvio({ accepted: true, providerMessageId, httpStatus: resp.status, channel: "freeform_image", destinationMasked })
   } catch (e) {

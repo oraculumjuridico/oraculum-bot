@@ -71,7 +71,7 @@ describe("Texto longo e menu interativo", () => {
 
     assert.match(trecho, /const\s+textoOk\s*=\s*await\s+enviar\(from,\s*texto,\s*null,\s*true,\s*messageId\)/)
     assert.match(trecho, /if\s*\(\s*!textoOk\s*\)\s*return\s*false/)
-    assert.match(trecho, /await\s+enviar\(from,\s*"Escolha uma opção abaixo:",\s*opcoes,\s*true,\s*messageId,\s*true\)/)
+    assert.match(trecho, /await\s+enviar\(from,\s*"Opções",\s*opcoes,\s*true,\s*messageId,\s*true\)/)
   })
 
   it("enviar aceita parametro semFallback131009", () => {

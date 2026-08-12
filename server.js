@@ -876,7 +876,7 @@ async function enviarRespostaAdmin(from, resposta, messageId) {
   if (texto.length > 800 && opcoes && opcoes.length > 0) {
     const textoOk = await enviar(from, texto, null, true, messageId)
     if (!textoOk) return false
-    const menuOk = await enviar(from, "Escolha uma opção abaixo:", opcoes, true, messageId, true)
+    const menuOk = await enviar(from, "Opções", opcoes, true, messageId, true)
     return menuOk
   }
 
@@ -1589,7 +1589,7 @@ async function telaConfirmarTranscricao(from, u, transcricao, area) {
   }
 
   return {
-    texto: `🎙️ *Recebi seu áudio!*\n\nIsto é o que entendi:\n\n_"${previewExibir}"_\n\nO que deseja fazer?`,
+    texto: `🎙️ *Recebi seu áudio!*\n\nIsto é o que entendi:\n\n_"${previewExibir}"_`,
     opcoes: [
       { id: "audio_transcricao_ok", title: "✅ Confirmar envio" },
       { id: "audio_transcricao_novo", title: "🔁 Enviar novo áudio" },
@@ -2249,8 +2249,8 @@ function telaVoltarConfirmacaoTerceiro(u, origem = "texto") {
   const temCasoAnterior = Boolean(u._casoAnteriorCliente)
   const cancelarTitle = temCasoAnterior ? "🏠 Meu menu" : "↩️ Cancelar atendimento"
   const textoTela = temCasoAnterior
-    ? `⬅️ *Antes de voltar*\n\nEste atendimento é para *${nomeTerceiro}*.\n\nPara evitar misturar este caso com o seu atendimento original, escolha uma opção abaixo:`
-    : `⬅️ *Atendimento para outra pessoa*\n\nVocê está abrindo um caso para *${nomeTerceiro}*.\n\nO que deseja fazer?`
+    ? `⬅️ *Antes de voltar*\n\nEste atendimento é para *${nomeTerceiro}*.\n\nO caso permanece separado do seu atendimento original.`
+    : `⬅️ *Atendimento para outra pessoa*\n\nVocê está abrindo um caso para *${nomeTerceiro}*.`
   return {
     texto: textoTela,
     opcoes: [
@@ -4561,7 +4561,9 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
 
   const base = hidratarUsuarioPersistido({
     ...snapshot,
-    nome: snapshot.nome || nomeResolvido || props.dealname || u?.nome || null,
+    // O titulo do negocio identifica o caso, nao a pessoa. O nome deve vir do
+    // snapshot, do contato associado ou da sessao local.
+    nome: snapshot.nome || nomeResolvido || u?.nome || null,
     nomeWA: snapshot.nomeWA || u?.nomeWA || null,
     nomePerfilWhatsApp: snapshot.nomePerfilWhatsApp || u?.nomePerfilWhatsApp || null,
     nomeHubspot: nomeResolvido || snapshot.nomeHubspot || u?.nomeHubspot || null,
@@ -4569,16 +4571,16 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     negocioId: negocio?.id || snapshot.negocioId || u?.negocioId || null,
     negocioStageId: negocio?.stageId || props.dealstage || snapshot.negocioStageId || u?.negocioStageId || null,
     numeroCaso: getNumeroCasoOficialDoNegocio(negocio) || snapshot.numeroCaso || u?.numeroCaso || null,
-    area: snapshot.area || props.area_juridica || u?.area || null,
-    tipo: snapshot.tipo || props.tipo_de_caso || u?.tipo || null,
-    subTipo: snapshot.subTipo || snapshot.subtipo || props.oraculum_case_subtype || u?.subTipo || u?.subtipo || null,
+    area: props.area_juridica || snapshot.area || u?.area || null,
+    tipo: props.tipo_de_caso || snapshot.tipo || u?.tipo || null,
+    subTipo: props.oraculum_case_subtype || snapshot.subTipo || snapshot.subtipo || u?.subTipo || u?.subtipo || null,
     urgencia: resolverUrgenciaAdmin({
       hubspot: props.urgencia,
       snapshot: snapshot.urgencia,
       local: u?.urgencia
     }),
-    descricao: snapshot.descricao || props.description || props.descricao_completa || u?.descricao || null,
-    assuntoResumo: snapshot.assuntoResumo || props.resumo_cliente || u?.assuntoResumo || null
+    descricao: props.description || props.descricao_completa || snapshot.descricao || u?.descricao || null,
+    assuntoResumo: props.resumo_cliente || snapshot.assuntoResumo || u?.assuntoResumo || null
   })
   garantirNomenclaturaJuridicaUsuario(base)
   base._numero = telefone || from || null
@@ -4636,7 +4638,7 @@ function hidratarDadosContatoAdmin(item, contato) {
   const telefone = normalizarNumeroWhatsAppEnvio(props.phone || props.mobilephone)
   Object.assign(item.u, {
     contatoId: String(contato.id),
-    nome: item.u.nome || nomeContato || null,
+    nome: nomeContato || item.u.nome || null,
     nomeHubspot: nomeContato || item.u.nomeHubspot || null,
     cpf: item.u.cpf || props.cpf_do_cliente || null,
     dataNascimento: item.u.dataNascimento || props.date_of_birth || null,
@@ -5083,6 +5085,7 @@ function gerarAlertasOperacionaisAdmin(item) {
   const u = item?.u || {}
   const briefing = gerarBriefingCaso(u)
   const idade = idadeUltimaInteracaoAdmin(u)
+  const idadeConhecida = Number.isFinite(idade)
   const alertas = []
 
   if (u._solicitouHumano === true && !u._fluxoEncerrado) {
@@ -5103,7 +5106,7 @@ function gerarAlertasOperacionaisAdmin(item) {
     })
   }
 
-  if (!briefing.numeroCaso && idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado) {
+  if (!briefing.numeroCaso && idadeConhecida && idade > 2 * 60 * 60 * 1000 && !u._fluxoEncerrado) {
     alertas.push({
       tipo: "lead_parado",
       peso: 85,
@@ -5112,7 +5115,7 @@ function gerarAlertasOperacionaisAdmin(item) {
     })
   }
 
-  if (briefing.numeroCaso && briefing.documentos.faltantesCriticos.length > 0 && idade > 24 * 60 * 60 * 1000) {
+  if (briefing.numeroCaso && briefing.documentos.faltantesCriticos.length > 0 && idadeConhecida && idade > 24 * 60 * 60 * 1000) {
     alertas.push({
       tipo: "docs_24h",
       peso: 75 + briefing.documentos.faltantesCriticos.length,
@@ -5130,7 +5133,7 @@ function gerarAlertasOperacionaisAdmin(item) {
     })
   }
 
-  if (briefing.stage === HS_STAGE.ANALISE && idade > 24 * 60 * 60 * 1000 && !casoAdminRevisado(item)) {
+  if (briefing.stage === HS_STAGE.ANALISE && idadeConhecida && idade > 24 * 60 * 60 * 1000 && !casoAdminRevisado(item)) {
     alertas.push({
       tipo: "analise_parada",
       peso: 55,
@@ -5332,42 +5335,43 @@ function marcarCasoAdminRevisado(from, item) {
 }
 
 function motivoPrioridadeAdmin(u, briefing = gerarBriefingCaso(u)) {
-  const motivos = []
-  if (briefing.scoreEmocional.nivel === "alto" || briefing.urgencia === "alta") motivos.push("urgente emocional")
-  if (briefing.documentos.faltantesCriticos.length) motivos.push(`${briefing.documentos.faltantesCriticos.length} doc(s) critico(s)`)
-  if (!briefing.numeroCaso) motivos.push("pre-cadastro")
-  const idade = Date.now() - Number(u?.ultimaMsg || 0)
-  if (idade > 2 * 60 * 60 * 1000 && !u?._fluxoEncerrado && u?.stage !== STAGES.CLIENTE) motivos.push(`sem resposta ha ${minutosParaTexto(idade)}`)
-  if (briefing.consultaAtiva) motivos.push("consulta futura")
-  return motivos.slice(0, 2).join(" + ") || briefing.proximaAcao || "acompanhar"
+  const alerta = maiorAlertaOperacionalAdmin({ u })
+  return alerta?.texto || briefing.proximaAcao || "acompanhar"
 }
 
 function scorePrioridadeAdmin({ u }) {
-  const briefing = gerarBriefingCaso(u)
-  let score = briefing.scoreOperacional || 0
-  score += (briefing.scoreEmocional.valor || 0) * 10
-  if (briefing.urgencia === "alta") score += 40
-  if (briefing.documentos.faltantesCriticos.length) score += 20 + briefing.documentos.faltantesCriticos.length * 5
-  if (!briefing.numeroCaso) score += 10
-  const idade = Date.now() - Number(u?.ultimaMsg || 0)
-  if (idade > 2 * 60 * 60 * 1000 && !u?._fluxoEncerrado && u?.stage !== STAGES.CLIENTE) score += 25
-  if (briefing.consultaAtiva) score += 8
-  return score
+  return maiorAlertaOperacionalAdmin({ u })?.peso || 0
 }
 
 async function gerarPrioridadesAdmin(limite = 10) {
   const resumo = await adminResumoOperacional()
   if (!resumo.ok) return { ok: false, items: [], errorCode: resumo.errorCode, errorMessage: resumo.errorMessage }
-  return {
-    ok: true,
-    items: resumo.todos
+  const candidatos = resumo.todos
     .filter(({ u }) => Boolean(u))
     .map(item => ({ ...item, prioridadeScore: scorePrioridadeAdmin(item) }))
     .filter(item => !casoAdminRevisado(item))
     .filter(item => item.prioridadeScore > 0)
     .sort((a, b) => b.prioridadeScore - a.prioridadeScore)
     .slice(0, limite)
+
+  return {
+    ok: true,
+    items: candidatos
   }
+}
+
+async function hidratarNomesPrioridadesAdmin(itens = []) {
+  return await mapearComLimite(itens, 3, async item => {
+    if (!item.u?.negocioId) return item
+    const contato = await hsAdminBuscarContatoDoNegocio(item.u.negocioId)
+    return contato ? hidratarDadosContatoAdmin(item, contato) : item
+  })
+}
+
+function nomePrioridadeAdmin(u = {}) {
+  const nome = resolverNomeBriefing(u)
+  if (nome !== "Cliente") return nome
+  return u.numeroCaso ? `Caso ${u.numeroCaso}` : "Contato não identificado"
 }
 
 function resolverTelefoneInterfaceAdmin(item, adminAutenticado = false) {
@@ -5387,7 +5391,7 @@ function linhaPrioridadeAdmin(item, idx, { adminAutenticado = false } = {}) {
   const tarefasAbertas = Array.isArray(u.tarefasAbertas) ? u.tarefasAbertas.length : Number(u.tarefasAbertas || 0)
   const consolidacao = sanitizarTextoEntrada(u.statusConsolidacao || u.consolidacaoDocumental?.status)
   return [
-    `${idx}. 👤 *${briefing.nome || "Cliente"}*`,
+    `${idx}. 👤 *${nomePrioridadeAdmin(u)}*`,
     telefoneAdmin ? `   📱 ${telefoneAdmin}` : null,
     `   🚩 ${motivoPrioridadeAdmin(u, briefing)}`,
     `   ${caso} · ${briefing.stageLabel}`,
@@ -5779,7 +5783,8 @@ async function telaAdminPrioridades(from, pagina = 1) {
     const totalItens = itens.length
     const totalPaginas = Math.max(1, Math.ceil(totalItens / tamanhoPagina))
     const inicio = (pagina - 1) * tamanhoPagina
-    const itensPagina = itens.slice(inicio, inicio + tamanhoPagina)
+    const itensPagina = await hidratarNomesPrioridadesAdmin(itens.slice(inicio, inicio + tamanhoPagina))
+    itens.splice(inicio, itensPagina.length, ...itensPagina)
 
     salvarListaCasosAdmin(from, itens, ADMIN_IDS.prioridades, pagina, tamanhoPagina, totalItens, totalPaginas, null)
     if (!itensPagina.length) {
@@ -5798,10 +5803,19 @@ async function telaAdminPrioridades(from, pagina = 1) {
     const preAtendimentos = itens.length - casosComNumero
 
     const linhas = itensPagina.map((item, idx) => linhaPrioridadeAdmin(item, idx + 1 + inicio, { adminAutenticado: true }))
+    const nomesOpcoes = itensPagina.map(item => primeiroEUltimoNomeAdmin(nomePrioridadeAdmin(item.u)))
+    const contagemNomes = nomesOpcoes.reduce((acc, nome) => {
+      const chave = normalizarNomeComparacao(nome)
+      acc.set(chave, (acc.get(chave) || 0) + 1)
+      return acc
+    }, new Map())
     const opcoes = [
       ...itensPagina.map((item, idx) => ({
         id: `admin_caso_${idx + inicio}`,
-        title: tituloOpcaoCasoAdmin(item, idx + inicio)
+        title: tituloOpcaoCasoAdmin(item, idx + inicio, {
+          nomeCurto: nomesOpcoes[idx],
+          duplicado: contagemNomes.get(normalizarNomeComparacao(nomesOpcoes[idx])) > 1
+        })
       }))
     ]
 
@@ -7592,7 +7606,7 @@ function textoAudioConfirmacaoDados(u) {
   return `${primeiroNome}, revise os dados antes de confirmar. Nome: ${u.nome || "não informado"}. Cidade: ${cidade}. Área: ${u.area || "não informada"}. Situação: ${situacao || "não informada"}. Urgência: ${urgencia}. ${fechamento}`
 }
 
-async function enviarTelaImagemOuTexto(from, imageUrl, texto, opcoes = null, chamadaOpcoes = "👇 *Escolha uma opção abaixo:*") {
+async function enviarTelaImagemOuTexto(from, imageUrl, texto, opcoes = null, chamadaOpcoes = "Opções") {
   const payload = aplicarEmojiTelaCliente(from, { texto, opcoes })
   const textoTela = payload.texto
   const opcoesTela = payload.opcoes || null
@@ -9213,7 +9227,7 @@ async function flowInicio(u, ctx) {
       "inicio retorno"
     )
     return {
-        texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
+        texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}`,
       opcoes: [
         { id: "ret_acompanhar", title: "📊 Acompanhar meu caso" },
         { id: "ret_novo", title: "➕ Abrir novo caso" }
@@ -9233,7 +9247,7 @@ async function flowInicioRetorno(u, ctx) {
     "inicio retorno"
   )
   return {
-        texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
+        texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}`,
     opcoes: [
         { id: "ret_acompanhar", title: "📊 Acompanhar meu caso" },
       { id: "ret_novo", title: "➕ Abrir novo caso" }

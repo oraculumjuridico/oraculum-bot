@@ -21,6 +21,7 @@ const sandbox = {
     proximaAcao: "acompanhar"
   }),
   motivoPrioridadeAdmin: () => "Revisar",
+  nomePrioridadeAdmin: u => u.nome || "Cliente",
   result: null
 }
 vm.runInNewContext(`${source.slice(start, end)}\nresult = linhaPrioridadeAdmin`, sandbox)

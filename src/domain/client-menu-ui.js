@@ -203,10 +203,9 @@ function menuCliente(u, casosCliente = null, { textoAudioBase = "" } = {}) {
     : null
   const cabecalho = `⚖️ *${saudacao}, ${nomeExib}!*`
   const linhaBoasVindas = boasVindas ? "\n\nSeja bem-vindo(a) de volta à Oráculum." : ""
-  const pergunta = "*O que deseja fazer?*"
   const corpo = temVariosCasos
-    ? `${cabecalho}${linhaBoasVindas}\n\n📋 *Seus atendimentos:*\n\n${listaCasos}\n\n${pergunta}`
-    : `${cabecalho}${linhaBoasVindas}\n\n${casoInfo}\n\n${pergunta}`
+    ? `${cabecalho}${linhaBoasVindas}\n\n📋 *Seus atendimentos:*\n\n${listaCasos}`
+    : `${cabecalho}${linhaBoasVindas}\n\n${casoInfo}`
 
   return createClientScreen({
     id: "menu_principal_cliente",

@@ -105,7 +105,7 @@ async function main() {
       {
         handled: true,
         response: {
-          texto: "Use uma das opções abaixo para confirmar ou corrigir a transcrição.",
+          texto: "Transcrição recebida.",
           opcoes: [
             { id: "desc_ok", title: "✅ Confirmar" },
             { id: "desc_corrigir", title: "✏️ Corrigir" }

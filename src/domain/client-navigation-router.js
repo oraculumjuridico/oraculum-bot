@@ -16,7 +16,7 @@ function criarClientNavigationRouter({
         return {
           handled: true,
           response: {
-            texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}\n\nO que deseja fazer?`,
+            texto: `Que bom te ver novamente, *${nomeExib}* 😊\n\nVocê já possui um atendimento conosco.\n\n📄 Caso: *${u.numeroCaso}*\n⚖️ Área: ${u.area}`,
             opcoes: [
             { id: "ret_acompanhar", title: "📊 Acompanhar meu caso" },
             { id: "ret_novo",       title: "➕ Abrir novo caso" }
