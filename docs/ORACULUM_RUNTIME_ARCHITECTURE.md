@@ -99,5 +99,5 @@ Admin usa allowlist e callbacks canônicos. Upload administrativo exige caso sel
 - Reproduzir com evidência sanitizada o RG verso que falhou no piloto real.
 - Executar gates PostgreSQL e integrações reais somente em ambiente autorizado.
 - Reduzir gradualmente o wiring legado de `server.js` sem criar arquitetura paralela.
-- Instalar e validar F1–F5 no Lightning para tornar efetivo o mapeamento multivozes já publicado no Oráculum.
-- Aprofundar os questionários jurídicos das áreas que ainda não possuem equivalência com INSS/BPC.
+- Manter o processo Lightning supervisionado; o servidor F1–F5 validado e seu procedimento operacional estão em `deploy/lightning/`.
+- Aprofundar especializações por área quando houver critérios jurídicos aprovados, preservando a triagem estruturada mínima já testada.

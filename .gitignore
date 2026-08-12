@@ -10,3 +10,5 @@ graphify-out/
 *.log
 scripts/local/
 .aider*
+__pycache__/
+*.pyc

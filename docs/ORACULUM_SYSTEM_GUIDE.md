@@ -106,7 +106,7 @@ Mapeamento:
 | Isabela | F3 |
 | Mariana | F5 |
 
-A F4 continua sendo a voz padrão. A ativação das demais depende do servidor Lightning com F1–F5 carregadas.
+A F4 continua sendo a voz padrão. O servidor Lightning multivozes validado fica versionado em `deploy/lightning/tts_api.py`; em 12 de agosto de 2026, F1–F5 foram carregadas com sucesso no Studio.
 
 ## 10. Documentos
 
@@ -236,6 +236,6 @@ O catálogo completo de funções fica em [reference/FUNCTION_CATALOG.md](refere
 
 - `server.js` ainda é grande e deve ser reduzido gradualmente, sem reescrita total.
 - a leitura de verso de RG difícil depende de evidência real e pode exigir revisão humana;
-- áreas além de INSS/BPC ainda não possuem a mesma profundidade de questionário;
-- as vozes F1, F2, F3 e F5 só ficam ativas depois que o arquivo multivozes for instalado no Lightning;
+- INSS/BPC permanecem mais especializados, mas Trabalhista, Família, Consumidor, Bancário, Penal, Civil, Imobiliário e Outros já possuem triagem estruturada mínima coberta por teste;
+- a configuração F1–F5 está validada; a disponibilidade contínua ainda depende de manter o processo do Lightning ativo ou supervisionado;
 - testes reais de Meta, HubSpot, Drive e Calendar exigem canário controlado e autorização explícita.
