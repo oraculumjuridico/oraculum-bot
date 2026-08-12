@@ -185,7 +185,8 @@ function createLiveCaseFlow(deps = {}) {
         existing = await hsBuscarPorPhone(plan.identity.phone)
         const existingName = comparableName([existing?.properties?.firstname, existing?.properties?.lastname].filter(Boolean).join(" "))
         const expectedName = comparableName(plan.identity?.name)
-        if (existing?.id && existingName && expectedName && existingName !== expectedName) {
+        const nomeDeclaradoPodeCorrigirContato = usuario.nomeConfirmado === true && usuario.telefoneEhDoCliente !== false
+        if (existing?.id && existingName && expectedName && existingName !== expectedName && !nomeDeclaradoPodeCorrigirContato) {
           throw Object.assign(new Error("telefone pertence a contato incompatível"), { code: "HUBSPOT_PHONE_IDENTITY_CONFLICT" })
         }
         contactId = existing?.id || null
@@ -205,6 +206,10 @@ function createLiveCaseFlow(deps = {}) {
         existing = existing || (plan.identity?.phone ? await hsBuscarPorPhone(plan.identity.phone) : null)
         pastaDriveMissing = !String(existing?.properties?.pasta_drive || "").trim()
         const missing = montarPropsAusentesContatoHubSpot(existing, props)
+        if (usuario.nomeConfirmado === true && usuario.telefoneEhDoCliente !== false) {
+          if (props.firstname) missing.firstname = props.firstname
+          if (props.lastname) missing.lastname = props.lastname
+        }
         if (Object.keys(missing).length) {
           await hsAtualizarContato(contactId, missing)
         }

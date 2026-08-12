@@ -29,6 +29,12 @@ function montarNomeCompletoHubSpot(contato) {
 }
 
 function resolverNomeUnificado({ contato, u, nomePerfilWhatsApp = "" } = {}) {
+  if (u?.nomeConfirmado) {
+    const nomeConfirmado = sanitizarNomeExibicao(u?.nome)
+    if (nomeConfirmado) {
+      return { nome: nomeConfirmado, origem: "confirmed_intake" }
+    }
+  }
   const nomeHubSpotCompleto = montarNomeCompletoHubSpot(contato)
   if (nomeHubSpotCompleto) {
     return { nome: nomeHubSpotCompleto, origem: "hubspot" }
@@ -36,12 +42,6 @@ function resolverNomeUnificado({ contato, u, nomePerfilWhatsApp = "" } = {}) {
   const nomeHubspotSessao = sanitizarNomeExibicao(u?.nomeHubspot)
   if (nomeHubspotSessao) {
     return { nome: nomeHubspotSessao, origem: "persisted_session" }
-  }
-  if (u?.nomeConfirmado) {
-    const nomeConfirmado = sanitizarNomeExibicao(u?.nome)
-    if (nomeConfirmado) {
-      return { nome: nomeConfirmado, origem: "confirmed_intake" }
-    }
   }
   const { valido: perfilValido, nome: perfilSanitizado } = validarNomePerfilWhatsApp(nomePerfilWhatsApp || u?.nomePerfilWhatsApp)
   if (perfilValido) {

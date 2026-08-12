@@ -7834,7 +7834,7 @@ async function finalizarCadastro(from, u) {
     const existenteCpf = u.cpf ? await hsBuscarPorCpf(u.cpf) : null
     const existente = existenteCpf || await hsBuscarPorPhone(telefoneContato)
     const nomeExistenteCompleto = [existente?.properties?.firstname, existente?.properties?.lastname].filter(Boolean).join(" ")
-    if (!existenteCpf && existente?.id && nomeExistenteCompleto && u.nome && normalizarNomeComparacao(nomeExistenteCompleto) !== normalizarNomeComparacao(u.nome)) {
+    if (!existenteCpf && existente?.id && nomeExistenteCompleto && u.nome && normalizarNomeComparacao(nomeExistenteCompleto) !== normalizarNomeComparacao(u.nome) && !(u.nomeConfirmado && !ehTerceiro)) {
       throw Object.assign(new Error("telefone pertence a contato incompatível"), { code: "HUBSPOT_PHONE_IDENTITY_CONFLICT" })
     }
     if (existente?.properties?.firstname && !u.nomeHubspot) u.nomeHubspot = existente.properties.firstname
@@ -7853,7 +7853,10 @@ async function finalizarCadastro(from, u) {
       logDebug("Contato encontrado no HubSpot:", contatoId)
       const propsContato = montarPropsContatoHubSpot(telefoneContato, u)
       const propsAusentes = montarPropsAusentesContatoHubSpot(existente, propsContato)
-      if (u.nomeConfirmado && u.nome && !ehTerceiro) propsAusentes.firstname = u.nome
+      if (u.nomeConfirmado && u.nome && !ehTerceiro) {
+        if (propsContato.firstname) propsAusentes.firstname = propsContato.firstname
+        if (propsContato.lastname) propsAusentes.lastname = propsContato.lastname
+      }
       if (Object.keys(propsAusentes).length) await hsAtualizarContato(contatoId, propsAusentes)
     }
     assertFinalizationOperation("hubspot_contact", contatoId)

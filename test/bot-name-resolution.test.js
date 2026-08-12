@@ -81,7 +81,7 @@ describe("Resolução de nomes no fluxo do bot", () => {
   })
 
   describe("resolverNomeUnificado - ordem de prioridade", () => {
-    it("deve priorizar nome completo do HubSpot", () => {
+    it("deve priorizar nome declarado e confirmado no pré-atendimento", () => {
       const contato = {
         properties: {
           firstname: "João",
@@ -96,8 +96,8 @@ describe("Resolução de nomes no fluxo do bot", () => {
         nomePerfilWhatsApp: "José S"
       }
       const resultado = resolverNomeUnificado({ contato, u })
-      assert.strictEqual(resultado.nome, "João Silva")
-      assert.strictEqual(resultado.origem, "hubspot")
+      assert.strictEqual(resultado.nome, "José Santos")
+      assert.strictEqual(resultado.origem, "confirmed_intake")
     })
 
     it("deve usar nome da sessão HubSpot quando contato não disponível", () => {

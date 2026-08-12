@@ -221,8 +221,12 @@ async function sincronizarContatoNegocioHubSpot(u) {
   }
   if (typeof u.nome === "string" && u.nome.trim()) u.nomeHubspot = u.nome.trim()
 
+  const partesNome = typeof u.nome === "string"
+    ? u.nome.trim().split(/\s+/).filter(Boolean)
+    : []
   const contatoProps = filtrarPropsHubSpot({
-    firstname: (u.nome && u.nome !== "cliente" && u.nome !== "você" ? u.nome : undefined),
+    firstname: partesNome.shift(),
+    lastname: partesNome.join(" "),
     city: u.cidade,
     state: u.uf
   })

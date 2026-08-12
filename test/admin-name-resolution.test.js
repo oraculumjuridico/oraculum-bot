@@ -86,7 +86,7 @@ describe("Resolução de nomes para Admin", () => {
   })
 
   describe("resolverNomeParaAdmin", () => {
-    it("deve priorizar nome completo do HubSpot", () => {
+    it("deve priorizar nome declarado e confirmado", () => {
       const item = {
         contato: {
           properties: {
@@ -95,12 +95,13 @@ describe("Resolução de nomes para Admin", () => {
           }
         },
         u: {
+          nomeConfirmado: true,
           nome: "Outro Nome",
           nomeWA: "Apelido",
           nomePerfilWhatsApp: "Nome WhatsApp"
         }
       }
-      assert.strictEqual(resolverNomeParaAdmin(item), "João Silva")
+      assert.strictEqual(resolverNomeParaAdmin(item), "Outro Nome")
     })
 
     it("deve usar nome confirmado quando HubSpot não existe", () => {
