@@ -3323,6 +3323,22 @@ async function perguntarNome(u) {
 // Equivalente ao ACOLHIMENTO_NOME_CONTATO para o fluxo "para mim".
 // Entra via ACOLHIMENTO_PARA_QUEM → "É para mim" e prepara o stage ACOLHIMENTO_NOME.
 async function perguntarNomeProprio(from, u) {
+  const nomeExistente = sanitizarTextoEntrada(u.nomeHubspot || u.nome || "")
+  if (nomeExistente && ehNomeAparente(nomeExistente, nomeExistente) === true) {
+    u._nomeTemp = nomeExistente
+    setStage(u, STAGES.ACOLHIMENTO_CONFIRMA_NOME)
+    iniciarTimer(from)
+    await enviarAudioModoVoz(
+      from,
+      u,
+      `Encontrei seu nome como ${nomeExistente}. Está correto? Se estiver, toque em Sim, está certo. Se não estiver, diga ou digite o nome correto.`,
+      "confirmar nome existente"
+    )
+    return {
+      texto: `●●○○○○ 👤 Etapa 2 de 6 · *SEU NOME*\n\n👤 Encontrei seu nome como *${nomeExistente}*.\n\nEstá correto? Se não estiver, é só me dizer o nome correto agora.`,
+      opcoes: [{ id: "nome_confirmar", title: "✅ Sim, está certo" }]
+    }
+  }
   setStage(u, STAGES.ACOLHIMENTO_NOME)
   iniciarTimer(from)
   const audioNome = `Entendido! Vou registrar o caso em seu nome. Para comecar, qual e o seu nome completo? Pode falar em audio ou digitar.`
@@ -8301,7 +8317,8 @@ async function iniciarAgendamento(from, u) {
     slots,
     pagina,
     temMais,
-    formatarSlot
+    formatarSlot,
+    formatarSlotAudio
   })
   await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaHorarios), "horários")
 
@@ -11868,6 +11885,10 @@ async function processarUrgenciaOuCorrecao(from, u, text, msgObj, ehDoc, ehAudio
         const docs = getDocumentosCaso(u)
         const primeiroNome = primeiroNomeCliente(u) || "você"
         const textoCasoReg = `🎉 *${primeiroNome}, seu caso foi registrado!*\n\n📄 *Número do caso:* \`\`\`${numeroCaso}\`\`\`\n\n_Guarde esse número. É com ele que identificamos seu atendimento por aqui._\n\nSeu caso foi encaminhado a um especialista em *${u.area ? "Direito " + u.area : "Direito"}*, que fará a análise e entrará em contato em breve.\n\n⏱️ Prazo estimado: até 2 dias úteis\n\n━━━━━━━━━━━━━━━\n📋 *Documentos que podem ser necessários:*\n${docs}\n\nVocê pode enviar agora ou depois, como preferir.`
+        const textoAudioCasoReg = eraNovoCasoDeCliente
+          ? `Pronto, ${primeiroNome}. Seu novo caso foi registrado com sucesso. O número do caso é ${numeroCaso.split("").join(" ")}. Você pode enviar documentos, falar com advogado ou voltar ao menu do cliente.`
+          : `Parabéns, ${primeiroNome}. Seu caso foi registrado com sucesso. O número do caso é ${numeroCaso.split("").join(" ")}. Você pode agendar uma consulta, enviar documentos ou acompanhar o status do caso.`
+        await enviarAudioModoVoz(from, u, textoAudioCasoReg, "caso registrado")
         const opcoesCasoReg = [
       { id: "m_docs", title: "📎 Enviar documentos" },
       { id: "m_adv",      title: "👨‍⚖️ Falar com advogado" },
@@ -14683,10 +14704,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           const textoAudioCadastro = eraNovoCasoDeCliente
             ? `Pronto, ${primeiroNome}. Seu novo caso foi registrado com sucesso. O número do caso é ${numeroCaso.split("").join(" ")}. Um especialista vai analisar essa nova situação e entrar em contato em breve pelo WhatsApp. Você pode enviar documentos, falar com advogado ou voltar ao menu do cliente.`
             : `Parabéns, ${primeiroNome}! Você agora é cliente do Escritório Oráculum. Seu número de caso é ${numeroCaso.split("").join(" ")}. Um especialista vai analisar sua situação e entrar em contato em breve pelo WhatsApp. Você já pode agendar uma consulta, enviar documentos ou acompanhar o status do seu caso.`
-          const ogg = await gerarAudioAtendente(u.atendente,
-            textoAudioCadastro)
-          await enviarAudio(from, urlAudioAtendente(ogg))
-          await new Promise(r => setTimeout(r, 6000))
+          await enviarAudioModoVoz(from, u, textoAudioCadastro, "caso registrado por áudio")
         } catch (e) { logErro("tts", "Falha áudio cadastro realizado", e) }
 
         const textoCasoRegAudio = `🎉 *${primeiroNome}, seu caso foi registrado!*\n\n📄 *Número do caso:* \`\`\`${numeroCaso}\`\`\`\n\n_Guarde esse número. É com ele que identificamos seu atendimento por aqui._\n\nSeu caso foi encaminhado a um especialista em *${u.area ? "Direito " + u.area : "Direito"}*, que fará a análise e entrará em contato em breve.\n\n⏱️ Prazo estimado: até 2 dias úteis\n\n━━━━━━━━━━━━━━━\n📋 *Documentos que podem ser necessários:*\n${docs}\n\nVocê pode enviar agora ou depois, como preferir.`
@@ -17504,7 +17522,7 @@ async function processarComLock(from, nomeWA, text, msgObj) {
   const textoSanitizado = sanitizarTextoEntrada(text)
   const tipoEntrada = String(msgObj?.type || "").toLowerCase()
   const ehCallbackCliente = ["interactive", "button"].includes(tipoEntrada) &&
-    /^(?:m_|docs_|doc_|cliente_|adv_|dir_|novo_caso_|nc_)/.test(textoSanitizado)
+    /^(?:m_|docs_|doc_|cliente_|adv_|dir_|novo_caso_|nc_|slot_|slots_|dur_|ag_)/.test(textoSanitizado)
   let u = users[from] || null
 
   try {

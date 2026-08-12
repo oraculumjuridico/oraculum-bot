@@ -3,6 +3,7 @@ const assert = require("node:assert/strict")
 const {
   formatarSituacaoJuridica,
   formatarDetalheJuridico,
+  resumirFrasesCompletas,
   detectarReferenciaTerceiro,
   formatarValorCorrecao,
   classificarReuniaoCliente
@@ -17,7 +18,12 @@ assert.equal(formatarDetalheJuridico("benefício negado"), "Benefício negado.")
 assert.equal(formatarDetalheJuridico("já termina!"), "Já termina!")
 assert.equal(formatarDetalheJuridico("", "resumo disponível"), "Resumo disponível.")
 assert.equal(formatarDetalheJuridico(), "Não informado")
-assert.equal(formatarDetalheJuridico("a".repeat(141)), `${"A"}${"a".repeat(136)}...`)
+assert.equal(formatarDetalheJuridico("a".repeat(141)), `${"A"}${"a".repeat(140)}.`)
+assert.equal(
+  resumirFrasesCompletas("Primeira frase completa. Segunda frase também completa. Terceira frase que não deve entrar.", 55),
+  "Primeira frase completa. Segunda frase também completa."
+)
+assert.equal(resumirFrasesCompletas("Relato longo sem pontuação " + "detalhado ".repeat(30), 50).includes("..."), false)
 
 const referenciaMae = detectarReferenciaTerceiro("Preciso de atendimento para minha mãe")
 assert.equal(referenciaMae?.relacao, "mae")

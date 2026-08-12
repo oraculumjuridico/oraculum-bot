@@ -23,6 +23,13 @@ function numeroPositivo(valor, padrao) {
   return Number.isFinite(numero) && numero > 0 ? numero : padrao
 }
 
+function numerosParaFala(texto) {
+  const nomes = ["zero", "um", "dois", "tr\u00eas", "quatro", "cinco", "seis", "sete", "oito", "nove"]
+  return String(texto || "").replace(/\b\d+\b/g, numero =>
+    numero.split("").map(digito => nomes[Number(digito)]).join(" ")
+  )
+}
+
 function normalizarTextoParaFala(texto) {
   const siglas = {
     INSS: "ieneésseésse",
@@ -40,7 +47,7 @@ function normalizarTextoParaFala(texto) {
   for (const [sigla, fala] of Object.entries(siglas)) {
     resultado = resultado.replace(new RegExp(`\\b${sigla}\\b`, "g"), fala)
   }
-  return resultado
+  return numerosParaFala(resultado)
 }
 
 function limparAudiosAntigos() {
@@ -208,6 +215,7 @@ function configurarDependenciasTtsParaTeste({ http, ffmpeg } = {}) {
 module.exports = {
   ATTENDANT_VOICE_PROFILES,
   normalizarTextoParaFala,
+  numerosParaFala,
   perfilDaAtendente,
   wavValido,
   baixarWavLightning,

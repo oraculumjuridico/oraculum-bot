@@ -34,11 +34,30 @@ function formatarSituacaoJuridica(situacao, tipo, subTipo) {
     : "Não informado")
 }
 
+function resumirFrasesCompletas(texto, limite = 220) {
+  const original = sanitizarTextoEntrada(texto).replace(/\s+/g, " ").trim()
+  if (!original || original.length <= limite) return original
+  const frases = original.match(/[^.!?]+[.!?]+/g) || []
+  if (!frases.length) return original
+
+  const selecionadas = []
+  let tamanho = 0
+  for (const fraseBruta of frases) {
+    const frase = fraseBruta.trim()
+    const proximoTamanho = tamanho + (selecionadas.length ? 1 : 0) + frase.length
+    if (selecionadas.length && proximoTamanho > limite) break
+    selecionadas.push(frase)
+    tamanho = proximoTamanho
+    if (tamanho >= limite) break
+  }
+  return selecionadas.join(" ") || frases[0].trim()
+}
+
 function formatarDetalheJuridico(detalhe, assuntoResumo, descricao = "") {
   const d = (detalhe || assuntoResumo || descricao || "").trim()
   if (!d) return "Não informado"
-  const limite = d.length > 140 ? d.slice(0, 137).trimEnd() + "..." : d
-  const texto = limite.charAt(0).toUpperCase() + limite.slice(1)
+  const resumo = resumirFrasesCompletas(d)
+  const texto = resumo.charAt(0).toUpperCase() + resumo.slice(1)
   return texto.endsWith(".") || texto.endsWith("!") || texto.endsWith("?")
     ? texto
     : texto + "."
@@ -128,6 +147,7 @@ function textoTemMarcadorVisual(texto = "") {
 
 module.exports = {
   formatarSituacaoJuridica,
+  resumirFrasesCompletas,
   formatarDetalheJuridico,
   detectarReferenciaTerceiro,
   formatarValorCorrecao,

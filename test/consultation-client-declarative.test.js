@@ -75,8 +75,9 @@ for (const tela of telas) {
   )
   const audio = gerarAudioDaTela(tela)
   for (const acao of tela.acoes) {
+    const trechoEsperado = acao.textoAudio || `Para ${acao.label}, toque em ${acao.label}`
     assert.equal(
-      audio.includes(`Para ${acao.label}, toque em ${acao.label}`),
+      audio.includes(trechoEsperado),
       true,
       `${tela.id} deve narrar ${acao.id}`
     )

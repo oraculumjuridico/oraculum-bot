@@ -9,6 +9,7 @@ const {
   limparTextoSomenteLetras
 } = require("../utils/text")
 const { logErro } = require("../utils/logging")
+const { resumirFrasesCompletas } = require("./text-utils")
 
 const { GROQ_KEY } = process.env
 
@@ -361,7 +362,7 @@ async function gerarResumoDescricaoConfirmacao(u) {
   }
 
   if (!GROQ_KEY || descricao.length < 30) {
-    const preview = descricao.slice(0, 200) + (descricao.length > 200 ? "…" : "")
+    const preview = resumirFrasesCompletas(descricao, 240)
     u._resumoDescricaoIA = preview
     u._resumoDescricaoIABase = descricao
     return preview
@@ -384,13 +385,17 @@ async function gerarResumoDescricaoConfirmacao(u) {
       },
       { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
     )
-    const resumo = res.data.choices?.[0]?.message?.content?.trim() || descricao.slice(0, 200)
+    const respostaResumo = res.data.choices?.[0]?.message?.content?.trim() || ""
+    const resumoSeguro = /\.\.\.|…/.test(respostaResumo)
+      ? resumirFrasesCompletas(descricao, 240)
+      : resumirFrasesCompletas(respostaResumo || descricao, 240)
+    const resumo = resumoSeguro || resumirFrasesCompletas(descricao, 240)
     u._resumoDescricaoIA = resumo
     u._resumoDescricaoIABase = descricao
     return resumo
   } catch (e) {
     logErro("groq", "gerarResumoDescricaoConfirmacao: " + e.message)
-    const fallback = descricao.slice(0, 200) + (descricao.length > 200 ? "…" : "")
+    const fallback = resumirFrasesCompletas(descricao, 240)
     u._resumoDescricaoIA = fallback
     u._resumoDescricaoIABase = descricao
     return fallback

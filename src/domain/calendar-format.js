@@ -2,6 +2,8 @@ function numeroPorExtenso(n, genero = "masculino") {
   const masculino = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez"]
   const feminino  = ["zero","uma","duas","três","quatro","cinco","seis","sete","oito","nove","dez"]
   if (n >= 0 && n <= 10) return genero === "feminino" ? feminino[n] : masculino[n]
+  const especiais = { 11: "onze", 12: "doze", 13: "treze", 14: "quatorze", 15: "quinze", 16: "dezesseis", 17: "dezessete", 18: "dezoito", 19: "dezenove", 20: "vinte", 21: "vinte e um", 22: "vinte e dois", 23: "vinte e três", 24: "vinte e quatro", 25: "vinte e cinco", 26: "vinte e seis", 27: "vinte e sete", 28: "vinte e oito", 29: "vinte e nove", 30: "trinta", 31: "trinta e um", 45: "quarenta e cinco" }
+  if (Object.prototype.hasOwnProperty.call(especiais, n)) return especiais[n]
   return String(n)
 }
 
@@ -34,30 +36,21 @@ function horaPorExtensoAudio(date) {
     10: "dez horas",
     11: "onze horas",
     12: "meio-dia",
-    13: "uma hora",
-    14: "duas horas",
-    15: "três horas",
-    16: "quatro horas",
-    17: "cinco horas",
-    18: "seis horas",
-    19: "sete horas",
-    20: "oito horas",
-    21: "nove horas",
-    22: "dez horas",
-    23: "onze horas"
+    13: "treze horas",
+    14: "quatorze horas",
+    15: "quinze horas",
+    16: "dezesseis horas",
+    17: "dezessete horas",
+    18: "dezoito horas",
+    19: "dezenove horas",
+    20: "vinte horas",
+    21: "vinte e uma horas",
+    22: "vinte e duas horas",
+    23: "vinte e três horas"
   }
-  const turno = hora >= 5 && hora < 12
-    ? "da manhã"
-    : hora >= 12 && hora < 18
-    ? "da tarde"
-    : hora >= 18
-    ? "da noite"
-    : "da madrugada"
-
   const base = mapaHoras[hora] || `${hora} horas`
-  const complementoTurno = hora === 0 || hora === 12 ? "" : ` ${turno}`
-  if (!minuto) return `${base}${complementoTurno}`
-  return `${base} e ${numeroPorExtenso(minuto)} minutos${complementoTurno}`
+  if (!minuto) return base
+  return `${base} e ${numeroPorExtenso(minuto)} minutos`
 }
 
 function formatarSlotAudio(date) {
@@ -68,7 +61,7 @@ function formatarSlotAudio(date) {
   const dia = dias[date.getDay()]
   const num = date.getDate()
   const mes = meses[date.getMonth()]
-  return `${dia}, dia ${num} de ${mes}, às ${horaPorExtensoAudio(date)}`
+  return `${dia}, ${numeroPorExtenso(num)} de ${mes}, às ${horaPorExtensoAudio(date)}`
 }
 
 module.exports = {

@@ -3,6 +3,7 @@ const fs = require("node:fs")
 const {
   ATTENDANT_VOICE_PROFILES,
   normalizarTextoParaFala,
+  numerosParaFala,
   perfilDaAtendente,
   gerarAudioAtendente,
   configurarDependenciasTtsParaTeste
@@ -75,6 +76,8 @@ async function main() {
 
   assert.equal(normalizarTextoParaFala("INSS, CPF, PDF, CNH e PVR."), "ieneésseésse, cêpêéfe, pê dê éfe, cê-ene-agá e pê vê erre.")
   assert.equal(normalizarTextoParaFala("INSSalubre CPF123"), "INSSalubre CPF123")
+  assert.equal(numerosParaFala("Etapa 2 de 6"), "Etapa dois de seis")
+  assert.equal(normalizarTextoParaFala("Opção 1. Caso 2026."), "Opção um. Caso dois zero dois seis.")
 
   const textoEscrito = "INSS e CPF"
   const eventosTts = []

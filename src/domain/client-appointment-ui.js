@@ -42,11 +42,13 @@ function telaHorariosConsulta({
   slots = [],
   pagina = 0,
   temMais = false,
-  formatarSlot
+  formatarSlot,
+  formatarSlotAudio = formatarSlot
 } = {}) {
   const acoes = slots.slice(0, 8).map((slot, index) => ({
     id: `slot_${index}`,
-    label: formatarSlot(slot)
+    label: formatarSlot(slot),
+    textoAudio: `Para ${formatarSlotAudio(slot)}, toque nesse horário`
   }))
   if (pagina > 0) acoes.unshift({ id: "slots_pagina_anterior", label: "⬅️ Horários anteriores" })
   if (temMais) acoes.push({ id: "slots_proxima_pagina", label: "➡️ Ver mais horários" })
