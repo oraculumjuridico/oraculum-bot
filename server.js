@@ -11303,6 +11303,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       requestedSide: folha,
       recognizedSides: (recebimentoGuiado.recognizedSides || []).join(",") || "none",
       reasonCode: recebimentoGuiado.reasonCode || "unknown",
+      pendingReview: Boolean(recebimentoGuiado.pendingReview),
       qualityWarnings: (recebimentoGuiado.qualityWarnings || []).join(",") || "none",
       selectedVariant: resultadoAnaliseGuiada?.evidencias?.[0]?.ocr?.selectedVariant ||
         resultadoAnaliseGuiada?.entrada?.pipeline?.selectedVariant || "unknown"
@@ -11376,11 +11377,11 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       ? `Toque em *Próximo documento* quando estiver pronto.`
       : `Todos os documentos foram enviados. Toque em *Concluir envio* para finalizar.`
   const textoAudioRecebido = rgAguardandoVerso
-    ? `${lblD}, ${folha}, recebido. Se o verso estiver nesse mesmo arquivo, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
+    ? `${lblD}, ${folha}, recebido${recebimentoGuiado?.pendingReview ? " e salvo para revisão" : ""}. Se o verso estiver nesse mesmo arquivo, toque em Usar mesma foto. Se quiser seguir sem o verso, toque em Seguir sem verso. Se preferir parar por agora, toque em Continuar depois.`
     : arquivoEhPdf
       ? `${lblD} recebido em PDF. Na tela, você pode ${temProximoDoc ? "seguir para o próximo documento" : "concluir o envio"} ou continuar depois.`
     : !docAtualCompleto
-      ? `${lblD}, ${folha}, recebido. Envie a próxima parte quando estiver pronto ou toque em Continuar depois para parar por agora.`
+      ? `${lblD}, ${folha}, recebido${recebimentoGuiado?.pendingReview ? " e salvo para revisão" : ""}. Envie a próxima parte quando estiver pronto ou toque em Continuar depois para parar por agora.`
       : temProximoDoc
         ? `${lblD} recebido. Na tela, você pode enviar complemento, seguir para o próximo documento ou continuar depois.`
         : `${lblD} recebido. Todos os documentos foram enviados. Toque em Concluir envio para finalizar ou em Continuar depois para parar por agora.`
@@ -11409,7 +11410,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const telaRecebido = criarTela({
     id: "documento_guiado_recebido",
     titulo: "Documento recebido",
-    texto: `✅ *${lblD}${docAtualCompleto ? "" : `: ${folha}`}* recebido!\n\n📊 *Andamento do envio*\n${statusRecebido.texto}\n\n${textoFinalTela}`,
+    texto: `✅ *${lblD}${docAtualCompleto ? "" : `: ${folha}`}* recebido e salvo!${recebimentoGuiado?.pendingReview ? "\n\n🔎 A leitura automática não foi conclusiva. O arquivo seguirá para revisão, sem impedir o restante do envio." : ""}\n\n📊 *Andamento do envio*\n${statusRecebido.texto}\n\n${textoFinalTela}`,
     textoAudioBase: textoAudioRecebido,
     imagemUrl: IMAGEM_DOC_RECEBIDO_URL,
     acoes: opcoesRecebido.map(opcao => ({ id: opcao.id, label: opcao.title }))

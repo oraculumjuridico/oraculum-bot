@@ -330,7 +330,9 @@ async function main() {
   const lowPipeline = pipelineResult("RG verso", 0.4)
   const low = await analyzeBack(frontRegistry, lowPipeline)
   assert.equal(low.result.evidencias[0].status, "review")
-  assert.equal(evaluateGuidedDocumentReceipt({ requirementId: "doc_rg", folha: "Verso", analysisResult: low.result }).advance, false)
+  const lowReceipt = evaluateGuidedDocumentReceipt({ requirementId: "doc_rg", folha: "Verso", analysisResult: low.result })
+  assert.equal(lowReceipt.advance, true)
+  assert.equal(lowReceipt.pendingReview, true)
 
   let samePhoto = evidence(normalizarContratoEvidencias({}), { fileId: "same", type: "RG frente", coverage: ["front"] })
   assert.equal(confirmAndDecide(samePhoto, { fileId: "same", origem: "client", assertion: "front_and_back_same_image", data: NOW }).decision.status, "partial")
@@ -340,7 +342,7 @@ async function main() {
   const qualityReceipt = evaluateGuidedDocumentReceipt({
     requirementId: "doc_rg", folha: "Verso", analysisResult: { ok: true, registry: qualityRegistry, evidencias: qualityRegistry.evidencias }
   })
-  assert.match(qualityReceipt.message, /pouco nitida/i)
+  assert.match(qualityReceipt.message.normalize("NFD").replace(/[\u0300-\u036f]/g, ""), /pouco nitida/i)
 
   assert.equal(paired.result.evidencias.length, 1)
   assert.equal(paired.deps.analysisWrites, 1)

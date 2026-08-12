@@ -4,7 +4,7 @@
 
 Este índice cobre as funções nomeadas de `server.js`, `tts.js` e `src/`. A explicação conceitual dos fluxos está em `docs/ORACULUM_SYSTEM_GUIDE.md`.
 
-Total: **2371 funções** em **230 módulos**.
+Total: **2372 funções** em **230 módulos**.
 
 - **pública**: aparece no contrato `module.exports` do módulo;
 - **interna**: detalhe de implementação usado dentro do próprio módulo.
@@ -404,37 +404,37 @@ Composição principal, rotas HTTP e orquestração dos fluxos WhatsApp.
 | `consolidarDocumentosDoCasoSeguro` | 11043 | interna | Executa a responsabilidade interna “consolidar documentos do caso seguro”. |
 | `registrarDocumentoNoCicloPosHumano` | 11057 | interna | Registra documento no ciclo pos humano. |
 | `processarMidia` | 11078 | interna | Processa midia. |
-| `proximaConfirmacaoProgressiva` | 11422 | interna | Executa a responsabilidade interna “proxima confirmacao progressiva”. |
-| `textoComIntroducaoAudio` | 11427 | interna | Executa a responsabilidade interna “texto com introducao audio”. |
-| `processarAudioCanalAtendimento` | 11570 | interna | Processa audio canal atendimento. |
-| `adaptarTextoAudioCadastral` | 11666 | interna | Executa a responsabilidade interna “adaptar texto audio cadastral”. |
-| `transcreverAudioRespostaCadastral` | 11696 | interna | Executa a responsabilidade interna “transcrever audio resposta cadastral”. |
-| `processarAudioNoFluxo` | 11708 | interna | Processa audio no fluxo. |
-| `processarUrgenciaOuCorrecao` | 11794 | interna | Processa urgencia ou correcao. |
-| `processarInterno` | 12820 | pública | Processa interno. |
-| `processar` | 17223 | interna | Processa processar. |
-| `drenaFilaUsuario` | 17237 | interna | Executa a responsabilidade interna “drena fila usuario”. |
-| `carregarPendenciasComplementaresPosHumanas` | 17258 | interna | Carrega pendencias complementares pos humanas. |
-| `complementoPosHumanoEstaCompleto` | 17308 | interna | Executa a responsabilidade interna “complemento pos humano esta completo”. |
-| `criarVerificadorCompletudePosHumana` | 17315 | interna | Cria verificador completude pos humana. |
-| `criarDispatcherPosHumano` | 17322 | interna | Cria dispatcher pos humano. |
-| `withLegalNomenclature` | 17386 | interna | Executa a responsabilidade interna “with legal nomenclature”. |
-| `processarComLock` | 17558 | interna | Processa com lock. |
-| `arquivoExiste` | 17642 | interna | Executa a responsabilidade interna “arquivo existe”. |
-| `dataModificacaoArquivo` | 17647 | interna | Executa a responsabilidade interna “data modificacao arquivo”. |
-| `resumirCallbackIdempotency` | 17656 | interna | Executa a responsabilidade interna “resumir callback idempotency”. |
-| `resumirWebhookInbox` | 17680 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
-| `agruparUltimosErrosPorCategoria` | 17701 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
-| `montarHealthInternoOperacional` | 17709 | interna | Monta health interno operacional. |
-| `processarMensagemWebhook` | 17773 | interna | Processa mensagem webhook. |
-| `drenarWebhookInbox` | 17811 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
-| `postRotaInterna` | 18621 | interna | Executa a responsabilidade interna “post rota interna”. |
-| `planejarConsultasNoAgendador` | 18637 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
-| `planejarReengajamentosNoAgendador` | 18677 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
-| `despacharRotaAgendada` | 18693 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
-| `sincronizarConsultaNoAgendador` | 18715 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
-| `executarAgendadorInterno` | 18739 | interna | Executa agendador interno. |
-| `iniciarServidor` | 18803 | pública | Inicia servidor. |
+| `proximaConfirmacaoProgressiva` | 11423 | interna | Executa a responsabilidade interna “proxima confirmacao progressiva”. |
+| `textoComIntroducaoAudio` | 11428 | interna | Executa a responsabilidade interna “texto com introducao audio”. |
+| `processarAudioCanalAtendimento` | 11571 | interna | Processa audio canal atendimento. |
+| `adaptarTextoAudioCadastral` | 11667 | interna | Executa a responsabilidade interna “adaptar texto audio cadastral”. |
+| `transcreverAudioRespostaCadastral` | 11697 | interna | Executa a responsabilidade interna “transcrever audio resposta cadastral”. |
+| `processarAudioNoFluxo` | 11709 | interna | Processa audio no fluxo. |
+| `processarUrgenciaOuCorrecao` | 11795 | interna | Processa urgencia ou correcao. |
+| `processarInterno` | 12821 | pública | Processa interno. |
+| `processar` | 17224 | interna | Processa processar. |
+| `drenaFilaUsuario` | 17238 | interna | Executa a responsabilidade interna “drena fila usuario”. |
+| `carregarPendenciasComplementaresPosHumanas` | 17259 | interna | Carrega pendencias complementares pos humanas. |
+| `complementoPosHumanoEstaCompleto` | 17309 | interna | Executa a responsabilidade interna “complemento pos humano esta completo”. |
+| `criarVerificadorCompletudePosHumana` | 17316 | interna | Cria verificador completude pos humana. |
+| `criarDispatcherPosHumano` | 17323 | interna | Cria dispatcher pos humano. |
+| `withLegalNomenclature` | 17387 | interna | Executa a responsabilidade interna “with legal nomenclature”. |
+| `processarComLock` | 17559 | interna | Processa com lock. |
+| `arquivoExiste` | 17643 | interna | Executa a responsabilidade interna “arquivo existe”. |
+| `dataModificacaoArquivo` | 17648 | interna | Executa a responsabilidade interna “data modificacao arquivo”. |
+| `resumirCallbackIdempotency` | 17657 | interna | Executa a responsabilidade interna “resumir callback idempotency”. |
+| `resumirWebhookInbox` | 17681 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
+| `agruparUltimosErrosPorCategoria` | 17702 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
+| `montarHealthInternoOperacional` | 17710 | interna | Monta health interno operacional. |
+| `processarMensagemWebhook` | 17774 | interna | Processa mensagem webhook. |
+| `drenarWebhookInbox` | 17812 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
+| `postRotaInterna` | 18622 | interna | Executa a responsabilidade interna “post rota interna”. |
+| `planejarConsultasNoAgendador` | 18638 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
+| `planejarReengajamentosNoAgendador` | 18678 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
+| `despacharRotaAgendada` | 18694 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
+| `sincronizarConsultaNoAgendador` | 18716 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
+| `executarAgendadorInterno` | 18740 | interna | Executa agendador interno. |
+| `iniciarServidor` | 18804 | pública | Inicia servidor. |
 
 ## `src/adapters/drive-single-case-adapter.js`
 
@@ -2159,8 +2159,9 @@ Regra de domínio: document guided receipt.
 | `requestedSide` | 9 | pública | Executa a responsabilidade interna “requested side”. |
 | `evidenceSide` | 16 | pública | Executa a responsabilidade interna “evidence side”. |
 | `response` | 26 | interna | Executa a responsabilidade interna “response”. |
-| `evaluateGuidedDocumentReceipt` | 48 | pública | Executa a responsabilidade interna “evaluate guided document receipt”. |
-| `applyGuidedDocumentReceipt` | 105 | pública | Executa a responsabilidade interna “apply guided document receipt”. |
+| `pendingReview` | 48 | interna | Executa a responsabilidade interna “pending review”. |
+| `evaluateGuidedDocumentReceipt` | 72 | pública | Executa a responsabilidade interna “evaluate guided document receipt”. |
+| `applyGuidedDocumentReceipt` | 131 | pública | Executa a responsabilidade interna “apply guided document receipt”. |
 
 ## `src/domain/document-hubspot-sync.js`
 
@@ -3975,17 +3976,17 @@ Síntese de voz, normalização de fala e fallback de áudio.
 | `numeroPositivo` | 20 | interna | Executa a responsabilidade interna “numero positivo”. |
 | `numerosParaFala` | 25 | pública | Executa a responsabilidade interna “numeros para fala”. |
 | `normalizarTextoParaFala` | 42 | pública | Normaliza texto para fala. |
-| `limparAudiosAntigos` | 73 | interna | Executa a responsabilidade interna “limpar audios antigos”. |
-| `dividirTextoTTS` | 89 | interna | Divide texto tts. |
-| `caminhoConcatFfmpeg` | 105 | interna | Executa a responsabilidade interna “caminho concat ffmpeg”. |
-| `motivoSanitizado` | 109 | interna | Executa a responsabilidade interna “motivo sanitizado”. |
-| `registrarTts` | 116 | interna | Registra tts. |
-| `perfilDaAtendente` | 120 | pública | Executa a responsabilidade interna “perfil da atendente”. |
-| `urlLightning` | 125 | interna | Executa a responsabilidade interna “url lightning”. |
-| `wavValido` | 129 | pública | Executa a responsabilidade interna “wav valido”. |
-| `baixarWavLightning` | 135 | pública | Executa a responsabilidade interna “baixar wav lightning”. |
-| `baixarMp3GoogleTTS` | 161 | interna | Executa a responsabilidade interna “baixar mp3 google tts”. |
-| `converterParaOgg` | 170 | interna | Converte para ogg. |
-| `gerarComGoogle` | 176 | interna | Gera com google. |
-| `gerarAudioAtendente` | 197 | pública | Gera audio atendente. |
-| `configurarDependenciasTtsParaTeste` | 230 | pública | Executa a responsabilidade interna “configurar dependencias tts para teste”. |
+| `limparAudiosAntigos` | 74 | interna | Executa a responsabilidade interna “limpar audios antigos”. |
+| `dividirTextoTTS` | 90 | interna | Divide texto tts. |
+| `caminhoConcatFfmpeg` | 106 | interna | Executa a responsabilidade interna “caminho concat ffmpeg”. |
+| `motivoSanitizado` | 110 | interna | Executa a responsabilidade interna “motivo sanitizado”. |
+| `registrarTts` | 117 | interna | Registra tts. |
+| `perfilDaAtendente` | 121 | pública | Executa a responsabilidade interna “perfil da atendente”. |
+| `urlLightning` | 126 | interna | Executa a responsabilidade interna “url lightning”. |
+| `wavValido` | 130 | pública | Executa a responsabilidade interna “wav valido”. |
+| `baixarWavLightning` | 136 | pública | Executa a responsabilidade interna “baixar wav lightning”. |
+| `baixarMp3GoogleTTS` | 162 | interna | Executa a responsabilidade interna “baixar mp3 google tts”. |
+| `converterParaOgg` | 171 | interna | Converte para ogg. |
+| `gerarComGoogle` | 177 | interna | Gera com google. |
+| `gerarAudioAtendente` | 198 | pública | Gera audio atendente. |
+| `configurarDependenciasTtsParaTeste` | 231 | pública | Executa a responsabilidade interna “configurar dependencias tts para teste”. |

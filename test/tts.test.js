@@ -84,6 +84,7 @@ async function main() {
   assert.equal(normalizarTextoParaFala("Para comecar, voce pode enviar audio ou informar o numero. Nao tem problema."), "Para começar, você pode enviar áudio ou informar o número. não tem problema.")
   assert.equal(normalizarTextoParaFala("O caso seguirá para analise."), "O caso seguirá para análise.")
   assert.equal(normalizarTextoParaFala("Analise os documentos."), "Analise os documentos.")
+  assert.equal(normalizarTextoParaFala("Seus documentos ficam em seguranca."), "Seus documentos ficam em segurança.")
 
   const textoEscrito = "INSS e CPF"
   const eventosTts = []

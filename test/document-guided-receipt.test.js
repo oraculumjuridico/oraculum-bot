@@ -170,12 +170,16 @@ async function main() {
     fileId: "unknown", type: "Documento desconhecido", confidence: 0.2, fields: {}
   })
   assert.equal(evaluate(unknownRegistry, "unknown").reasonCode, "unreadable_or_uncertain")
-  assert.equal(evaluateGuidedDocumentReceipt({ requirementId: "doc_rg", folha: "Frente", analysisResult: { ok: false, evidencias: [] } }).advance, false)
+  const falhaOcrRecebida = evaluateGuidedDocumentReceipt({ requirementId: "doc_rg", folha: "Frente", analysisResult: { ok: false, evidencias: [] } })
+  assert.equal(falhaOcrRecebida.accepted, true)
+  assert.equal(falhaOcrRecebida.advance, true)
+  assert.equal(falhaOcrRecebida.pendingReview, true)
 
   const lowRegistry = evidence(normalizarContratoEvidencias({}), {
     fileId: "low", type: "RG frente", confidence: 0.4
   })
   assert.equal(evaluate(lowRegistry, "low").reasonCode, "unreadable_or_uncertain")
+  assert.equal(evaluate(lowRegistry, "low").pendingReview, true)
   assert.equal(confirm(lowRegistry, "low").decision.status, "review")
   const highRegistry = evidence(normalizarContratoEvidencias({}), {
     fileId: "high", type: "RG frente", confidence: 0.9

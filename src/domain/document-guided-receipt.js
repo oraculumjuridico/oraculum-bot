@@ -46,6 +46,30 @@ function response(reasonCode, requested, extra = {}) {
   return { accepted: false, confirmEvidence: false, advance: false, reasonCode, message: messages[reasonCode], ...extra }
 }
 
+function pendingReview(reasonCode, requested, extra = {}) {
+  const sideLabel = requested === "back" ? "verso" : requested === "front" ? "frente" : "documento"
+  const artigo = requested === "front" ? "a" : "o"
+  const qualityWarnings = extra.qualityWarnings || []
+  let qualityMessage = null
+  if (qualityWarnings.includes("low_resolution")) qualityMessage = "A imagem parece pequena para a leitura automática"
+  else if (qualityWarnings.includes("possible_blur")) qualityMessage = "A imagem parece pouco nítida para a leitura automática"
+  else if (qualityWarnings.includes("underexposed")) qualityMessage = "A imagem parece escura para a leitura automática"
+  else if (qualityWarnings.includes("overexposed")) qualityMessage = "A imagem parece clara demais para a leitura automática"
+  const messages = {
+    identity_not_verified: `Recebi e salvei ${artigo} ${sideLabel}. A identificação será conferida na revisão do documento. Você pode continuar o envio normalmente.`,
+    unreadable_or_uncertain: `Recebi e salvei ${artigo} ${sideLabel}. ${qualityMessage ? `${qualityMessage}. ` : ""}A leitura não foi conclusiva, então o arquivo ficará para revisão. Você pode continuar o envio normalmente.`
+  }
+  return {
+    accepted: true,
+    confirmEvidence: false,
+    advance: true,
+    pendingReview: true,
+    reasonCode,
+    message: messages[reasonCode],
+    ...extra
+  }
+}
+
 function evaluateGuidedDocumentReceipt(input = {}) {
   const requirementId = input.requirementId || input.documentoId || null
   if (requirementId !== "doc_rg") {
@@ -53,13 +77,15 @@ function evaluateGuidedDocumentReceipt(input = {}) {
   }
   const requested = requestedSide(input.folha)
   const evidences = Array.isArray(input.analysisResult?.evidencias) ? input.analysisResult.evidencias : []
-  if (!input.analysisResult?.ok || !evidences.length) return response("unreadable_or_uncertain", requested)
+  if (!input.analysisResult?.ok || !evidences.length) return pendingReview("unreadable_or_uncertain", requested)
 
   const identityEvidences = evidences.filter(evidence =>
     ["rg frente", "rg verso", "rg", "cnh"].includes(normalized(evidence.tipoDocumento || evidence.classificacao?.tipoDocumento)))
   if (!identityEvidences.length) {
     const unknown = evidences.some(evidence => normalized(evidence.tipoDocumento || evidence.classificacao?.tipoDocumento) === "documento desconhecido")
-    return response(unknown ? "unreadable_or_uncertain" : "wrong_document_type", requested)
+    return unknown
+      ? pendingReview("unreadable_or_uncertain", requested)
+      : response("wrong_document_type", requested)
   }
   const confirmedFrontAvailable = hasConfirmedTrustedFront(input.analysisResult?.registry || {}, "doc_rg")
   const safe = identityEvidences.filter(evidence => {
@@ -80,7 +106,7 @@ function evaluateGuidedDocumentReceipt(input = {}) {
       ...(evidence.quality?.originalWarnings || [])
     ]))]
     const identityUnsafe = identityEvidences.some(evidence => normalized(evidence.partyRole) !== "titular")
-    return response(identityUnsafe ? "identity_not_verified" : "unreadable_or_uncertain", requested, { qualityWarnings })
+    return pendingReview(identityUnsafe ? "identity_not_verified" : "unreadable_or_uncertain", requested, { qualityWarnings })
   }
 
   const sides = new Set(safe.map(evidenceSide).filter(Boolean))
