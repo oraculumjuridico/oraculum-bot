@@ -123,14 +123,14 @@
     "src/scripts/consultation-release-check.js": "436a327960ca45f089fec63522bdbbeb59badf6bbae81f4a2c24591821ed4789",
     "src/scripts/consultation-export-legal.js": "1b93711fedd9fbed571edeca4fafa442502dfdabd6f8733853ba3207488258bb",
     "src/scripts/consultation-export-dossier.js": "d510469965b0dce561f023efb60ef2828b858e73217b2739cd0800c9c7037534",
-    "consultation-architecture-baseline.json": "23bf410aee6c609dfcb744e27966738b2843e56be8c6603521153942e9dd0662",
+    "consultation-architecture-baseline.json": "2d6fa49e50184b1067a1a66a16c9c46720b8cfddca44eadd05f7fe1dc2f78518",
     "consultation-architecture-snapshot.json": "9bc25304b856f8fff9025289b433db477ede2c0f7c2ba3f7137c72d39e55f266"
   },
   "approval": {
     "approved": true,
     "approvedBy": "user-requested-make-replacement",
-    "approvedAt": "2026-08-12T00:00:00-03:00",
-    "changeId": "INTERNAL-SCHEDULER-REPLACES-MAKE",
-    "structuralDigest": "1b711be23c58e572b2cbc5f7245f10b844d3ecef493afc9d015c73ff1fbec192"
+    "approvedAt": "2026-08-12T10:50:00-03:00",
+    "changeId": "INTERNAL-SCHEDULER-GITHUB-WAKEUP",
+    "structuralDigest": "7dbac63f127162faaa634a33ea72f291a639be1c805735d00abc6143599d3397"
   }
 }

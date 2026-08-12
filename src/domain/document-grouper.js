@@ -12,6 +12,7 @@ const GRUPOS_DOCUMENTAIS = Object.freeze([
   "documentosPrevidenciarios",
   "documentosTrabalhistas",
   "documentosProcessuais",
+  "revisaoHumana",
   "outros"
 ])
 
@@ -93,6 +94,10 @@ function isRGVerso(documento) {
 }
 
 function adicionarDocumentoPessoal(documento, grupos) {
+  if (documento.requerRevisaoHumana) {
+    grupos.revisaoHumana.push(documento)
+    return
+  }
   const tipo = normalizarTexto(documento.tipoDocumento)
   const categoria = normalizarTexto(documento.categoria)
 
@@ -197,6 +202,7 @@ function agruparRG(documentos, grupos) {
   const versos = new Map()
 
   for (const documento of documentos) {
+    if (documento.requerRevisaoHumana) continue
     if (isRGFrente(documento)) {
       const chave = chaveRG(documento)
       if (!frentes.has(chave)) frentes.set(chave, [])
@@ -239,7 +245,8 @@ function documentoFoiAgrupado(documento, grupos) {
     grupos.receitas,
     grupos.documentosPrevidenciarios,
     grupos.documentosTrabalhistas,
-    grupos.documentosProcessuais
+    grupos.documentosProcessuais,
+    grupos.revisaoHumana
   ].some(lista => lista.includes(documento))
 }
 
@@ -260,6 +267,25 @@ function agruparDocumentosProcessados(documentos = []) {
   }
 
   const normalizados = documentos.map(normalizarDocumento)
+
+  const tentativasGuiadas = new Map()
+  for (const documento of normalizados) {
+    const contexto = documento.contexto || documento.arquivo?.contexto || {}
+    if (normalizarTexto(contexto.fluxoDocumento) !== "guiado" || normalizarTexto(contexto.documentoId) !== "doc_rg") continue
+    const lado = normalizarTexto(contexto.folha).includes("verso") ? "verso" : normalizarTexto(contexto.folha).includes("frente") ? "frente" : "sem_lado"
+    const chave = `${chaveRG(documento)}:${lado}`
+    if (!tentativasGuiadas.has(chave)) tentativasGuiadas.set(chave, [])
+    tentativasGuiadas.get(chave).push(documento)
+  }
+  for (const repetidas of tentativasGuiadas.values()) {
+    if (repetidas.length < 2) continue
+    for (const documento of repetidas) documento.requerRevisaoHumana = true
+    avisos.push({
+      code: "DOCUMENT_GROUPER_REPEATED_GUIDED_SIDE_REVIEW",
+      message: "varias tentativas do mesmo lado do documento exigem revisao humana",
+      count: repetidas.length
+    })
+  }
 
   for (const documento of normalizados) {
     adicionarDocumentoPessoal(documento, grupos)

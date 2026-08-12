@@ -299,7 +299,8 @@ const {
   renomearArquivoDrive,
   uploadPastaAudio,
   salvarAudioTranscritoNoCaso,
-  listarArquivosDriveNaPasta
+  listarArquivosDriveNaPasta,
+  baixarArquivoDrive
 } = require("./src/domain/drive-files")
 const {
   processarAnaliseDocumentalPosUpload
@@ -312,7 +313,11 @@ const {
   aplicarDadosDocumentaisConfiaveisAoUsuario,
   validarContextoDocumentalHubSpot
 } = require("./src/domain/document-hubspot-sync")
-const { atualizarEstadoDocumental } = require("./src/domain/document-state-repository")
+const { carregarEstadoDocumental, atualizarEstadoDocumental } = require("./src/domain/document-state-repository")
+const {
+  listPendingHumanReviews,
+  applyHumanDocumentReview
+} = require("./src/domain/document-human-review")
 const { resolveDocumentPartyIdentity } = require("./src/domain/document-party-identity")
 const {
   evaluateGuidedDocumentReceipt,
@@ -411,6 +416,7 @@ const {
   createInternalSchedulerRepository
 } = require("./src/infrastructure/internal-scheduler-postgres")
 const { processInternalSchedule } = require("./src/domain/internal-scheduler")
+const { verifyGitHubActionsOidc, bearerToken } = require("./src/domain/github-oidc")
 const {
   consultationScope,
   consultationLifecycleScope,
@@ -4407,6 +4413,11 @@ const ADMIN_IDS = {
   enviarDocumentos: "adm_enviar_documentos",
   casoCompletar: "adm_caso_completar",
   casoEnviarDocumento: "adm_caso_enviar_documento",
+  casoRevisarDocumentos: "adm_caso_revisar_documentos",
+  documentoRgFrente: "adm_doc_rg_frente",
+  documentoRgVerso: "adm_doc_rg_verso",
+  documentoIlegivel: "adm_doc_ilegivel",
+  documentoDescartar: "adm_doc_descartar",
   casoAgendar: "adm_caso_agendar",
   casoPreferenciaComunicacao: "adm_caso_preferencia_comunicacao",
   preferenciaTexto: "adm_preferencia_texto",
@@ -5293,6 +5304,11 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
   const relatoCurto = relato ? relato.slice(0, 700) + (relato.length > 700 ? "..." : "") : "Sem relato consolidado."
   const dossieJuridico = montarDossieJuridicoAdminWhatsApp(item)
   const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
+  const cpf = sanitizarTextoEntrada(u.cpf || u._cpf)
+  const nascimento = sanitizarTextoEntrada(u.dataNascimento || u.data_nascimento)
+  const email = sanitizarTextoEntrada(u.email)
+  const endereco = [u.endereco, u.numeroEndereco, u.complementoEndereco, u.bairro].map(sanitizarTextoEntrada).filter(Boolean).join(", ")
+  const localidade = [u.cidade, u.uf, u.cep].map(sanitizarTextoEntrada).filter(Boolean).join(" · ")
   const statusDocumental = sanitizarTextoEntrada(u.oraculumDocumentStatus || u.oraculum_document_status)
   const subtipo = sanitizarTextoEntrada(u.oraculumCaseSubtype || u.oraculum_case_subtype || u.subTipo)
   const quarentena = Array.isArray(u.documentosQuarentena) ? u.documentosQuarentena.length : Number(u.documentosQuarentena || 0)
@@ -5304,6 +5320,11 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
     "",
     `📄 Caso: ${briefing.numeroCaso || "sem caso"}`,
     telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : "",
+    cpf ? `🪪 CPF: ${cpf}` : "🪪 CPF: não informado",
+    nascimento ? `🎂 Nascimento: ${nascimento}` : "🎂 Nascimento: não informado",
+    email ? `✉️ E-mail: ${email}` : "",
+    endereco ? `🏠 Endereço: ${endereco}` : "",
+    localidade ? `📍 Localidade: ${localidade}` : "",
     `⚖️ Area: ${briefing.area || "nao definida"}`,
     `🧭 Tipo/subtipo: ${[u.tipo, subtipo].filter(Boolean).join(" / ") || "nao definido"}`,
     `📌 Status: ${briefing.stageLabel}`,
@@ -5930,6 +5951,7 @@ function telaDetalheCasoAdmin(from, idx) {
       { id: ADMIN_IDS.casoPedirDocs, title: `📎 ${ADMIN_MENU_LABELS.pedirDocumentos}` },
       { id: ADMIN_IDS.casoCompletar, title: "✏️ Completar dados" },
       { id: ADMIN_IDS.casoEnviarDocumento, title: "📤 Anexar documento" },
+      { id: ADMIN_IDS.casoRevisarDocumentos, title: "🔎 Revisar documentos" },
       { id: ADMIN_IDS.casoAgendar, title: "📅 Agendar atendimento" },
       { id: ADMIN_IDS.casoPreferenciaComunicacao, title: "💬 Preferência de comunicação" },
       { id: voltar, title: `⬅️ ${ADMIN_MENU_LABELS.voltarLista}` },
@@ -5939,6 +5961,80 @@ function telaDetalheCasoAdmin(from, idx) {
     registrarPergunta: false
   })
   return botaoPosAtendimento ? waitForActionContextButton(botaoPosAtendimento).then(montarTela) : montarTela(null)
+}
+
+async function telaRevisaoDocumentalAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.pastaDriveId) return { texto: "Este caso não possui pasta documental confirmada.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const state = await carregarEstadoDocumental(item.u.pastaDriveId)
+  const pending = listPendingHumanReviews(state || {})
+  if (!pending.length) return {
+    texto: `✅ Não há documento aguardando classificação humana no caso ${item.u.numeroCaso || "selecionado"}.`,
+    opcoes: [{ id: `admin_caso_${(sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}).casoSelecionado || 0}`, title: "⬅️ Voltar ao caso" }],
+    registrarPergunta: false
+  }
+  const current = pending[0]
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, documentoRevisaoEvidenceId: current.evidenceId, ts: Date.now() })
+  return {
+    texto: [
+      "🔎 *Revisão documental*",
+      "",
+      `Caso: ${item.u.numeroCaso || "-"}`,
+      `Arquivo: ${current.fileName}`,
+      current.pageNumber ? `Página: ${current.pageNumber}` : "",
+      `Leitura automática: ${current.detectedType}`,
+      `Confiança: ${Math.round(current.confidence * 100)}%`,
+      `Pendentes após este: ${Math.max(0, pending.length - 1)}`,
+      item.u.pastaDriveLink ? `Drive: ${item.u.pastaDriveLink}` : "",
+      "",
+      "Confira o arquivo no Drive e escolha a classificação correta."
+    ].filter(Boolean).join("\n"),
+    opcoes: [
+      { id: ADMIN_IDS.documentoRgFrente, title: "🪪 RG frente" },
+      { id: ADMIN_IDS.documentoRgVerso, title: "🪪 RG verso" },
+      { id: ADMIN_IDS.documentoIlegivel, title: "⚠️ Ilegível" },
+      { id: ADMIN_IDS.documentoDescartar, title: "🗑️ Descartar" },
+      { id: `admin_caso_${sessao.casoSelecionado || 0}`, title: "⬅️ Voltar ao caso" }
+    ],
+    registrarPergunta: false
+  }
+}
+
+async function aplicarRevisaoDocumentalAdmin(from, action) {
+  const item = obterCasoAdmin(from)
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  if (!item?.u?.pastaDriveId || !sessao.documentoRevisaoEvidenceId) return telaRevisaoDocumentalAdmin(from)
+  const state = await carregarEstadoDocumental(item.u.pastaDriveId)
+  const pendingBefore = listPendingHumanReviews(state || {})
+  const selected = pendingBefore.find(review => review.evidenceId === sessao.documentoRevisaoEvidenceId)
+  if (!selected) return telaRevisaoDocumentalAdmin(from)
+  const fileBuffer = await baixarArquivoDrive(selected.fileId)
+  const physicalSha256 = crypto.createHash("sha256").update(fileBuffer).digest("hex")
+  const result = applyHumanDocumentReview(state || {}, {
+    evidenceId: sessao.documentoRevisaoEvidenceId,
+    action,
+    reviewerId: chaveAdminWhatsApp(from),
+    sha256: physicalSha256
+  })
+  if (!result.ok) return { texto: "Não foi possível registrar a revisão. Nenhum documento foi alterado.", opcoes: [{ id: ADMIN_IDS.casoRevisarDocumentos, title: "🔄 Tentar novamente" }], registrarPergunta: false }
+  const saved = await atualizarEstadoDocumental(item.u.pastaDriveId, {
+    analysis: result.state.analysis,
+    registry: result.state.registry,
+    dossier: result.state.dossier
+  })
+  if (!saved?.arquivo) return { texto: "Não foi possível confirmar a revisão no Drive. Nenhum sucesso foi informado.", opcoes: [{ id: ADMIN_IDS.casoRevisarDocumentos, title: "🔄 Tentar novamente" }], registrarPergunta: false }
+  if (["rg_frente", "rg_verso"].includes(action)) {
+    await confirmarDocumentoCanonicoSeguro(item.u, result.evidence.fileId, { origem: "admin_human_review" })
+  }
+  await consolidarDocumentosDoCasoSeguro({ u: item.u, contexto: { origem: "admin_human_review" } })
+  item.u.revisaoDocumentalNecessaria = listPendingHumanReviews(saved.estado).length > 0
+  item.u.oraculumDocumentStatus = item.u.revisaoDocumentalNecessaria ? "em_revisao_humana" : "analisado"
+  agendarPersistenciaUsers()
+  sessoesAdminWhatsApp.set(chave, { ...sessao, documentoRevisaoEvidenceId: null, ts: Date.now() })
+  return telaRevisaoDocumentalAdmin(from)
 }
 
 function telaPreferenciaComunicacaoAdmin(from) {
@@ -6849,6 +6945,11 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
   if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
+  if (["revisar documentos", ADMIN_IDS.casoRevisarDocumentos].includes(comando)) return await telaRevisaoDocumentalAdmin(from)
+  if (comando === ADMIN_IDS.documentoRgFrente) return await aplicarRevisaoDocumentalAdmin(from, "rg_frente")
+  if (comando === ADMIN_IDS.documentoRgVerso) return await aplicarRevisaoDocumentalAdmin(from, "rg_verso")
+  if (comando === ADMIN_IDS.documentoIlegivel) return await aplicarRevisaoDocumentalAdmin(from, "ilegivel")
+  if (comando === ADMIN_IDS.documentoDescartar) return await aplicarRevisaoDocumentalAdmin(from, "descartar")
   if (["agendar atendimento", ADMIN_IDS.casoAgendar].includes(comando)) return iniciarAgendamentoCasoAdmin(from)
   if (["preferencia de comunicacao", "preferência de comunicação", ADMIN_IDS.casoPreferenciaComunicacao].includes(comando)) return telaPreferenciaComunicacaoAdmin(from)
   if ([ADMIN_IDS.preferenciaTexto].includes(comando)) return await atualizarPreferenciaComunicacaoAdmin(from, "texto")
@@ -18264,8 +18365,10 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
 // Um cron externo gratuito pode apenas acordar este endpoint; todas as
 // regras, reservas, tentativas e resultados permanecem no Oráculum/Neon.
 // ------------------------------------------------------------------
-const INTERNAL_SCHEDULER_ENABLED =
-  String(process.env.INTERNAL_SCHEDULER_ENABLED || "false").trim().toLowerCase() === "true"
+const INTERNAL_SCHEDULER_FLAG = String(process.env.INTERNAL_SCHEDULER_ENABLED || "").trim().toLowerCase()
+const INTERNAL_SCHEDULER_ENABLED = INTERNAL_SCHEDULER_FLAG
+  ? INTERNAL_SCHEDULER_FLAG === "true"
+  : String(process.env.NODE_ENV || "").trim().toLowerCase() === "production"
 const INTERNAL_SCHEDULER_INTERVAL_MS = Math.max(
   60000,
   Number(process.env.INTERNAL_SCHEDULER_INTERVAL_MS || 300000)
@@ -18419,6 +18522,24 @@ async function executarAgendadorInterno() {
 }
 
 app.post("/internal/processar-agendamentos", validarWebhookInterno, async (_req, res) => {
+  try {
+    if (!INTERNAL_SCHEDULER_ENABLED) return res.json({ status: "disabled" })
+    const result = await executarAgendadorInterno()
+    return res.json({ status: "ok", ...result })
+  } catch (error) {
+    logErro("internal_scheduler", error.message, error)
+    return res.status(503).json({ status: "unavailable" })
+  }
+})
+
+app.post("/internal/processar-agendamentos-github", async (req, res) => {
+  const verification = await verifyGitHubActionsOidc(bearerToken(req.headers), {
+    repository: process.env.INTERNAL_SCHEDULER_GITHUB_REPOSITORY || "oraculumjuridico/oraculum-bot"
+  })
+  if (!verification.ok) {
+    logInfo({ event: "scheduler_wakeup_rejected", queue: "internal_scheduler", reasonCode: verification.reason })
+    return res.status(401).json({ status: "unauthorized" })
+  }
   try {
     if (!INTERNAL_SCHEDULER_ENABLED) return res.json({ status: "disabled" })
     const result = await executarAgendadorInterno()

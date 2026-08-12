@@ -312,7 +312,26 @@ const CAMPOS_ADMIN_ASSISTIDO = {
   dataDemissao: {
     label: "Data demissão",
     pergunta: "Qual foi a data de demissão?"
-  }
+  },
+  jornadaTrabalho: { label: "Jornada", pergunta: "Qual era a jornada habitual de trabalho?" },
+  remuneracao: { label: "Remuneração", pergunta: "Qual era a remuneração aproximada?" },
+  verbasPendentes: { label: "Verbas pendentes", pergunta: "Quais pagamentos ou direitos ficaram pendentes?" },
+  provasDisponiveis: { label: "Provas disponíveis", pergunta: "Quais documentos ou outras provas estão disponíveis?" },
+  acordoOuProcessoAnterior: { label: "Acordo ou processo anterior", pergunta: "Já existe acordo, decisão ou processo anterior?" },
+  situacaoAtual: { label: "Situação atual", pergunta: "Como está a situação atualmente?" },
+  riscoImediato: { label: "Risco imediato", pergunta: "Existe risco imediato?" },
+  dataFato: { label: "Data do fato", pergunta: "Quando ocorreu o fato principal?" },
+  valorEnvolvido: { label: "Valor envolvido", pergunta: "Qual valor está envolvido?" },
+  tentativaSolucao: { label: "Tentativa de solução", pergunta: "Houve tentativa anterior de solução?" },
+  prejuizos: { label: "Prejuízos", pergunta: "Quais prejuízos concretos ocorreram?" },
+  autorizacaoOperacao: { label: "Autorização", pergunta: "A operação foi reconhecida e autorizada?" },
+  fatoPenal: { label: "Fato penal", pergunta: "O que aconteceu, quando e onde?" },
+  delegaciaOuProcesso: { label: "Delegacia ou processo", pergunta: "Existe boletim, inquérito ou processo?" },
+  custodiaOuMedida: { label: "Custódia ou medida", pergunta: "Há prisão, medida protetiva ou restrição vigente?" },
+  prazoOuAudiencia: { label: "Prazo ou audiência", pergunta: "Existe prazo ou audiência marcada?" },
+  relacaoImovel: { label: "Relação com o imóvel", pergunta: "Qual é a relação jurídica com o imóvel?" },
+  contratoOuRegistro: { label: "Contrato ou registro", pergunta: "Existe contrato, escritura ou matrícula?" },
+  situacaoPosse: { label: "Situação da posse", pergunta: "Quem ocupa o imóvel e desde quando?" }
 }
 
 const OBRIGATORIOS_BASE = [

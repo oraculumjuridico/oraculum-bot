@@ -139,7 +139,8 @@
     "/pos-consulta",
     "/consulta-status",
     "/lembrete",
-    "/internal/processar-agendamentos"
+    "/internal/processar-agendamentos",
+    "/internal/processar-agendamentos-github"
   ],
   "scan": {
     "include": ["server.js", "src", "scripts"],

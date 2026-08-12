@@ -6,6 +6,7 @@ const { isPostHumanComplementationEnabled } = require("./post-human-feature-flag
 const { PostHumanActionContextRepository } = require("./post-human-action-context-repository")
 
 const ACTION_ID = "admin_post_human_completed"
+const DEFAULT_PRODUCTION_PILOT_CASES = "PRV.260801.813"
 const actionContexts = new Map()
 function actionTtlMs() { return Math.max(1000, Number(process.env.POST_HUMAN_ACTION_TTL_MS || 15 * 60 * 1000)) }
 function actionMaxContexts() { return Math.max(1, Math.min(10000, Number(process.env.POST_HUMAN_ACTION_MAX_CONTEXTS || 500))) }
@@ -21,7 +22,10 @@ function configuredPilotCases() {
   if (canonical) return canonical
   const legacy = String(process.env.POST_HUMAN_COMPLEMENTATION_ALLOWLIST || "").trim()
   if (legacy && !legacyAllowlistWarningEmitted) { legacyAllowlistWarningEmitted = true; console.warn("[POST_HUMAN] alias legado de allowlist em uso; configure POST_HUMAN_PILOT_CASES") }
-  return legacy
+  if (legacy) return legacy
+  return String(process.env.NODE_ENV || "").trim().toLowerCase() === "production"
+    ? DEFAULT_PRODUCTION_PILOT_CASES
+    : ""
 }
 function getAllowedPilotCases(raw = configuredPilotCases()) {
   const source = String(raw ?? "").trim(); if (!source) return new Set()

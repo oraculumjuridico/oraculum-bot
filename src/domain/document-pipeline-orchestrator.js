@@ -7,9 +7,11 @@ const { avaliarQualidadeImagem } = require("./document-image-quality")
 const DEFAULT_PREPROCESSING_PROFILES = Object.freeze([
   "standard",
   "grayscale_contrast",
-  "text_enhanced"
+  "text_enhanced",
+  "text_enhanced_rotate_90",
+  "text_enhanced_rotate_270"
 ])
-const MAX_DOCUMENT_VARIANTS = 3
+const MAX_DOCUMENT_VARIANTS = 5
 const SAFE_CLASSIFICATION_CONFIDENCE = 0.85
 const DEFAULT_TOTAL_PIPELINE_TIMEOUT_MS = 45000
 
@@ -156,7 +158,7 @@ async function executarTentativaDocumental({ buffer, mimeType, profile, modules,
   }, options.qualityOptions || {})
   resultado.qualidade.originalWarnings = originalQuality?.warnings || []
   try {
-    const pageSegmentationMode = profile === "text_enhanced" ? "11" : profile === "grayscale_contrast" ? "6" : "3"
+    const pageSegmentationMode = profile.startsWith("text_enhanced") ? "11" : profile === "grayscale_contrast" ? "6" : "3"
     resultado.ocr = await modules.executarOCRImagem({
       buffer: resultado.preprocessamento.buffer,
       mimeType: resultado.preprocessamento.mimeType

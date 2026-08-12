@@ -52,6 +52,9 @@ function usuarioRealCompleto(overrides = {}) {
     telefoneNormalizado: "5511999999999", pastaDriveId: "DRIVE-EXISTENTE",
     nome: "Ana Silva", whatsappContato: "5511999999999", cidade: "Recife", uf: "PE",
     area: "Outros", tipoCaso: "orientacao", descricao: "Relato juridico suficientemente detalhado.",
+    parteContraria: "Empresa Exemplo", dataFato: "10/07/2026",
+    objetivo: "Obter orientacao e solucao do problema.",
+    provasDisponiveis: "Contrato e comprovantes.", prazoOuAudiencia: "Nao ha prazo urgente.",
     listaDocumental: ["RG"], docsEntregues: ["RG"], docsAusentes: [], docsParciais: [],
     revisaoDocumentalNecessaria: false, ultimaMsg: Date.now(),
     ...overrides

@@ -3,7 +3,9 @@ const sharp = require("sharp")
 const PREPROCESSING_PROFILES = Object.freeze({
   standard: "standard",
   grayscale_contrast: "grayscale_contrast",
-  text_enhanced: "text_enhanced"
+  text_enhanced: "text_enhanced",
+  text_enhanced_rotate_90: "text_enhanced_rotate_90",
+  text_enhanced_rotate_270: "text_enhanced_rotate_270"
 })
 
 const DEFAULT_IMAGE_LIMITS = Object.freeze({
@@ -81,10 +83,12 @@ function validarDimensoes(metadata = {}, limits = DEFAULT_IMAGE_LIMITS) {
 }
 
 function aplicarPerfil(image, metadata, processingOptions) {
-  const common = image
+  let common = image
     .rotate()
     .flatten({ background: processingOptions.trimBackground })
     .trim({ background: processingOptions.trimBackground, threshold: processingOptions.trimThreshold })
+  if (processingOptions.profile === PREPROCESSING_PROFILES.text_enhanced_rotate_90) common = common.rotate(90)
+  if (processingOptions.profile === PREPROCESSING_PROFILES.text_enhanced_rotate_270) common = common.rotate(270)
 
   if (processingOptions.profile === PREPROCESSING_PROFILES.grayscale_contrast) {
     return common
@@ -93,7 +97,7 @@ function aplicarPerfil(image, metadata, processingOptions) {
       .linear(1.2, Math.round((1 - 1.2) * 64))
       .sharpen({ sigma: 1.05 })
   }
-  if (processingOptions.profile === PREPROCESSING_PROFILES.text_enhanced) {
+  if ([PREPROCESSING_PROFILES.text_enhanced, PREPROCESSING_PROFILES.text_enhanced_rotate_90, PREPROCESSING_PROFILES.text_enhanced_rotate_270].includes(processingOptions.profile)) {
     const width = Number(metadata.width || 0)
     const targetWidth = Math.min(
       processingOptions.limits.maxUpscaleWidth,
@@ -120,8 +124,9 @@ function passosPerfil(profile, resized) {
   if (profile === PREPROCESSING_PROFILES.grayscale_contrast) {
     return [...common, "grayscale", "normalize_levels", "strong_contrast", "sharpen_for_ocr", "png_derivative"]
   }
-  if (profile === PREPROCESSING_PROFILES.text_enhanced) {
-    return [...common, ...(resized ? ["controlled_upscale"] : []), "grayscale", "normalize_levels", "median_noise_reduction", "sharpen_for_ocr", "binary_threshold", "png_derivative"]
+  if ([PREPROCESSING_PROFILES.text_enhanced, PREPROCESSING_PROFILES.text_enhanced_rotate_90, PREPROCESSING_PROFILES.text_enhanced_rotate_270].includes(profile)) {
+    const rotation = profile.endsWith("_90") ? ["rotate_90"] : profile.endsWith("_270") ? ["rotate_270"] : []
+    return [...common, ...rotation, ...(resized ? ["controlled_upscale"] : []), "grayscale", "normalize_levels", "median_noise_reduction", "sharpen_for_ocr", "binary_threshold", "png_derivative"]
   }
   return [...common, "normalize_levels", "brightness_adjustment", "contrast_adjustment", "sharpen_for_ocr", "png_derivative"]
 }
@@ -161,7 +166,7 @@ async function preprocessarImagemDocumento(input, options = {}) {
     },
     steps: passosPerfil(
       processingOptions.profile,
-      processingOptions.profile === PREPROCESSING_PROFILES.text_enhanced && processedMetadata.width > originalMetadata.width
+      processingOptions.profile.startsWith("text_enhanced") && processedMetadata.width > originalMetadata.width
     )
   }
 }

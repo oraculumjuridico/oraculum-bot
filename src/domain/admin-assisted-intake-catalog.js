@@ -46,14 +46,79 @@ const AREA_QUESTIONS = Object.freeze({
     { id: "recursoAdministrativo", postHumanOnly: true, client: "Foi apresentado recurso administrativo?", postHuman: ({ data }) => isDenied(data) },
     { id: "beneficioAnterior", postHumanOnly: true, client: "Você já recebeu benefício por incapacidade anteriormente?", postHuman: ({ data }) => isIncapacity(data) }
   ],
-  Trabalhista: [{ id: "empresa", required: true, admin: "Qual empresa está envolvida?", client: "Qual empresa está envolvida?" }, { id: "motivo", required: true, admin: "O vínculo terminou? Por qual motivo?", client: "O vínculo terminou? Por qual motivo?" }],
-  Família: [{ id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" }, { id: "vinculoFamiliar", required: true, admin: "Qual é a relação familiar entre as partes?", client: "Qual é a relação familiar entre as partes?" }],
-  Consumidor: [{ id: "fornecedor", required: true, admin: "Qual fornecedor está envolvido?", client: "Qual fornecedor está envolvido?" }, { id: "produtoServico", required: true, admin: "Qual produto ou serviço está envolvido?", client: "Qual produto ou serviço está envolvido?" }],
-  Bancário: [{ id: "fornecedor", required: true, admin: "Qual instituição financeira está envolvida?", client: "Qual instituição financeira está envolvida?" }, { id: "problema", required: true, admin: "Qual é o problema bancário?", client: "Qual é o problema bancário?" }],
-  Penal: [{ id: "posicaoPenal", required: true, admin: "O cliente é vítima, investigado ou acusado?", client: "Você é vítima, investigado ou acusado?" }],
-  Civil: [{ id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" }, { id: "contratoOuFato", required: true, admin: "Existe contrato ou qual fato originou a demanda?", client: "Existe contrato ou qual fato originou a demanda?" }],
-  Imobiliário: [{ id: "imovel", required: true, admin: "Qual imóvel está envolvido?", client: "Qual imóvel está envolvido?" }, { id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" }],
-  Outros: []
+  Trabalhista: [
+    { id: "empresa", required: true, admin: "Qual empresa está envolvida?", client: "Qual empresa está envolvida?" },
+    { id: "motivo", required: true, admin: "O vínculo terminou? Por qual motivo?", client: "O vínculo terminou? Por qual motivo?" },
+    { id: "cargo", postHumanOnly: true, postHuman: true, client: "Qual era sua função ou cargo e quais atividades realizava?" },
+    { id: "dataAdmissao", postHumanOnly: true, postHuman: true, client: "Quando começou a trabalhar para essa empresa?" },
+    { id: "dataDemissao", postHumanOnly: true, postHuman: true, client: "Quando o trabalho terminou ou quando ocorreu o problema principal?" },
+    { id: "jornadaTrabalho", postHumanOnly: true, postHuman: true, client: "Qual era sua jornada habitual, incluindo dias, horários e intervalos?" },
+    { id: "remuneracao", postHumanOnly: true, postHuman: true, client: "Qual era sua remuneração aproximada e como ela era paga?" },
+    { id: "verbasPendentes", postHumanOnly: true, postHuman: true, client: "Quais pagamentos, verbas ou direitos ficaram pendentes?" },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais documentos, conversas, recibos ou testemunhas você possui?" }
+  ],
+  Família: [
+    { id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" },
+    { id: "vinculoFamiliar", required: true, admin: "Qual é a relação familiar entre as partes?", client: "Qual é a relação familiar entre as partes?" },
+    { id: "filhos", postHumanOnly: true, postHuman: true, client: "Há filhos ou dependentes envolvidos? Informe as idades e com quem moram." },
+    { id: "acordoOuProcessoAnterior", postHumanOnly: true, postHuman: true, client: "Já existe acordo, decisão ou processo anterior entre as partes?" },
+    { id: "situacaoAtual", postHumanOnly: true, postHuman: true, client: "Como está a situação atualmente e qual foi o último fato importante?" },
+    { id: "objetivo", postHumanOnly: true, postHuman: true, client: "Qual resultado você espera obter?" },
+    { id: "riscoImediato", postHumanOnly: true, postHuman: true, client: "Existe risco imediato, violência, retirada de criança ou outra urgência?" }
+  ],
+  Consumidor: [
+    { id: "fornecedor", required: true, admin: "Qual fornecedor está envolvido?", client: "Qual fornecedor está envolvido?" },
+    { id: "produtoServico", required: true, admin: "Qual produto ou serviço está envolvido?", client: "Qual produto ou serviço está envolvido?" },
+    { id: "dataFato", postHumanOnly: true, postHuman: true, client: "Quando ocorreu a compra, contratação ou problema?" },
+    { id: "valorEnvolvido", postHumanOnly: true, postHuman: true, client: "Qual valor foi pago, cobrado ou perdido aproximadamente?" },
+    { id: "tentativaSolucao", postHumanOnly: true, postHuman: true, client: "Você tentou resolver com a empresa? Informe protocolos e respostas, se houver." },
+    { id: "prejuizos", postHumanOnly: true, postHuman: true, client: "Quais prejuízos concretos esse problema causou?" },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais comprovantes, contratos, notas, conversas ou imagens você possui?" }
+  ],
+  Bancário: [
+    { id: "fornecedor", required: true, admin: "Qual instituição financeira está envolvida?", client: "Qual instituição financeira está envolvida?" },
+    { id: "problema", required: true, admin: "Qual é o problema bancário?", client: "Qual é o problema bancário?" },
+    { id: "produtoServico", postHumanOnly: true, postHuman: true, client: "Qual conta, cartão, empréstimo ou serviço bancário está envolvido?" },
+    { id: "dataFato", postHumanOnly: true, postHuman: true, client: "Quando começou a cobrança, desconto, bloqueio ou fraude?" },
+    { id: "valorEnvolvido", postHumanOnly: true, postHuman: true, client: "Qual valor está envolvido e ele continua sendo cobrado ou descontado?" },
+    { id: "autorizacaoOperacao", postHumanOnly: true, postHuman: true, client: "Você reconhece e autorizou a contratação ou transação?" },
+    { id: "tentativaSolucao", postHumanOnly: true, postHuman: true, client: "Você contestou no banco? Informe protocolos e respostas, se houver." },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais extratos, faturas, contratos ou comprovantes você possui?" }
+  ],
+  Penal: [
+    { id: "posicaoPenal", required: true, admin: "O cliente é vítima, investigado ou acusado?", client: "Você é vítima, investigado ou acusado?" },
+    { id: "fatoPenal", postHumanOnly: true, postHuman: true, client: "O que aconteceu, quando e onde ocorreu?" },
+    { id: "delegaciaOuProcesso", postHumanOnly: true, postHuman: true, client: "Existe boletim, inquérito, audiência ou processo? Informe os dados que souber." },
+    { id: "custodiaOuMedida", postHumanOnly: true, postHuman: true, client: "Há prisão, medida protetiva, intimação ou restrição em vigor?" },
+    { id: "prazoOuAudiencia", postHumanOnly: true, postHuman: true, client: "Existe audiência, prazo ou comparecimento marcado?" },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais documentos, mensagens, vídeos ou testemunhas existem?" }
+  ],
+  Civil: [
+    { id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" },
+    { id: "contratoOuFato", required: true, admin: "Existe contrato ou qual fato originou a demanda?", client: "Existe contrato ou qual fato originou a demanda?" },
+    { id: "dataFato", postHumanOnly: true, postHuman: true, client: "Quando ocorreu o fato ou começou o descumprimento?" },
+    { id: "valorEnvolvido", postHumanOnly: true, postHuman: true, client: "Existe valor econômico envolvido? Qual é o valor aproximado?" },
+    { id: "tentativaSolucao", postHumanOnly: true, postHuman: true, client: "Houve cobrança, notificação, acordo ou tentativa anterior de solução?" },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais contratos, recibos, conversas ou testemunhas existem?" },
+    { id: "prazoOuAudiencia", postHumanOnly: true, postHuman: true, client: "Existe prazo, audiência ou risco de perda imediata?" }
+  ],
+  Imobiliário: [
+    { id: "imovel", required: true, admin: "Qual imóvel está envolvido?", client: "Qual imóvel está envolvido?" },
+    { id: "parteContraria", required: true, admin: "Quem é a outra parte?", client: "Quem é a outra parte?" },
+    { id: "relacaoImovel", postHumanOnly: true, postHuman: true, client: "O caso envolve compra, venda, aluguel, posse, condomínio ou regularização?" },
+    { id: "contratoOuRegistro", postHumanOnly: true, postHuman: true, client: "Existe contrato, escritura, matrícula ou outro registro do imóvel?" },
+    { id: "situacaoPosse", postHumanOnly: true, postHuman: true, client: "Quem ocupa o imóvel atualmente e desde quando?" },
+    { id: "valorEnvolvido", postHumanOnly: true, postHuman: true, client: "Há parcelas, aluguel, condomínio ou outro valor pendente?" },
+    { id: "riscoImediato", postHumanOnly: true, postHuman: true, client: "Existe despejo, leilão, invasão, obra ou outro risco imediato?" },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais documentos, recibos, fotos ou conversas você possui?" }
+  ],
+  Outros: [
+    { id: "parteContraria", postHumanOnly: true, postHuman: true, client: "Quem são as pessoas, empresas ou órgãos envolvidos?" },
+    { id: "dataFato", postHumanOnly: true, postHuman: true, client: "Quando ocorreu o fato principal?" },
+    { id: "objetivo", postHumanOnly: true, postHuman: true, client: "Qual resultado você espera obter?" },
+    { id: "provasDisponiveis", postHumanOnly: true, postHuman: true, client: "Quais documentos ou outras provas você possui?" },
+    { id: "prazoOuAudiencia", postHumanOnly: true, postHuman: true, client: "Existe prazo, audiência ou risco urgente?" }
+  ]
 })
 
 function value(data, field) { return String(data?.[field]?.valor ?? data?.[field] ?? "").trim() }

@@ -118,6 +118,16 @@ function main() {
   assert.equal(guiadosComOcrInconclusivo.comprovantesResidencia.length, 1)
   assert.equal(guiadosComOcrInconclusivo.outros.length, 0)
 
+  const tentativasVerso = agruparDocumentosProcessados([
+    { ...doc("Documento desconhecido", "outros", null, {}, "frente.jpg"), contexto: { fluxoDocumento: "guiado", documentoId: "doc_rg", documentoLabel: "RG ou CNH", folha: "Frente", numeroCaso: "TESTE" } },
+    { ...doc("Documento desconhecido", "outros", null, {}, "verso-1.jpg"), contexto: { fluxoDocumento: "guiado", documentoId: "doc_rg", documentoLabel: "RG ou CNH", folha: "Verso", numeroCaso: "TESTE" } },
+    { ...doc("Documento desconhecido", "outros", null, {}, "verso-2.jpg"), contexto: { fluxoDocumento: "guiado", documentoId: "doc_rg", documentoLabel: "RG ou CNH", folha: "Verso", numeroCaso: "TESTE" } }
+  ])
+  assert.equal(tentativasVerso.revisaoHumana.length, 2)
+  assert.equal(tentativasVerso.documentosPessoais.length, 1)
+  assert.equal(tentativasVerso.outros.length, 0)
+  assert.ok(tentativasVerso.avisos.some(aviso => aviso.code === "DOCUMENT_GROUPER_REPEATED_GUIDED_SIDE_REVIEW"))
+
   const invalido = agruparDocumentosProcessados(null)
   assert.equal(invalido.erros[0].code, "DOCUMENT_GROUPER_INPUT_INVALID")
   assert.equal(invalido.documentosPessoais.length, 0)

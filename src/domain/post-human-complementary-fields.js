@@ -45,7 +45,19 @@ const USER_FIELDS = Object.freeze({
   bpcSituacaoAdministrativa: ["bpcSituacaoAdministrativa"],
   empresa: ["empresa"], parteContraria: ["parteContraria"], vinculoFamiliar: ["vinculoFamiliar"],
   fornecedor: ["fornecedor"], produtoServico: ["produtoServico"], problema: ["problema"],
-  posicaoPenal: ["posicaoPenal"], contratoOuFato: ["contratoOuFato"], imovel: ["imovel"]
+  posicaoPenal: ["posicaoPenal"], contratoOuFato: ["contratoOuFato"], imovel: ["imovel"],
+  cargo: ["cargo"], dataAdmissao: ["dataAdmissao"], dataDemissao: ["dataDemissao"],
+  jornadaTrabalho: ["jornadaTrabalho"], remuneracao: ["remuneracao"],
+  verbasPendentes: ["verbasPendentes"], provasDisponiveis: ["provasDisponiveis"],
+  filhos: ["filhos"], acordoOuProcessoAnterior: ["acordoOuProcessoAnterior"],
+  situacaoAtual: ["situacaoAtual"], riscoImediato: ["riscoImediato"],
+  dataFato: ["dataFato"], valorEnvolvido: ["valorEnvolvido"],
+  tentativaSolucao: ["tentativaSolucao"], prejuizos: ["prejuizos"],
+  autorizacaoOperacao: ["autorizacaoOperacao"], fatoPenal: ["fatoPenal"],
+  delegaciaOuProcesso: ["delegaciaOuProcesso"], custodiaOuMedida: ["custodiaOuMedida"],
+  prazoOuAudiencia: ["prazoOuAudiencia"], relacaoImovel: ["relacaoImovel"],
+  contratoOuRegistro: ["contratoOuRegistro"], situacaoPosse: ["situacaoPosse"],
+  objetivo: ["objetivo"]
 })
 
 const CAMPOS_CADASTRAIS = new Set([

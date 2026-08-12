@@ -36,4 +36,13 @@ runTest("número 1", "1", false);
 runTest("número 0", "0", false);
 runTest("whitespace", "  true  ", false);
 
+const originalNodeEnv = process.env.NODE_ENV;
+const originalFlag = process.env.POST_HUMAN_COMPLEMENTATION_ENABLED;
+delete process.env.POST_HUMAN_COMPLEMENTATION_ENABLED;
+process.env.NODE_ENV = "production";
+console.log(`${isPostHumanComplementationEnabled() ? "PASS" : "FAIL"}: produção sem configuração explícita habilita o piloto controlado`);
+if (!isPostHumanComplementationEnabled()) process.exitCode = 1;
+if (originalFlag === undefined) delete process.env.POST_HUMAN_COMPLEMENTATION_ENABLED; else process.env.POST_HUMAN_COMPLEMENTATION_ENABLED = originalFlag;
+if (originalNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = originalNodeEnv;
+
 console.log("=== Fim dos testes ===");
