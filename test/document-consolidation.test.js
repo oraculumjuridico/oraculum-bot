@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict")
-const { consolidarDocumentosDoCaso } = require("../src/domain/document-consolidation")
+const { consolidarDocumentosDoCaso, prepararDocumentosDasAnalises } = require("../src/domain/document-consolidation")
 
 function analise(fileId, tipo, hash) {
   return {
@@ -11,6 +11,26 @@ function analise(fileId, tipo, hash) {
 }
 
 async function main() {
+  const paginasPdf = await prepararDocumentosDasAnalises([{
+    status: "concluido",
+    arquivo: { fileId: "pdf-1", nome: "entrada.pdf", mimeType: "application/pdf" },
+    pipeline: { units: [
+      { unit: { pageNumber: 1 }, pipeline: { classificacao: { tipoDocumento: "RG frente" }, extracao: { camposExtraidos: { nome: "Pessoa Piloto" } } } },
+      { unit: { pageNumber: 2 }, pipeline: { classificacao: { tipoDocumento: "RG verso" }, extracao: { camposExtraidos: {} } } }
+    ] }
+  }], {
+    baixarArquivoDrive: async () => Buffer.from("pdf-ficticio"),
+    normalizarEntradaDocumental: async () => ({ units: [
+      { pageNumber: 1, mimeType: "image/png", buffer: Buffer.from("pagina-1") },
+      { pageNumber: 2, mimeType: "image/png", buffer: Buffer.from("pagina-2") }
+    ] })
+  })
+  assert.equal(paginasPdf.documentos.length, 2)
+  assert.equal(paginasPdf.arquivosPreparados, 1)
+  assert.ok(paginasPdf.documentos.every(item => item.sourceFileId === "pdf-1"))
+  assert.deepEqual(paginasPdf.documentos.map(item => item.classificacao.tipoDocumento), ["RG frente", "RG verso"])
+  assert.ok(paginasPdf.documentos.every(item => item.mimeType === "image/png" && Buffer.isBuffer(item.buffer)))
+
   let estado = {
     analysis: { analises: [analise("pessoal-1", "RG frente", "h1"), analise("ctps-1", "CTPS pagina", "h2"), analise("residencia-1", "Comprovante de residencia", "h3"), { status: "erro", arquivo: { fileId: "erro-1" } }] },
     registry: {},

@@ -25,11 +25,12 @@ const {
   assert.equal(scope.scopeType, "consultation")
   assert.equal(scope.scopeId, "event-1")
   assert.deepEqual(scope.jobs.map(job => job.kind), [
-    "consultation_reminder", "consultation_reminder", "consultation_reminder", "consultation_lifecycle"
+    "consultation_reminder", "consultation_reminder", "consultation_reminder", "consultation_sync", "consultation_lifecycle"
   ])
   assert.deepEqual(scope.jobs.slice(0, 3).map(job => job.payload.tipo), ["24h", "hoje", "1h"])
   assert.equal(scope.jobs.at(-1).scheduledFor, "2026-08-20T16:00:00.000Z")
-  assert.equal(new Set(scope.jobs.map(job => job.dedupeKey)).size, 4)
+  assert.equal(scope.jobs.find(job => job.kind === "consultation_sync").payload.datetime, start)
+  assert.equal(new Set(scope.jobs.map(job => job.dedupeKey)).size, 5)
 }
 
 {

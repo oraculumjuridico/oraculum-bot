@@ -101,6 +101,13 @@ function main() {
   assert.equal(incerta.ctps.length, 2)
   assert.ok(incerta.avisos.some(aviso => aviso.code === "DOCUMENT_GROUPER_CTPS_REVIEW"))
 
+  const paginasMesmoPdf = agruparDocumentosProcessados([
+    { ...doc("CTPS pagina", "documentos_pessoais", "trabalho", {}, "ctps.pdf"), fileId: "ctps.pdf#page=1", sourceFileId: "ctps.pdf", pageNumber: 1 },
+    { ...doc("CTPS pagina", "documentos_pessoais", "trabalho", {}, "ctps.pdf"), fileId: "ctps.pdf#page=2", sourceFileId: "ctps.pdf", pageNumber: 2 }
+  ])
+  assert.equal(paginasMesmoPdf.ctps.length, 1)
+  assert.deepEqual(paginasMesmoPdf.ctps[0].documentos.map(item => item.pageNumber), [1, 2])
+
   const invalido = agruparDocumentosProcessados(null)
   assert.equal(invalido.erros[0].code, "DOCUMENT_GROUPER_INPUT_INVALID")
   assert.equal(invalido.documentosPessoais.length, 0)

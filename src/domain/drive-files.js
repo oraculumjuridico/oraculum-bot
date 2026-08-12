@@ -90,8 +90,54 @@ async function criarPastaCliente(numeroCaso, nome, area, situacao, tipo) {
       logDebug(`[DRIVE] Pasta reutilizada: ${existentes.data.files[0].name}`)
       return existentes.data.files[0]
     }
+    const numeroCasoSeguro = escapeDriveQueryValue(numeroCaso)
+    const porCaso = await getDrive().files.list({
+      q: [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        `'${pastaAreaId}' in parents`,
+        `appProperties has { key='oraculumCaseNumber' and value='${numeroCasoSeguro}' }`,
+        "trashed = false"
+      ].join(" and "),
+      fields: "files(id,name,webViewLink,appProperties)",
+      pageSize: 2
+    })
+    if (porCaso.data.files?.length === 1) {
+      logDebug(`[DRIVE] Pasta reutilizada pela chave do caso: ${porCaso.data.files[0].name}`)
+      return porCaso.data.files[0]
+    }
+    if ((porCaso.data.files?.length || 0) > 1) {
+      logErro("drive", "[DRIVE] Mais de uma pasta encontrada para o mesmo caso; criação bloqueada")
+      return null
+    }
+
+    // Compatibilidade com pastas antigas, criadas antes da chave imutável.
+    const legado = await getDrive().files.list({
+      q: [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        `name contains '${numeroCasoSeguro}'`,
+        `'${pastaAreaId}' in parents`,
+        "trashed = false"
+      ].join(" and "),
+      fields: "files(id,name,webViewLink)",
+      pageSize: 10
+    })
+    const prefixo = `${numeroCaso} - `
+    const pastasDoCaso = (legado.data.files || []).filter(item => String(item.name || "").startsWith(prefixo))
+    if (pastasDoCaso.length === 1) {
+      logDebug(`[DRIVE] Pasta legada reutilizada pelo número do caso: ${pastasDoCaso[0].name}`)
+      return pastasDoCaso[0]
+    }
+    if (pastasDoCaso.length > 1) {
+      logErro("drive", "[DRIVE] Pastas legadas duplicadas para o mesmo caso; criação bloqueada")
+      return null
+    }
     const res = await getDrive().files.create({
-      requestBody: { name: nomePasta, mimeType: "application/vnd.google-apps.folder", parents: [pastaAreaId] },
+      requestBody: {
+        name: nomePasta,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [pastaAreaId],
+        appProperties: { oraculumCaseNumber: String(numeroCaso) }
+      },
       fields: "id,name,webViewLink"
     })
     logDebug(`[DRIVE] Pasta criada: ${res.data.name} (área: ${nomeArea})`)

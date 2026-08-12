@@ -3,7 +3,7 @@
 const crypto = require("node:crypto")
 
 const TABLE = "oraculum_scheduled_jobs"
-const KINDS = new Set(["consultation_reminder", "consultation_lifecycle", "reengagement"])
+const KINDS = new Set(["consultation_reminder", "consultation_lifecycle", "consultation_sync", "reengagement"])
 const FINAL_STATUSES = new Set(["sent", "skipped", "cancelled", "failed"])
 
 function fail(code) { throw new Error(code) }

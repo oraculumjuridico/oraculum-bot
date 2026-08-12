@@ -5,7 +5,7 @@ const CONTACT_UPDATE_FIELDS = new Set([
 ])
 const DEAL_UPDATE_FIELDS = new Set([
   "description", "descricao_completa", "resumo_cliente", "area_juridica", "tipo_de_caso",
-  "beneficio", "motivo", "situacao_caso", "nb", "urgencia"
+  "beneficio", "motivo", "situacao_caso", "nb", "urgencia", "oraculum_case_facts"
 ])
 const PROTECTED_DEAL_FIELDS = new Set([
   "numero_de_caso", "dealstage", "hubspot_owner_id", "hs_object_id", "id",
@@ -15,11 +15,32 @@ const PROTECTED_DEAL_FIELDS = new Set([
 function normalize(value) { return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR") }
 function empty(value) { return value === null || value === undefined || String(value).trim() === "" }
 
+function jsonObject(value) {
+  if (empty(value)) return {}
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 function planSafeUpdate(current = {}, incoming = {}, allowed = []) {
   const updates = {}; const divergences = []; const unchanged = []; const blocked = []
   const allow = new Set(allowed)
   for (const field of Object.keys(incoming)) {
     if (!allow.has(field)) { blocked.push({ field, reason: "property_not_allowed" }); continue }
+    if (field === "oraculum_case_facts") {
+      const atual = jsonObject(current[field])
+      const recebido = jsonObject(incoming[field])
+      if (!atual || !recebido) { blocked.push({ field, reason: "invalid_json_object" }); continue }
+      const conflitos = Object.keys(recebido).filter(key => !empty(atual[key]) && normalize(atual[key]) !== normalize(recebido[key]))
+      if (conflitos.length) { divergences.push({ field, keys: conflitos.sort() }); continue }
+      const merged = JSON.stringify({ ...atual, ...recebido })
+      if (normalize(current[field]) === normalize(merged)) unchanged.push(field)
+      else updates[field] = merged
+      continue
+    }
     if (empty(current[field])) updates[field] = incoming[field]
     else if (normalize(current[field]) === normalize(incoming[field])) unchanged.push(field)
     else divergences.push({ field })

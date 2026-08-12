@@ -455,7 +455,7 @@ function planejarSincronizacaoDocumentalCanonicaHubSpot(input = {}, options = {}
   const objectId = obterId(contato, ["contactId", "contatoId"])
   const minConfidence = Number(options.minConfidence || DEFAULT_MIN_CONFIDENCE)
   if (!decision || decision.requirementId !== "doc_rg") return planoCanonicoBloqueado(registry, decision, "canonical_decision_missing")
-  if (decision.status !== "delivered" || normalizarArray(decision.divergenceIds).length) {
+  if (!["partial", "delivered"].includes(decision.status) || normalizarArray(decision.divergenceIds).length) {
     return planoCanonicoBloqueado(registry, decision, decision.status === "review" ? "canonical_decision_in_review" : "canonical_decision_not_delivered")
   }
   if (!objectId) return planoCanonicoBloqueado(registry, decision, "contact_identity_missing")

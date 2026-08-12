@@ -81,3 +81,38 @@ test("lista achatada mantem cadastral antes de juridico", () => {
   assert.equal(result.camposJuridicosPendentes[0], "beneficio")
   assert.equal(result.camposPendentes.indexOf("cidade") < result.camposPendentes.indexOf("beneficio"), true)
 })
+
+test("complementacao pos-humana inclui campos juridicos obrigatorios de outras areas", () => {
+  const result = resolveComplementaryContext(base({
+    usuario: {
+      area: "Trabalhista",
+      areaJuridica: "Trabalhista",
+      tipoCaso: "Verbas rescisorias",
+      descricao: "Contrato encerrado sem pagamento das verbas."
+    },
+    deal: { id: "D", properties: { area_juridica: "Trabalhista" } }
+  }))
+  assert.equal(result.camposJuridicosPendentes.includes("empresa"), true)
+  assert.equal(result.camposJuridicosPendentes.includes("motivo"), true)
+})
+
+test("campo juridico respondido fora do INSS nao reaparece", () => {
+  const result = resolveComplementaryContext(base({
+    usuario: { area: "Trabalhista", areaJuridica: "Trabalhista", tipoCaso: "Verbas rescisorias" },
+    deal: { id: "D", properties: { area_juridica: "Trabalhista" } },
+    answered: { empresa: { valor: "Empresa Piloto Ltda", status: "confirmado" } }
+  }))
+  assert.equal(result.camposJuridicosPendentes.includes("empresa"), false)
+})
+
+test("fato juridico persistido no usuario continua reconhecido", () => {
+  const result = resolveComplementaryContext(base({
+    usuario: {
+      area: "Trabalhista", areaJuridica: "Trabalhista", tipoCaso: "Verbas rescisorias",
+      empresa: "Empresa Piloto Ltda", motivo: "Dispensa sem pagamento"
+    },
+    deal: { id: "D", properties: { area_juridica: "Trabalhista" } }
+  }))
+  assert.equal(result.camposJuridicosPendentes.includes("empresa"), false)
+  assert.equal(result.camposJuridicosPendentes.includes("motivo"), false)
+})

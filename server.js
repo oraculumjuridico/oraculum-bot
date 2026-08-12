@@ -221,6 +221,7 @@ const {
   normalizeCaseNumber
 } = require("./src/domain/admin-post-human-complementation")
 const { isPostHumanComplementationEnabled } = require("./src/domain/post-human-feature-flag")
+const { automationTargetAllowed } = require("./src/domain/automation-pilot")
 const { PostHumanCycleRepository } = require("./src/domain/post-human-cycle-model")
 const { PostHumanActionContextRepository } = require("./src/domain/post-human-action-context-repository")
 const { processPostHumanCycle } = require("./src/domain/post-human-flow")
@@ -239,6 +240,7 @@ const {
   applyLegalCaseNomenclatureToUser
 } = require("./src/domain/legal-case-nomenclature")
 const { ADDRESS_FIELDS, buildAddressAnswerResult } = require("./src/domain/address-facts")
+const { CAMPOS_ADMIN_ASSISTIDO } = require("./src/domain/admin-assisted-ai-schema")
 const { atualizarHubSpotSeguro } = require("./src/domain/post-human-hubspot-updater")
 const { META_TEMPLATES } = require("./src/domain/meta-templates")
 const {
@@ -292,6 +294,7 @@ const {
 const {
   criarPastaCliente,
   uploadDrive,
+  obterOuCriarSubpastaDrive,
   marcarArquivoDriveSubstituido,
   renomearArquivoDrive,
   uploadPastaAudio,
@@ -7330,6 +7333,12 @@ async function uploadDocumentoCano(u, pastaId, nome, buffer, mimeType, contexto 
   return arquivo
 }
 
+async function pastaUploadDocumento(u) {
+  if (!isPilotCaseAllowed(u?.numeroCaso)) return u?.pastaDriveId || null
+  const pasta = await obterOuCriarSubpastaDrive(u?.pastaDriveId, "00 - Originais recebidos")
+  return pasta?.id || null
+}
+
 async function detectarEncerramentoPorAudio(from, u, msgObj, tipo) {
   const mediaId = msgObj?.[tipo]?.id
   if (!mediaId) return null
@@ -10568,7 +10577,8 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
         registry,
         documentType: pipeline?.classificacao?.tipoDocumento,
         classificationConfidence: pipeline?.classificacao?.confianca,
-        requirementId: analysisContext?.documentoId || null
+        requirementId: analysisContext?.documentoId || null,
+        allowExactNameMatch: analysisContext?.fluxoDocumento === "guiado" && isPilotCaseAllowed(u?.numeroCaso)
       })
     })
     if (resultado?.reason && !resultado.skipped) {
@@ -10663,9 +10673,9 @@ async function confirmarDocumentoCanonicoSeguro(u, fileId, options = {}) {
     const projection = projectDocumentDecision(u, canonical.decision, marcarStatusDocumento)
     const promotable = ["partial", "delivered"].includes(canonical.decision?.status)
     if (!promotable) return { ...canonical, projection, reevaluation: { processed: false, reason: "decision_not_promoted" } }
-    const hubspotSync = canonical.decision?.status === "delivered"
+    const hubspotSync = ["partial", "delivered"].includes(canonical.decision?.status)
       ? await sincronizarDecisaoDocumentalCanonicaHubSpotSeguro(u, canonical)
-      : { ok: true, skipped: true, reason: "decision_not_delivered" }
+      : { ok: true, skipped: true, reason: "decision_not_promotable" }
     await api.persistirUsersAgora({ propagarErro: true })
     const reevaluation = await reevaluatePostHumanForDecision({
       usuario: u,
@@ -10836,7 +10846,8 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
     const nCli = ulN && ulN !== prN ? `${prN} ${ulN}` : prN
     const ext = (nomeArq || "").split(".").pop()
     const nomeFinal = `Aguardando classificacao - ${nCli}${ext && ext.length <= 4 ? "." + ext : ".jpg"}`
-    const arquivo = await uploadDocumentoCano(u, u.pastaDriveId, nomeFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "avulso_pendente", nomeSalvo: nomeFinal })
+    const pastaOriginais = await pastaUploadDocumento(u)
+    const arquivo = await uploadDocumentoCano(u, pastaOriginais, nomeFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "avulso_pendente", nomeSalvo: nomeFinal })
     if (!arquivo) {
       return responderTelaDocumento(from, u, criarTela({
         id: "documento_avulso_upload_falhou",
@@ -10902,7 +10913,8 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const nArqFinal = `${lblD} - ${folha} - ${nCli}${ext2 && ext2.length <= 4 ? "."+ext2 : ".jpg"}`
   const arquivoEhPdf = /pdf/i.test(midia.mimeType || mimeType || "") || /\.pdf$/i.test(nomeArq || "")
 
-  const arquivo = await uploadDocumentoCano(u, u.pastaDriveId, nArqFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "guiado", documentoId: docAtual?.id || null, documentoLabel: lblD, folha, nomeSalvo: nArqFinal })
+  const pastaOriginais = await pastaUploadDocumento(u)
+  const arquivo = await uploadDocumentoCano(u, pastaOriginais, nArqFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "guiado", documentoId: docAtual?.id || null, documentoLabel: lblD, folha, nomeSalvo: nArqFinal })
   if (!arquivo) {
     return responderTelaDocumento(from, u, criarTela({
       id: "documento_guiado_upload_falhou",
@@ -16230,6 +16242,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinalDoc}${linkFinalDoc ? `\nDrive: ${linkFinalDoc}` : ""}`
       )
       await confirmarDocumentoCanonicoSeguro(u, fileIdDoc, { origem: "doc_cliente_anexar" })
+      if (isPilotCaseAllowed(u.numeroCaso)) {
+        await consolidarDocumentosDoCasoSeguro({ u, contexto: { origem: "documento_avulso_confirmado" } })
+      }
       u.documentosEnviados = true
       u._docsClienteGuiado = false
       u._docClientePendenteNome = null
@@ -16305,6 +16320,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         "DOCUMENTO ANEXADO AO CASO",
         `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nTipo: ${tipoDoc}\nArquivo: ${nomeFinalDoc}${linkFinalDoc ? `\nDrive: ${linkFinalDoc}` : ""}`
       )
+      if (isPilotCaseAllowed(u.numeroCaso)) {
+        await consolidarDocumentosDoCasoSeguro({ u, contexto: { origem: "documento_avulso_classificado" } })
+      }
       u.documentosEnviados = true
       u._docsClienteGuiado = false
       u._docClientePendenteNome = null
@@ -17031,11 +17049,11 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
       }
       const dealFields = {
         areaJuridica: "area_juridica", tipoCaso: "tipo_de_caso",
-        descricao: "description", beneficio: "beneficio", motivo: "motivo",
-        situacao: "situacao_caso", nb: "nb"
+        descricao: "description"
       }
-      const property = contactFields[field] || dealFields[field]
-      const objectType = contactFields[field] ? "contact" : dealFields[field] ? "deal" : null
+      const caseFactField = !contactFields[field] && !dealFields[field] && Boolean(CAMPOS_ADMIN_ASSISTIDO[field])
+      const property = contactFields[field] || dealFields[field] || (caseFactField ? "oraculum_case_facts" : null)
+      const objectType = contactFields[field] ? "contact" : (dealFields[field] || caseFactField) ? "deal" : null
       const objectId = objectType === "contact" ? cycle.contatoId : cycle.negocioId
       if (legalField && legalAnswers[field]?.status !== "confirmado") return withLegalNomenclature(legalResult)
       if (legalField && (!property || !objectId)) return withLegalNomenclature(legalResult)
@@ -17085,13 +17103,16 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
         currentProperties = response.data?.properties || {}
       }
       const canonicalValue = legalField ? legalAnswers[field]?.valor : sanitizarTextoEntrada(content)
+      const incomingValue = caseFactField
+        ? JSON.stringify({ [field]: canonicalValue })
+        : canonicalValue
       return withLegalNomenclature({
         ...(legalResult || {}),
         persisted: true,
         canonicalPatch: { field, value: canonicalValue },
         hubspot: {
           objectType, objectId, contactId: cycle.contatoId, expectedDealId: cycle.negocioId,
-          current: currentProperties, incoming: { [property]: canonicalValue }
+          current: currentProperties, incoming: { [property]: incomingValue }
         }
       })
     },
@@ -17134,7 +17155,7 @@ function criarDispatcherPosHumano({ from, nomeWA, usuario }) {
           changed = applyLegalCaseNomenclatureToUser(usuario, rawValue) || changed
           continue
         }
-        const target = userFields[field]
+        const target = userFields[field] || (CAMPOS_ADMIN_ASSISTIDO[field] ? field : null)
         const value = sanitizarTextoEntrada(rawValue)
         if (!target || !value) continue
         if (!sanitizarTextoEntrada(usuario[target]) || corrections.has(field)) {
@@ -18260,20 +18281,21 @@ async function planejarConsultasNoAgendador() {
     let scope = null
     if (state.status === "agendada") {
       const response = await postRotaInterna("/consulta-lembrete-dados", { eventId: state.eventId })
-      if (response.status === 200) {
+      if (response.status === 200 && automationTargetAllowed(response.body)) {
         scope = consultationScope(
           { ...response.body, end: state.fim || null },
           { todayHour: INTERNAL_SCHEDULER_TODAY_HOUR, now }
         )
       }
-    } else if (state.status === "cancelada") {
+    } else if (state.status === "cancelada" && automationTargetAllowed({ dealId: state.metadata?.dealId })) {
       scope = consultationLifecycleScope({
         action: "cancel",
         eventId: state.eventId,
         dealId: state.metadata?.dealId,
         scheduledFor: now
       })
-    } else if (["encerrada", "realizada", "nao_compareceu"].includes(state.status)) {
+    } else if (["encerrada", "realizada", "nao_compareceu"].includes(state.status) &&
+        automationTargetAllowed({ dealId: state.metadata?.dealId })) {
       scope = consultationLifecycleScope({
         action: "complete",
         eventId: state.eventId,
@@ -18290,6 +18312,7 @@ async function planejarReengajamentosNoAgendador() {
   if (!AUTO_REENGAJAMENTO) return []
   const scopes = []
   for (const candidate of descobrirCandidatosReengajamento()) {
+    if (!automationTargetAllowed(candidate)) continue
     const response = await postRotaInterna("/reengajamento-dados", {
       phone: candidate.phone,
       dealId: candidate.dealId
@@ -18302,6 +18325,10 @@ async function planejarReengajamentosNoAgendador() {
 }
 
 async function despacharRotaAgendada(pathname, payload) {
+  if (!automationTargetAllowed(payload)) {
+    logInfo({ event: "scheduler_job_skipped", queue: "internal_scheduler", reasonCode: "pilot_target_not_allowed" })
+    return { outcome: "skipped", reason: "pilot_target_not_allowed" }
+  }
   const response = await postRotaInterna(pathname, payload)
   if (response.status >= 500) {
     const error = new Error("INTERNAL_ROUTE_UNAVAILABLE")
@@ -18319,6 +18346,30 @@ async function despacharRotaAgendada(pathname, payload) {
   }
 }
 
+async function sincronizarConsultaNoAgendador(payload = {}) {
+  if (!payload.eventId || !automationTargetAllowed(payload)) {
+    return { outcome: "skipped", reason: "pilot_target_not_allowed" }
+  }
+  try {
+    const localizado = await localizarUsuarioAgendamento(payload)
+    if (!localizado.u || !localizado.from) return { outcome: "skipped", reason: "usuario_nao_encontrado" }
+    const resultado = await executarComLockUsuario(localizado.from, async () => {
+      const atual = users[localizado.from]
+      if (!atual) return null
+      await atualizarEstadoConsultaUsuario(atual)
+      await sincronizarNegocio(atual)
+      agendarPersistenciaUsers()
+      return true
+    })
+    return resultado
+      ? { outcome: "sent" }
+      : { outcome: "skipped", reason: "usuario_nao_encontrado" }
+  } catch (error) {
+    logErro("consulta_sync_scheduler", error.message, error)
+    throw error
+  }
+}
+
 async function executarAgendadorInterno() {
   if (!INTERNAL_SCHEDULER_ENABLED) return { status: "disabled" }
   if (!internalSchedulerRepository) throw new Error("INTERNAL_SCHEDULER_NOT_READY")
@@ -18328,6 +18379,7 @@ async function executarAgendadorInterno() {
     planners: [planejarConsultasNoAgendador, planejarReengajamentosNoAgendador],
     dispatchers: {
       consultation_reminder: job => despacharRotaAgendada("/lembrete", job.payload),
+      consultation_sync: job => sincronizarConsultaNoAgendador(job.payload),
       consultation_lifecycle: job => despacharRotaAgendada(
         job.payload?.action === "cancel" ? "/evento-cancelado" : "/pos-consulta",
         job.payload

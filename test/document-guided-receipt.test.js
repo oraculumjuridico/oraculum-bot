@@ -67,6 +67,22 @@ function memoryDeps(pipeline) {
 }
 
 async function main() {
+  const exactNamePilot = resolveDocumentPartyIdentity({
+    extraction: { camposExtraidos: { nome: "Jesaías Belmiro Leite Mendes", dataNascimento: "01/01/1990" } },
+    trustedUser: { nome: "Jesaias Belmiro Leite Mendes" },
+    documentType: "RG frente",
+    classificationConfidence: 0.96,
+    requirementId: "doc_rg",
+    allowExactNameMatch: true
+  })
+  assert.equal(exactNamePilot.status, "titular")
+  assert.equal(resolveDocumentPartyIdentity({
+    extraction: { camposExtraidos: { nome: "Outra Pessoa", cpf: "529.982.247-25" } },
+    trustedUser: { nome: "Jesaias Belmiro Leite Mendes", cpf: "111.444.777-35" },
+    documentType: "RG frente",
+    allowExactNameMatch: true
+  }).status, "terceiro")
+
   const cpfEqualRgDifferent = compareIdentity(
     { cpf: "52998224725", rg: "rgb", nome: "", nascimento: "" },
     { cpf: "52998224725", rg: "rga", nome: "", nascimento: "" }

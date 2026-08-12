@@ -38,6 +38,13 @@ function consultationScope(data, { todayHour = 9, now = new Date(), maxReminderD
     payload: { ...base, tipo, scheduledFor: scheduled.toISOString() }
   }))
   jobs.push({
+    kind: "consultation_sync",
+    dedupeKey: `consultation:${data.eventId}:sync:${start.toISOString()}`,
+    scopeType: "consultation", scopeId: data.eventId,
+    scheduledFor: current.toISOString(),
+    payload: { ...base, end: data.end || null }
+  })
+  jobs.push({
     kind: "consultation_lifecycle",
     dedupeKey: `consultation:${data.eventId}:lifecycle:${start.toISOString()}`,
     scopeType: "consultation", scopeId: data.eventId,

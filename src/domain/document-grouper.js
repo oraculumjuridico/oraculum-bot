@@ -130,7 +130,9 @@ function chaveCTPS(documento) {
   const explicita = documento.grupoDocumento || documento.documentGroup || documento.groupId || documento.carteiraId || documento.ctpsId
   if (explicita) return { chave: `explicita:${normalizarTexto(explicita)}`, confiavel: true }
   if (campos.numero && campos.serie && campos.uf) return { chave: `campos:${normalizarTexto(campos.numero)}:${normalizarTexto(campos.serie)}:${normalizarTexto(campos.uf)}`, confiavel: true }
-  const origem = documento.fileId || documento.referenciaArquivoOriginal || documento.arquivoOriginal
+  // Páginas renderizadas de um mesmo PDF físico pertencem à mesma carteira,
+  // salvo quando número/série ou um identificador explícito provarem o contrário.
+  const origem = documento.sourceFileId || documento.fileId || documento.referenciaArquivoOriginal || documento.arquivoOriginal
   if (origem) return { chave: `origem:${normalizarTexto(origem)}`, confiavel: false }
   return { chave: `entrada:${documento.indiceEntrada}`, confiavel: false }
 }

@@ -4,6 +4,7 @@ const { carregarEstadoDocumental, atualizarEstadoDocumental } = require("./docum
 const { agruparDocumentosProcessados } = require("./document-grouper")
 const { comporPdfsDocumentais } = require("./document-pdf-composer")
 const { criarDocumentRegistry, atualizarDocumentRegistry } = require("./document-registry")
+const { normalizarEntradaDocumental } = require("./document-input-normalizer")
 const { logDebug, logErro } = require("../utils/logging")
 
 function hash(valor) {
@@ -11,14 +12,18 @@ function hash(valor) {
 }
 
 function analisesConcluidas(analises = []) {
-  return analises.filter(item => item?.status === "concluido" && item?.arquivo?.fileId && item?.pipeline?.classificacao)
+  return analises.filter(item => item?.status === "concluido" && item?.arquivo?.fileId && (
+    item?.pipeline?.classificacao ||
+    (item?.pipeline?.units || []).some(unit => unit?.pipeline?.classificacao)
+  ))
 }
 
 function assinaturaConsolidacao(analises = [], documentosEsperados = []) {
   const material = analisesConcluidas(analises).map(item => ({
     fileId: item.arquivo.fileId,
     hash: item.arquivo.hash || item.hash || null,
-    tipo: item.pipeline.classificacao.tipoDocumento || null,
+    tipo: item.pipeline.classificacao?.tipoDocumento ||
+      (item.pipeline.units || []).map(unit => unit?.pipeline?.classificacao?.tipoDocumento).filter(Boolean),
     nome: item.arquivo.nome || item.arquivo.nomeOriginal || null,
     versao: item.versaoPipeline || item.arquivo.modifiedTime || item.dataProcessamento || null
   })).sort((a, b) => a.fileId.localeCompare(b.fileId))
@@ -37,8 +42,10 @@ function removerBuffers(valor) {
 
 async function prepararDocumentosDasAnalises(analises = [], deps = {}) {
   const baixar = deps.baixarArquivoDrive || baixarArquivoDrive
+  const normalizar = deps.normalizarEntradaDocumental || normalizarEntradaDocumental
   const documentos = []
   const avisos = []
+  let arquivosPreparados = 0
   for (const analise of analisesConcluidas(analises)) {
     const arquivo = analise.arquivo
     let buffer
@@ -51,6 +58,44 @@ async function prepararDocumentosDasAnalises(analises = [], deps = {}) {
     }
     if (!Buffer.isBuffer(buffer) || !buffer.length) {
       avisos.push({ code: "DOCUMENT_CONSOLIDATION_DOWNLOAD_FAILED", fileId: arquivo.fileId, ...(technicalCode ? { technicalCode } : {}) })
+      continue
+    }
+    if (/application\/pdf/i.test(arquivo.mimeType || "") && Array.isArray(analise.pipeline?.units)) {
+      let normalized
+      try {
+        normalized = await normalizar({ fileId: arquivo.fileId, buffer, mimeType: "application/pdf" }, deps)
+      } catch (error) {
+        avisos.push({ code: "DOCUMENT_CONSOLIDATION_PDF_RENDER_FAILED", fileId: arquivo.fileId, technicalCode: String(error?.code || error?.name || "PDF_RENDER_ERROR") })
+        continue
+      }
+      const analysisByPage = new Map((analise.pipeline.units || []).map(unit => [Number(unit?.unit?.pageNumber), unit?.pipeline]))
+      let paginasPreparadas = 0
+      for (const unit of normalized.units || []) {
+        const pipeline = analysisByPage.get(Number(unit.pageNumber))
+        if (!pipeline?.classificacao || !Buffer.isBuffer(unit.buffer)) {
+          avisos.push({ code: "DOCUMENT_CONSOLIDATION_PDF_PAGE_ANALYSIS_MISSING", fileId: arquivo.fileId, pageNumber: unit.pageNumber })
+          continue
+        }
+        documentos.push({
+          fileId: `${arquivo.fileId}#page=${unit.pageNumber}`,
+          sourceFileId: arquivo.fileId,
+          arquivoOriginal: arquivo.nome || arquivo.nomeOriginal || null,
+          referenciaArquivoOriginal: arquivo.nomeOriginal || arquivo.nome || arquivo.fileId,
+          mimeType: unit.mimeType,
+          webViewLink: arquivo.webViewLink || null,
+          buffer: unit.buffer,
+          classificacao: pipeline.classificacao,
+          extracao: pipeline.extracao,
+          contexto: arquivo.contexto || analise.contexto || null,
+          pageNumber: unit.pageNumber,
+          ...Object.fromEntries(["grupoDocumento", "documentGroup", "groupId", "carteiraId", "ctpsId"].flatMap(chave => {
+            const valor = pipeline?.[chave] ?? pipeline?.classificacao?.[chave] ?? arquivo[chave] ?? analise[chave]
+            return valor == null ? [] : [[chave, valor]]
+          }))
+        })
+        paginasPreparadas += 1
+      }
+      if (paginasPreparadas > 0) arquivosPreparados += 1
       continue
     }
     documentos.push({
@@ -68,8 +113,9 @@ async function prepararDocumentosDasAnalises(analises = [], deps = {}) {
         return valor == null ? [] : [[chave, valor]]
       }))
     })
+    arquivosPreparados += 1
   }
-  return { documentos, avisos }
+  return { documentos, avisos, arquivosPreparados }
 }
 
 function dependencias(deps = {}) {
@@ -77,6 +123,7 @@ function dependencias(deps = {}) {
     carregarEstadoDocumental: deps.carregarEstadoDocumental || carregarEstadoDocumental,
     atualizarEstadoDocumental: deps.atualizarEstadoDocumental || atualizarEstadoDocumental,
     baixarArquivoDrive: deps.baixarArquivoDrive || baixarArquivoDrive,
+    normalizarEntradaDocumental: deps.normalizarEntradaDocumental || normalizarEntradaDocumental,
     salvarArquivoBinarioDrive: deps.salvarArquivoBinarioDrive || salvarArquivoBinarioDrive,
     agruparDocumentosProcessados: deps.agruparDocumentosProcessados || agruparDocumentosProcessados,
     comporPdfsDocumentais: deps.comporPdfsDocumentais || comporPdfsDocumentais,
@@ -107,8 +154,11 @@ async function consolidarDocumentosDoCaso(input = {}, deps = {}) {
     return { ...resumo, ok: true, skipped: true, reason: "consolidacao sem alteracoes", documentosConsiderados: analisesConcluidas(analises).length, pdfsGerados: pdfsAnteriores.length, pdfsSalvos: pdfsAnteriores.length }
   }
 
-  const preparados = await prepararDocumentosDasAnalises(analises, { baixarArquivoDrive: d.baixarArquivoDrive })
-  const todosDocumentosPreparados = totalAnalisesElegiveis > 0 && preparados.documentos.length === totalAnalisesElegiveis
+  const preparados = await prepararDocumentosDasAnalises(analises, {
+    baixarArquivoDrive: d.baixarArquivoDrive,
+    normalizarEntradaDocumental: d.normalizarEntradaDocumental
+  })
+  const todosDocumentosPreparados = totalAnalisesElegiveis > 0 && preparados.arquivosPreparados === totalAnalisesElegiveis
   resumo.documentosConsiderados = preparados.documentos.length
   resumo.avisos.push(...preparados.avisos)
   const agrupamentos = d.agruparDocumentosProcessados(preparados.documentos)

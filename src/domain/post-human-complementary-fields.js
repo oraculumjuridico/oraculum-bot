@@ -42,7 +42,10 @@ const USER_FIELDS = Object.freeze({
   bpcRequerenteTipo: ["bpcRequerenteTipo"], bpcDeficiencia: ["bpcDeficiencia"],
   bpcImpedimentoLongoPrazo: ["bpcImpedimentoLongoPrazo"], bpcComposicaoFamiliar: ["bpcComposicaoFamiliar"],
   bpcDespesas: ["bpcDespesas"], bpcCadUnico: ["bpcCadUnico"],
-  bpcSituacaoAdministrativa: ["bpcSituacaoAdministrativa"]
+  bpcSituacaoAdministrativa: ["bpcSituacaoAdministrativa"],
+  empresa: ["empresa"], parteContraria: ["parteContraria"], vinculoFamiliar: ["vinculoFamiliar"],
+  fornecedor: ["fornecedor"], produtoServico: ["produtoServico"], problema: ["problema"],
+  posicaoPenal: ["posicaoPenal"], contratoOuFato: ["contratoOuFato"], imovel: ["imovel"]
 })
 
 const CAMPOS_CADASTRAIS = new Set([
@@ -154,9 +157,9 @@ function resolveComplementaryContext({
   const juridicosCondicionais = camposJuridicosInssCondicionais(usuario, data, area)
     .filter(field => !responded.has(field))
   const camposCadastraisPendentes = obrigatoriosAtuais.filter(field => CAMPOS_CADASTRAIS.has(field))
-  const perguntasJuridicasDinamicas = area === "INSS"
-    ? pendingPostHumanLegalQuestions({ area, data }).map(item => item.id).filter(field => !responded.has(field))
-    : []
+  const perguntasJuridicasDinamicas = pendingPostHumanLegalQuestions({ area, data })
+    .map(item => item.id)
+    .filter(field => !responded.has(field))
   const camposJuridicosPendentes = [...new Set([
     ...obrigatoriosAtuais.filter(field => !CAMPOS_CADASTRAIS.has(field)),
     ...juridicosCondicionais,

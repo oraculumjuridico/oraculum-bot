@@ -80,7 +80,11 @@ function pendingQuestions({ area = "Outros", data = {}, asked = [], deferred = [
 function pendingPostHumanLegalQuestions({ area = "Outros", data = {} } = {}) {
   const pending = (AREA_QUESTIONS[area] || AREA_QUESTIONS.Outros)
     .map((item, index) => ({ group: "Dados da área", priority: 100 + index, target: "deal", ...item }))
-    .filter(item => item.postHuman === true || (typeof item.postHuman === "function" && item.postHuman({ data })))
+    .filter(item =>
+      item.postHuman === true ||
+      (typeof item.postHuman === "function" && item.postHuman({ data })) ||
+      (area !== "INSS" && item.required === true)
+    )
     .filter(item => !answered(data, item.id))
   if (area === "INSS" && isBpcCase(data) && answered(data, "bpcComposicaoFamiliar")) {
     const member = nextFamilyMember(data)

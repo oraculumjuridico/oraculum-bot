@@ -60,6 +60,9 @@ assert.match(criarPasta, /files\.list\(\{/)
 assert.match(criarPasta, /name = '\$\{escapeDriveQueryValue\(nomePasta\)\}'/)
 assert.ok(criarPasta.indexOf("files.list") < criarPasta.indexOf("files.create"))
 assert.match(criarPasta, /return existentes\.data\.files\[0\]/)
+assert.match(criarPasta, /oraculumCaseNumber/)
+assert.match(criarPasta, /name contains/)
+assert.match(criarPasta, /criação bloqueada/)
 
 const hubspot = fs.readFileSync(
   path.join(__dirname, "..", "src", "domain", "hubspot-core.js"),

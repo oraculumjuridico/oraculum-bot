@@ -95,7 +95,7 @@ function hasConfirmedTrustedFront(registry = {}, requirementId = "doc_rg") {
 
 function resolveDocumentPartyIdentity({
   extraction = {}, trustedUser = {}, registry = {}, documentType = null,
-  classificationConfidence = 0, requirementId = null
+  classificationConfidence = 0, requirementId = null, allowExactNameMatch = false
 } = {}) {
   const candidate = identityFromFields(extraction.camposExtraidos || extraction)
   const trusted = [identityFromUser(trustedUser), ...trustedRegistryIdentities(registry)]
@@ -106,6 +106,10 @@ function resolveDocumentPartyIdentity({
     if (result.status === "titular" && !confirmedMatch) confirmedMatch = result
   }
   if (confirmedMatch) return confirmedMatch
+  if (allowExactNameMatch && candidate.nome && candidate.nome.split(" ").length >= 2 &&
+      trusted.some(identity => identity.nome && identity.nome === candidate.nome)) {
+    return { status: "titular", reasonCode: "pilot_guided_exact_full_name_match" }
+  }
   const kind = normalized(documentType)
   if (kind === "rg verso" && requirementId === "doc_rg" &&
       Number(classificationConfidence) >= MIN_PAIRED_BACK_CLASSIFICATION_CONFIDENCE &&

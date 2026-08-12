@@ -192,7 +192,8 @@ async function main() {
   assert.equal(thirdPartyPlan.bloqueados[0].motivo, "canonical_decision_in_review")
 
   const partialDecision = { ...base.decision, status: "partial" }
-  assert.equal(planejarSincronizacaoDocumentalHubSpot(syncInput({ ...base, decision: partialDecision })).bloqueados[0].motivo, "canonical_decision_not_delivered")
+  const partialPlan = planejarSincronizacaoDocumentalHubSpot(syncInput({ ...base, decision: partialDecision }))
+  assert.equal(partialPlan.contato.props.cpf_do_cliente, "52998224725")
   const reviewDecision = { ...base.decision, status: "review", divergenceIds: ["div-1"] }
   assert.equal(planejarSincronizacaoDocumentalHubSpot(syncInput({ ...base, decision: reviewDecision })).bloqueados[0].motivo, "canonical_decision_in_review")
   const legacyDecision = { ...base.decision, evidenceRefs: [] }
