@@ -7,10 +7,10 @@ let executarFfmpeg = execFileSync
 
 const ATTENDANT_VOICE_PROFILES = Object.freeze({
   Helena: { voiceProfileId: "supertonic-f4", voice: "F4", lang: "pt" },
-  Clara: { voiceProfileId: "supertonic-f4", voice: "F4", lang: "pt" },
-  Beatriz: { voiceProfileId: "supertonic-f4", voice: "F4", lang: "pt" },
-  Isabela: { voiceProfileId: "supertonic-f4", voice: "F4", lang: "pt" },
-  Mariana: { voiceProfileId: "supertonic-f4", voice: "F4", lang: "pt" }
+  Clara: { voiceProfileId: "supertonic-f1", voice: "F1", lang: "pt" },
+  Beatriz: { voiceProfileId: "supertonic-f2", voice: "F2", lang: "pt" },
+  Isabela: { voiceProfileId: "supertonic-f3", voice: "F3", lang: "pt" },
+  Mariana: { voiceProfileId: "supertonic-f5", voice: "F5", lang: "pt" }
 })
 
 const AUDIO_DIR = path.join(__dirname, "audios", "atendentes")
@@ -114,6 +114,7 @@ async function baixarWavLightning(texto, profile, env = process.env) {
   }
   const headers = { "Content-Type": "application/json" }
   if (String(env.LIGHTNING_TTS_TOKEN || "").trim()) headers.Authorization = `Bearer ${env.LIGHTNING_TTS_TOKEN.trim()}`
+  headers["X-Oraculum-Voice"] = profile.voice
   const resposta = await clienteHttp.post(`${baseUrl}/tts`, {
     text: texto
   }, {
@@ -181,11 +182,11 @@ async function gerarAudioAtendente(atendente, texto, opcoes = {}) {
     const wav = await baixarWavLightning(textoFala || "Mensagem da Oraculum.", profile, env)
     fs.writeFileSync(wavPath, wav)
     converterParaOgg(wavPath, oggPath, env)
-    registrarTts({ motor: "SUPERTONIC_F4", atendente: attendant, voiceProfileId: profile.voiceProfileId, sucesso: true, fallbackUsed: false, duracaoMs: Date.now() - inicio, tamanhoAudio: fs.statSync(oggPath).size, attendantFallback })
+    registrarTts({ motor: `SUPERTONIC_${profile.voice}`, atendente: attendant, voiceProfileId: profile.voiceProfileId, sucesso: true, fallbackUsed: false, duracaoMs: Date.now() - inicio, tamanhoAudio: fs.statSync(oggPath).size, attendantFallback })
     return oggPath
   } catch (erroLightning) {
     lightningFailure = motivoSanitizado(erroLightning)
-    registrarTts({ motor: "SUPERTONIC_F4", atendente: attendant, voiceProfileId: profile.voiceProfileId, sucesso: false, fallbackUsed: true, motivo: lightningFailure, duracaoMs: Date.now() - inicio, attendantFallback })
+    registrarTts({ motor: `SUPERTONIC_${profile.voice}`, atendente: attendant, voiceProfileId: profile.voiceProfileId, sucesso: false, fallbackUsed: true, motivo: lightningFailure, duracaoMs: Date.now() - inicio, attendantFallback })
   } finally {
     try { if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath) } catch {}
   }

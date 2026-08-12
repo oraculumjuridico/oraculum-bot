@@ -63,7 +63,13 @@ async function gerar(opcoes) {
 
 async function main() {
   assert.deepEqual(Object.keys(ATTENDANT_VOICE_PROFILES), ["Helena", "Clara", "Beatriz", "Isabela", "Mariana"])
-  for (const nome of Object.keys(ATTENDANT_VOICE_PROFILES)) assert.equal(ATTENDANT_VOICE_PROFILES[nome].voiceProfileId, "supertonic-f4")
+  assert.deepEqual(Object.fromEntries(Object.entries(ATTENDANT_VOICE_PROFILES).map(([nome, perfil]) => [nome, perfil.voice])), {
+    Helena: "F4",
+    Clara: "F1",
+    Beatriz: "F2",
+    Isabela: "F3",
+    Mariana: "F5"
+  })
   assert.equal(perfilDaAtendente("Isabela").attendant, "Isabela")
   assert.equal(perfilDaAtendente("Mariana").attendant, "Mariana")
 
@@ -80,11 +86,12 @@ async function main() {
   assert.equal(principal.http.chamadas[0].tipo, "post")
   assert.equal(principal.http.chamadas[0].url, "https://lightning.example/tts")
   assert.deepEqual(principal.http.chamadas[0].body, { text: "ieneésseésse e cêpêéfe" })
+  assert.equal(principal.http.chamadas[0].options.headers["X-Oraculum-Voice"], "F3")
   assert.equal(principal.http.chamadas.some(chamada => chamada.tipo === "get"), false)
   assert.equal(principal.comandos[0].includes("libopus"), true)
   assert.equal(eventosTts.some(([prefixo, evento]) =>
-    prefixo === "[tts]" && JSON.parse(evento).motor === "SUPERTONIC_F4" &&
-    JSON.parse(evento).voiceProfileId === "supertonic-f4" &&
+    prefixo === "[tts]" && JSON.parse(evento).motor === "SUPERTONIC_F3" &&
+    JSON.parse(evento).voiceProfileId === "supertonic-f3" &&
     JSON.parse(evento).atendente === "Isabela"
   ), true)
 
