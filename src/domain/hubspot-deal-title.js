@@ -96,7 +96,8 @@ function nomenclaturaJuridicaTitulo(u = {}) {
       objetivo: u.objetivo
     }
   })
-  return resolved.divergences?.length ? null : resolved
+  const classificationConflict = resolved.divergences?.some(item => ["area", "subtype"].includes(item.field))
+  return classificationConflict ? null : resolved
 }
 
 function rotuloTipoCasoNegocio(u = {}) {

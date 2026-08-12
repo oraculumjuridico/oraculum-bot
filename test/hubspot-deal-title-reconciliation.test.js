@@ -41,6 +41,17 @@ function main() {
   assert.equal(divergente.requerRevisaoHumana, true)
   assert.deepEqual(divergente.propriedades, {})
 
+  const objetivoDivergente = planoTitulo(deal("104", {
+    dealname: "🟢 PRV.260812.012",
+    dealstage: "presentationscheduled",
+    area_juridica: "INSS",
+    numero_de_caso: "PRV.260812.012",
+    description: "Pedi auxílio-doença negado e quero recorrer.",
+    resumo_cliente: "Quero analisar a possibilidade."
+  }))
+  assert.equal(objetivoDivergente.aplicavel, true)
+  assert.equal(objetivoDivergente.propriedades.dealname, "🟢 PRV.260812.012 - Benefício por incapacidade temporária")
+
   console.log("hubspot-deal-title-reconciliation.test.js ok")
 }
 

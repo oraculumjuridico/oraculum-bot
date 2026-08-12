@@ -2091,7 +2091,8 @@ function garantirNomenclaturaJuridicaUsuario(u = {}) {
       objetivo: u.objetivo
     }
   })
-  if (model.divergences?.length || (!model.area && !model.subtype)) return null
+  const classificationConflict = model.divergences?.some(item => ["area", "subtype"].includes(item.field))
+  if (classificationConflict || (!model.area && !model.subtype)) return null
   applyLegalCaseNomenclatureToUser(u, model)
   return model
 }

@@ -69,7 +69,8 @@ function planoTitulo(deal = {}) {
       subTipo: usuario.oraculum_case_subtype
     }
   })
-  if (!nomenclatura.divergences.length && nomenclatura.subtype) {
+  const classificationConflict = nomenclatura.divergences.some(item => ["area", "subtype"].includes(item.field))
+  if (!classificationConflict && nomenclatura.subtype) {
     usuario.nomenclaturaJuridica = nomenclatura
   }
   const referencia = rotuloTipoCasoNegocio(usuario)
@@ -81,10 +82,10 @@ function planoTitulo(deal = {}) {
   if (!numeroCaso) motivos.push("caso_sem_numero_oficial")
   if (!sanitizarTextoEntrada(props.area_juridica)) motivos.push("area_ausente")
   if (!referencia) motivos.push("referencia_juridica_nao_determinada")
-  if (nomenclatura.divergences.length) motivos.push("classificacao_divergente")
+  if (classificationConflict) motivos.push("classificacao_divergente")
   if (sanitizarTextoEntrada(props.dealname) !== tituloProposto) motivos.push("titulo_fora_do_padrao")
 
-  const aplicavel = Boolean(numeroCaso && referencia && !nomenclatura.divergences.length)
+  const aplicavel = Boolean(numeroCaso && referencia && !classificationConflict)
   const propriedades = aplicavel && motivos.includes("titulo_fora_do_padrao")
     ? { dealname: tituloProposto }
     : {}
