@@ -54,7 +54,17 @@ Estados de transporte incertos ou já iniciados bloqueiam novo outbound inclusiv
 - `ultimaMsg` registra apenas mensagem real do cliente e define a janela de 24h.
 - Dentro da janela é permitido envio livre; fora dela, apenas template aprovado. Restauração HubSpot não fabrica timestamp recente.
 - O instante exato de 24h é aceito; depois dele usa-se template.
-- TTS preserva Unicode pt-BR até o payload UTF-8 e converte a saída para OGG/OPUS. Provedor/modelo não foi trocado.
+- O webhook grava a mensagem na inbox durável e sincroniza o espelho externo antes do HTTP 200; o processamento pode ser retomado após reinício.
+- TTS preserva Unicode pt-BR até o payload UTF-8 e converte a saída para OGG/OPUS.
+- O corpo enviado ao Lightning permanece somente `{ "text": "..." }`; `X-Oraculum-Voice` identifica F1–F5 sem reabrir o erro antigo de payload.
+- Helena preserva F4; Clara, Beatriz, Isabela e Mariana usam F1, F2, F3 e F5 quando o servidor Lightning multivozes está ativo.
+
+## Agenda e automação
+
+- Google Calendar é a fonte dos compromissos; planos, tentativas, idempotência e histórico ficam no Neon/PostgreSQL.
+- O agendador interno pertence ao Oráculum. GitHub Actions ou Google Apps Script apenas acordam o endpoint protegido.
+- Alterações diretas no Calendar entram pela leitura/reconciliação; Make.com não é fonte de verdade e permanece apenas como legado de contingência.
+- `INTERNAL_SCHEDULER_ENABLED=true` exige escopo explícito por allowlist ou `AUTOMATION_ALLOW_ALL=true` consciente.
 
 ## Admin e Atendimento Assistido
 
@@ -81,9 +91,13 @@ Admin usa allowlist e callbacks canônicos. Upload administrativo exige caso sel
 4. `node --check` para todo JS alterado e `git diff --check`.
 5. Auditar arquivos/commits, worktree e diff contra `origin/main`.
 6. Push somente após autorização, sem force; PR, migration e deploy continuam separados.
+7. Regenerar `docs/reference/FUNCTION_CATALOG.md` com `npm run docs:catalog` quando funções forem criadas, removidas ou renomeadas.
+8. Consultar `configuracao` em `/health-interno`; o diagnóstico nunca expõe valores das variáveis.
 
 ## Backlog conhecido
 
 - Reproduzir com evidência sanitizada o RG verso que falhou no piloto real.
 - Executar gates PostgreSQL e integrações reais somente em ambiente autorizado.
 - Reduzir gradualmente o wiring legado de `server.js` sem criar arquitetura paralela.
+- Instalar e validar F1–F5 no Lightning para tornar efetivo o mapeamento multivozes já publicado no Oráculum.
+- Aprofundar os questionários jurídicos das áreas que ainda não possuem equivalência com INSS/BPC.

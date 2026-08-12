@@ -41,7 +41,7 @@ function logInfo(evento = {}) {
     const durationMs = Number(evento.durationMs)
     if (Number.isFinite(durationMs)) payload.durationMs = durationMs
   }
-  for (const key of ["providerMessageId", "action", "channel", "fallback", "failureCode", "failureDescription", "queue", "stages", "receivedCount", "hubspotTotal", "after", "filteredCount", "errorCode", "operation", "searchType", "httpStatus", "resultsIsArray", "rawResultCount", "total", "hasPaging", "classificationType", "classificationConfidence", "ocrHasText", "ocrConfidenceBucket", "preprocessingProfile", "requestedSide", "recognizedSides", "evidenceStatus", "partyResolutionStatus", "reasonCode", "qualityWarnings", "retryAttempt", "selectedVariant"]) {
+  for (const key of ["providerMessageId", "action", "channel", "fallback", "failureCode", "failureDescription", "queue", "stages", "receivedCount", "hubspotTotal", "after", "filteredCount", "errorCode", "operation", "searchType", "httpStatus", "resultsIsArray", "rawResultCount", "total", "hasPaging", "classificationType", "classificationConfidence", "ocrHasText", "ocrConfidenceBucket", "preprocessingProfile", "requestedSide", "recognizedSides", "evidenceStatus", "partyResolutionStatus", "reasonCode", "qualityWarnings", "retryAttempt", "selectedVariant", "blockers", "optionalUnavailable"]) {
     if (evento[key] !== undefined) payload[key] = sanitizarCampoLog(evento[key])
   }
 

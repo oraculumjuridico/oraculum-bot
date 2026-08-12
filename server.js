@@ -22,6 +22,7 @@ const axios      = require("axios")
 const { google } = require("googleapis")
 const { privacyPolicyPage, dataDeletionPage } = require("./src/domain/public-lgpd-pages")
 const { INSTITUTIONAL_CALENDAR_ID: CALENDAR_ID } = require("./src/config/institutional-calendar")
+const { avaliarProntidaoProducao } = require("./src/config/production-readiness")
 const path       = require("path")
 const fs         = require("fs")
 const crypto     = require("crypto")
@@ -17650,7 +17651,9 @@ function agruparUltimosErrosPorCategoria() {
 
 function montarHealthInternoOperacional() {
   const webhookInboxFile = path.join(DATA_DIR, "webhook-inbox.json")
+  const configuracao = avaliarProntidaoProducao(process.env)
   return {
+    configuracao,
     callbackIdempotency: resumirCallbackIdempotency(),
     webhookInbox: resumirWebhookInbox(),
     persistencia: {
@@ -18740,6 +18743,13 @@ app.get("/internal/agendador-status", validarWebhookInterno, async (_req, res) =
 
 let httpServer = null
 async function iniciarServidor() {
+  const prontidao = avaliarProntidaoProducao(process.env)
+  logInfo({
+    event: "runtime.readiness",
+    status: prontidao.ready ? "ready" : "blocked",
+    blockers: prontidao.blockers,
+    optionalUnavailable: prontidao.optionalUnavailable
+  })
   try {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
     console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)

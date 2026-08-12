@@ -1,5 +1,7 @@
 # Auditoria de prontidão para Go-Live
 
+> **Documento histórico (02/07/2026).** Os bloqueadores de permissão pública no Drive, inbox durável e release reproduzível descritos abaixo foram corrigidos posteriormente. Para o estado atual, consulte `docs/ORACULUM_SYSTEM_GUIDE.md`, `docs/ORACULUM_RUNTIME_ARCHITECTURE.md` e `docs/operations/PRODUCTION_RUNBOOK.md`.
+
 Data da auditoria: 02/07/2026
 Escopo: estado atual do workspace do Bot Oráculum
 Natureza: auditoria técnica, sem alteração de código ou testes

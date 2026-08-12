@@ -1,6 +1,6 @@
 # Oráculum Bot — contexto para manutenção
 
-Leia primeiro [docs/ORACULUM_RUNTIME_ARCHITECTURE.md](docs/ORACULUM_RUNTIME_ARCHITECTURE.md). Ele descreve o runtime atual, fontes de verdade, integrações e gates.
+Leia primeiro [docs/ORACULUM_SYSTEM_GUIDE.md](docs/ORACULUM_SYSTEM_GUIDE.md) e depois [docs/ORACULUM_RUNTIME_ARCHITECTURE.md](docs/ORACULUM_RUNTIME_ARCHITECTURE.md). O runbook está em [docs/operations/PRODUCTION_RUNBOOK.md](docs/operations/PRODUCTION_RUNBOOK.md), e o índice técnico em [docs/reference/FUNCTION_CATALOG.md](docs/reference/FUNCTION_CATALOG.md).
 
 ## Invariantes
 
