@@ -349,3 +349,31 @@ test("Atendimento Assistido finaliza com a mesma estrutura canônica sem usar mo
     ]
   )
 })
+
+test("legacy generic INSS classification is refined by a complete narrative", () => {
+  const current = {
+    area: "INSS",
+    subtype: "inss_outros",
+    type: "inss_outros",
+    subtypeLabel: "Demanda Previdenciaria",
+    status: "generic"
+  }
+  const result = resolve(
+    "Pedi benef\u00edcio por incapacidade tempor\u00e1ria no INSS, mas foi negado depois da per\u00edcia. Quero recorrer da decis\u00e3o.",
+    { current }
+  )
+
+  assert.equal(result.subtype, "incapacidade_temporaria")
+  assert.equal(result.type, "inss_incapacidade")
+  assert.equal(result.situation, "indeferido")
+  assert.equal(result.status, "specific")
+  assert.deepEqual(result.divergences, [])
+  assert.equal(
+    montarTituloNegocioHubSpot({
+      area: "INSS",
+      numeroCaso: "PRV.260801.813",
+      nomenclaturaJuridica: result
+    }),
+    "\ud83d\udfe2 PRV.260801.813 - Benef\u00edcio por incapacidade tempor\u00e1ria"
+  )
+})

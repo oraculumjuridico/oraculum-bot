@@ -223,7 +223,12 @@ function sameClassification(left = {}, right = {}) {
 }
 
 function isGenericSubtype(code) {
-  return !code || code === "bpc_generico"
+  const normalized = normalizedCode(code)
+  return !normalized ||
+    normalized === "bpc_generico" ||
+    normalized === "generico" ||
+    normalized === "outros_livre" ||
+    normalized.endsWith("_outros")
 }
 
 function resolveField(field, currentValue, candidates, { correction = false } = {}) {
