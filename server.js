@@ -428,6 +428,9 @@ const {
   reengagementScope
 } = require("./src/domain/internal-scheduler-plans")
 const {
+  resolveConsultationReminderContact
+} = require("./src/domain/consultation-reminder-contact-resolver")
+const {
   dispatchConversationContext
 } = require("./src/domain/conversation-context-dispatcher")
 const {
@@ -18252,12 +18255,38 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
 
     let phone = null
     let name = "cliente"
-    if (contactId) {
-      const contato = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}?properties=firstname,lastname,phone`,
-        { headers: HS() }
-      )
-      const props = contato.data?.properties || {}
+    const contatoResolvido = await resolveConsultationReminderContact({
+      contactId,
+      dealId,
+      getContact: async id => {
+        const response = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,phone`,
+          { headers: HS() }
+        )
+        return response.data || null
+      },
+      listDealContacts: async id => {
+        const response = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(id)}/associations/contacts`,
+          { headers: HS() }
+        )
+        return response.data?.results
+      }
+    })
+
+    if (contatoResolvido.staleContactId) {
+      logInfo({
+        event: "consultation_reminder_contact_resolution",
+        status: contatoResolvido.ok ? "resolved" : "unresolved",
+        fallback: "deal",
+        reasonCode: contatoResolvido.reasonCode
+      })
+    }
+    if (!contatoResolvido.ok) {
+      return res.status(contatoResolvido.httpStatus).json({ erro: contatoResolvido.reasonCode })
+    }
+    if (contatoResolvido.contact) {
+      const props = contatoResolvido.contact.properties || {}
       phone = props.phone || null
       name = (props.firstname || "cliente").trim()
     }
