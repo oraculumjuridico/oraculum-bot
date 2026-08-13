@@ -7612,13 +7612,18 @@ async function enviarTelaImagemOuTexto(from, imageUrl, texto, opcoes = null, cha
   const quantidadeOpcoes = Array.isArray(opcoesTela) ? opcoesTela.length : 0
   const opcoesImagem = quantidadeOpcoes > 0 && quantidadeOpcoes <= 3 ? opcoesTela : null
   // Imagem com até três botões pode ser enviada como uma única mensagem.
-  // Para listas com mais opções, priorizamos a tela interativa única: enviar a
-  // imagem antes separava o texto principal do botão "Ver opções".
   if (imageUrl && quantidadeOpcoes <= 3) {
     const enviada = await enviarImagemWhatsApp(from, imageUrl, textoTela, opcoesImagem)
     if (enviada) {
       return { texto: null, opcoes: null }
     }
+  }
+  // O WhatsApp não admite cabeçalho de imagem em listas com mais de três
+  // opções. Preservamos a imagem da tela sem legenda e devolvemos abaixo uma
+  // única lista com o texto completo, evitando a antiga mensagem isolada
+  // chamada apenas "Opções".
+  if (imageUrl && quantidadeOpcoes > 3) {
+    await enviarImagemWhatsApp(from, imageUrl, "", null)
   }
   return {
     texto: textoTela,
