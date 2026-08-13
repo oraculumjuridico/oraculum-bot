@@ -31,7 +31,8 @@ function formatarSlot(date) {
   const num = Number(local.day)
   const mes = meses[Number(local.month) - 1]
   const hora = local.hour
-  return `${dia} ${num}/${mes} às ${hora}h`
+  const minuto = local.minute
+  return `${dia} ${num}/${mes} às ${hora}h${minuto === "00" ? "" : minuto}`
 }
 
 // Formata slot para o áudio

@@ -116,7 +116,7 @@
     "src/domain/consultation/projections/consultation-session-recovery.js": "e15cd24a1ac45b03bb9a370686f3b0b645011abe43a4a19d3a3330e1a4768139",
     "src/domain/consultation-read-model.js": "ec05037655fdf8ed5506d19d54f88f8ad173bbf49453dc0bdbc0f0717fa5b79f",
     "src/domain/consultation-events.js": "15e0578bf26dc6d8cdf48c1097d1481ad2d2b3f8c4f7d6a5b1f179cfab03f7de",
-    "src/domain/calendar-scheduling.js": "d4ec1838615058fae9f07a4fee77c693a84fdf289c919e07bca7f0524dec69b1",
+    "src/domain/calendar-scheduling.js": "b309057ebbbe6d0ef3eaa61298747713c14effe05a3b18d0045e6b0a103cfa66",
     "src/domain/consultation-metrics.js": "b1c8e20adddb2a3dafdad0783b4baf325b20b55cba574c631c94e97137d7df92",
     "src/domain/consultation-guards.js": "3ec6036dea60bb83c3bd53b8a4530b30f166c0e3b00109407ac2bc5a66075f67",
     "src/scripts/consultation-architecture-audit.js": "7166149eee67e14e106728dac2e277c43a0819743388d605590f1fabb5a9a870",
@@ -128,9 +128,9 @@
   },
   "approval": {
     "approved": true,
-    "approvedBy": "user-reported-past-calendar-slots",
-    "approvedAt": "2026-08-12T15:35:00-03:00",
-    "changeId": "REJECT-PAST-CALENDAR-SLOTS",
-    "structuralDigest": "6214252d900dd77a47b724eab093bf271eea7e3c6521b078e4430d96132d1a6c"
+    "approvedBy": "user-requested-scheduling-and-status-consistency",
+    "approvedAt": "2026-08-13T17:50:56-03:00",
+    "changeId": "FIX-SCHEDULING-SLOTS-AND-CLIENT-UX",
+    "structuralDigest": "914677c056cd532eaddf06ddfab6412a6b5d4bbf1ee10fac9c4c6603c16e0a72"
   }
 }

@@ -26,7 +26,7 @@ const { avaliarProntidaoProducao } = require("./src/config/production-readiness"
 const path       = require("path")
 const fs         = require("fs")
 const crypto     = require("crypto")
-const { gerarAudioAtendente } = require("./tts")
+const { gerarAudioAtendente, iniciarKeepAliveLightningTts } = require("./tts")
 const nodemailer = require("nodemailer")
 const {
   sanitizarTextoEntrada,
@@ -1030,6 +1030,7 @@ const sessoesAdminWhatsApp = new Map()
 // Fila por usuário — garante que mensagens simultâneas sejam processadas em ordem,
 // sem perda de conteúdo quando o cliente envia várias mensagens rapidamente.
 const filasMensagens = new Map()
+const ultimosCliquesStatus = new Map()
 const locksUsuarios = new Map()
 const sessoesAdminAutenticadas = new Map()
 const tentativasAdminWhatsApp = new Map()
@@ -7600,24 +7601,30 @@ function textoAudioConfirmacaoDados(u) {
   return `${primeiroNome}, revise os dados antes de confirmar. Nome: ${u.nome || "não informado"}. Cidade: ${cidade}. Área: ${u.area || "não informada"}. Situação: ${situacao || "não informada"}. Urgência: ${urgencia}. ${fechamento}`
 }
 
-async function enviarTelaImagemOuTexto(from, imageUrl, texto, opcoes = null, chamadaOpcoes = "Opções") {
+async function enviarTelaImagemOuTexto(from, imageUrl, texto, opcoes = null, chamadaOpcoes = "Opções", options = {}) {
   const payload = aplicarEmojiTelaCliente(from, { texto, opcoes })
   const textoTela = payload.texto
   const opcoesTela = payload.opcoes || null
-  await enviarAudioAutomaticoTela(from, users[from], payload, "tela direta")
+  if (options.audioAutomatico !== false) {
+    await enviarAudioAutomaticoTela(from, users[from], payload, "tela direta")
+  }
 
-  const opcoesImagem = Array.isArray(opcoesTela) && opcoesTela.length <= 3 ? opcoesTela : null
-  if (imageUrl) {
+  const quantidadeOpcoes = Array.isArray(opcoesTela) ? opcoesTela.length : 0
+  const opcoesImagem = quantidadeOpcoes > 0 && quantidadeOpcoes <= 3 ? opcoesTela : null
+  // Imagem com até três botões pode ser enviada como uma única mensagem.
+  // Para listas com mais opções, priorizamos a tela interativa única: enviar a
+  // imagem antes separava o texto principal do botão "Ver opções".
+  if (imageUrl && quantidadeOpcoes <= 3) {
     const enviada = await enviarImagemWhatsApp(from, imageUrl, textoTela, opcoesImagem)
     if (enviada) {
-      if (Array.isArray(opcoesTela) && opcoesTela.length > 3) {
-        await new Promise(r => setTimeout(r, 500))
-        return aplicarEmojiTelaCliente(from, { texto: chamadaOpcoes, opcoes: opcoesTela })
-      }
       return { texto: null, opcoes: null }
     }
   }
-  return { texto: textoTela, opcoes: opcoesTela }
+  return {
+    texto: textoTela,
+    opcoes: opcoesTela,
+    ...(options.semAudioResposta === true ? { semAudio: true } : {})
+  }
 }
 
 async function enviarGuiaDocs(from, u, tela) {
@@ -8734,14 +8741,18 @@ async function telaStatusCliente(from, u) {
       .map(opcao => ({ id: opcao.id, label: opcao.title }))
   })
 
-  await enviarAudioModoVoz(from, u, gerarAudioDaTela(telaStatus), "status cliente")
-
-  return await enviarTelaImagemOuTexto(
+  const respostaVisual = await enviarTelaImagemOuTexto(
     from,
     IMAGEM_STATUS_URL,
     textoStatus,
-    gerarBotoesDaTela(telaStatus)
+    gerarBotoesDaTela(telaStatus),
+    "Opções",
+    { audioAutomatico: false, semAudioResposta: true }
   )
+  // A tela não deve aguardar a síntese remota. Em modo de voz, o áudio chega
+  // logo depois sem bloquear a resposta visual nem a fila do usuário.
+  void enviarAudioModoVoz(from, u, gerarAudioDaTela(telaStatus), "status cliente")
+  return respostaVisual
 }
 
 async function telaConfirmarCancelamentoConsultaCliente(from, u) {
@@ -17320,10 +17331,22 @@ async function processar(from, nomeWA, text, msgObj) {
   // enviadas enquanto o processamento anterior ainda está em curso.
   return new Promise((resolve) => {
     if (!filasMensagens.has(from)) filasMensagens.set(from, [])
-    filasMensagens.get(from).push({ nomeWA, text, msgObj, resolve })
+    const fila = filasMensagens.get(from)
+    // Status é uma consulta idempotente. Toques adicionais enquanto o primeiro
+    // ainda está em processamento não devem enfileirar telas repetidas.
+    if (text === "m_status") {
+      const agora = Date.now()
+      const ultimoClique = Number(ultimosCliquesStatus.get(from) || 0)
+      if (fila.some(item => item.text === "m_status") || agora - ultimoClique < 15000) {
+        resolve(null)
+        return
+      }
+      ultimosCliquesStatus.set(from, agora)
+    }
+    fila.push({ nomeWA, text, msgObj, resolve })
 
     // Só inicia o dreno se não há outro em andamento para este usuário
-    if (filasMensagens.get(from).length === 1) {
+    if (fila.length === 1) {
       drenaFilaUsuario(from)
     }
   })
@@ -19003,6 +19026,7 @@ async function iniciarServidor() {
 
   httpServer = app.listen(PORT, () => {
     console.log(`Oraculum v6.4 — porta ${PORT}`)
+    iniciarKeepAliveLightningTts()
     if (INTERNAL_SCHEDULER_ENABLED) {
       setImmediate(() => executarAgendadorInterno().catch(error =>
         logErro("internal_scheduler", error.message, error)

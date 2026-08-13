@@ -14,7 +14,43 @@ const SUBTYPES = Object.freeze({
   bpc_generico: { benefit: "bpc", label: "BPC/LOAS", type: "inss_bpc" },
   aposentadoria: { benefit: "aposentadoria", label: "Aposentadoria", type: "inss_aposentadoria" },
   pensao_morte: { benefit: "pensao_morte", label: "Pensão por morte", type: "inss_dependentes" },
-  salario_maternidade: { benefit: "salario_maternidade", label: "Salário-maternidade", type: "inss_dependentes" }
+  salario_maternidade: { benefit: "salario_maternidade", label: "Salário-maternidade", type: "inss_dependentes" },
+  trab_demissao: { area: "Trabalhista", label: "Demissão / Verbas Rescisórias", type: "trab_demissao" },
+  trab_direitos: { area: "Trabalhista", label: "Direitos Trabalhistas", type: "trab_direitos" },
+  trab_acidente: { area: "Trabalhista", label: "Acidente ou Doença do Trabalho", type: "trab_acidente" },
+  trab_assedio: { area: "Trabalhista", label: "Assédio no Trabalho", type: "trab_assedio" },
+  familia_divorcio: { area: "Família", label: "Divórcio / Dissolução de União", type: "outros_livre" },
+  familia_pensao: { area: "Família", label: "Pensão Alimentícia", type: "outros_livre" },
+  familia_guarda: { area: "Família", label: "Guarda e Convivência", type: "outros_livre" },
+  familia_inventario: { area: "Família", label: "Inventário e Herança", type: "outros_livre" },
+  consumidor_cobranca: { area: "Consumidor", label: "Cobrança Indevida", type: "outros_livre" },
+  consumidor_produto: { area: "Consumidor", label: "Produto com Defeito ou Não Entregue", type: "outros_livre" },
+  consumidor_servico: { area: "Consumidor", label: "Problema na Prestação de Serviço", type: "outros_livre" },
+  consumidor_negativacao: { area: "Consumidor", label: "Negativação Indevida", type: "outros_livre" },
+  civil_contrato: { area: "Civil", label: "Contrato / Descumprimento Contratual", type: "outros_livre" },
+  civil_indenizacao: { area: "Civil", label: "Indenização por Danos", type: "outros_livre" },
+  civil_divida: { area: "Civil", label: "Dívida e Cobrança Civil", type: "outros_livre" },
+  penal_vitima: { area: "Penal", label: "Assistência à Vítima", type: "outros_livre" },
+  penal_defesa: { area: "Penal", label: "Defesa Criminal", type: "outros_livre" },
+  imobiliario_compra_venda: { area: "Imobiliário", label: "Compra e Venda de Imóvel", type: "outros_livre" },
+  imobiliario_locacao: { area: "Imobiliário", label: "Aluguel / Despejo", type: "outros_livre" },
+  imobiliario_usucapiao: { area: "Imobiliário", label: "Usucapião", type: "outros_livre" },
+  imobiliario_regularizacao: { area: "Imobiliário", label: "Regularização de Imóvel", type: "outros_livre" },
+  bancario_fraude: { area: "Bancário", label: "Fraude Bancária", type: "outros_livre" },
+  bancario_emprestimo: { area: "Bancário", label: "Empréstimo / Consignado", type: "outros_livre" },
+  bancario_juros: { area: "Bancário", label: "Juros ou Encargos Abusivos", type: "outros_livre" },
+  bancario_conta_cartao: { area: "Bancário", label: "Conta ou Cartão Bancário", type: "outros_livre" }
+})
+
+const AREA_LABELS = Object.freeze({
+  INSS: "Previdenciário / INSS",
+  Trabalhista: "Trabalhista",
+  Família: "Família",
+  Consumidor: "Consumidor",
+  Civil: "Civil",
+  Penal: "Penal",
+  Imobiliário: "Imobiliário",
+  Bancário: "Bancário"
 })
 
 const SITUATIONS = Object.freeze({
@@ -99,32 +135,81 @@ function inferSituation(text) {
 }
 
 function inferBenefitFacts(text, structured = {}) {
-  const raw = withoutThirdPartyBenefit([
+  const rawCompleto = [
     text,
     unwrap(structured.beneficio), unwrap(structured.tipoCaso), unwrap(structured.tipo),
     unwrap(structured.subTipo), unwrap(structured.subtipo), unwrap(structured.bpcRequerenteTipo),
     unwrap(structured.bpcDeficiencia)
-  ].filter(present).join(". "))
-  const value = plain(raw)
+  ].filter(present).join(". ")
+  const value = plain(rawCompleto)
+  const valueBeneficio = plain(withoutThirdPartyBenefit(rawCompleto))
   const explicitCode = normalizedCode(unwrap(structured.subtype || structured.subtipo || structured.subTipo))
   if (SUBTYPES[explicitCode]) return { subtype: explicitCode }
-  if (/\b(auxilio[- ]doenca|auxilio por incapacidade temporaria|beneficio por incapacidade temporaria)\b/.test(value)) return { subtype: "incapacidade_temporaria" }
-  if (/\b(aposentadoria por incapacidade permanente|aposentadoria por invalidez|incapacidade permanente)\b/.test(value)) return { subtype: "incapacidade_permanente" }
-  if (/\b(auxilio acidente)\b/.test(value)) return { subtype: "auxilio_acidente" }
-  if (/\b(pensao por morte)\b/.test(value)) return { subtype: "pensao_morte" }
-  if (/\b(salario maternidade)\b/.test(value)) return { subtype: "salario_maternidade" }
-  const bpc = /\b(bpc|loas|beneficio de prestacao continuada)\b/.test(value)
+  if (/\b(auxilio[- ]doenca|auxilio por incapacidade temporaria|beneficio por incapacidade temporaria)\b/.test(valueBeneficio)) return { subtype: "incapacidade_temporaria" }
+  if (/\b(aposentadoria por incapacidade permanente|aposentadoria por invalidez|incapacidade permanente)\b/.test(valueBeneficio)) return { subtype: "incapacidade_permanente" }
+  if (/\b(auxilio acidente)\b/.test(valueBeneficio)) return { subtype: "auxilio_acidente" }
+  if (/\b(pensao por morte)\b/.test(valueBeneficio)) return { subtype: "pensao_morte" }
+  if (/\b(salario maternidade)\b/.test(valueBeneficio)) return { subtype: "salario_maternidade" }
+  const bpc = /\b(bpc|loas|beneficio de prestacao continuada)\b/.test(valueBeneficio)
   if (bpc) {
-    const child = /\b(crianca|meu filho|minha filha|menor requerente)\b/.test(value) || normalizedCode(structured.bpcRequerenteTipo) === "crianca"
-    const elderly = /\b(idoso|idosa|pessoa idosa)\b/.test(value) || normalizedCode(structured.bpcRequerenteTipo) === "idoso"
-    const disability = /\b(deficiencia|autismo|tea|paralisia|sindrome|impedimento)\b/.test(value) || present(unwrap(structured.bpcDeficiencia))
+    const child = /\b(crianca|meu filho|minha filha|menor requerente)\b/.test(valueBeneficio) || normalizedCode(structured.bpcRequerenteTipo) === "crianca"
+    const elderly = /\b(idoso|idosa|pessoa idosa)\b/.test(valueBeneficio) || normalizedCode(structured.bpcRequerenteTipo) === "idoso"
+    const disability = /\b(deficiencia|autismo|tea|paralisia|sindrome|impedimento)\b/.test(valueBeneficio) || present(unwrap(structured.bpcDeficiencia))
     if (elderly) return { subtype: "bpc_idoso" }
     if (child && disability) return { subtype: "bpc_crianca_deficiencia" }
     if (disability) return { subtype: "bpc_deficiencia" }
     return { subtype: "bpc_generico" }
   }
-  if (/\b(aposentadoria(?: por idade| por tempo de contribuicao)?)\b/.test(value)) return { subtype: "aposentadoria" }
+  if (/\b(aposentadoria(?: por idade| por tempo de contribuicao)?)\b/.test(valueBeneficio)) return { subtype: "aposentadoria" }
+
+  if (/\b(assedio moral|assedio sexual|humilhac\w* no trabalho|perseguic\w* no trabalho)\b/.test(value)) return { subtype: "trab_assedio" }
+  if (/\b(acidente de trabalho|acidente no trabalho|doenca ocupacional|adoecimento ocupacional)\b/.test(value)) return { subtype: "trab_acidente" }
+  if (/\b(demiss\w*|mandad\w* embora|justa causa|rescis\w*|verbas rescisorias)\b/.test(value)) return { subtype: "trab_demissao" }
+  if (/\b(horas extras|fgts|ferias|salario atrasado|direitos trabalhistas|carteira (?:nao )?assinada|vinculo empregaticio|adicional noturno|insalubridade)\b/.test(value)) return { subtype: "trab_direitos" }
+
+  if (/\b(divorci\w*|separac\w*|dissolucao de uniao estavel)\b/.test(value)) return { subtype: "familia_divorcio" }
+  if (/\b(pensao alimenticia|acao de alimentos|prestacao de alimentos)\b/.test(value)) return { subtype: "familia_pensao" }
+  if (/\b(guarda (?:do|da|de )?|visita(?:s|cao)?|convivencia familiar)\b/.test(value)) return { subtype: "familia_guarda" }
+  if (/\b(inventario|heranca|sucessao|partilha de bens de falecido)\b/.test(value)) return { subtype: "familia_inventario" }
+
+  const contextoBancario = /\b(banco|bancari\w*|financeira|conta bancaria|cartao|pix|consignado|emprestimo)\b/.test(value)
+  if (contextoBancario && /\b(fraude|golpe|pix (?:nao )?reconhecido|transferencia (?:nao )?reconhecida|cartao clonado|compra (?:nao )?reconhecida)\b/.test(value)) return { subtype: "bancario_fraude" }
+  if (contextoBancario && /\b(emprestimo|consignado|financiamento)\b/.test(value)) return { subtype: "bancario_emprestimo" }
+  if (contextoBancario && /\b(juros|encargos|taxa abusiva|cobranca abusiva)\b/.test(value)) return { subtype: "bancario_juros" }
+  if (contextoBancario) return { subtype: "bancario_conta_cartao" }
+
+  if (/\b(negativacao indevida|nome negativado|serasa|spc)\b/.test(value)) return { subtype: "consumidor_negativacao" }
+  if (/\b(cobranca indevida|cobraram indevidamente|cobranca duplicada)\b/.test(value)) return { subtype: "consumidor_cobranca" }
+  if (/\b(produto com defeito|produto defeituoso|produto nao entregue|compra nao entregue)\b/.test(value)) return { subtype: "consumidor_produto" }
+  if (/\b(servico nao prestado|servico mal prestado|falha na prestacao do servico)\b/.test(value)) return { subtype: "consumidor_servico" }
+
+  if (/\b(usucapiao)\b/.test(value)) return { subtype: "imobiliario_usucapiao" }
+  if (/\b(aluguel|locacao|despejo|inquilino|locador)\b/.test(value)) return { subtype: "imobiliario_locacao" }
+  if (/\b(compra e venda de imovel|venda de imovel|compr[aei]\w* (?:uma )?(?:casa|terreno|apartamento|imovel))\b/.test(value)) return { subtype: "imobiliario_compra_venda" }
+  if (/\b(regularizacao de imovel|escritura|registro do imovel|matricula do imovel|invasao de terreno)\b/.test(value)) return { subtype: "imobiliario_regularizacao" }
+
+  if (/\b(fui preso|prisao|acusad\w*|investigad\w*|processo criminal|defesa criminal)\b/.test(value)) return { subtype: "penal_defesa" }
+  if (/\b(fui vitima|vitima de|ameaca|agressao|estelionato|crime contra mim)\b/.test(value)) return { subtype: "penal_vitima" }
+
+  if (/\b(descumprimento (?:de )?contratual|quebra de contrato|contrato(?:\s+\w+){0,3}\s+nao(?:\s+\w+){0,2}\s+cumprid\w*)\b/.test(value)) return { subtype: "civil_contrato" }
+  if (/\b(indenizacao|danos morais|danos materiais|reparacao de danos)\b/.test(value)) return { subtype: "civil_indenizacao" }
+  if (/\b(divida|cobranca civil|emprestimo entre pessoas)\b/.test(value)) return { subtype: "civil_divida" }
   return { subtype: null }
+}
+
+function inferArea(text, subtype = null) {
+  const subtypeArea = SUBTYPES[subtype]?.area
+  if (subtypeArea) return subtypeArea
+  const value = plain(text)
+  if (/\b(inss|previd|bpc|loas|incapacidade|aposentadoria|pensao por morte|salario maternidade)\b/.test(value)) return "INSS"
+  if (/\b(trabalh|empregad|empregador|patrao|fgts|horas extras)\b/.test(value)) return "Trabalhista"
+  if (/\b(divorcio|guarda|pensao alimenticia|inventario|heranca|uniao estavel)\b/.test(value)) return "Família"
+  if (/\b(banco|bancari|financeira|pix|consignado|emprestimo|cartao clonado)\b/.test(value)) return "Bancário"
+  if (/\b(consumidor|fornecedor|produto|servico nao prestado|serasa|spc|cobranca indevida)\b/.test(value)) return "Consumidor"
+  if (/\b(crime|criminal|prisao|delegacia|ameaca|agressao|acusado|investigado)\b/.test(value)) return "Penal"
+  if (/\b(imovel|aluguel|locacao|despejo|usucapiao|terreno|escritura)\b/.test(value)) return "Imobiliário"
+  if (/\b(civil|contrato|indenizacao|danos morais|divida)\b/.test(value)) return "Civil"
+  return null
 }
 
 function inferObjective(text, situation) {
@@ -197,8 +282,8 @@ function candidateForSource(source, input) {
   const facts = inferBenefitFacts(text, structured)
   const combined = [text, unwrap(structured.situacao), unwrap(structured.bpcSituacaoAdministrativa), unwrap(structured.objetivo)].filter(present).join(". ")
   const situation = inferSituation(combined)
-  const areaText = plain([combined, unwrap(structured.area), unwrap(structured.areaJuridica), unwrap(structured.tipoCaso), facts.subtype].filter(present).join(" "))
-  const area = /\b(inss|previd|bpc|loas|incapacidade|aposentadoria|pensao por morte|salario maternidade)\b/.test(areaText) ? "INSS" : null
+  const areaText = [combined, unwrap(structured.area), unwrap(structured.areaJuridica), unwrap(structured.tipoCaso), facts.subtype].filter(present).join(" ")
+  const area = inferArea(areaText, facts.subtype)
   return {
     source,
     priority: SOURCE_PRIORITY[source],
@@ -231,11 +316,18 @@ function isGenericSubtype(code) {
     normalized.endsWith("_outros")
 }
 
+function isGenericArea(area) {
+  const normalized = normalizedCode(area)
+  return !normalized || ["outros", "outra_area", "area_outros"].includes(normalized)
+}
+
 function resolveField(field, currentValue, candidates, { correction = false } = {}) {
   const available = candidates.filter(item => item[field])
   const preferred = available[0] || null
   if (!preferred) return { value: currentValue || null, source: null, divergences: [] }
-  if (!currentValue || (field === "subtype" && isGenericSubtype(currentValue) && !isGenericSubtype(preferred[field]))) {
+  const refinamentoAreaGenerica = field === "area" && isGenericArea(currentValue) && !isGenericArea(preferred[field])
+  const refinamentoBancarioLegado = field === "area" && currentValue === "Consumidor" && preferred[field] === "Bancário" && String(preferred.subtype || "").startsWith("bancario_")
+  if (!currentValue || refinamentoAreaGenerica || refinamentoBancarioLegado || (field === "subtype" && isGenericSubtype(currentValue) && !isGenericSubtype(preferred[field]))) {
     return { value: preferred[field], source: preferred.source, divergences: [] }
   }
   if (currentValue === preferred[field]) return { value: currentValue, source: preferred.source, divergences: [] }
@@ -292,11 +384,11 @@ function resolveLegalCaseNomenclature(input = {}) {
     schemaVersion: SCHEMA_VERSION,
     revision: changed ? Number(current.revision || 0) + 1 : Number(current.revision || (Object.values(next).some(Boolean) ? 1 : 0)),
     area: next.area,
-    areaLabel: next.area === "INSS" ? "Previdenciário / INSS" : null,
+    areaLabel: AREA_LABELS[next.area] || next.area || null,
     benefit: subtype?.benefit || null,
     subtype: next.subtype,
     subtypeLabel: subtype?.label || null,
-    type: subtype?.type || (next.area === "INSS" ? "inss_outros" : null),
+    type: subtype?.type || (next.area === "INSS" ? "inss_outros" : next.area ? "outros_livre" : null),
     situation: next.situation,
     situationLabel: SITUATIONS[next.situation] || null,
     objective: next.objective,

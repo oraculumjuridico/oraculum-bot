@@ -22,11 +22,12 @@ async function classificarAreaAudio(texto) {
 
   try {
     const system = `Você é um assistente jurídico especialista. Analise cuidadosamente a descrição do caso e extraia as informações. Responda APENAS JSON válido com estas chaves exatas:
-- "area": exatamente uma de: INSS, Trabalhista, Família, Consumidor, Penal, Civil, Imobiliário, Outros
+- "area": exatamente uma de: INSS, Trabalhista, Família, Consumidor, Bancário, Penal, Civil, Imobiliário, Outros
   * INSS: aposentadoria, benefício previdenciário, BPC/LOAS, auxílio-doença, pensão por morte
   * Trabalhista: demissão, FGTS, horas extras, acidente de trabalho, assédio moral, direitos trabalhistas
   * Família: divórcio, guarda de filhos, pensão alimentícia, inventário, herança
-  * Consumidor: cobrança indevida, produto com defeito, serviço não prestado, banco, financeira
+  * Consumidor: cobrança indevida de fornecedor, produto com defeito, serviço não prestado, negativação por empresa não bancária
+  * Bancário: fraude bancária, PIX não reconhecido, cartão clonado, empréstimo, consignado, juros e tarifas bancárias
   * Penal: crime, prisão, boletim de ocorrência, delegacia, processo criminal
   * Civil: dívida, contrato, indenização, dano moral (não relacionado a consumidor/trabalho)
   * Imobiliário: imóvel, aluguel, despejo, usucapião, financiamento imobiliário
@@ -67,7 +68,7 @@ Exemplos de relatos coloquiais que você DEVE saber classificar corretamente:
 
     const resultado = JSON.parse(res.data.choices[0].message.content)
 
-    const AREAS_VALIDAS = ["INSS", "Trabalhista", "Família", "Consumidor", "Penal", "Civil", "Imobiliário", "Outros"]
+    const AREAS_VALIDAS = ["INSS", "Trabalhista", "Família", "Consumidor", "Bancário", "Penal", "Civil", "Imobiliário", "Outros"]
     const docKey = sanitizarTextoEntrada(resultado.docKey)
     return {
       area: AREAS_VALIDAS.includes(resultado.area) ? resultado.area : "Outros",

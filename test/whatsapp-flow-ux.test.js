@@ -148,6 +148,15 @@ async function executarTestesSelecaoCaso() {
       new RegExp(`abrirSelecaoCasoParaAcao\\(from, u, "${acao}"\\)`)
     )
   }
+
+  assert.match(source, /const ultimosCliquesStatus = new Map\(\)/)
+  assert.match(source, /fila\.some\(item => item\.text === "m_status"\) \|\| agora - ultimoClique < 15000/)
+  const statusCliente = trecho(
+    "async function telaStatusCliente",
+    "async function telaConfirmarCancelamentoConsultaCliente"
+  )
+  assert.match(statusCliente, /\{ audioAutomatico: false, semAudioResposta: true \}/)
+  assert.match(statusCliente, /void enviarAudioModoVoz\(from, u, gerarAudioDaTela\(telaStatus\), "status cliente"\)/)
 }
 
 executarTestesSelecaoCaso()

@@ -377,3 +377,44 @@ test("legacy generic INSS classification is refined by a complete narrative", ()
     "\ud83d\udfe2 PRV.260801.813 - Benef\u00edcio por incapacidade tempor\u00e1ria"
   )
 })
+
+test("all supported legal areas derive a specific canonical subtype and title", () => {
+  const scenarios = [
+    ["Fui demitido sem receber as verbas rescisórias.", "Trabalhista", "trab_demissao", "Demissão / Verbas Rescisórias"],
+    ["Quero me divorciar e resolver a partilha.", "Família", "familia_divorcio", "Divórcio / Dissolução de União"],
+    ["Comprei um produto com defeito e a loja não troca.", "Consumidor", "consumidor_produto", "Produto com Defeito ou Não Entregue"],
+    ["Fizeram um PIX não reconhecido na minha conta bancária.", "Bancário", "bancario_fraude", "Fraude Bancária"],
+    ["Um contrato não foi cumprido e quero indenização.", "Civil", "civil_contrato", "Contrato / Descumprimento Contratual"],
+    ["Fui acusado em um processo criminal e preciso de defesa.", "Penal", "penal_defesa", "Defesa Criminal"],
+    ["O inquilino não paga o aluguel e preciso de despejo.", "Imobiliário", "imobiliario_locacao", "Aluguel / Despejo"]
+  ]
+
+  for (const [narrative, area, subtype, label] of scenarios) {
+    const result = resolve(narrative)
+    assert.equal(result.area, area, narrative)
+    assert.equal(result.subtype, subtype, narrative)
+    assert.equal(result.subtypeLabel, label, narrative)
+    assert.equal(result.status, "specific", narrative)
+    assert.match(
+      montarTituloNegocioHubSpot({ area, numeroCaso: "JUR.260813.001", nomenclaturaJuridica: result }),
+      new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)
+    )
+  }
+})
+
+test("legacy consumer classification is refined to banking when narrative is explicit", () => {
+  const current = { area: "Consumidor", subtype: null, type: "outros_livre", status: "generic" }
+  const result = resolve("Houve fraude bancária e um PIX não reconhecido na minha conta.", { current })
+  assert.equal(result.area, "Bancário")
+  assert.equal(result.subtype, "bancario_fraude")
+  assert.deepEqual(result.divergences, [])
+})
+
+test("legacy Outros area is refined when the narrative identifies a supported area", () => {
+  const current = { area: "Outros", subtype: "outros_livre", type: "outros_livre", status: "generic" }
+  const result = resolve("Preciso fazer inventário e partilhar a herança.", { current })
+  assert.equal(result.area, "Família")
+  assert.equal(result.subtype, "familia_inventario")
+  assert.equal(result.status, "specific")
+  assert.deepEqual(result.divergences, [])
+})

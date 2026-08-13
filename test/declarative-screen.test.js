@@ -25,6 +25,8 @@ assert.deepEqual(gerarBotoesDaTela(tela), [
   { id: "m_adv", title: "Falar com advogado" },
   { id: "m_inicio", title: "Menu do cliente" }
 ])
+assert.doesNotMatch(tela.texto, /O que fazer agora/)
+assert.doesNotMatch(tela.texto, /Enviar documentos.*enviar documentos/s)
 
 const audio = gerarAudioDaTela(tela)
 for (const acao of tela.acoes) {

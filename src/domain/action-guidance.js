@@ -51,13 +51,10 @@ function descricaoAcao(id = "", label = "") {
 }
 
 function orientarTextoComAcoes(texto = "", acoes = []) {
-  const base = String(texto || "").trim()
-  if (!Array.isArray(acoes) || !acoes.length || /O que fazer agora:/i.test(base)) return base
-  const linhas = acoes.map(acao => {
-    const label = limparRotulo(acao.label || acao.title)
-    return `• *${label}:* ${acao.descricao || descricaoAcao(acao.id, label)}.`
-  })
-  return `${base}\n\n👇 *O que fazer agora:*\n${linhas.join("\n")}`
+  // Os próprios botões já apresentam as ações disponíveis. Repetir cada
+  // rótulo e sua descrição no corpo deixa as telas longas e redundantes.
+  // A orientação detalhada permanece no áudio por orientarAudioAcao().
+  return String(texto || "").trim()
 }
 
 function orientarAudioAcao(acao = {}) {

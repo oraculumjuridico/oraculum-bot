@@ -17,6 +17,9 @@ const AUDIO_DIR = path.join(__dirname, "audios", "atendentes")
 const AUDIO_TTL_MS = 24 * 60 * 60 * 1000
 const GOOGLE_TTS_MAX_CHARS = 180
 let ultimaLimpeza = 0
+let ultimaSaudeLightningEm = 0
+let aquecimentoLightningEmCurso = null
+let timerKeepAliveLightning = null
 
 function numeroPositivo(valor, padrao) {
   const numero = Number(valor)
@@ -128,6 +131,46 @@ function urlLightning(env) {
   return String(env.LIGHTNING_TTS_URL || "").trim().replace(/\/+$/, "")
 }
 
+async function aquecerLightningTts(env = process.env, { force = false } = {}) {
+  const baseUrl = urlLightning(env)
+  if (!baseUrl) return false
+  const intervalo = numeroPositivo(env.LIGHTNING_TTS_KEEPALIVE_MS, 4 * 60 * 1000)
+  if (!force && ultimaSaudeLightningEm && Date.now() - ultimaSaudeLightningEm < intervalo) return true
+  if (aquecimentoLightningEmCurso) return aquecimentoLightningEmCurso
+
+  const headers = {}
+  if (String(env.LIGHTNING_TTS_TOKEN || "").trim()) headers.Authorization = `Bearer ${env.LIGHTNING_TTS_TOKEN.trim()}`
+  aquecimentoLightningEmCurso = (async () => {
+    try {
+      const resposta = await clienteHttp.get(`${baseUrl}/health`, {
+        timeout: numeroPositivo(env.LIGHTNING_TTS_HEALTH_TIMEOUT_MS, 70000),
+        headers
+      })
+      const ok = resposta?.status === undefined || (resposta.status >= 200 && resposta.status < 300)
+      if (ok) ultimaSaudeLightningEm = Date.now()
+      registrarTts({ motor: "SUPERTONIC_HEALTH", sucesso: ok, warmup: true })
+      return ok
+    } catch (erro) {
+      registrarTts({ motor: "SUPERTONIC_HEALTH", sucesso: false, warmup: true, motivo: motivoSanitizado(erro) })
+      return false
+    } finally {
+      aquecimentoLightningEmCurso = null
+    }
+  })()
+  return aquecimentoLightningEmCurso
+}
+
+function iniciarKeepAliveLightningTts(env = process.env) {
+  if (!urlLightning(env) || timerKeepAliveLightning) return timerKeepAliveLightning
+  void aquecerLightningTts(env, { force: true })
+  const intervalo = numeroPositivo(env.LIGHTNING_TTS_KEEPALIVE_MS, 4 * 60 * 1000)
+  timerKeepAliveLightning = setInterval(() => {
+    void aquecerLightningTts(env, { force: true })
+  }, intervalo)
+  timerKeepAliveLightning.unref?.()
+  return timerKeepAliveLightning
+}
+
 function wavValido(buffer) {
   return Buffer.isBuffer(buffer) && buffer.length >= 44 &&
     buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
@@ -208,6 +251,7 @@ async function gerarAudioAtendente(atendente, texto, opcoes = {}) {
   const wavPath = path.join(AUDIO_DIR, `${nomeArquivo}.wav`)
   let lightningFailure = null
   try {
+    await aquecerLightningTts(env)
     const wav = await baixarWavLightning(textoFala || "Mensagem da Oraculum.", profile, env)
     fs.writeFileSync(wavPath, wav)
     converterParaOgg(wavPath, oggPath, env)
@@ -232,6 +276,8 @@ async function gerarAudioAtendente(atendente, texto, opcoes = {}) {
 function configurarDependenciasTtsParaTeste({ http, ffmpeg } = {}) {
   clienteHttp = http || axios
   executarFfmpeg = ffmpeg || execFileSync
+  ultimaSaudeLightningEm = 0
+  aquecimentoLightningEmCurso = null
 }
 
 module.exports = {
@@ -241,6 +287,8 @@ module.exports = {
   perfilDaAtendente,
   wavValido,
   baixarWavLightning,
+  aquecerLightningTts,
+  iniciarKeepAliveLightningTts,
   gerarAudioAtendente,
   configurarDependenciasTtsParaTeste
 }

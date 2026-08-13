@@ -37,6 +37,7 @@ function criarHttp({ lightning = "ok", google = "ok" } = {}) {
     },
     async get(url, options) {
       chamadas.push({ tipo: "get", url, options })
+      if (url.endsWith("/health")) return { status: 200, data: { ok: true } }
       if (google === "fail") throw new Error("google indisponivel")
       return { data: Buffer.from("mp3-de-teste") }
     }
@@ -93,11 +94,12 @@ async function main() {
   const principal = await gerar({ texto: textoEscrito })
   console.info = consoleInfoOriginal
   assert.equal(textoEscrito, "INSS e CPF")
-  assert.equal(principal.http.chamadas[0].tipo, "post")
-  assert.equal(principal.http.chamadas[0].url, "https://lightning.example/tts")
-  assert.deepEqual(principal.http.chamadas[0].body, { text: "ieneésseésse e cêpêéfe" })
-  assert.equal(principal.http.chamadas[0].options.headers["X-Oraculum-Voice"], "F3")
-  assert.equal(principal.http.chamadas.some(chamada => chamada.tipo === "get"), false)
+  assert.equal(principal.http.chamadas[0].url, "https://lightning.example/health")
+  const chamadaTts = principal.http.chamadas.find(chamada => chamada.tipo === "post")
+  assert.equal(chamadaTts.url, "https://lightning.example/tts")
+  assert.deepEqual(chamadaTts.body, { text: "ieneésseésse e cêpêéfe" })
+  assert.equal(chamadaTts.options.headers["X-Oraculum-Voice"], "F3")
+  assert.equal(principal.http.chamadas.some(chamada => chamada.url.includes("translate.google")), false)
   assert.equal(principal.comandos[0].includes("libopus"), true)
   assert.equal(eventosTts.some(([prefixo, evento]) =>
     prefixo === "[tts]" && JSON.parse(evento).motor === "SUPERTONIC_F3" &&
@@ -107,8 +109,9 @@ async function main() {
 
   for (const lightning of ["timeout", "http500", "invalid"]) {
     const resultado = await gerar({ lightning })
-    assert.equal(resultado.http.chamadas[0].tipo, "post")
-    assert.equal(resultado.http.chamadas[1].tipo, "get")
+    assert.equal(resultado.http.chamadas.some(chamada => chamada.url.endsWith("/health")), true)
+    assert.equal(resultado.http.chamadas.some(chamada => chamada.tipo === "post"), true)
+    assert.equal(resultado.http.chamadas.some(chamada => chamada.url.includes("translate.google")), true)
   }
 
   const semUrl = await gerar({ env: { ...env, LIGHTNING_TTS_URL: "" } })

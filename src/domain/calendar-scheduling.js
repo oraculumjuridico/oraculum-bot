@@ -59,6 +59,16 @@ function horarioDentroDoExpediente(dataHora, duracaoMin = 60) {
   return false
 }
 
+function removerSlotsDuplicados(slots = []) {
+  const vistos = new Set()
+  return slots.filter(slot => {
+    const timestamp = new Date(slot).getTime()
+    if (!Number.isFinite(timestamp) || vistos.has(timestamp)) return false
+    vistos.add(timestamp)
+    return true
+  })
+}
+
 function getCalendar() {
   const oauth2 = new google.auth.OAuth2(
     GOOGLE_CLIENT_ID,
@@ -114,9 +124,11 @@ async function buscarHorariosDisponiveis(pagina = 0) {
   }
 
   // Flatten — todos os slots organizados por dia
-  const todosSlots = Object.values(slotsPorDia)
-    .flat()
-    .filter(slot => horarioAindaPodeSerAgendado(slot, agora))
+  const todosSlots = removerSlotsDuplicados(
+    Object.values(slotsPorDia)
+      .flat()
+      .filter(slot => horarioAindaPodeSerAgendado(slot, agora))
+  )
 
   // Paginação — 6 slots por página
   const porPagina = 6
@@ -491,6 +503,7 @@ async function vincularEventoConsulta(eventId, metadata = {}) {
 }
 
 module.exports = {
+  removerSlotsDuplicados,
   horarioDentroDoExpediente,
   configurarConsultaEventSink,
   buscarHorariosDisponiveis,
