@@ -134,6 +134,24 @@ function main() {
     "🟢 PRV.260812.999 - Direito do Consumidor"
   )
 
+  assert.equal(
+    montarTituloNegocioHubSpot({
+      area: "INSS",
+      numeroCaso: "PRV.260801.813",
+      tipo_de_caso: "inss_outros",
+      tipo: "outros",
+      descricao: "O pedido de benefício por incapacidade temporária foi negado após a perícia.",
+      nomenclaturaJuridica: {
+        area: "INSS",
+        subtype: "inss_outros",
+        subtypeLabel: "Demanda Previdenciária",
+        type: "inss_outros",
+        status: "generic"
+      }
+    }),
+    "🟢 PRV.260801.813 - Benefício por incapacidade temporária"
+  )
+
   console.log("hubspot-deal-title.test.js ok")
 }
 

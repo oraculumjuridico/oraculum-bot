@@ -92,10 +92,10 @@ function tipoCompativelComArea(type = "", area = "") {
 }
 
 function nomenclaturaJuridicaTitulo(u = {}) {
-  if (u.nomenclaturaJuridica && typeof u.nomenclaturaJuridica === "object") {
-    return u.nomenclaturaJuridica
-  }
   const resolved = resolveLegalCaseNomenclature({
+    current: u.nomenclaturaJuridica && typeof u.nomenclaturaJuridica === "object"
+      ? u.nomenclaturaJuridica
+      : null,
     narrative: [u.descricao, u.assuntoResumo, u.detalhe, u.objetivo].filter(Boolean),
     usuario: u,
     classification: {
@@ -112,11 +112,17 @@ function nomenclaturaJuridicaTitulo(u = {}) {
 
 function rotuloTipoCasoNegocio(u = {}) {
   const areaExplicita = sanitizarTextoEntrada(u.area || u.area_juridica || "")
+  const nomenclatura = nomenclaturaJuridicaTitulo(u)
+  const nomenclaturaCompativel = tipoCompativelComArea(nomenclatura?.type, areaExplicita)
+  const rotuloCanonico = nomenclaturaCompativel
+    ? sanitizarTextoEntrada(nomenclatura?.subtypeLabel || "") || CASE_TYPE_LABELS[nomenclatura?.subtype] || CASE_TYPE_LABELS[nomenclatura?.type]
+    : ""
   const explicit = sanitizarTextoEntrada(
     u.nomenclaturaJuridica?.subtypeLabel || u.caseTypeLabel || u.rotuloTipoCaso || ""
   )
   const explicitType = u.nomenclaturaJuridica?.type || u.tipo_de_caso || u.tipoCaso || u.caseType
-  if (explicit && tipoCompativelComArea(explicitType, areaExplicita)) return explicit
+  const tipoGenerico = value => ["inss_outros", "trab_outros", "outros_livre", "outros"].includes(sanitizarTextoEntrada(value).toLowerCase())
+  if (explicit && tipoCompativelComArea(explicitType, areaExplicita) && !(tipoGenerico(explicitType) && rotuloCanonico && nomenclatura?.status === "specific")) return explicit
   const subtype = sanitizarTextoEntrada(
     u.oraculum_case_subtype || u.subTipo || u.subtipo || u.caseSubtype || ""
   ).toLowerCase()
@@ -126,12 +132,12 @@ function rotuloTipoCasoNegocio(u = {}) {
   const mapped = tipoCompativelComArea(subtype, areaExplicita) && tipoCompativelComArea(type, areaExplicita)
     ? CASE_TYPE_LABELS[subtype] || CASE_TYPE_LABELS[type]
     : null
-  if (mapped) return mapped
-  const nomenclatura = nomenclaturaJuridicaTitulo(u)
-  const nomenclaturaCompativel = tipoCompativelComArea(nomenclatura?.type, areaExplicita)
-  return (nomenclaturaCompativel ? sanitizarTextoEntrada(nomenclatura?.subtypeLabel || "") : "") ||
-    (nomenclaturaCompativel ? CASE_TYPE_LABELS[nomenclatura?.subtype] || CASE_TYPE_LABELS[nomenclatura?.type] : null) ||
-    rotuloAreaCasoNegocio(u)
+  if (mapped && !(tipoGenerico(subtype || type) && rotuloCanonico && nomenclatura?.status === "specific")) return mapped
+  const rotuloNomenclatura = nomenclaturaCompativel
+    ? sanitizarTextoEntrada(nomenclatura?.subtypeLabel || "") || CASE_TYPE_LABELS[nomenclatura?.subtype] || CASE_TYPE_LABELS[nomenclatura?.type]
+    : ""
+  if (nomenclatura?.status === "specific" && rotuloNomenclatura) return rotuloNomenclatura
+  return rotuloAreaCasoNegocio(u) || rotuloNomenclatura
 }
 
 function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = {}) {

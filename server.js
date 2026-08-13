@@ -2130,7 +2130,9 @@ function getHubSpotDealStateProps(u) {
     descricao_completa: getHubSpotDescricaoCompleta(u),
     estado_bot_snapshot: serializarEstado(u),
     etapa_do_bot: etapaBot,
-    tipo_de_caso: mapearTipoCaso(u) || u?.nomenclaturaJuridica?.type || "",
+    // A classificação canônica refinada deve prevalecer sobre o mapeamento
+    // legado genérico (por exemplo, inss_outros).
+    tipo_de_caso: u?.nomenclaturaJuridica?.type || mapearTipoCaso(u) || "",
     oraculum_case_subtype: u?.nomenclaturaJuridica?.subtype || u?.oraculum_case_subtype || u?.subTipo || u?.subtipo || "",
     temperatura_lead: mapearTemperatura(temperatura),
     hs_priority: mapearPrioridade(temperatura),
@@ -7610,21 +7612,16 @@ async function enviarTelaImagemOuTexto(from, imageUrl, texto, opcoes = null, cha
     await enviarAudioAutomaticoTela(from, users[from], payload, "tela direta")
   }
 
-  const quantidadeOpcoes = Array.isArray(opcoesTela) ? opcoesTela.length : 0
-  const opcoesImagem = quantidadeOpcoes > 0 && quantidadeOpcoes <= 3 ? opcoesTela : null
-  // Imagem com até três botões pode ser enviada como uma única mensagem.
-  if (imageUrl && quantidadeOpcoes <= 3) {
+  const opcoesImagem = Array.isArray(opcoesTela) && opcoesTela.length <= 3 ? opcoesTela : null
+  if (imageUrl) {
     const enviada = await enviarImagemWhatsApp(from, imageUrl, textoTela, opcoesImagem)
     if (enviada) {
+      if (Array.isArray(opcoesTela) && opcoesTela.length > 3) {
+        await new Promise(r => setTimeout(r, 500))
+        return aplicarEmojiTelaCliente(from, { texto: chamadaOpcoes, opcoes: opcoesTela })
+      }
       return { texto: null, opcoes: null }
     }
-  }
-  // O WhatsApp não admite cabeçalho de imagem em listas com mais de três
-  // opções. Preservamos a imagem da tela sem legenda e devolvemos abaixo uma
-  // única lista com o texto completo, evitando a antiga mensagem isolada
-  // chamada apenas "Opções".
-  if (imageUrl && quantidadeOpcoes > 3) {
-    await enviarImagemWhatsApp(from, imageUrl, "", null)
   }
   return {
     texto: textoTela,
