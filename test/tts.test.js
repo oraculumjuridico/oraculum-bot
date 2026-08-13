@@ -6,6 +6,7 @@ const {
   numerosParaFala,
   perfilDaAtendente,
   gerarAudioAtendente,
+  iniciarKeepAliveLightningTts,
   configurarDependenciasTtsParaTeste
 } = require("../tts")
 
@@ -120,6 +121,29 @@ async function main() {
   const httpFalho = criarHttp({ lightning: "timeout", google: "fail" })
   configurarDependenciasTtsParaTeste({ http: httpFalho, ffmpeg: ffmpegFalso([]) })
   await assert.rejects(() => gerarAudioAtendente("Helena", "teste", { env }))
+
+  let tentativasSaude = 0
+  configurarDependenciasTtsParaTeste({
+    http: {
+      async get() {
+        tentativasSaude += 1
+        if (tentativasSaude === 1) {
+          const erro = new Error("timeout")
+          erro.code = "ECONNABORTED"
+          throw erro
+        }
+        return { status: 200, data: { ok: true } }
+      }
+    },
+    ffmpeg: ffmpegFalso([])
+  })
+  iniciarKeepAliveLightningTts({
+    ...env,
+    LIGHTNING_TTS_KEEPALIVE_MS: "60000",
+    LIGHTNING_TTS_WARMUP_RETRY_MS: "5"
+  })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(tentativasSaude, 2)
 
   configurarDependenciasTtsParaTeste()
   console.log("tts.test.js: ok")

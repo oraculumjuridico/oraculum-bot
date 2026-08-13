@@ -20,6 +20,7 @@ let ultimaLimpeza = 0
 let ultimaSaudeLightningEm = 0
 let aquecimentoLightningEmCurso = null
 let timerKeepAliveLightning = null
+let timerRetryLightning = null
 
 function numeroPositivo(valor, padrao) {
   const numero = Number(valor)
@@ -147,7 +148,11 @@ async function aquecerLightningTts(env = process.env, { force = false } = {}) {
         headers
       })
       const ok = resposta?.status === undefined || (resposta.status >= 200 && resposta.status < 300)
-      if (ok) ultimaSaudeLightningEm = Date.now()
+      if (ok) {
+        ultimaSaudeLightningEm = Date.now()
+        if (timerRetryLightning) clearTimeout(timerRetryLightning)
+        timerRetryLightning = null
+      }
       registrarTts({ motor: "SUPERTONIC_HEALTH", sucesso: ok, warmup: true })
       return ok
     } catch (erro) {
@@ -160,12 +165,27 @@ async function aquecerLightningTts(env = process.env, { force = false } = {}) {
   return aquecimentoLightningEmCurso
 }
 
+function agendarRetryAquecimentoLightning(env = process.env) {
+  if (timerRetryLightning || !urlLightning(env)) return
+  const espera = numeroPositivo(env.LIGHTNING_TTS_WARMUP_RETRY_MS, 10000)
+  timerRetryLightning = setTimeout(async () => {
+    timerRetryLightning = null
+    const saudavel = await aquecerLightningTts(env, { force: true })
+    if (!saudavel) agendarRetryAquecimentoLightning(env)
+  }, espera)
+  timerRetryLightning.unref?.()
+}
+
 function iniciarKeepAliveLightningTts(env = process.env) {
   if (!urlLightning(env) || timerKeepAliveLightning) return timerKeepAliveLightning
-  void aquecerLightningTts(env, { force: true })
+  void aquecerLightningTts(env, { force: true }).then(saudavel => {
+    if (!saudavel) agendarRetryAquecimentoLightning(env)
+  })
   const intervalo = numeroPositivo(env.LIGHTNING_TTS_KEEPALIVE_MS, 4 * 60 * 1000)
   timerKeepAliveLightning = setInterval(() => {
-    void aquecerLightningTts(env, { force: true })
+    void aquecerLightningTts(env, { force: true }).then(saudavel => {
+      if (!saudavel) agendarRetryAquecimentoLightning(env)
+    })
   }, intervalo)
   timerKeepAliveLightning.unref?.()
   return timerKeepAliveLightning
@@ -278,6 +298,10 @@ function configurarDependenciasTtsParaTeste({ http, ffmpeg } = {}) {
   executarFfmpeg = ffmpeg || execFileSync
   ultimaSaudeLightningEm = 0
   aquecimentoLightningEmCurso = null
+  if (timerKeepAliveLightning) clearInterval(timerKeepAliveLightning)
+  if (timerRetryLightning) clearTimeout(timerRetryLightning)
+  timerKeepAliveLightning = null
+  timerRetryLightning = null
 }
 
 module.exports = {
