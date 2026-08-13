@@ -1031,6 +1031,7 @@ const sessoesAdminWhatsApp = new Map()
 // sem perda de conteúdo quando o cliente envia várias mensagens rapidamente.
 const filasMensagens = new Map()
 const ultimosCliquesStatus = new Map()
+const ultimosCliquesMenuCliente = new Map()
 const locksUsuarios = new Map()
 const sessoesAdminAutenticadas = new Map()
 const tentativasAdminWhatsApp = new Map()
@@ -17347,6 +17348,18 @@ async function processar(from, nomeWA, text, msgObj) {
         return
       }
       ultimosCliquesStatus.set(from, agora)
+    }
+    // O menu também é uma navegação idempotente. Alguns callbacks podem
+    // chegar repetidos enquanto o áudio da primeira resposta ainda está na
+    // fila; somente a primeira abertura deve produzir tela e áudio.
+    if (text === "m_inicio") {
+      const agora = Date.now()
+      const ultimoClique = Number(ultimosCliquesMenuCliente.get(from) || 0)
+      if (fila.some(item => item.text === "m_inicio") || agora - ultimoClique < 15000) {
+        resolve(null)
+        return
+      }
+      ultimosCliquesMenuCliente.set(from, agora)
     }
     fila.push({ nomeWA, text, msgObj, resolve })
 

@@ -150,7 +150,9 @@ async function executarTestesSelecaoCaso() {
   }
 
   assert.match(source, /const ultimosCliquesStatus = new Map\(\)/)
+  assert.match(source, /const ultimosCliquesMenuCliente = new Map\(\)/)
   assert.match(source, /fila\.some\(item => item\.text === "m_status"\) \|\| agora - ultimoClique < 15000/)
+  assert.match(source, /fila\.some\(item => item\.text === "m_inicio"\) \|\| agora - ultimoClique < 15000/)
   const statusCliente = trecho(
     "async function telaStatusCliente",
     "async function telaConfirmarCancelamentoConsultaCliente"
