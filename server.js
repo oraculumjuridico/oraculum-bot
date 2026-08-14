@@ -4512,6 +4512,7 @@ const ADMIN_IDS = {
   completarInformacoes: "adm_completar_informacoes",
   enviarDocumentos: "adm_enviar_documentos",
   casoCompletar: "adm_caso_completar",
+  casoCredenciais: "adm_caso_credenciais",
   casoEnviarDocumento: "adm_caso_enviar_documento",
   casoDocumentos: "adm_caso_documentos",
   casoRevisarDocumentos: "adm_caso_revisar_documentos",
@@ -6138,6 +6139,7 @@ async function telaDetalheCasoAdmin(from, idx) {
       { id: ADMIN_IDS.casoMarcarUrgente, title: `🚨 ${ADMIN_MENU_LABELS.marcarUrgente}` },
       { id: ADMIN_IDS.casoEnviarAnalise, title: `📝 ${ADMIN_MENU_LABELS.registrarAnalise}` },
       { id: ADMIN_IDS.casoCompletar, title: "✏️ Completar dados" },
+      { id: ADMIN_IDS.casoCredenciais, title: "🔐 Credenciais" },
       { id: ADMIN_IDS.casoDocumentos, title: "📎 Documentos" },
       { id: ADMIN_IDS.casoAgendar, title: "📅 Agendar atendimento" },
       { id: ADMIN_IDS.casoComunicacao, title: "💬 Comunicação" },
@@ -6152,6 +6154,53 @@ async function telaDetalheCasoAdmin(from, idx) {
 function botaoVoltarCasoAdmin(from) {
   const sessao = sessoesAdminWhatsApp.get(normalizarNumeroWhatsAppEnvio(from)) || {}
   return { id: `admin_caso_${sessao.casoSelecionado || 0}`, title: "⬅️ Voltar ao caso" }
+}
+
+function formatarCpfAdmin(valor) {
+  const digitos = String(valor || "").replace(/\D/g, "")
+  if (digitos.length !== 11) return ""
+  return digitos.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4")
+}
+
+function resolverUrlCofreCredenciaisAdmin() {
+  const valor = String(process.env.ADMIN_CREDENTIALS_VAULT_URL || "").trim()
+  if (!valor) return ""
+  try {
+    const url = new URL(valor)
+    return url.protocol === "https:" ? url.toString() : ""
+  } catch {
+    return ""
+  }
+}
+
+async function telaCredenciaisCasoAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u) return { texto: "Selecione novamente um caso.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+
+  if (item.u.negocioId && !item.contato) {
+    const contato = await hsAdminBuscarContatoDoNegocio(item.u.negocioId)
+    if (contato) hidratarDadosContatoAdmin(item, contato)
+  }
+
+  const cpf = formatarCpfAdmin(item.u.cpf || item.u._cpf)
+  const cofre = resolverUrlCofreCredenciaisAdmin()
+  return {
+    texto: [
+      "🔐 *Credenciais do cliente*",
+      "",
+      `Caso: ${item.u.numeroCaso || "-"}`,
+      cpf ? "CPF para copiar:" : "CPF: não informado",
+      cpf || "",
+      "",
+      cofre ? "Senha e demais acessos ficam somente no cofre seguro:" : "Senha: não armazenada no bot, HubSpot, Drive ou notas.",
+      cofre || "Configure ADMIN_CREDENTIALS_VAULT_URL para abrir o cofre seguro por esta tela.",
+      "",
+      "Nunca envie a senha ao cliente nem registre a senha nesta conversa."
+    ].filter(Boolean).join("\n"),
+    opcoes: [botaoVoltarCasoAdmin(from), { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+    registrarPergunta: false,
+    audio: false
+  }
 }
 
 function telaDocumentosCasoAdmin(from) {
@@ -7223,6 +7272,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["completar informacoes", "completar informações", ADMIN_IDS.completarInformacoes].includes(comando)) return await telaAdminCasos()
   if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
+  if (["credenciais", ADMIN_IDS.casoCredenciais].includes(comando)) return await telaCredenciaisCasoAdmin(from)
   if (["documentos do caso", ADMIN_IDS.casoDocumentos].includes(comando)) return telaDocumentosCasoAdmin(from)
   if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
   if (["revisar documentos", ADMIN_IDS.casoRevisarDocumentos].includes(comando)) return await telaRevisaoDocumentalAdmin(from)
@@ -19103,6 +19153,8 @@ module.exports = {
   iniciarServidor,
   encerrarServidor,
   telaDetalheCasoAdmin,
+  telaCredenciaisCasoAdmin,
+  formatarCpfAdmin,
   sessoesAdminWhatsApp,
   users,
   usuarioTemProgressoParaRetomada,

@@ -78,6 +78,8 @@ Módulos principais: `client-mode-ui.js`, `client-menu-ui.js`, `client-navigatio
 
 Nome, telefone, cidade, endereço e demais dados são coletados e confirmados de forma incremental. Correção por texto ou áudio atualiza somente o campo identificado. Os demais valores permanecem intactos. Credenciais do Meu INSS nunca são aceitas como campo comum nem armazenadas em notas abertas.
 
+No WhatsApp Admin, a opção **Credenciais** apresenta o CPF confirmado em uma linha própria para cópia. Senhas permanecem exclusivamente em um cofre externo restrito, acessível pela URL HTTPS configurada em `ADMIN_CREDENTIALS_VAULT_URL`. O bot, o HubSpot, o Drive e as notas não armazenam nem registram a senha.
+
 O HubSpot recebe propriedades permitidas pelo contrato. Divergência entre valor manual e extração automática não autoriza sobrescrita silenciosa.
 
 Módulos principais: `name-normalization.js`, `phone-name.js`, `address-facts.js`, `geo-search.js`, `hubspot-contract.js`, `hubspot-sync.js` e handlers de revalidação.
