@@ -146,6 +146,7 @@ function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = 
     HS_STAGE?.ANALISE,
     HS_STAGE?.AGUARDANDO_DOCS,
     HS_STAGE?.DOCS,
+    HS_STAGE?.AGENDAMENTO,
     HS_STAGE?.PROTOCOLO,
     HS_STAGE?.PROCESSO,
     HS_STAGE?.FINAL
@@ -156,7 +157,7 @@ function classificacaoTituloNegocio(u = {}, { HS_STAGE = null, stage = null } = 
   }
 
   const temperatura = sanitizarTextoEntrada(u.temperatura || u.temperaturaLead || definirTemperatura(u)).toLowerCase()
-  if (temperatura === "quente") return { tipo: "lead_quente", prefixo: "LQ-", bolinha: "🟠" }
+  if (temperatura === "quente") return { tipo: "lead_quente", prefixo: "LQ-", bolinha: "🟢" }
   if (temperatura === "morno") return { tipo: "lead_morno", prefixo: "LM-", bolinha: "🟡" }
   return { tipo: "lead_frio", prefixo: "LF-", bolinha: "⚪" }
 }

@@ -99,7 +99,8 @@ function main() {
     fs.readFileSync(path.join(root, "scripts", "migrate-consulta-calendar.js"), "utf8")
   ].join("\n")
   assert.doesNotMatch(fontesOperacionais, /_eventoCalendarId/)
-  assert.doesNotMatch(fontesOperacionais, /1343040832|HS_STAGE\.AGENDAMENTO/)
+  assert.match(fontesOperacionais, /AGENDAMENTO:\s*"1343040832"/)
+  assert.match(fontesOperacionais, /consultaStatus\s*===\s*"agendada"[\s\S]{0,80}HS_STAGE\.AGENDAMENTO/)
 
   console.log("consultation-architecture-hard-lock.test.js: ok")
 }

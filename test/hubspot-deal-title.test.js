@@ -12,6 +12,7 @@ const HS_STAGE = {
   ANALISE: "presentationscheduled",
   AGUARDANDO_DOCS: "decisionmakerboughtin",
   DOCS: "contractsent",
+  AGENDAMENTO: "1343040832",
   PROTOCOLO: "1343040098",
   PROCESSO: "1337291921",
   FINAL: "1343039663"
@@ -55,7 +56,7 @@ function main() {
       area: "Bancário",
       temperatura: "quente"
     }, { HS_STAGE, stage: HS_STAGE.CADASTRO }),
-    "🟠 LQ-Bnc"
+    "🟢 LQ-Bnc"
   )
 
   assert.deepEqual(

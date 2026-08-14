@@ -4,6 +4,7 @@ const HS_STAGE = {
   ANALISE: "presentationscheduled",
   AGUARDANDO_DOCS: "decisionmakerboughtin",
   DOCS: "contractsent",
+  AGENDAMENTO: "1343040832",
   PROTOCOLO: "1343040098",
   PROCESSO: "1337291921",
   FINAL: "1343039663"
@@ -63,7 +64,7 @@ function montarBarraStatusCliente({
   // Stages que já passaram pela análise jurídica
   const ordemFlat = [
     HS_STAGE.LEAD, HS_STAGE.CADASTRO, HS_STAGE.ANALISE,
-    HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.DOCS,
+    HS_STAGE.AGUARDANDO_DOCS, HS_STAGE.DOCS, HS_STAGE.AGENDAMENTO,
     HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL
   ]
   const idxAtual = ordemFlat.indexOf(stageAtualHS)
@@ -82,10 +83,11 @@ function montarBarraStatusCliente({
   ]
 
   return ordemBarra.map(etapa => {
-    // Análise jurídica — controlada pelos documentos, não pelo stage
+    // A análise permanece em andamento até o avanço jurídico manual para
+    // protocolo. Documentos e consulta são acompanhados em linhas próprias.
     if (etapa.stages.includes(HS_STAGE.ANALISE)) {
       if (!jaPassouAnalise) return `⚪ ${etapa.label}`
-      if (todosDocsEnviados) return `✅ ${etapa.label}`
+      if ([HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL].includes(stageAtualHS)) return `✅ ${etapa.label}`
       return `🔄 *${etapa.label}*`
     }
 
@@ -120,7 +122,9 @@ function montarBlocoAgendamentoStatus(temAgendamentoAtivo, consultaDataHora) {
       weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit"
     })
     // Formatar: "quinta-feira, 28 de maio às 11h" com primeira letra maiúscula
-    const dataFormatada = dataConsulta.replace(/:\d{2}$/, "h").replace(/^./, c => c.toUpperCase())
+    const dataFormatada = dataConsulta
+      .replace(/:(\d{2})$/, (_horaCompleta, minutos) => minutos === "00" ? "h" : `h${minutos}`)
+      .replace(/^./, c => c.toUpperCase())
     blocoAgendamento.push(
       "━━━━━━━━━━━━━━━",
       "📅 *Consulta agendada*",
@@ -180,6 +184,7 @@ function montarAudioStatusCliente({
     [HS_STAGE.ANALISE]:         "Seu caso está em análise jurídica.",
     [HS_STAGE.AGUARDANDO_DOCS]: "Seu caso está em análise jurídica e aguardando os documentos.",
     [HS_STAGE.DOCS]:            "Seus documentos foram recebidos e o caso está em análise.",
+    [HS_STAGE.AGENDAMENTO]:     "Seu caso está em análise jurídica e possui consulta agendada com o advogado.",
     [HS_STAGE.PROTOCOLO]:       "Seu caso foi protocolado junto ao órgão responsável.",
     [HS_STAGE.PROCESSO]:        "Seu processo está em andamento. Avisaremos a cada novidade.",
     [HS_STAGE.FINAL]:           "Seu caso foi encerrado. Para nova demanda, estamos à disposição."

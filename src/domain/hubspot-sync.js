@@ -31,6 +31,54 @@ let deps = {
 let HS_STAGES_FINALIZADOS = new Set()
 const filasMutacaoNegocio = new Map()
 
+function classificacaoGenerica(valor = "") {
+  const normalizado = sanitizarTextoEntrada(valor).toLowerCase()
+  return !normalizado || ["outros", "outros_livre", "inss_outros", "trab_outros", "bpc_generico"].includes(normalizado)
+}
+
+function aplicarContextoAtualHubSpot(u, props = {}) {
+  if (!u || !props || typeof props !== "object") return
+  if (props.dealstage) u.negocioStageId = props.dealstage
+  if (props.numero_de_caso) u.numeroCaso = props.numero_de_caso
+  if (props.area_juridica) u.area = props.area_juridica
+
+  const subtipoAtual = u.oraculum_case_subtype || u.subTipo || u.subtipo
+  const subtipoHubSpot = sanitizarTextoEntrada(props.oraculum_case_subtype)
+  if (subtipoHubSpot && (classificacaoGenerica(subtipoAtual) || !classificacaoGenerica(subtipoHubSpot))) {
+    u.oraculum_case_subtype = subtipoHubSpot
+    u.subTipo = subtipoHubSpot
+  }
+
+  const tipoAtual = u.tipo_de_caso || u.tipoCaso || u.tipo
+  const tipoHubSpot = sanitizarTextoEntrada(props.tipo_de_caso)
+  if (tipoHubSpot && (classificacaoGenerica(tipoAtual) || !classificacaoGenerica(tipoHubSpot))) {
+    u.tipo_de_caso = tipoHubSpot
+    u.tipoCaso = tipoHubSpot
+  }
+
+  if (!u.numeroCaso && props.temperatura_lead) u.temperatura = props.temperatura_lead
+}
+
+async function buscarContextoAtualHubSpot(u) {
+  if (!u?.negocioId) return null
+  try {
+    const res = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${u.negocioId}?properties=dealstage,dealname,numero_de_caso,area_juridica,tipo_de_caso,oraculum_case_subtype,temperatura_lead`,
+      { headers: { Authorization: `Bearer ${deps.HUBSPOT_TOKEN}` } }
+    )
+    const props = res.data?.properties || null
+    if (props) aplicarContextoAtualHubSpot(u, props)
+    return props
+  } catch (e) {
+    logErroHubSpot(e, {
+      operation: "buscarContextoAtualNegocio",
+      dealId: u.negocioId,
+      properties: ["dealstage", "dealname", "numero_de_caso", "area_juridica", "tipo_de_caso", "oraculum_case_subtype", "temperatura_lead"]
+    })
+    return null
+  }
+}
+
 async function executarComLockNegocio(dealId, tarefa) {
   const chave = sanitizarTextoEntrada(dealId)
   if (!chave) return tarefa()
@@ -60,29 +108,21 @@ async function hsAtualizarNegocioComEstado(u, props = {}) {
   if (!u?.negocioId) return null
   return executarComLockNegocio(
     u.negocioId,
-    () => hsAtualizarNegocio(u.negocioId, deps.getHubSpotDealProps(u, props))
+    async () => {
+      const contextoAtual = await buscarContextoAtualHubSpot(u)
+      if (!contextoAtual) return null
+      return hsAtualizarNegocio(u.negocioId, deps.getHubSpotDealProps(u, props))
+    }
   )
 }
 
-async function atualizarDealstageSemLock(u) {
+async function atualizarDealstageSemLock(u, contextoAtual = undefined) {
   if (!u?.negocioId) return null
 
-  // Se não temos o stage em memória, busca do HubSpot antes de qualquer decisão
-  if (!u.negocioStageId) {
-    try {
-      const res = await axios.get(
-        `https://api.hubapi.com/crm/v3/objects/deals/${u.negocioId}?properties=dealstage`,
-        { headers: { Authorization: `Bearer ${deps.HUBSPOT_TOKEN}` } }
-      )
-      u.negocioStageId = res.data?.properties?.dealstage || null
-    } catch (e) {
-      logErroHubSpot(e, {
-        operation: "buscarDealstage",
-        dealId: u.negocioId,
-        properties: ["dealstage"]
-      })
-    }
-  }
+  // O HubSpot é relido antes da decisão para respeitar hidratação e mudanças
+  // manuais, sobretudo os estágios jurídicos protegidos.
+  if (contextoAtual === undefined) contextoAtual = await buscarContextoAtualHubSpot(u)
+  if (!contextoAtual) return null
 
   const dealstage = deps.mapearStageParaDealstage(u)
   if (!dealstage) return null
@@ -120,7 +160,9 @@ async function sincronizarNegocioSemLock(u) {
   if (!u?.negocioId) return null
 
   try {
-    await atualizarDealstageSemLock(u)
+    const contextoAtual = await buscarContextoAtualHubSpot(u)
+    if (!contextoAtual) return null
+    await atualizarDealstageSemLock(u, contextoAtual)
     const props = {
       ...deps.getHubSpotDealStateProps(u),
       dealname: montarTituloNegocioHubSpot(u, { HS_STAGE: deps.HS_STAGE })
@@ -432,7 +474,7 @@ async function hsMoverStage(nId, stage) {
 // Move o stage no HubSpot apenas se o stage atual NÃO for um stage avançado.
 // Impede que ações de documentos regridam o pipeline após agendamento.
 async function hsMoverStageSeguro(nId, novoStage, stageAtual, temEventoCalendar = false) {
-  const stagesProtegidos = [deps.HS_STAGE.PROTOCOLO, deps.HS_STAGE.PROCESSO, deps.HS_STAGE.FINAL]
+  const stagesProtegidos = [deps.HS_STAGE.AGENDAMENTO, deps.HS_STAGE.PROTOCOLO, deps.HS_STAGE.PROCESSO, deps.HS_STAGE.FINAL]
   if (stagesProtegidos.includes(stageAtual) || temEventoCalendar) return false
   await hsMoverStage(nId, novoStage)
   return true

@@ -520,6 +520,7 @@ const HS_STAGE = {
   ANALISE: "presentationscheduled",
   AGUARDANDO_DOCS: "decisionmakerboughtin",
   DOCS: "contractsent",
+  AGENDAMENTO: "1343040832",
   PROTOCOLO: "1343040098",
   PROCESSO: "1337291921",
   FINAL: "1343039663"
@@ -2164,6 +2165,10 @@ function mapearStageParaDealstage(u) {
   // Proteção global — nunca regride de stage avançado independente do stageBase
   const stagesAvancados = [HS_STAGE.PROTOCOLO, HS_STAGE.PROCESSO, HS_STAGE.FINAL]
   if (stagesAvancados.includes(u?.negocioStageId)) return null
+
+  // A agenda prevalece temporariamente sobre análise e documentos.
+  // Protocolo, processo e encerramento continuam protegidos acima.
+  if (u?.numeroCaso && u?.consultaStatus === "agendada") return HS_STAGE.AGENDAMENTO
 
   if (stageBase === STAGES.CLIENTE || stageBase === STAGES.DOCUMENTOS) {
     const pendentes = getDocsPendentes(u)
@@ -4073,8 +4078,6 @@ function proximaEtapaConfirmacao(u = {}, briefing = gerarBriefingCaso(u)) {
 
 function calcularStageAposAgendamento(u) {
   const statusDocs = calcularStatusDocumentos(u)
-  const recebeuAlgumDocumento = Boolean(u?.documentosEnviados) || statusDocs.recebidos.length > 0
-  if (!recebeuAlgumDocumento) return HS_STAGE.ANALISE
   if (statusDocs.faltantesCriticos.length > 0) return HS_STAGE.AGUARDANDO_DOCS
   return HS_STAGE.DOCS
 }
@@ -4461,6 +4464,7 @@ function labelStageAdmin(stage) {
     [HS_STAGE.ANALISE]: "🔎 Análise",
     [HS_STAGE.AGUARDANDO_DOCS]: "📎 Docs pendentes",
     [HS_STAGE.DOCS]: "📁 Docs recebidos",
+    [HS_STAGE.AGENDAMENTO]: "📅 Agendamento advogado",
     [HS_STAGE.PROTOCOLO]: "📮 Protocolo",
     [HS_STAGE.PROCESSO]: "⚖️ Processo",
     [HS_STAGE.FINAL]: "✅ Encerrado",
@@ -8677,9 +8681,12 @@ async function telaStatusCliente(from, u) {
     estadoConsulta = await atualizarEstadoConsultaUsuario(u)
     if (estadoConsulta.inicio) consultaDataHora = new Date(estadoConsulta.inicio)
     consultaPassou = ["encerrada", "realizada", "nao_compareceu"].includes(estadoConsulta.status)
-    if (estadoConsulta.status === "cancelada") {
-      const liberacao = await liberarAgendamentoERecalcularStage(u, "evento_cancelado_calendar")
+    if (["cancelada", "encerrada", "realizada", "nao_compareceu"].includes(estadoConsulta.status)) {
+      const liberacao = await liberarAgendamentoERecalcularStage(u, `consulta_${estadoConsulta.status}_calendar`)
       if (liberacao.novoStage) stageAtualHS = liberacao.novoStage
+    } else if (estadoConsulta.status === "agendada") {
+      await sincronizarNegocio(u)
+      stageAtualHS = u.negocioStageId || stageAtualHS
     }
   } catch (e) {
     logErro("calendar", "Falha ao obter estado central da consulta: " + e.message)
