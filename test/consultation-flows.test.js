@@ -71,6 +71,11 @@ const calendarSource = fs.readFileSync(path.join(__dirname, "..", "src", "domain
 assert.match(server, /await atualizarEstadoConsultaUsuario\(u\)/, "retomada atualiza estado pelo Calendar")
 assert.match(server, /AGENDAMENTO:\s*"1343040832"/, "stage Agendamento advogado pertence ao pipeline")
 assert.match(server, /consultaStatus\s*===\s*"agendada"[\s\S]{0,80}HS_STAGE\.AGENDAMENTO/, "consulta ativa prevalece no pipeline")
+assert.match(
+  server,
+  /\["cancelada",\s*"encerrada",\s*"realizada",\s*"nao_compareceu"\][\s\S]{0,180}calcularStageAposAgendamento\(u\)/,
+  "consulta finalizada preserva o estágio documental contra sincronização posterior"
+)
 assert.match(server, /calcularStageAposAgendamento[\s\S]{0,300}HS_STAGE\.AGUARDANDO_DOCS[\s\S]{0,100}HS_STAGE\.DOCS/, "fim da consulta restaura estágio documental")
 assert.doesNotMatch(calendarSource, /HUBSPOT|dealstage|1343040832/, "fonte central nao consulta HubSpot")
 assert.doesNotMatch(calendarSource, /cliente\._eventoCalendarId/, "criacao nao decide por eventId do snapshot")

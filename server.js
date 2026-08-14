@@ -2178,6 +2178,14 @@ function mapearStageParaDealstage(u) {
   // Protocolo, processo e encerramento continuam protegidos acima.
   if (u?.numeroCaso && u?.consultaStatus === "agendada") return HS_STAGE.AGENDAMENTO
 
+  // Depois que a consulta deixa de estar ativa, o estado documental definido
+  // pelo encerramento/cancelamento deve prevalecer. Sem esta proteção, uma
+  // sincronização posterior do menu do cliente poderia regredir o negócio para
+  // análise apenas porque nenhum documento havia sido enviado ainda.
+  const consultaFinalizada = ["cancelada", "encerrada", "realizada", "nao_compareceu"]
+    .includes(sanitizarTextoEntrada(u?.consultaStatus).toLowerCase())
+  if (u?.numeroCaso && consultaFinalizada) return calcularStageAposAgendamento(u)
+
   if (stageBase === STAGES.CLIENTE || stageBase === STAGES.DOCUMENTOS) {
     const pendentes = getDocsPendentes(u)
     const statusDocs = calcularStatusDocumentos(u)
