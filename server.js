@@ -454,6 +454,7 @@ const {
   hsAtualizarContato,
   hsCriarNota,
   hsCriarNotaNegocio,
+  hsSincronizarNotaAnalise,
   hsAtualizarNegocio
 } = require("./src/domain/hubspot-core")
 const {
@@ -8097,6 +8098,8 @@ async function finalizarCadastro(from, u) {
     } catch (e) { logErro("drive", "salvarAudiosCorrigidos: " + e.message) }
   }
 
+  await sincronizarNotaAnaliseCasoSegura(u)
+
   Reflect.set(u, "stage", STAGES.CLIENTE)
   u._novoCasoDeCliente = false
   u._casoAnteriorCliente = null
@@ -11090,6 +11093,64 @@ async function processarAnaliseDocumentalSegura({ u, arquivo, buffer, mimeType, 
   }
 }
 
+function rotulosDocumentosCaso(u, valores = []) {
+  const catalogo = new Map(getDocumentosListaCaso(u).map(item => [String(item.id || ""), item.label || item.nome || item.id]))
+  return (Array.isArray(valores) ? valores : [])
+    .map(item => {
+      if (item && typeof item === "object") return item.label || item.nome || item.name || catalogo.get(String(item.id || "")) || item.id
+      return catalogo.get(String(item)) || item
+    })
+    .filter(Boolean)
+}
+
+async function sincronizarNotaAnaliseCasoSegura(u, extra = {}) {
+  if (!u?.negocioId || !u?.numeroCaso) return { ok: false, skipped: true }
+  try {
+    const briefing = gerarBriefingCaso(u)
+    const pendentes = getDocsPendentes(u).filter(item =>
+      !extra.excludePendingDocumentId || String(item?.id || item) !== String(extra.excludePendingDocumentId)
+    )
+    return await hsSincronizarNotaAnalise({
+      dealId: u.negocioId,
+      contactId: u.contatoId || null,
+      contactUnambiguous: Boolean(
+        u.contatoId &&
+        u.telefoneEhDoCliente !== false &&
+        !u._associationAmbiguous &&
+        !u._hubspotSemContato
+      ),
+      caseNumber: u.numeroCaso,
+      clientName: u.nomeConfirmado === false ? "" : u.nome,
+      caseType: formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || u.tipo || u.area,
+      summary: u.assuntoResumo || u._resumoDescricaoIA || u.descricao || u.situacao,
+      facts: [
+        u.area ? `Área jurídica: ${u.area}` : null,
+        u.tipo ? `Tipo do caso: ${u.tipo}` : null,
+        u.subTipo || u.detalhe ? `Detalhe: ${u.subTipo || u.detalhe}` : null
+      ].filter(Boolean),
+      preliminaryAnalysis: u.analisePreliminar || u.analise_preliminar || [],
+      documentsReceived: [
+        ...rotulosDocumentosCaso(u, u.docsEntregues),
+        ...(extra.documentsReceived || [])
+      ],
+      documentsPending: rotulosDocumentosCaso(u, [
+        ...pendentes,
+        ...(Array.isArray(u.documentosPendentes) ? u.documentosPendentes : [])
+      ]),
+      nextAction: extra.nextAction || u.nextAction || briefing.proximaAcao,
+      analysisStatus: extra.analysisStatus || u.oraculum_analysis_status || u.analysisStatus || (u._reviewRequired ? "review_required" : "analyzed"),
+      reviewReasons: [
+        ...(Array.isArray(u._reviewBlockers) ? u._reviewBlockers : []),
+        ...(Array.isArray(u.motivosRevisao) ? u.motivosRevisao : []),
+        ...(extra.reviewReasons || [])
+      ]
+    })
+  } catch (error) {
+    logErro("hubspot_analysis_note", `falha nao bloqueante: ${error.code || "HUBSPOT_ANALYSIS_NOTE_SYNC_FAILED"}`)
+    return { ok: false, skipped: false, error: error.code || "HUBSPOT_ANALYSIS_NOTE_SYNC_FAILED" }
+  }
+}
+
 function dependenciasReavaliacaoDocumentalPosHumana(usuario, cycle) {
   return {
     resolverListaDocumental: () => getDocumentosListaCaso(usuario),
@@ -11359,7 +11420,7 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         ]
       }))
     }
-    await processarAnaliseDocumentalSegura({
+    const resultadoAnalise = await processarAnaliseDocumentalSegura({
       u,
       arquivo,
       buffer: midia.buffer,
@@ -11370,6 +11431,14 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
         nomeSalvo: nomeFinal
       }
     })
+    if (!resultadoAnalise?.skipped) {
+      await sincronizarNotaAnaliseCasoSegura(u, {
+        analysisStatus: "review_required",
+        reviewReasons: resultadoAnalise?.ok
+          ? ["Documento recebido e aguardando classificação."]
+          : ["A análise documental requer revisão humana."]
+      })
+    }
     await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "avulso_pendente" })
     u._docClientePendenteArquivo = arquivo.webViewLink || null
     u._docClientePendenteId = arquivo.id || null
@@ -11474,6 +11543,10 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       decisionStatus: confirmacaoCanonicaGuiada?.decision?.status || null
     })
     if (!recebimentoGuiado.accepted && confirmacaoCanonicaGuiada?.decision?.status !== "delivered") {
+      await sincronizarNotaAnaliseCasoSegura(u, {
+        analysisStatus: "review_required",
+        reviewReasons: ["O documento enviado não confirmou a parte solicitada e requer revisão ou reenvio."]
+      })
       u.ultimoArqId = null
       u.ultimoArqNome = null
       salvarEtapa(u._numero, "documentos")
@@ -11531,6 +11604,17 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   const docAtualCompleto = docAtual?.id === "doc_rg"
     ? rgColetaCompleta
     : arquivoEhPdf || u.docAtualIdx >= folhas.length
+  if (!resultadoAnaliseGuiada?.skipped) {
+    const classificacao = resultadoAnaliseGuiada?.entrada?.pipeline?.classificacao || {}
+    await sincronizarNotaAnaliseCasoSegura(u, {
+      documentsReceived: resultadoAnaliseGuiada?.ok && docAtualCompleto
+        ? [lblD || classificacao.tipoDocumento || arquivo?.name].filter(Boolean)
+        : [],
+      excludePendingDocumentId: resultadoAnaliseGuiada?.ok && docAtualCompleto ? docAtual?.id : null,
+      analysisStatus: resultadoAnaliseGuiada?.ok ? undefined : "review_required",
+      reviewReasons: resultadoAnaliseGuiada?.ok ? [] : ["A análise documental requer revisão humana."]
+    })
+  }
   const temProximoDoc = pendentes.length > 1
   const proximaAcaoTitle = !docAtualCompleto ? "Próxima página" : temProximoDoc ? "Próximo documento" : "Concluir envio"
   const statusRecebido = docAtualCompleto
@@ -17515,8 +17599,10 @@ async function carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repo
 async function complementoPosHumanoEstaCompleto({ cycle, usuario, repository }) {
   if (!cycle?.cycleId || !usuario?.contatoId || !usuario?.negocioId || !usuario?.numeroCaso || !usuario?.pastaDriveId) return false
   const context = await carregarPendenciasComplementaresPosHumanas({ usuario, cycle, repository })
-  return !context.humanReviewRequired && context.camposPendentes.length === 0 &&
+  const complete = !context.humanReviewRequired && context.camposPendentes.length === 0 &&
     !(usuario.docsAusentes || []).length && !(usuario.docsParciais || []).length && !usuario.revisaoDocumentalNecessaria
+  if (complete) await sincronizarNotaAnaliseCasoSegura(usuario)
+  return complete
 }
 
 function criarVerificadorCompletudePosHumana(usuario, repository) {

@@ -4,6 +4,7 @@ const { sanitizarTextoEntrada } = require("../utils/text")
 const { normalizarNumeroWhatsAppEnvio, normalizarTelefoneHubSpot } = require("./phone-name")
 const { validateHubSpotProperties, isPlaceholderValue, normalizeCpfHubSpot } = require("./hubspot-contract")
 const { montarTituloNegocioHubSpot } = require("./hubspot-deal-title")
+const { syncAnalysisNote } = require("./hubspot-analysis-note")
 
 let deps = {
   monitor: null,
@@ -433,6 +434,84 @@ async function hsCriarNotaNegocio(nId, tipo, corpo) {
   }
 }
 
+const hubspotAnalysisNoteAdapter = {
+  async findByDealAndMarker({ dealId, marker }) {
+    const encontrados = []
+    let url = `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(dealId)}/associations/notes?limit=100`
+    do {
+      const associations = await axios.get(url, { headers: HS() })
+      const ids = (associations.data?.results || []).map(item => item.id).filter(Boolean)
+      for (let index = 0; index < ids.length; index += 100) {
+        const batch = await axios.post(
+          "https://api.hubapi.com/crm/v3/objects/notes/batch/read",
+          {
+            properties: ["hs_note_body"],
+            inputs: ids.slice(index, index + 100).map(id => ({ id: String(id) }))
+          },
+          { headers: HS() }
+        )
+        for (const note of batch.data?.results || []) {
+          if (String(note?.properties?.hs_note_body || "").includes(marker)) encontrados.push(note)
+        }
+      }
+      const after = associations.data?.paging?.next?.after
+      url = after
+        ? `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(dealId)}/associations/notes?limit=100&after=${encodeURIComponent(after)}`
+        : null
+    } while (url)
+    return encontrados
+  },
+  async create({ body, dealId, contactId }) {
+    const associations = [{
+      to: { id: String(dealId) },
+      types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 214 }]
+    }]
+    if (contactId) {
+      associations.push({
+        to: { id: String(contactId) },
+        types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 202 }]
+      })
+    }
+    const response = await axios.post(
+      "https://api.hubapi.com/crm/v3/objects/notes",
+      {
+        properties: { hs_note_body: body, hs_timestamp: String(Date.now()) },
+        associations
+      },
+      { headers: HS() }
+    )
+    return response.data
+  },
+  async update({ noteId, body }) {
+    const response = await axios.patch(
+      `https://api.hubapi.com/crm/v3/objects/notes/${encodeURIComponent(noteId)}`,
+      { properties: { hs_note_body: body, hs_timestamp: String(Date.now()) } },
+      { headers: HS() }
+    )
+    return response.data
+  },
+  async associateContact({ noteId, contactId }) {
+    await axios.put(
+      `https://api.hubapi.com/crm/v3/objects/notes/${encodeURIComponent(noteId)}/associations/contacts/${encodeURIComponent(contactId)}/note_to_contact`,
+      {},
+      { headers: HS() }
+    )
+  }
+}
+
+async function hsSincronizarNotaAnalise(input = {}) {
+  if (!process.env.HUBSPOT_TOKEN) {
+    return { ok: false, skipped: true, reason: "hubspot_not_configured" }
+  }
+  return syncAnalysisNote(input, {
+    adapter: hubspotAnalysisNoteAdapter,
+    logError: details => logErroHubSpot(Object.assign(new Error(details.code), { code: details.code }), {
+      operation: details.operation,
+      dealId: details.dealId
+    })
+  })
+}
+
 module.exports = {
   configurarHubSpotCore,
   HS,
@@ -449,5 +528,6 @@ module.exports = {
   hsAtualizarNegocio,
   hsCriarNota,
   hsCriarNotaNegocio,
+  hsSincronizarNotaAnalise,
   emailValidoHubSpot
 }
