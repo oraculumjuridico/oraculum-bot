@@ -4,7 +4,7 @@
 
 Este índice cobre as funções nomeadas de `server.js`, `tts.js` e `src/`. A explicação conceitual dos fluxos está em `docs/ORACULUM_SYSTEM_GUIDE.md`.
 
-Total: **2429 funções** em **235 módulos**.
+Total: **2431 funções** em **235 módulos**.
 
 - **pública**: aparece no contrato `module.exports` do módulo;
 - **interna**: detalhe de implementação usado dentro do próprio módulo.
@@ -419,30 +419,30 @@ Composição principal, rotas HTTP e orquestração dos fluxos WhatsApp.
 | `transcreverAudioRespostaCadastral` | 11948 | interna | Executa a responsabilidade interna “transcrever audio resposta cadastral”. |
 | `processarAudioNoFluxo` | 11960 | interna | Processa audio no fluxo. |
 | `processarUrgenciaOuCorrecao` | 12046 | interna | Processa urgencia ou correcao. |
-| `processarInterno` | 13072 | pública | Processa interno. |
-| `processar` | 17489 | interna | Processa processar. |
-| `drenaFilaUsuario` | 17527 | interna | Executa a responsabilidade interna “drena fila usuario”. |
-| `carregarPendenciasComplementaresPosHumanas` | 17548 | interna | Carrega pendencias complementares pos humanas. |
-| `complementoPosHumanoEstaCompleto` | 17598 | interna | Executa a responsabilidade interna “complemento pos humano esta completo”. |
-| `criarVerificadorCompletudePosHumana` | 17607 | interna | Cria verificador completude pos humana. |
-| `criarDispatcherPosHumano` | 17614 | interna | Cria dispatcher pos humano. |
-| `withLegalNomenclature` | 17678 | interna | Executa a responsabilidade interna “with legal nomenclature”. |
-| `processarComLock` | 17850 | interna | Processa com lock. |
-| `arquivoExiste` | 17934 | interna | Executa a responsabilidade interna “arquivo existe”. |
-| `dataModificacaoArquivo` | 17939 | interna | Executa a responsabilidade interna “data modificacao arquivo”. |
-| `resumirCallbackIdempotency` | 17948 | interna | Executa a responsabilidade interna “resumir callback idempotency”. |
-| `resumirWebhookInbox` | 17972 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
-| `agruparUltimosErrosPorCategoria` | 17993 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
-| `montarHealthInternoOperacional` | 18001 | interna | Monta health interno operacional. |
-| `processarMensagemWebhook` | 18065 | interna | Processa mensagem webhook. |
-| `drenarWebhookInbox` | 18103 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
-| `postRotaInterna` | 18939 | interna | Executa a responsabilidade interna “post rota interna”. |
-| `planejarConsultasNoAgendador` | 18955 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
-| `planejarReengajamentosNoAgendador` | 18995 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
-| `despacharRotaAgendada` | 19011 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
-| `sincronizarConsultaNoAgendador` | 19033 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
-| `executarAgendadorInterno` | 19057 | interna | Executa agendador interno. |
-| `iniciarServidor` | 19121 | pública | Inicia servidor. |
+| `processarInterno` | 13073 | pública | Processa interno. |
+| `processar` | 17490 | interna | Processa processar. |
+| `drenaFilaUsuario` | 17528 | interna | Executa a responsabilidade interna “drena fila usuario”. |
+| `carregarPendenciasComplementaresPosHumanas` | 17549 | interna | Carrega pendencias complementares pos humanas. |
+| `complementoPosHumanoEstaCompleto` | 17599 | interna | Executa a responsabilidade interna “complemento pos humano esta completo”. |
+| `criarVerificadorCompletudePosHumana` | 17608 | interna | Cria verificador completude pos humana. |
+| `criarDispatcherPosHumano` | 17615 | interna | Cria dispatcher pos humano. |
+| `withLegalNomenclature` | 17679 | interna | Executa a responsabilidade interna “with legal nomenclature”. |
+| `processarComLock` | 17851 | interna | Processa com lock. |
+| `arquivoExiste` | 17935 | interna | Executa a responsabilidade interna “arquivo existe”. |
+| `dataModificacaoArquivo` | 17940 | interna | Executa a responsabilidade interna “data modificacao arquivo”. |
+| `resumirCallbackIdempotency` | 17949 | interna | Executa a responsabilidade interna “resumir callback idempotency”. |
+| `resumirWebhookInbox` | 17973 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
+| `agruparUltimosErrosPorCategoria` | 17994 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
+| `montarHealthInternoOperacional` | 18002 | interna | Monta health interno operacional. |
+| `processarMensagemWebhook` | 18066 | interna | Processa mensagem webhook. |
+| `drenarWebhookInbox` | 18104 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
+| `postRotaInterna` | 18940 | interna | Executa a responsabilidade interna “post rota interna”. |
+| `planejarConsultasNoAgendador` | 18956 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
+| `planejarReengajamentosNoAgendador` | 18996 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
+| `despacharRotaAgendada` | 19012 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
+| `sincronizarConsultaNoAgendador` | 19034 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
+| `executarAgendadorInterno` | 19058 | interna | Executa agendador interno. |
+| `iniciarServidor` | 19122 | pública | Inicia servidor. |
 
 ## `src/adapters/drive-single-case-adapter.js`
 
@@ -2657,17 +2657,19 @@ Regra de domínio: hubspot analysis note.
 
 | Função | Linha | Visibilidade | Responsabilidade |
 | --- | ---: | --- | --- |
-| `cleanText` | 6 | interna | Executa a responsabilidade interna “clean text”. |
-| `redactSensitiveData` | 15 | pública | Executa a responsabilidade interna “redact sensitive data”. |
-| `limitNoteBody` | 26 | interna | Executa a responsabilidade interna “limit note body”. |
-| `uniqueList` | 32 | interna | Executa a responsabilidade interna “unique list”. |
-| `markerForCase` | 49 | pública | Executa a responsabilidade interna “marker for case”. |
-| `requiresHumanReview` | 55 | pública | Executa a responsabilidade interna “requires human review”. |
-| `addSection` | 66 | interna | Executa a responsabilidade interna “add section”. |
-| `formatAnalysisNote` | 74 | pública | Executa a responsabilidade interna “format analysis note”. |
-| `hasUsefulContent` | 104 | interna | Determina se existe useful content. |
-| `withSyncLock` | 116 | interna | Executa a responsabilidade interna “with sync lock”. |
-| `syncAnalysisNote` | 130 | pública | Executa a responsabilidade interna “sync analysis note”. |
+| `cleanText` | 7 | interna | Executa a responsabilidade interna “clean text”. |
+| `redactSensitiveData` | 16 | pública | Executa a responsabilidade interna “redact sensitive data”. |
+| `escapeHtml` | 28 | interna | Executa a responsabilidade interna “escape html”. |
+| `htmlText` | 37 | interna | Executa a responsabilidade interna “html text”. |
+| `limitNoteBody` | 41 | interna | Executa a responsabilidade interna “limit note body”. |
+| `uniqueList` | 50 | interna | Executa a responsabilidade interna “unique list”. |
+| `markerForCase` | 67 | pública | Executa a responsabilidade interna “marker for case”. |
+| `requiresHumanReview` | 73 | pública | Executa a responsabilidade interna “requires human review”. |
+| `addSection` | 84 | interna | Executa a responsabilidade interna “add section”. |
+| `formatAnalysisNote` | 92 | pública | Executa a responsabilidade interna “format analysis note”. |
+| `hasUsefulContent` | 121 | interna | Determina se existe useful content. |
+| `withSyncLock` | 133 | interna | Executa a responsabilidade interna “with sync lock”. |
+| `syncAnalysisNote` | 147 | pública | Executa a responsabilidade interna “sync analysis note”. |
 
 ## `src/domain/hubspot-contract.js`
 
@@ -2749,16 +2751,16 @@ Regra de domínio: hubspot sync.
 | `restaurarEstadoNegocioHubSpot` | 195 | pública | Restaura estado negocio hub spot. |
 | `deveSincronizarEstadoHubSpot` | 267 | pública | Executa a responsabilidade interna “deve sincronizar estado hub spot”. |
 | `sincronizarContatoNegocioHubSpot` | 273 | pública | Executa a responsabilidade interna “sincronizar contato negocio hub spot”. |
-| `hsBuscarNegociosDoContato` | 302 | pública | Executa a responsabilidade interna “hs buscar negocios do contato”. |
-| `hsBuscarNegocioAbertoDoContato` | 316 | pública | Executa a responsabilidade interna “hs buscar negocio aberto do contato”. |
-| `hsBuscarNegocioAbertoInfoDoContato` | 321 | pública | Executa a responsabilidade interna “hs buscar negocio aberto info do contato”. |
-| `hsBuscarNegociosComCasoDoContato` | 351 | pública | Executa a responsabilidade interna “hs buscar negocios com caso do contato”. |
-| `hsListarNegociosAtivosDoContato` | 391 | pública | Executa a responsabilidade interna “hs listar negocios ativos do contato”. |
-| `hsListarNegociosAtivosDoContatoEstrito` | 434 | pública | Executa a responsabilidade interna “hs listar negocios ativos do contato estrito”. |
-| `hsAtualizarEtapaNegocio` | 477 | pública | Executa a responsabilidade interna “hs atualizar etapa negocio”. |
-| `hsMoverStage` | 484 | pública | Executa a responsabilidade interna “hs mover stage”. |
-| `hsMoverStageSeguro` | 492 | pública | Executa a responsabilidade interna “hs mover stage seguro”. |
-| `hsAtualizarNegocioSerializado` | 498 | pública | Executa a responsabilidade interna “hs atualizar negocio serializado”. |
+| `hsBuscarNegociosDoContato` | 315 | pública | Executa a responsabilidade interna “hs buscar negocios do contato”. |
+| `hsBuscarNegocioAbertoDoContato` | 329 | pública | Executa a responsabilidade interna “hs buscar negocio aberto do contato”. |
+| `hsBuscarNegocioAbertoInfoDoContato` | 334 | pública | Executa a responsabilidade interna “hs buscar negocio aberto info do contato”. |
+| `hsBuscarNegociosComCasoDoContato` | 364 | pública | Executa a responsabilidade interna “hs buscar negocios com caso do contato”. |
+| `hsListarNegociosAtivosDoContato` | 404 | pública | Executa a responsabilidade interna “hs listar negocios ativos do contato”. |
+| `hsListarNegociosAtivosDoContatoEstrito` | 447 | pública | Executa a responsabilidade interna “hs listar negocios ativos do contato estrito”. |
+| `hsAtualizarEtapaNegocio` | 490 | pública | Executa a responsabilidade interna “hs atualizar etapa negocio”. |
+| `hsMoverStage` | 497 | pública | Executa a responsabilidade interna “hs mover stage”. |
+| `hsMoverStageSeguro` | 505 | pública | Executa a responsabilidade interna “hs mover stage seguro”. |
+| `hsAtualizarNegocioSerializado` | 511 | pública | Executa a responsabilidade interna “hs atualizar negocio serializado”. |
 
 ## `src/domain/hubspot-task-service.js`
 

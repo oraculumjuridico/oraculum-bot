@@ -271,22 +271,35 @@ function deveSincronizarEstadoHubSpot(estadoAnterior, u) {
   return snapshotAnterior !== snapshotAtual
 }
 
-async function sincronizarContatoNegocioHubSpot(u) {
+async function sincronizarContatoNegocioHubSpot(u, options = {}) {
   if (!u) return
   if (u._novoCasoParaTerceiro && u.telefoneEhDoCliente === false && !u.numeroCaso) {
     logDebug("[HUBSPOT] Sync ignorado durante coleta de caso para terceiro.")
     return
   }
-  if (typeof u.nome === "string" && u.nome.trim()) u.nomeHubspot = u.nome.trim()
+  const nomePodeSerAtualizado = Boolean(
+    u.nomeConfirmado === true &&
+    typeof u.nome === "string" &&
+    u.nome.trim() &&
+    (options.permitirAtualizacaoNome === true || !u.numeroCaso)
+  )
+  if (nomePodeSerAtualizado) {
+    u.nomeHubspot = u.nome.trim()
+    u.oraculumIdentityProvenance = sanitizarTextoEntrada(
+      options.origemNome || u.oraculumIdentityProvenance ||
+      (u.numeroCaso ? "client_explicit_correction" : "confirmed_intake")
+    )
+  }
 
-  const partesNome = typeof u.nome === "string"
+  const partesNome = nomePodeSerAtualizado
     ? u.nome.trim().split(/\s+/).filter(Boolean)
     : []
   const contatoProps = filtrarPropsHubSpot({
     firstname: partesNome.shift(),
     lastname: partesNome.join(" "),
     city: u.cidade,
-    state: u.uf
+    state: u.uf,
+    oraculum_identity_provenance: nomePodeSerAtualizado ? u.oraculumIdentityProvenance : undefined
   })
 
   if (u.contatoId && Object.keys(contatoProps).length) {

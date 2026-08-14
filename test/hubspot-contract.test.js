@@ -477,6 +477,7 @@ async function executar() {
   await sincronizarContatoNegocioHubSpot({
     contatoId: "contact-2",
     nome: "João",
+    nomeConfirmado: true,
     cidade: "Campinas",
     uf: "SP"
   })
@@ -486,7 +487,36 @@ async function executar() {
   assert.equal(sincronizacaoContato.body.properties.firstname, "João")
   assert.equal(sincronizacaoContato.body.properties.city, "Campinas")
   assert.equal(sincronizacaoContato.body.properties.state, "SP")
+  assert.equal(sincronizacaoContato.body.properties.oraculum_identity_provenance, "confirmed_intake")
   assert.equal("uf" in sincronizacaoContato.body.properties, false)
+
+  await sincronizarContatoNegocioHubSpot({
+    contatoId: "contact-name-protected",
+    numeroCaso: "PRV.260814.999",
+    nome: "Empresa Nome de Perfil",
+    nomeConfirmado: true,
+    cidade: "Recife",
+    uf: "PE"
+  })
+  const sincronizacaoProtegida = requests.find(item =>
+    item.method === "patch" && item.url.endsWith("/contacts/contact-name-protected")
+  )
+  assert.equal("firstname" in sincronizacaoProtegida.body.properties, false)
+  assert.equal("lastname" in sincronizacaoProtegida.body.properties, false)
+  assert.equal(sincronizacaoProtegida.body.properties.city, "Recife")
+
+  await sincronizarContatoNegocioHubSpot({
+    contatoId: "contact-name-explicit",
+    numeroCaso: "PRV.260814.998",
+    nome: "Nome Corrigido",
+    nomeConfirmado: true
+  }, { permitirAtualizacaoNome: true })
+  const sincronizacaoExplicita = requests.find(item =>
+    item.method === "patch" && item.url.endsWith("/contacts/contact-name-explicit")
+  )
+  assert.equal(sincronizacaoExplicita.body.properties.firstname, "Nome")
+  assert.equal(sincronizacaoExplicita.body.properties.lastname, "Corrigido")
+  assert.equal(sincronizacaoExplicita.body.properties.oraculum_identity_provenance, "client_explicit_correction")
 
   const tiposValidos = [
     ["inss", "aposentadoria", "inss_aposentadoria"],

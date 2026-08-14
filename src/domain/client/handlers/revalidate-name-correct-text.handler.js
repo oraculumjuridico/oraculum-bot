@@ -31,7 +31,7 @@ async function handle({
   if (ehNomeAparente(nomeLimpo, nomeCorrecaoRevalida ? nomeLimpo : texto) === true) {
     u.nome = nomeLimpo
     u.nomeConfirmado = true
-    await sincronizarContatoNegocioHubSpot(u)
+    await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: true })
     if (!u.modoTexto) {
       try {
         const ogg = await gerarAudioAtendente(u.atendente, `Entendi! Nome atualizado para ${nomeLimpo}.`)

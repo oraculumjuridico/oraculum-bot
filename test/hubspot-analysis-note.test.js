@@ -1,5 +1,3 @@
-"use strict"
-
 const assert = require("node:assert/strict")
 const {
   formatAnalysisNote,
@@ -59,39 +57,41 @@ async function main() {
   const formatted = formatAnalysisNote({
     caseNumber: "ORC.260814.001",
     clientName: "Maria Teste",
-    summary: "BenefÃ­cio foi indeferido e serÃ¡ analisado.",
+    summary: "Benefício foi indeferido e será analisado.",
     facts: ["Indeferimento informado pelo cliente"],
-    preliminaryAnalysis: ["Conferir a fundamentaÃ§Ã£o disponÃ­vel"],
+    preliminaryAnalysis: ["Conferir a fundamentação disponível"],
     documentsReceived: ["Carta de indeferimento", "CNIS"],
     documentsPending: ["Processo administrativo"],
     nextAction: "Solicitar o processo administrativo."
   })
-  assert.match(formatted, /^ANÃLISE JURÃDICA ATUALIZADA\nORC\.260814\.001 â€” Maria Teste/)
+  assert.match(formatted, /^<strong>ANÁLISE JURÍDICA ATUALIZADA<\/strong><br><strong>ORC\.260814\.001 — Maria Teste<\/strong>/)
   const headings = [
-    "ðŸ“Œ SITUAÃ‡ÃƒO ATUAL",
-    "âš–ï¸ PONTOS PARA ANÃLISE",
-    "ðŸ“‚ DOCUMENTOS EXISTENTES",
-    "â³ PENDÃŠNCIAS",
-    "âž¡ï¸ PRÃ“XIMA AÃ‡ÃƒO"
+    "📌 SITUAÇÃO ATUAL",
+    "⚖️ PONTOS PARA ANÁLISE",
+    "📂 DOCUMENTOS EXISTENTES",
+    "⏳ PENDÊNCIAS",
+    "➡️ PRÓXIMA AÇÃO"
   ]
   headings.reduce((lastIndex, heading) => {
     const index = formatted.indexOf(heading)
     assert.ok(index > lastIndex, `${heading} deve respeitar a ordem visual`)
     return index
   }, -1)
+  assert.match(formatted, /<strong>📌 SITUAÇÃO ATUAL<\/strong><br>/)
+  assert.match(formatted, /• Carta de indeferimento<br>• CNIS/)
 
-  const minimal = formatAnalysisNote({ caseNumber: "ORC.002", caseType: "PrevidenciÃ¡rio", summary: "Relato confirmado." })
-  assert.doesNotMatch(minimal, /PONTOS PARA ANÃLISE|DOCUMENTOS EXISTENTES|PENDÃŠNCIAS|PRÃ“XIMA AÃ‡ÃƒO|OBSERVAÃ‡ÃƒO/)
+  const minimal = formatAnalysisNote({ caseNumber: "ORC.002", caseType: "Previdenciário", summary: "Relato confirmado." })
+  assert.doesNotMatch(minimal, /PONTOS PARA ANÁLISE|DOCUMENTOS EXISTENTES|PENDÊNCIAS|PRÓXIMA AÇÃO|OBSERVAÇÃO/)
 
   const review = formatAnalysisNote({
     caseNumber: "ORC.003",
     caseType: "Caso",
-    summary: "HÃ¡ divergÃªncia documental.",
+    summary: "Há divergência documental.",
     analysisStatus: "review_required",
     reviewReasons: ["Nome divergente entre documentos"]
   })
-  assert.match(review, /âš ï¸ REVISÃƒO HUMANA NECESSÃRIA/)
-  assert.match(review, /âš ï¸ OBSERVAÃ‡ÃƒO/)
+  assert.match(review, /⚠️ REVISÃO HUMANA NECESSÁRIA/)
+  assert.match(review, /⚠️ OBSERVAÇÃO/)
 
   const sensitive = formatAnalysisNote({
     caseNumber: "ORC.004",
@@ -102,15 +102,15 @@ async function main() {
   assert.doesNotMatch(sensitive, /529\.982|99999-1234|segredo|abc123|xyz987|eyJhbGci|privado\.example/)
   assert.match(sensitive, /\[CPF OMITIDO\]/)
   assert.match(sensitive, /\[TELEFONE OMITIDO\]/)
-  assert.equal(redactSensitiveData("senha=minhaSenha"), "senha: [DADO SENSÃVEL OMITIDO]")
-  assert.equal(redactSensitiveData("senha: minha senha secreta"), "senha: [DADO SENSÃVEL OMITIDO]")
-  assert.equal(redactSensitiveData("Credenciais Gov.br: usuario teste senha aberta"), "Credenciais Gov.br: [DADO SENSÃVEL OMITIDO]")
+  assert.equal(redactSensitiveData("senha=minhaSenha"), "senha: [DADO SENSÍVEL OMITIDO]")
+  assert.equal(redactSensitiveData("senha: minha senha secreta"), "senha: [DADO SENSÍVEL OMITIDO]")
+  assert.equal(redactSensitiveData("Credenciais Gov.br: usuario teste senha aberta"), "Credenciais Gov.br: [DADO SENSÍVEL OMITIDO]")
   assert.equal(redactSensitiveData("NB 175043832-9"), "NB 175043832-9")
   assert.equal(redactSensitiveData("protocolo 1099179194"), "protocolo 1099179194")
   assert.equal(redactSensitiveData("telefone: 85999991234"), "telefone: [TELEFONE OMITIDO]")
 
   const limited = formatAnalysisNote({ caseNumber: "ORC.005", summary: "x".repeat(70000) })
-  assert.equal(limited.length, 65000)
+  assert.ok(limited.length <= 65000)
   assert.equal(limited.endsWith(markerForCase("ORC.005")), true)
 
   const fake = createFakeAdapter()
@@ -140,8 +140,8 @@ async function main() {
   assert.equal(second.action, "updated")
   assert.equal(second.noteId, first.noteId)
   assert.equal(fake.notes.size, 1)
-  assert.match(fake.notes.get(first.noteId).body, /â€¢ CNIS/)
-  assert.doesNotMatch(fake.notes.get(first.noteId).body, /â³ PENDÃŠNCIAS/)
+  assert.match(fake.notes.get(first.noteId).body, /• CNIS/)
+  assert.doesNotMatch(fake.notes.get(first.noteId).body, /⏳ PENDÊNCIAS/)
   assert.match(fake.notes.get(first.noteId).body, /Revisar documentos recebidos/)
 
   const otherCase = await syncAnalysisNote({
@@ -161,13 +161,13 @@ async function main() {
 
   const logged = []
   const failed = await syncAnalysisNote(base, {
-    adapter: { findByDealAndMarker: async () => { throw Object.assign(new Error("conteÃºdo privado"), { code: "RATE_LIMIT" }) } },
+    adapter: { findByDealAndMarker: async () => { throw Object.assign(new Error("conteúdo privado"), { code: "RATE_LIMIT" }) } },
     logError: event => logged.push(event)
   })
   assert.equal(failed.ok, false)
   assert.equal(failed.error, "RATE_LIMIT")
   assert.deepEqual(logged, [{ operation: "syncAnalysisNote", code: "RATE_LIMIT", dealId: "deal-a" }])
-  assert.equal(JSON.stringify(logged).includes("conteÃºdo privado"), false)
+  assert.equal(JSON.stringify(logged).includes("conteúdo privado"), false)
 
   assert.equal(fake.calls.some(call => call[0] === "create"), true)
   assert.equal(fake.calls.some(call => call[0] === "update"), true)

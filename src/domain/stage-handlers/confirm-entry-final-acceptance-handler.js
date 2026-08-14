@@ -34,7 +34,7 @@ async function handleConfirmEntryFinalAcceptance({
     u.nome = valor
     u.nomeConfirmado = true
     if (!(u._novoCasoParaTerceiro && !u.whatsappContato)) {
-      await sincronizarContatoNegocioHubSpot(u)
+      await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: true })
     }
     if (origem === "coleta_tel_outro") {
       setStage(u, "coleta_tel_wpp"); iniciarTimer(from)

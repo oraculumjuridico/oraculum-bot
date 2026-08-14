@@ -12083,10 +12083,11 @@ async function processarUrgenciaOuCorrecao(from, u, text, msgObj, ehDoc, ehAudio
 
   if (u.stage === STAGES.CORRIGIR_VALOR && text) {
     if (u.corrigirCampo) {
-      if (u.corrigirCampo === "nome") u[u.corrigirCampo] = formatarNome(text.trim())
+      const corrigindoNome = u.corrigirCampo === "nome"
+      if (corrigindoNome) u[u.corrigirCampo] = formatarNome(text.trim())
       else if (u.corrigirCampo === "cidade") u[u.corrigirCampo] = formatarCidade(text.trim())
       else u[u.corrigirCampo] = normalizarTextoCRM(text)
-      await sincronizarContatoNegocioHubSpot(u)
+      await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: corrigindoNome })
       u.corrigirCampo = null
     }
 
@@ -13756,7 +13757,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       if (ehNomeAparente(nomeLimpo, nomeCorrecaoRevalida ? nomeLimpo : text) === true) {
         u.nome = nomeLimpo
         u.nomeConfirmado = true
-        await sincronizarContatoNegocioHubSpot(u)
+        await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: true })
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
         u._revalidaConfirmados.push("nome")
         return await proximaConfirmacaoProgressiva(from, u, {
@@ -14355,7 +14356,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       }
       u.nome = nomeLimpo
       u.nomeConfirmado = true
-      await sincronizarContatoNegocioHubSpot(u)
+      await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: true })
       if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
       u._revalidaConfirmados.push("nome")
       return await proximaConfirmacaoProgressiva(from, u, {
@@ -15677,7 +15678,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.nome = u._nomeTemp
       u.nomeConfirmado = true
       u._nomeTitularPendente = null
-      await sincronizarContatoNegocioHubSpot(u)
+      await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: true })
       // se está em revalidação progressiva, retornar ao fluxo de revalidação
       if (u._revalidandoCampos) {
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
@@ -15802,7 +15803,7 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       u.nomeConfirmado = true
       u._nomeTitularPendente = null
       u._nomeTitularOrigem = confirmarContato ? "contato" : "atendido"
-      await sincronizarContatoNegocioHubSpot(u)
+      await sincronizarContatoNegocioHubSpot(u, { permitirAtualizacaoNome: true })
       if (u._revalidandoCampos) {
         if (!Array.isArray(u._revalidaConfirmados)) u._revalidaConfirmados = []
         u._revalidaConfirmados.push("nome")

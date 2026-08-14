@@ -2,6 +2,7 @@
 
 const ANALYSIS_NOTE_PREFIX = "ORACULUM_ANALYSIS"
 const MAX_NOTE_BODY_LENGTH = 65000
+const MAX_ITEM_LENGTH = 40000
 const syncLocks = new Map()
 
 function cleanText(value) {
@@ -18,16 +19,33 @@ function redactSensitiveData(value) {
     .replace(/(?<!\d)(?:\+?55[\s.-]*)?(?:\(\d{2}\)|\d{2}[\s.-])[\s.-]*9?\d{4}[\s.-]\d{4}\b/g, "[TELEFONE OMITIDO]")
     .replace(/\b(?:telefone|celular|whats(?:app)?)\s*[:=]\s*\+?\d[\d\s().-]{7,}\d/gi, match => `${match.split(/[:=]/, 1)[0].trim()}: [TELEFONE OMITIDO]`)
     .replace(/\b\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2}\b/g, "[CPF OMITIDO]")
-    .replace(/\b(?:credenciais?(?:\s+(?:do\s+)?gov(?:\.br)?)?|senha|password|passcode|access[_ -]?token|refresh[_ -]?token|token)\s*[:=]\s*[^\n.!?;]*/gi, match => `${match.split(/[:=]/, 1)[0].trim()}: [DADO SENSÃVEL OMITIDO]`)
+    .replace(/\b(?:credenciais?(?:\s+(?:do\s+)?gov(?:\.br)?)?|senha|password|passcode|access[_ -]?token|refresh[_ -]?token|token)\s*[:=]\s*[^\n.!?;]*/gi, match => `${match.split(/[:=]/, 1)[0].trim()}: [DADO SENSÍVEL OMITIDO]`)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [TOKEN OMITIDO]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[TOKEN OMITIDO]")
     .replace(/https?:\/\/\S+/gi, "[LINK OMITIDO]")
+    .slice(0, MAX_ITEM_LENGTH)
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+function htmlText(value) {
+  return escapeHtml(value).replace(/\n/g, "<br>")
 }
 
 function limitNoteBody(body, marker) {
   if (body.length <= MAX_NOTE_BODY_LENGTH) return body
-  const suffix = `\n\n[CONTEÃšDO REDUZIDO PARA O LIMITE DO HUBSPOT]\n\n${marker}`
-  return `${body.slice(0, Math.max(0, MAX_NOTE_BODY_LENGTH - suffix.length)).trimEnd()}${suffix}`
+  const suffix = `<br><br>[CONTEÚDO REDUZIDO PARA O LIMITE DO HUBSPOT]<br><br>${escapeHtml(marker)}`
+  const maximum = Math.max(0, MAX_NOTE_BODY_LENGTH - suffix.length)
+  const boundary = body.lastIndexOf("<br>", maximum)
+  const prefix = body.slice(0, boundary > 0 ? boundary : maximum).replace(/&(?:#\d*|#x[\da-f]*|[a-z]*)?$/i, "")
+  return `${prefix}${suffix}`
 }
 
 function uniqueList(value) {
@@ -58,18 +76,18 @@ function requiresHumanReview(status, reasons) {
   return uniqueList(reasons).length > 0 || [
     "review_required",
     "revisao_necessaria",
-    "revisÃ£o necessÃ¡ria",
+    "revisão necessária",
     "human_review_required",
     "pending_human_review"
   ].includes(normalized)
 }
 
-function addSection(lines, heading, content, { bullets = false } = {}) {
+function addSection(blocks, heading, content, { bullets = false } = {}) {
   const values = uniqueList(content)
   if (!values.length) return
-  lines.push("", heading, "")
-  if (bullets) lines.push(...values.map(item => `â€¢ ${item}`))
-  else lines.push(values.join("\n"))
+  blocks.push(`<br><strong>${escapeHtml(heading)}</strong><br>`)
+  if (bullets) blocks.push(values.map(item => `• ${htmlText(item)}`).join("<br>"))
+  else blocks.push(values.map(htmlText).join("<br>"))
 }
 
 function formatAnalysisNote(input = {}) {
@@ -83,23 +101,22 @@ function formatAnalysisNote(input = {}) {
     ...(Array.isArray(input.facts) ? input.facts : input.facts ? [input.facts] : []),
     ...(Array.isArray(input.preliminaryAnalysis) ? input.preliminaryAnalysis : input.preliminaryAnalysis ? [input.preliminaryAnalysis] : [])
   ])
-  const lines = [
-    "ANÃLISE JURÃDICA ATUALIZADA",
-    `${caseNumber} â€” ${descriptor}`,
-    "",
-    "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”"
+  const blocks = [
+    "<strong>ANÁLISE JURÍDICA ATUALIZADA</strong><br>",
+    `<strong>${htmlText(caseNumber)} — ${htmlText(descriptor)}</strong><br>`,
+    "<hr>"
   ]
 
-  if (reviewRequired) lines.push("", "âš ï¸ REVISÃƒO HUMANA NECESSÃRIA")
-  addSection(lines, "ðŸ“Œ SITUAÃ‡ÃƒO ATUAL", input.summary)
-  addSection(lines, "âš–ï¸ PONTOS PARA ANÃLISE", analysisPoints, { bullets: true })
-  addSection(lines, "ðŸ“‚ DOCUMENTOS EXISTENTES", input.documentsReceived, { bullets: true })
-  addSection(lines, "â³ PENDÃŠNCIAS", input.documentsPending, { bullets: true })
-  addSection(lines, "âž¡ï¸ PRÃ“XIMA AÃ‡ÃƒO", input.nextAction)
-  if (reviewReasons.length) addSection(lines, "âš ï¸ OBSERVAÃ‡ÃƒO", reviewReasons, { bullets: reviewReasons.length > 1 })
+  if (reviewRequired) blocks.push("<br><strong>⚠️ REVISÃO HUMANA NECESSÁRIA</strong><br>")
+  addSection(blocks, "📌 SITUAÇÃO ATUAL", input.summary)
+  addSection(blocks, "⚖️ PONTOS PARA ANÁLISE", analysisPoints, { bullets: true })
+  addSection(blocks, "📂 DOCUMENTOS EXISTENTES", input.documentsReceived, { bullets: true })
+  addSection(blocks, "⏳ PENDÊNCIAS", input.documentsPending, { bullets: true })
+  addSection(blocks, "➡️ PRÓXIMA AÇÃO", input.nextAction)
+  if (reviewReasons.length) addSection(blocks, "⚠️ OBSERVAÇÃO", reviewReasons, { bullets: reviewReasons.length > 1 })
 
-  lines.push("", marker)
-  return limitNoteBody(lines.join("\n"), marker)
+  blocks.push(`<br><br>${escapeHtml(marker)}`)
+  return limitNoteBody(blocks.join(""), marker)
 }
 
 function hasUsefulContent(input = {}) {
