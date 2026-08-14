@@ -16,6 +16,16 @@ async function imagem(cor) {
   }).png().toBuffer()
 }
 
+async function imagemDocumentoInclinado() {
+  return sharp(Buffer.from(`
+    <svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+      <rect width="800" height="600" fill="#737373"/>
+      <polygon points="115,95 700,135 650,520 150,485" fill="#ffffff" stroke="#111111" stroke-width="10"/>
+      <text x="250" y="290" font-size="42" fill="#111111">DOCUMENTO</text>
+    </svg>
+  `)).jpeg({ quality: 92 }).toBuffer()
+}
+
 function gruposVazios() {
   return {
     documentosPessoais: [],
@@ -123,6 +133,12 @@ async function main() {
   const resultadoOutros = await comporPdfsDocumentais(gruposOutros)
   assertPdfValido(porTipo(resultadoOutros, "Outros"), 1)
   assert.equal(porTipo(resultadoOutros, "Outros").originais[0].tipoDocumento, "Documento desconhecido")
+
+  const gruposScanner = gruposVazios()
+  gruposScanner.outros.push(doc("Documento desconhecido", await imagemDocumentoInclinado(), "scanner-1", { categoria: "outros" }))
+  const resultadoScanner = await comporPdfsDocumentais(gruposScanner)
+  assert.equal(porTipo(resultadoScanner, "Outros").digitalizacoes[0].applied, true)
+  assert.ok(porTipo(resultadoScanner, "Outros").digitalizacoes[0].confidence >= 0.68)
 
   const gruposSemBuffer = gruposVazios()
   gruposSemBuffer.laudos.push({

@@ -117,7 +117,8 @@ O fluxo documental separa recebimento físico, análise e decisão:
 ```mermaid
 flowchart LR
     MEDIA["Foto ou arquivo"] --> NORMALIZE["Normalização e segurança"]
-    NORMALIZE --> OCR["Qualidade, OCR e classificação"]
+    NORMALIZE --> SCAN["Scanner local: bordas e perspectiva"]
+    SCAN --> OCR["Qualidade, OCR e classificação"]
     OCR --> EVIDENCE["Evidência versionada"]
     EVIDENCE --> DECISION{"Confiança e identidade suficientes?"}
     DECISION -->|Sim| GROUP["Grupo documental"]
@@ -131,6 +132,9 @@ flowchart LR
 Regras essenciais:
 
 - o original permanece preservado e privado;
+- a versão scanner é derivada localmente com OpenCV/WASM e só substitui a imagem do PDF quando as quatro bordas têm confiança suficiente;
+- falha ou baixa confiança no recorte preserva a imagem orientada como fallback e nunca bloqueia o atendimento;
+- a IA documental recebe apenas sinais técnicos e nomes de campos, sem fotografia, texto OCR bruto ou valores pessoais, e só pode recomendar revisão ou novo envio — nunca promover dado inseguro;
 - RG frente e verso não são considerados completos apenas pela quantidade de imagens;
 - a mesma imagem não pode valer como duas faces sem evidência visual;
 - CPF, nome e nascimento só são promovidos quando documento, titularidade, confiança e ausência de divergência permitem;
@@ -139,7 +143,7 @@ Regras essenciais:
 - a pasta é única por caso, identificada também por `appProperties.oraculumCaseNumber`;
 - nenhum upload cria permissão pública `anyone/reader`.
 
-Módulos principais: `document-input-normalizer.js`, `document-image-*`, `document-ocr.js`, `document-classifier.js`, `document-evidence-model.js`, `document-registry.js`, `document-requirement-engine.js`, `document-grouper.js`, `document-pdf-composer.js`, `document-human-review.js`, `document-hubspot-sync.js`, `document-state-repository.js` e `drive-files.js`.
+Módulos principais: `document-input-normalizer.js`, `document-scanner.js`, `document-ai-assistant.js`, `document-image-*`, `document-ocr.js`, `document-classifier.js`, `document-evidence-model.js`, `document-registry.js`, `document-requirement-engine.js`, `document-grouper.js`, `document-pdf-composer.js`, `document-human-review.js`, `document-hubspot-sync.js`, `document-state-repository.js` e `drive-files.js`.
 
 ## 11. WhatsApp Admin
 

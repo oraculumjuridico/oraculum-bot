@@ -212,7 +212,7 @@ Rollback: registrar commit implantado; manter release anterior; parar entrada; p
 
 ## 19. Backlog pós-go-live
 
-- OCR/CamScanner avançado/OpenCV;
+- validar o scanner OpenCV com amostras reais variadas no piloto antes de ampliar volume;
 - TTS neural e vozes;
 - Oracle/repository adapter;
 - scheduler distribuído;

@@ -178,6 +178,22 @@ async function main() {
   }).decision
   assert.equal(decisaoConflitante.status, "partial")
 
+  const revisaoIA = await processarAnaliseDocumentalPosUpload({
+    pastaDriveId: "pasta-caso",
+    arquivo: { id: "drive-ai-review", name: "documento-incerto.jpg" },
+    buffer,
+    mimeType: "image/jpeg"
+  }, {
+    ...deps,
+    executarPipelineDocumental: async input => ({
+      ...(await deps.executarPipelineDocumental(input)),
+      assistenciaIA: { used: true, recommendation: "request_new_image", reasonCode: "possible_blur" }
+    })
+  })
+  assert.equal(revisaoIA.ok, true)
+  assert.equal(arquivos.get(DOCUMENT_STATE_FILE).registry.evidencias
+    .find(item => item.fileId === "drive-ai-review").status, "review")
+
   const pdfBuffer = Buffer.from("%PDF-1.4\nfixture parcial")
   const pngPage = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   const parcialPdf = await processarAnaliseDocumentalPosUpload({

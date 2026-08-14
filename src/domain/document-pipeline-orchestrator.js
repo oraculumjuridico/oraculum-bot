@@ -1,4 +1,6 @@
 const { preprocessarImagemDocumento } = require("./document-image-preprocessing")
+const { digitalizarImagemDocumento } = require("./document-scanner")
+const { avaliarDocumentoComIA } = require("./document-ai-assistant")
 const { executarOCRImagem } = require("./document-ocr")
 const { classificarDocumento } = require("./document-classifier")
 const { extrairDadosDocumento } = require("./document-extractor")
@@ -211,7 +213,9 @@ async function executarPipelineDocumental(input = {}, options = {}) {
     executarOCRImagem: options.executarOCRImagem || executarOCRImagem,
     classificarDocumento: options.classificarDocumento || classificarDocumento,
     extrairDadosDocumento: options.extrairDadosDocumento || extrairDadosDocumento,
-    avaliarQualidadeImagem: options.avaliarQualidadeImagem || avaliarQualidadeImagem
+    avaliarQualidadeImagem: options.avaliarQualidadeImagem || avaliarQualidadeImagem,
+    digitalizarImagemDocumento: options.digitalizarImagemDocumento || digitalizarImagemDocumento,
+    avaliarDocumentoComIA: options.avaliarDocumentoComIA || avaliarDocumentoComIA
   }
   const injected = Boolean(options.preprocessarImagemDocumento || options.executarOCRImagem || options.classificarDocumento || options.extrairDadosDocumento)
   const requestedProfiles = Array.isArray(options.preprocessingProfiles) && options.preprocessingProfiles.length
@@ -222,6 +226,12 @@ async function executarPipelineDocumental(input = {}, options = {}) {
   const totalTimeoutMs = Math.max(5000, Math.min(60000, Number(options.totalTimeoutMs || DEFAULT_TOTAL_PIPELINE_TIMEOUT_MS)))
   const startedAt = Date.now()
   const originalQuality = await modules.avaliarQualidadeImagem({ buffer, mimeType }, options.qualityOptions || {})
+  const scanner = await modules.digitalizarImagemDocumento(
+    { buffer, mimeType },
+    { ...(options.scannerOptions || {}), enabled: options.scannerEnabled !== false }
+  )
+  const analysisBuffer = scanner?.applied && Buffer.isBuffer(scanner.buffer) ? scanner.buffer : buffer
+  const analysisMimeType = scanner?.applied ? scanner.mimeType || "image/jpeg" : mimeType
   const attempts = []
   let selected = null
   let selectedAttempt = null
@@ -236,7 +246,7 @@ async function executarPipelineDocumental(input = {}, options = {}) {
       }
     }
     const result = await executarTentativaDocumental({
-      buffer, mimeType, profile: profiles[index], modules, options: attemptOptions, originalQuality
+      buffer: analysisBuffer, mimeType: analysisMimeType, profile: profiles[index], modules, options: attemptOptions, originalQuality
     })
     const attempt = resumoTentativa(result, index, minConfidence)
     attempts.push(attempt)
@@ -267,6 +277,29 @@ async function executarPipelineDocumental(input = {}, options = {}) {
     totalTimeoutMs,
     conflict,
     safe: resultadoSeguro(selected, minConfidence) && !conflict
+  }
+  selected.digitalizacao = {
+    applied: Boolean(scanner?.applied),
+    reason: scanner?.reason || "scanner_unavailable",
+    confidence: Number(scanner?.confidence || 0),
+    areaRatio: Number(scanner?.areaRatio || 0),
+    rectangularity: Number(scanner?.rectangularity || 0),
+    original: scanner?.original || null,
+    processed: scanner?.processed || null,
+    steps: Array.isArray(scanner?.steps) ? scanner.steps : []
+  }
+  selected.assistenciaIA = options.aiAssistanceEnabled === false
+    ? { used: false, skipped: true, reason: "ai_assistance_disabled" }
+    : await modules.avaliarDocumentoComIA({ pipeline: selected, contexto: options.contexto || {} }, options.aiOptions || {})
+  if (["review", "request_new_image"].includes(selected.assistenciaIA?.recommendation)) {
+    selected.classificacao = selected.classificacao || {}
+    selected.classificacao.avisos = [
+      ...(selected.classificacao.avisos || []),
+      criarErroPipeline(
+        "DOCUMENT_AI_REVIEW_RECOMMENDED",
+        `assistencia documental recomendou ${selected.assistenciaIA.recommendation}: ${selected.assistenciaIA.reasonCode}`
+      )
+    ]
   }
   return selected
 }

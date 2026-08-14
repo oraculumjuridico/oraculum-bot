@@ -147,7 +147,12 @@ function emitirLogsDocumentaisSeguros({ logger, pipeline, contexto, evidenceStat
         reasonCode,
         qualityWarnings: (attempt.qualityWarnings || []).join(",") || "none",
         retryAttempt: attempt.retryAttempt || 0,
-        selectedVariant: pipeline?.selectedVariant || "standard"
+        selectedVariant: pipeline?.selectedVariant || "standard",
+        scannerApplied: Boolean(pipeline?.digitalizacao?.applied),
+        scannerConfidence: Number(pipeline?.digitalizacao?.confidence || 0),
+        scannerReason: pipeline?.digitalizacao?.reason || "scanner_unavailable",
+        aiAssistanceUsed: Boolean(pipeline?.assistenciaIA?.used),
+        aiRecommendation: pipeline?.assistenciaIA?.recommendation || "none"
       })
     } catch {}
   }
@@ -267,7 +272,7 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
       try {
         const pipeline = await dependencias.executarPipelineDocumental(
           { buffer: unit.buffer, mimeType: unit.mimeType },
-          { mimeType: unit.mimeType }
+          { mimeType: unit.mimeType, contexto: contexto || {} }
         )
         const erros = coletarEventos(pipeline, "erros")
         const avisos = coletarEventos(pipeline, "avisos")
@@ -278,7 +283,8 @@ async function processarAnaliseDocumentalPosUpload(input = {}, deps = {}) {
         const scopedPairCandidate = partyResolution?.status === "scoped_pair_candidate"
         const identityUnsafe = identityDocument && typeof resolvePartyRole === "function" &&
           partyResolution?.status !== "titular" && !scopedPairCandidate
-        const status = normalizedInput.reviewRequired || erros.length || identityUnsafe ? "review" : "analyzed"
+        const aiReview = ["review", "request_new_image"].includes(pipeline.assistenciaIA?.recommendation)
+        const status = normalizedInput.reviewRequired || erros.length || identityUnsafe || aiReview ? "review" : "analyzed"
         emitirLogsDocumentaisSeguros({
           logger: dependencias.logInfo,
           pipeline,

@@ -1,4 +1,5 @@
 const sharp = require("sharp")
+const { digitalizarImagemDocumento } = require("./document-scanner")
 
 const PAGE_WIDTH = 595.28
 const PAGE_HEIGHT = 841.89
@@ -142,14 +143,23 @@ async function prepararPaginaDocumento(documento, contexto, avisos) {
   }
 
   try {
-    const imagem = sharp(buffer, { failOn: "none" }).rotate()
+    const digitalizacao = await digitalizarImagemDocumento({ buffer, mimeType })
+    const paginaBuffer = digitalizacao?.applied && Buffer.isBuffer(digitalizacao.buffer)
+      ? digitalizacao.buffer
+      : buffer
+    const imagem = sharp(paginaBuffer, { failOn: "none" }).rotate()
     const metadata = await imagem.metadata()
     const jpeg = await imagem.flatten({ background: "#ffffff" }).jpeg({ quality: 88 }).toBuffer()
     return {
       buffer: jpeg,
       width: metadata.width || 1,
       height: metadata.height || 1,
-      original: referencia
+      original: referencia,
+      digitalizacao: {
+        applied: Boolean(digitalizacao?.applied),
+        reason: digitalizacao?.reason || "scanner_unavailable",
+        confidence: Number(digitalizacao?.confidence || 0)
+      }
     }
   } catch (error) {
     avisos.push({
@@ -288,7 +298,8 @@ async function gerarPdfDefinicao(definicao, grupos, avisos) {
     arquivo: definicao.arquivo,
     buffer: criarPdfDePaginas(paginas),
     paginas: paginas.length,
-    originais: paginas.map(pagina => pagina.original)
+    originais: paginas.map(pagina => pagina.original),
+    digitalizacoes: paginas.map(pagina => pagina.digitalizacao)
   }
 }
 
