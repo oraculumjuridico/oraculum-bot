@@ -357,6 +357,10 @@ const {
   validarOpcoesWhatsApp
 } = require("./src/domain/whatsapp-transport")
 const templateService = require("./src/domain/template-service")
+const {
+  montarParametrosLembreteConsulta,
+  montarMensagemLembreteConsulta
+} = require("./src/domain/consultation-reminder-message")
 const { enviarAudioPedidoDocumentos } = require("./src/domain/admin-document-request-audio")
 const { validarMetaWabaNoBoot } = require("./src/domain/meta-waba-validator")
 const {
@@ -18894,11 +18898,16 @@ app.post("/lembrete", validarWebhookInterno, async (req, res) => {
     const callbackExecution = beginCallbackExecution(callbackKey, { route: "/lembrete" })
     if (!callbackExecution.started) return res.sendStatus(200)
 
-    const parametrosTemplate = Array.isArray(params) ? params : []
+    const parametrosTemplate = Array.isArray(params) && params.length
+      ? params
+      : montarParametrosLembreteConsulta({ tipo, name, datetime: dataEvento })
+    const textoLembrete = montarMensagemLembreteConsulta({ tipo, name, datetime: dataEvento })
     const enviado = await templateService.consultaLembrete(numero, tipo, parametrosTemplate, {
       usuario: localizado.u,
       contextoConversa,
-      requireContextoConversa: true
+      requireContextoConversa: true,
+      ultimaMsg: localizado.u.ultimaMsg,
+      texto: textoLembrete
     })
     if (!enviado) {
       abandonCallbackExecution(callbackKey)

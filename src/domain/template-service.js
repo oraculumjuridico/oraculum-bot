@@ -79,6 +79,22 @@ function templateTipoConsultaLembrete(tipo) {
 async function consultaLembrete(to, tipo, params = [], options = {}) {
   const chave = String(tipo || "").trim().toLowerCase()
   const template = CONSULTA_LEMBRETE_TEMPLATES[chave]
+  const agora = Number.isFinite(Number(options?.agora)) ? Number(options.agora) : Date.now()
+  if (!options?.forceTemplate && conversaDentroJanela24h(options?.ultimaMsg, agora)) {
+    const opts = options && typeof options === "object" ? options : {}
+    let contextoAnterior = null
+    let contextoPersistido = false
+    if (opts.requireContextoConversa) {
+      if (!opts.usuario || typeof opts.usuario !== "object") return false
+      contextoAnterior = opts.usuario.contextoConversa
+      contextoPersistido = persistirContextoConversaAposTemplate(opts.usuario, opts.contextoConversa)
+      if (!contextoPersistido) return false
+    }
+    const enviado = await enviar(to, opts.texto || "Lembrete da sua consulta jurídica.")
+    if (!enviado && contextoPersistido) opts.usuario.contextoConversa = contextoAnterior || null
+    if (enviado && !contextoPersistido) persistirContextoConversaAposTemplate(opts.usuario, opts.contextoConversa)
+    return enviado
+  }
   return enviarTemplateCatalogado(to, template, params, options)
 }
 

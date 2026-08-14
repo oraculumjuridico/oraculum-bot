@@ -41,21 +41,21 @@ const META_TEMPLATES = {
     nome: "consulta_lembrete_24h",
     idioma: process.env.WHATSAPP_TEMPLATE_LANG || "pt_BR",
     headerImageUrl: "",
-    parametrosEsperados: null,
+    parametrosEsperados: 2,
     critico: false
   },
   consultaLembreteHoje: {
     nome: "consulta_lembrete_hoje",
     idioma: process.env.WHATSAPP_TEMPLATE_LANG || "pt_BR",
     headerImageUrl: "",
-    parametrosEsperados: null,
+    parametrosEsperados: 3,
     critico: false
   },
   consultaLembrete1h: {
     nome: "consulta_lembrete_1h",
     idioma: process.env.WHATSAPP_TEMPLATE_LANG || "pt_BR",
     headerImageUrl: "",
-    parametrosEsperados: null,
+    parametrosEsperados: 3,
     critico: false
   }
 }
