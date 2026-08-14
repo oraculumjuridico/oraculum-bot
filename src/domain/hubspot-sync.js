@@ -26,7 +26,8 @@ let deps = {
   etapaValida: null,
   serializarEstado: null,
   desserializarEstado: null,
-  hidratarUsuarioPersistido: null
+  hidratarUsuarioPersistido: null,
+  garantirNomenclaturaJuridicaUsuario: null
 }
 let HS_STAGES_FINALIZADOS = new Set()
 const filasMutacaoNegocio = new Map()
@@ -226,10 +227,13 @@ function restaurarEstadoNegocioHubSpot(u, negocio) {
   const descricao = sanitizarTextoEntrada(negocio.properties.description) ||
     sanitizarTextoEntrada(negocio.properties.descricao_completa)
   const tipo = sanitizarTextoEntrada(negocio.properties.tipo_de_caso)
+  const subtipo = sanitizarTextoEntrada(negocio.properties.oraculum_case_subtype)
+  const area = sanitizarTextoEntrada(negocio.properties.area_juridica)
   const etapa = normalizarStageKey(negocio.properties.etapa_do_bot)
   const numeroCasoOficial = deps.getNumeroCasoOficialDoNegocio(negocio)
 
   u.numeroCaso = numeroCasoOficial
+  if (area) u.area = area
 
   if (descricao && !u.descricao) {
     const descricaoNormalizada = normalizarTextoCRM(descricao)
@@ -237,10 +241,22 @@ function restaurarEstadoNegocioHubSpot(u, negocio) {
     if (!u.assuntoResumo) u.assuntoResumo = descricaoNormalizada
   }
 
-  if (tipo && !u.tipo) {
+  if (tipo) {
+    u.tipo_de_caso = tipo
+    u.tipoCaso = tipo
     const tipoRestaurado = deps.restaurarTipoCasoHubSpot(tipo)
     if (tipoRestaurado.area && !u.area) u.area = tipoRestaurado.area
-    if (tipoRestaurado.tipo) u.tipo = tipoRestaurado.tipo
+    if (tipoRestaurado.tipo && !u.tipo) u.tipo = tipoRestaurado.tipo
+  }
+
+  // As propriedades canônicas do negócio são posteriores ao snapshot e devem
+  // refinar classificações genéricas persistidas em atendimentos antigos.
+  if (subtipo) {
+    u.oraculum_case_subtype = subtipo
+    u.subTipo = subtipo
+  }
+  if (typeof deps.garantirNomenclaturaJuridicaUsuario === "function") {
+    deps.garantirNomenclaturaJuridicaUsuario(u)
   }
 
   if (deps.etapaValida(etapa)) {

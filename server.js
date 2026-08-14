@@ -2115,6 +2115,14 @@ function garantirNomenclaturaJuridicaUsuario(u = {}) {
   const classificationConflict = model.divergences?.some(item => ["area", "subtype"].includes(item.field))
   if (classificationConflict || (!model.area && !model.subtype)) return null
   applyLegalCaseNomenclatureToUser(u, model)
+  // Mantenha também os aliases persistidos no HubSpot/snapshot alinhados ao
+  // modelo canônico; caso contrário uma classificação antiga pode reaparecer
+  // na próxima restauração do atendimento.
+  if (model.type) u.tipo_de_caso = model.type
+  if (model.subtype) {
+    u.oraculum_case_subtype = model.subtype
+    u.subtipo = model.subtype
+  }
   return model
 }
 
@@ -4008,7 +4016,8 @@ configurarHubSpotSync({
   etapaValida,
   serializarEstado,
   desserializarEstado,
-  hidratarUsuarioPersistido
+  hidratarUsuarioPersistido,
+  garantirNomenclaturaJuridicaUsuario
 })
 
 function textoOuTraco(valor) {

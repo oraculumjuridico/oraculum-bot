@@ -14,6 +14,10 @@ const {
   hsBuscarNegociosComCasoDoContato,
   restaurarEstadoNegocioHubSpot
 } = require("../src/domain/hubspot-sync")
+const {
+  resolveLegalCaseNomenclature,
+  applyLegalCaseNomenclatureToUser
+} = require("../src/domain/legal-case-nomenclature")
 
 const axiosOriginal = {
   get: axios.get,
@@ -43,7 +47,7 @@ function configurarHS() {
     getNomeDeal: () => "Caso teste",
     getHubSpotDealStateProps: () => ({ etapa_do_bot: "inicio" })
   })
-  configurarHubSpotSync({
+configurarHubSpotSync({
     HUBSPOT_TOKEN: "tok-test",
     HS_STAGE: { LEAD: HS_LEAD, FINAL: HS_FINAL, ANALISE: HS_ANALISE },
     getNomeDeal: () => "Caso teste",
@@ -55,7 +59,24 @@ function configurarHS() {
     etapaValida: () => true,
     serializarEstado: (u) => JSON.stringify(u),
     desserializarEstado: (snapshot) => { try { return JSON.parse(snapshot || "{}") } catch { return null } },
-    hidratarUsuarioPersistido: (obj) => ({ ...obj })
+    hidratarUsuarioPersistido: (obj) => ({ ...obj }),
+    garantirNomenclaturaJuridicaUsuario: (u) => {
+      const model = resolveLegalCaseNomenclature({
+        current: u.nomenclaturaJuridica,
+        narrative: [u.descricao, u.assuntoResumo, u.detalhe].filter(Boolean),
+        usuario: u,
+        classification: {
+          area: u.area,
+          tipo: u.tipo_de_caso || u.tipoCaso || u.tipo,
+          subTipo: u.oraculum_case_subtype || u.subTipo || u.subtipo,
+          situacao: u.situacao
+        }
+      })
+      applyLegalCaseNomenclatureToUser(u, model)
+      if (model.type) u.tipo_de_caso = model.type
+      if (model.subtype) u.oraculum_case_subtype = model.subtype
+      return model
+    }
   })
 }
 
@@ -408,6 +429,38 @@ async function executar() {
   }
 
   // === Test 12: REAL_EXTERNAL_ACTIONS = 0 ===
+  {
+    const casoClassificado = {}
+    restaurarEstadoNegocioHubSpot(casoClassificado, {
+      id: "deal-classification-1",
+      properties: {
+        numero_de_caso: "PRV.260801.813",
+        area_juridica: "INSS",
+        tipo_de_caso: "inss_outros",
+        oraculum_case_subtype: "incapacidade_temporaria",
+        description: "Benefício por incapacidade temporária negado pelo INSS.",
+        estado_bot_snapshot: JSON.stringify({
+          numeroCaso: "PRV.260801.813",
+          area: "INSS",
+          tipo: "outros",
+          tipo_de_caso: null,
+          oraculum_case_subtype: null,
+          nomenclaturaJuridica: {
+            area: "INSS",
+            subtype: null,
+            type: "inss_outros",
+            situation: "indeferido",
+            status: "generic"
+          }
+        })
+      }
+    })
+    assert.equal(casoClassificado.nomenclaturaJuridica.subtype, "incapacidade_temporaria")
+    assert.equal(casoClassificado.tipo_de_caso, "inss_incapacidade")
+    assert.equal(casoClassificado.oraculum_case_subtype, "incapacidade_temporaria")
+    console.log("Test: restore refines stale generic classification from canonical deal fields")
+  }
+
   {
     const semAtividade = {}
     restaurarEstadoNegocioHubSpot(semAtividade, {
