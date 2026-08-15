@@ -5485,6 +5485,15 @@ async function hidratarNomesPrioridadesAdmin(itens = []) {
   })
 }
 
+async function hidratarNomesCasosNumeradosAdmin(itens = []) {
+  return await mapearComLimite(itens, 3, async item => {
+    if (!item.u?.numeroCaso || !item.u?.negocioId) return item
+    if (item.contato?.id) return item
+    const contato = await hsAdminBuscarContatoDoNegocio(item.u.negocioId)
+    return contato ? hidratarDadosContatoAdmin(item, contato) : item
+  })
+}
+
 function nomePrioridadeAdmin(u = {}) {
   const nome = resolverNomeBriefing(u)
   if (nome !== "Cliente") return nome
@@ -6047,8 +6056,11 @@ async function telaAdminAlertas() {
   }
 }
 
-function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.casos, pagina = 1, totalPaginas = 1, rotaLista = voltar) {
+async function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.casos, pagina = 1, totalPaginas = 1, rotaLista = voltar) {
   const tamanhoPagina = ADMIN_CASE_PAGE_SIZE
+  const inicio = (pagina - 1) * tamanhoPagina
+  const itensExibidos = await hidratarNomesCasosNumeradosAdmin(itens.slice(inicio, inicio + tamanhoPagina))
+  itens.splice(inicio, itensExibidos.length, ...itensExibidos)
   salvarListaCasosAdmin(from, itens, rotaLista, pagina, tamanhoPagina, itens.length, totalPaginas, null, voltar)
   if (!itens.length) {
     return {
@@ -6061,8 +6073,6 @@ function telaAdminListaCasos(from, titulo, itens, vazio, voltar = ADMIN_IDS.caso
     }
   }
 
-  const inicio = (pagina - 1) * tamanhoPagina
-  const itensExibidos = itens.slice(inicio, inicio + tamanhoPagina)
   const linhas = itensExibidos.map((item, idx) => resumoCasoAdmin(item, idx + 1 + inicio, { adminAutenticado: true }))
   const nomesOpcoes = itensExibidos.map(item => primeiroEUltimoNome(resolverNomeBriefing(item.u)) || "Cliente")
   const contagemNomes = nomesOpcoes.reduce((acc, nome) => {
