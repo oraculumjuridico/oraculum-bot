@@ -5173,10 +5173,18 @@ async function adminResumoOperacional() {
   const ativos = ativosResultado.items
   const memoria = usuariosAdminOrdenados()
   const todos = mesclarItensAdminPorIdentidade(ativos, memoria)
+  const negociosAtivos = new Set(ativos
+    .map(item => String(item.u?.negocioId || item.negocio?.id || "").trim())
+    .filter(Boolean))
+  const todosOperacionais = todos.filter(item => {
+    const negocioId = String(item.u?.negocioId || item.negocio?.id || "").trim()
+    if (negocioId && negociosAtivos.has(negocioId)) return true
+    return !item.u?.numeroCaso && !negocioId
+  })
 
   // Contar casos reais (com numeroCaso) e pré-atendimentos
-  const casosComNumero = todos.filter(({ u }) => Boolean(u.numeroCaso))
-  const preAtendimentos = todos.filter(({ u }) => !u.numeroCaso)
+  const casosComNumero = todosOperacionais.filter(({ u }) => Boolean(u.numeroCaso))
+  const preAtendimentos = todosOperacionais.filter(({ u }) => !u.numeroCaso)
 
   const resultado = {
     ok: true,
@@ -5184,11 +5192,11 @@ async function adminResumoOperacional() {
     totalClientes: totalAtivos,
     totalCasosComNumero: casosComNumero.length,
     totalPreAtendimentos: preAtendimentos.length,
-    consultasAtivas: todos.filter(({ u }) => u.consultaStatus === "agendada").length,
-    docsPendentes: todos.filter(({ u }) => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)).length,
-    urgentes: todos.filter(({ u }) => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || u.hs_priority === "high").length,
+    consultasAtivas: todosOperacionais.filter(({ u }) => u.consultaStatus === "agendada").length,
+    docsPendentes: todosOperacionais.filter(({ u }) => calcularStatusDocumentos(u).faltantesCriticos.length > 0 && Boolean(u.numeroCaso)).length,
+    urgentes: todosOperacionais.filter(({ u }) => u.urgencia === "alta" || u.stage === STAGES.AGUARDANDO_URGENTE || u.hs_priority === "high").length,
     analise: totalAnalise,
-    todos
+    todos: todosOperacionais
   }
 
   cacheResumoOperacional.dados = resultado
@@ -5313,19 +5321,37 @@ async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
       ((b.alertas[0]?.peso || 0) - (a.alertas[0]?.peso || 0)) ||
       (b.briefing.scoreOperacional - a.briefing.scoreOperacional)
     )
+    .slice(0, 5)
+
+  const chaveResumo = item => String(
+    item.u?.negocioId || item.briefing.numeroCaso || item.from || ""
+  ).trim()
+  const chavesPrioritarias = new Set(proximasAcoes.map(chaveResumo).filter(Boolean))
+  const documentosComplementares = docsPendentes
+    .filter(item => !chavesPrioritarias.has(chaveResumo(item)))
     .slice(0, 3)
+  const selecionados = [...new Set([...proximasAcoes, ...documentosComplementares])]
+  const hidratados = await hidratarNomesCasosNumeradosAdmin(
+    selecionados.map(item => ({ from: item.from, u: item.u }))
+  )
+  selecionados.forEach((item, index) => {
+    item.u = hidratados[index]?.u || item.u
+    item.briefing = gerarBriefingCaso(item.u)
+    item.alertas = gerarAlertasOperacionaisAdmin({ from: item.from, u: item.u })
+  })
 
   return {
     ok: true,
     geradoEm: new Date().toISOString(),
     fonte: resumo.fonte,
     totais: {
-      casosClientes: resumo.totalClientes,
+      casosClientes: resumo.totalCasosComNumero,
       consultasAtivas: resumo.consultasAtivas,
       emAnalise: resumo.analise,
       documentosPendentes: resumo.docsPendentes,
       alertasUrgentes: resumo.urgentes,
-      itensAnalisados: briefings.length
+      itensAnalisados: briefings.length,
+      preAtendimentos: resumo.totalPreAtendimentos
     },
     filas: {
       urgentes,
@@ -5333,7 +5359,8 @@ async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
       consultasAtivas: consultas,
       recentes,
       alertasOperacionais,
-      proximasAcoes
+      proximasAcoes,
+      documentosComplementares
     },
     checklistProducao: checklistProducaoAdmin()
   }

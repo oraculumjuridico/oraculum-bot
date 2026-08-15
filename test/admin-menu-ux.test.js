@@ -115,7 +115,8 @@ const resumo = textoResumoDiarioOperacional({
     emAnalise: 0,
     documentosPendentes: 0,
     alertasUrgentes: 0,
-    itensAnalisados: 0
+    itensAnalisados: 0,
+    preAtendimentos: 0
   },
   fonte: "mock local",
   filas: {
@@ -123,7 +124,8 @@ const resumo = textoResumoDiarioOperacional({
     documentosPendentes: [],
     alertasOperacionais: [],
     proximasAcoes: [],
-    recentes: []
+    recentes: [],
+    documentosComplementares: []
   },
   checklistProducao: [
     "node --check server.js",
@@ -134,8 +136,9 @@ const resumo = textoResumoDiarioOperacional({
     "Registrar resultado no Resumo_bot.md"
   ]
 })
-assert.match(resumo, /Verificações técnicas são realizadas durante a validação e o deploy\./)
-assert.doesNotMatch(resumo, /node --check|verificar\.js|smoke\.js|ngrok|Resumo_bot|Teste WhatsApp/)
+assert.match(resumo, /Resumo diário/)
+assert.match(resumo, /Prioridades de hoje/)
+assert.doesNotMatch(resumo, /Validação técnica|Itens analisados|Fonte:|Recentes|node --check|verificar\.js|smoke\.js|ngrok|Resumo_bot|Teste WhatsApp/)
 
 for (const [arquivo, conteudo] of [
   ["server.js", serverSource],
