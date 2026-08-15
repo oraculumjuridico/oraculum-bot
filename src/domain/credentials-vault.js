@@ -263,8 +263,13 @@ function createCredentialsVault({ pool, baseUrl, masterSecret, validateMasterPas
     if (!session) return res.status(401).json({ ok: false })
     let record = await findByToken(token)
     if (!record) return res.sendStatus(404)
+    const storedProfile = decryptJson({
+      ciphertext: record.profile_ciphertext,
+      iv: record.profile_iv,
+      tag: record.profile_tag
+    }, key) || {}
     if (typeof resolveCurrentUser === "function") {
-      const currentUser = await resolveCurrentUser(record)
+      const currentUser = await resolveCurrentUser(record, storedProfile)
       if (currentUser?.negocioId && currentUser?.numeroCaso) {
         await ensureCase(currentUser)
         record = await findByToken(token) || record

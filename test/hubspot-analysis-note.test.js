@@ -64,7 +64,7 @@ async function main() {
     documentsPending: ["Processo administrativo"],
     nextAction: "Solicitar o processo administrativo."
   })
-  assert.match(formatted, /^<strong>ANÁLISE JURÍDICA ATUALIZADA<\/strong><br><strong>ORC\.260814\.001 — Maria Teste<\/strong>/)
+  assert.match(formatted, /^<div><p><strong>ANÁLISE JURÍDICA ATUALIZADA<\/strong><br><strong>ORC\.260814\.001 — Maria Teste<\/strong><\/p><hr><\/div>/)
   const headings = [
     "📌 SITUAÇÃO ATUAL",
     "⚖️ PONTOS PARA ANÁLISE",
@@ -77,8 +77,8 @@ async function main() {
     assert.ok(index > lastIndex, `${heading} deve respeitar a ordem visual`)
     return index
   }, -1)
-  assert.match(formatted, /<strong>📌 SITUAÇÃO ATUAL<\/strong><br>/)
-  assert.match(formatted, /• Carta de indeferimento<br>• CNIS/)
+  assert.match(formatted, /<p><strong>📌 SITUAÇÃO ATUAL<\/strong><\/p><p>/)
+  assert.match(formatted, /<ul><li>Carta de indeferimento<\/li><li>CNIS<\/li><\/ul>/)
 
   const minimal = formatAnalysisNote({ caseNumber: "ORC.002", caseType: "Previdenciário", summary: "Relato confirmado." })
   assert.doesNotMatch(minimal, /PONTOS PARA ANÁLISE|DOCUMENTOS EXISTENTES|PENDÊNCIAS|PRÓXIMA AÇÃO|OBSERVAÇÃO/)
@@ -111,7 +111,7 @@ async function main() {
 
   const limited = formatAnalysisNote({ caseNumber: "ORC.005", summary: "x".repeat(70000) })
   assert.ok(limited.length <= 65000)
-  assert.equal(limited.endsWith(markerForCase("ORC.005")), true)
+  assert.match(limited, new RegExp(`${markerForCase("ORC.005").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<\\/small><\\/p>$`))
 
   const fake = createFakeAdapter()
   const base = {
@@ -140,7 +140,7 @@ async function main() {
   assert.equal(second.action, "updated")
   assert.equal(second.noteId, first.noteId)
   assert.equal(fake.notes.size, 1)
-  assert.match(fake.notes.get(first.noteId).body, /• CNIS/)
+  assert.match(fake.notes.get(first.noteId).body, /<li>CNIS<\/li>/)
   assert.doesNotMatch(fake.notes.get(first.noteId).body, /⏳ PENDÊNCIAS/)
   assert.match(fake.notes.get(first.noteId).body, /Revisar documentos recebidos/)
 

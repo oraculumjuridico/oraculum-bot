@@ -41,9 +41,11 @@ function htmlText(value) {
 
 function limitNoteBody(body, marker) {
   if (body.length <= MAX_NOTE_BODY_LENGTH) return body
-  const suffix = `<br><br>[CONTEÚDO REDUZIDO PARA O LIMITE DO HUBSPOT]<br><br>${escapeHtml(marker)}`
+  const suffix = `<p><strong>[CONTEÚDO REDUZIDO PARA O LIMITE DO HUBSPOT]</strong></p><p>${escapeHtml(marker)}</p>`
   const maximum = Math.max(0, MAX_NOTE_BODY_LENGTH - suffix.length)
-  const boundary = body.lastIndexOf("<br>", maximum)
+  const paragraphBoundary = body.lastIndexOf("</p>", maximum)
+  const listBoundary = body.lastIndexOf("</li>", maximum)
+  const boundary = Math.max(paragraphBoundary >= 0 ? paragraphBoundary + 4 : -1, listBoundary >= 0 ? listBoundary + 5 : -1)
   const prefix = body.slice(0, boundary > 0 ? boundary : maximum).replace(/&(?:#\d*|#x[\da-f]*|[a-z]*)?$/i, "")
   return `${prefix}${suffix}`
 }
@@ -85,9 +87,10 @@ function requiresHumanReview(status, reasons) {
 function addSection(blocks, heading, content, { bullets = false } = {}) {
   const values = uniqueList(content)
   if (!values.length) return
-  blocks.push(`<br><strong>${escapeHtml(heading)}</strong><br>`)
-  if (bullets) blocks.push(values.map(item => `• ${htmlText(item)}`).join("<br>"))
-  else blocks.push(values.map(htmlText).join("<br>"))
+  const body = bullets
+    ? `<ul>${values.map(item => `<li>${htmlText(item)}</li>`).join("")}</ul>`
+    : values.map(item => `<p>${htmlText(item)}</p>`).join("")
+  blocks.push(`<div><p><strong>${escapeHtml(heading)}</strong></p>${body}</div>`)
 }
 
 function formatAnalysisNote(input = {}) {
@@ -102,12 +105,11 @@ function formatAnalysisNote(input = {}) {
     ...(Array.isArray(input.preliminaryAnalysis) ? input.preliminaryAnalysis : input.preliminaryAnalysis ? [input.preliminaryAnalysis] : [])
   ])
   const blocks = [
-    "<strong>ANÁLISE JURÍDICA ATUALIZADA</strong><br>",
-    `<strong>${htmlText(caseNumber)} — ${htmlText(descriptor)}</strong><br>`,
-    "<hr>"
+    "<div><p><strong>ANÁLISE JURÍDICA ATUALIZADA</strong><br>",
+    `<strong>${htmlText(caseNumber)} — ${htmlText(descriptor)}</strong></p><hr></div>`
   ]
 
-  if (reviewRequired) blocks.push("<br><strong>⚠️ REVISÃO HUMANA NECESSÁRIA</strong><br>")
+  if (reviewRequired) blocks.push("<div><p><strong>⚠️ REVISÃO HUMANA NECESSÁRIA</strong></p></div>")
   addSection(blocks, "📌 SITUAÇÃO ATUAL", input.summary)
   addSection(blocks, "⚖️ PONTOS PARA ANÁLISE", analysisPoints, { bullets: true })
   addSection(blocks, "📂 DOCUMENTOS EXISTENTES", input.documentsReceived, { bullets: true })
@@ -115,7 +117,7 @@ function formatAnalysisNote(input = {}) {
   addSection(blocks, "➡️ PRÓXIMA AÇÃO", input.nextAction)
   if (reviewReasons.length) addSection(blocks, "⚠️ OBSERVAÇÃO", reviewReasons, { bullets: reviewReasons.length > 1 })
 
-  blocks.push(`<br><br>${escapeHtml(marker)}`)
+  blocks.push(`<p><small>${escapeHtml(marker)}</small></p>`)
   return limitNoteBody(blocks.join(""), marker)
 }
 

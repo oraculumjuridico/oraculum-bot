@@ -4703,6 +4703,33 @@ async function hsAdminBuscarContatoDoNegocio(dealId) {
   }
 }
 
+async function hsAdminBuscarDadosDoNegocio(dealId) {
+  const id = sanitizarTextoEntrada(dealId)
+  if (!id) return null
+  try {
+    return await executarComRetryHubSpot(
+      async () => {
+        const negocio = await axios.get(
+          `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(id)}?properties=numero_de_caso,pasta_drive`,
+          { headers: HS() }
+        )
+        return negocio.data || null
+      },
+      {
+        maxTentativas: 3,
+        operacao: "adminBuscarDadosDoNegocio",
+        idempotente: true,
+        onRetry: info => {
+          logDebug(`[HUBSPOT_RETRY] ${info.operacao} tentativa=${info.tentativa}/${info.maxTentativas} delay=${info.delayMs}ms`)
+        }
+      }
+    )
+  } catch (e) {
+    logErroHubSpot(e, { operation: "adminBuscarDadosDoNegocio", dealId: id })
+    return null
+  }
+}
+
 function hidratarDadosContatoAdmin(item, contato) {
   if (!item?.u || !contato?.id) return item
   const props = contato.properties || {}
@@ -6239,9 +6266,15 @@ async function telaCredenciaisCasoAdmin(from) {
   const item = obterCasoAdmin(from)
   if (!item?.u) return { texto: "Selecione novamente um caso.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
 
-  if (item.u.negocioId && !item.contato) {
-    const contato = await hsAdminBuscarContatoDoNegocio(item.u.negocioId)
+  if (item.u.negocioId) {
+    const [contato, negocio] = await Promise.all([
+      hsAdminBuscarContatoDoNegocio(item.u.negocioId),
+      hsAdminBuscarDadosDoNegocio(item.u.negocioId)
+    ])
     if (contato) hidratarDadosContatoAdmin(item, contato)
+    const propsNegocio = negocio?.properties || {}
+    item.u.numeroCaso = item.u.numeroCaso || propsNegocio.numero_de_caso || null
+    item.u.pastaDriveLink = item.u.pastaDriveLink || propsNegocio.pasta_drive || null
   }
 
   const cpf = formatarCpfAdmin(item.u.cpf || item.u._cpf)
@@ -11210,6 +11243,57 @@ async function sincronizarNotaAnaliseCasoSegura(u, extra = {}) {
   } catch (error) {
     logErro("hubspot_analysis_note", `falha nao bloqueante: ${error.code || "HUBSPOT_ANALYSIS_NOTE_SYNC_FAILED"}`)
     return { ok: false, skipped: false, error: error.code || "HUBSPOT_ANALYSIS_NOTE_SYNC_FAILED" }
+  }
+}
+
+const ANALYSIS_NOTE_LAYOUT_MIGRATION_ID = "hubspot-analysis-note-layout-v2"
+
+async function reconciliarFormatoNotasAnaliseHubSpot() {
+  const pool = getPool()
+  if (!pool) return { ok: false, skipped: true, reason: "database_unavailable" }
+  try {
+    const registry = await pool.query("SELECT to_regclass('oraculum_state_migrations') AS table_name")
+    if (!registry.rows?.[0]?.table_name) return { ok: false, skipped: true, reason: "migration_registry_unavailable" }
+    const prior = await pool.query(
+      "SELECT migration_id FROM oraculum_state_migrations WHERE migration_id=$1",
+      [ANALYSIS_NOTE_LAYOUT_MIGRATION_ID]
+    )
+    if (prior.rowCount) return { ok: true, skipped: true, reason: "already_applied" }
+
+    const busca = await hsAdminBuscarTodosNegociosPorStages([...new Set(Object.values(HS_STAGE))], "analysis_note_layout")
+    if (!busca.ok) return { ok: false, skipped: false, reason: "hubspot_search_failed" }
+
+    let updated = 0
+    let created = 0
+    let skipped = 0
+    let failed = 0
+    for (const negocio of busca.deals) {
+      const item = normalizarItemAdminLocal("", null, negocio, null)
+      if (!item.u?.negocioId || !item.u?.numeroCaso) {
+        skipped++
+        continue
+      }
+      const contato = await hsAdminBuscarContatoDoNegocio(item.u.negocioId)
+      if (contato) hidratarDadosContatoAdmin(item, contato)
+      const result = await sincronizarNotaAnaliseCasoSegura(item.u)
+      if (result.ok && result.action === "updated") updated++
+      else if (result.ok && result.action === "created") created++
+      else if (result.skipped) skipped++
+      else failed++
+      await new Promise(resolve => setTimeout(resolve, 150))
+    }
+
+    if (failed === 0) {
+      await pool.query(
+        "INSERT INTO oraculum_state_migrations(migration_id, details, applied_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(migration_id) DO NOTHING",
+        [ANALYSIS_NOTE_LAYOUT_MIGRATION_ID, JSON.stringify({ updated, created, skipped, schemaVersion: 2 })]
+      )
+    }
+    logInfo({ event: "hubspot.analysis_note_layout", status: failed ? "partial" : "complete", updated, created, skipped, failed })
+    return { ok: failed === 0, updated, created, skipped, failed }
+  } catch (error) {
+    logErro("hubspot_analysis_note", `reconciliação de formato não bloqueante: ${error.code || "ANALYSIS_NOTE_LAYOUT_FAILED"}`)
+    return { ok: false, skipped: false, reason: error.code || "ANALYSIS_NOTE_LAYOUT_FAILED" }
   }
 }
 
@@ -19203,14 +19287,45 @@ async function iniciarServidor() {
         baseUrl: obterBaseUrlPublica(),
         masterSecret: obterMaterialChaveAdmin(),
         validateMasterPassword: senhaAdminValida,
-        resolveCurrentUser: async record => {
-          const usuario = Object.values(users).find(item =>
+        resolveCurrentUser: async (record, storedProfile = {}) => {
+          const usuarioEmMemoria = Object.values(users).find(item =>
             String(item?.negocioId || "") === String(record?.deal_id || "") ||
             String(item?.numeroCaso || "").toUpperCase() === String(record?.case_number || "").toUpperCase())
-          if (!usuario) return null
+          const usuario = usuarioEmMemoria || {
+            negocioId: String(record?.deal_id || storedProfile.dealId || ""),
+            contatoId: String(record?.contact_id || storedProfile.contactId || ""),
+            numeroCaso: String(record?.case_number || storedProfile.caseNumber || ""),
+            nome: storedProfile.name || null,
+            cpf: storedProfile.cpf || null,
+            rg: storedProfile.rg || null,
+            dataNascimento: storedProfile.birthDate || null,
+            nomeMae: storedProfile.motherName || null,
+            nomePai: storedProfile.fatherName || null,
+            filiacao: storedProfile.parentage || null,
+            estadoCivil: storedProfile.maritalStatus || null,
+            profissao: storedProfile.profession || null,
+            nitPis: storedProfile.nitPis || null,
+            whatsappContato: storedProfile.phone || null,
+            email: storedProfile.email || null,
+            endereco: storedProfile.street || null,
+            numeroEndereco: storedProfile.addressNumber || null,
+            complementoEndereco: storedProfile.addressComplement || null,
+            bairro: storedProfile.district || null,
+            cidade: storedProfile.city || null,
+            uf: storedProfile.state || null,
+            cep: storedProfile.postalCode || null,
+            referenciaEndereco: storedProfile.addressReference || null,
+            pastaDriveLink: storedProfile.driveUrl || null
+          }
           if (usuario.negocioId) {
-            const contato = await hsAdminBuscarContatoDoNegocio(usuario.negocioId)
+            const [contato, negocio] = await Promise.all([
+              hsAdminBuscarContatoDoNegocio(usuario.negocioId),
+              hsAdminBuscarDadosDoNegocio(usuario.negocioId)
+            ])
             if (contato) hidratarDadosContatoAdmin({ u: usuario }, contato)
+            const propsNegocio = negocio?.properties || {}
+            usuario.numeroCaso = usuario.numeroCaso || propsNegocio.numero_de_caso || null
+            usuario.pastaDriveLink = usuario.pastaDriveLink || propsNegocio.pasta_drive || null
           }
           return usuario
         },
@@ -19308,6 +19423,11 @@ async function iniciarServidor() {
     setImmediate(() => {
       drenarWebhookInbox().catch(err =>
         logErro("webhook_inbox", "Falha no replay da inbox: " + err.message, err)
+      )
+    })
+    setImmediate(() => {
+      reconciliarFormatoNotasAnaliseHubSpot().catch(error =>
+        logErro("hubspot_analysis_note", "Falha não bloqueante na reconciliação de formato", error)
       )
     })
   })

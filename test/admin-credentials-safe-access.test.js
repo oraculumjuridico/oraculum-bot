@@ -76,6 +76,13 @@ test("cofre apenas lê o telefone e não possui operação de atualização de C
   assert.match(server, /resolveCurrentUser/)
 })
 
+test("cofre relê Contato e Negócio mesmo sem o caso carregado na memória", () => {
+  assert.match(server, /resolveCurrentUser: async \(record, storedProfile = \{\}\)/)
+  assert.match(server, /hsAdminBuscarDadosDoNegocio/)
+  assert.match(server, /properties=numero_de_caso,pasta_drive/)
+  assert.match(server, /pastaDriveLink = usuario\.pastaDriveLink \|\| propsNegocio\.pasta_drive \|\| null/)
+})
+
 test("token é comparado por hash e página não contém dados de cliente", () => {
   assert.equal(hashToken("token"), hashToken("token"))
   assert.notEqual(hashToken("token"), hashToken("outro"))
