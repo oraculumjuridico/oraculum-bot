@@ -508,6 +508,7 @@ const {
 } = require("./src/domain/admin-auth")
 const {
   createCredentialsVault,
+  formatBrazilianDate,
   vaultPage
 } = require("./src/domain/credentials-vault")
 const {
@@ -5485,7 +5486,10 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
   const dossieJuridico = montarDossieJuridicoAdminWhatsApp(item)
   const telefoneAdmin = resolverTelefoneInterfaceAdmin(item, adminAutenticado)
   const cpf = sanitizarTextoEntrada(u.cpf || u._cpf)
-  const nascimento = sanitizarTextoEntrada(u.dataNascimento || u.data_nascimento)
+  const nascimento = formatBrazilianDate(u.dataNascimento || u.data_nascimento || u.date_of_birth)
+  const nomeMae = sanitizarTextoEntrada(u.nomeMae || u.nome_mae || u.filiacao?.mae || u.filiacao?.mother)
+  const nomePai = sanitizarTextoEntrada(u.nomePai || u.nome_pai || u.filiacao?.pai || u.filiacao?.father)
+  const filiacao = typeof u.filiacao === "string" ? sanitizarTextoEntrada(u.filiacao) : ""
   const email = sanitizarTextoEntrada(u.email)
   const endereco = [u.endereco, u.numeroEndereco, u.complementoEndereco, u.bairro].map(sanitizarTextoEntrada).filter(Boolean).join(", ")
   const localidade = [u.cidade, u.uf, u.cep].map(sanitizarTextoEntrada).filter(Boolean).join(" · ")
@@ -5502,6 +5506,9 @@ function textoDetalheCasoAdmin(item, { adminAutenticado = false } = {}) {
     telefoneAdmin ? `📱 WhatsApp: ${telefoneAdmin}` : "",
     cpf ? `🪪 CPF: ${cpf}` : "🪪 CPF: não informado",
     nascimento ? `🎂 Nascimento: ${nascimento}` : "🎂 Nascimento: não informado",
+    nomeMae ? `👩 Nome da mãe: ${nomeMae}` : "",
+    nomePai ? `👨 Nome do pai: ${nomePai}` : "",
+    filiacao && !nomeMae && !nomePai ? `👪 Filiação: ${filiacao}` : "",
     email ? `✉️ E-mail: ${email}` : "",
     endereco ? `🏠 Endereço: ${endereco}` : "",
     localidade ? `📍 Localidade: ${localidade}` : "",

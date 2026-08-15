@@ -10,6 +10,7 @@ const {
   decryptJson,
   profileFromUser,
   hashToken,
+  formatBrazilianDate,
   vaultPage,
   createCredentialsVault
 } = require("../src/domain/credentials-vault")
@@ -39,13 +40,39 @@ test("perfil automático usa somente campos operacionais permitidos", () => {
     contatoId: "20",
     nome: "Cliente Teste",
     cpf: "123",
+    dataNascimento: "1980-04-15",
+    nomeMae: "Maria Teste",
+    nomePai: "João Teste",
+    endereco: "Rua Segura",
+    numeroEndereco: "42",
+    complementoEndereco: "Casa",
+    bairro: "Centro",
     senha: "NUNCA",
     password: "NUNCA"
   })
   assert.equal(profile.name, "Cliente Teste")
   assert.equal(profile.cpf, "123")
+  assert.equal(profile.birthDate, "15/04/1980")
+  assert.equal(profile.motherName, "Maria Teste")
+  assert.equal(profile.fatherName, "João Teste")
+  assert.equal(profile.street, "Rua Segura")
+  assert.equal(profile.addressNumber, "42")
   assert.equal(Object.hasOwn(profile, "senha"), false)
   assert.equal(Object.hasOwn(profile, "password"), false)
+})
+
+test("datas técnicas são exibidas no padrão brasileiro sem alterar o valor persistido no HubSpot", () => {
+  assert.equal(formatBrazilianDate("1980-04-15"), "15/04/1980")
+  assert.equal(formatBrazilianDate("1980-04-15T00:00:00.000Z"), "15/04/1980")
+  assert.equal(formatBrazilianDate("5/4/1980"), "05/04/1980")
+  assert.equal(formatBrazilianDate("1980-99-40"), "1980-99-40")
+  assert.match(server, /formatBrazilianDate\(u\.dataNascimento/)
+})
+
+test("cofre apenas lê o telefone e não possui operação de atualização de Contato", () => {
+  const vaultSource = fs.readFileSync(path.join(__dirname, "..", "src", "domain", "credentials-vault.js"), "utf8")
+  assert.match(vaultSource, /user\.whatsappContato \|\| user\._numero/)
+  assert.doesNotMatch(vaultSource, /hsAtualizarContato|crm\/v3\/objects\/contacts|axios\.(?:patch|post|put)/)
 })
 
 test("token é comparado por hash e página não contém dados de cliente", () => {
@@ -54,6 +81,8 @@ test("token é comparado por hash e página não contém dados de cliente", () =
   const html = vaultPage("nonce-seguro")
   assert.match(html, /senha mestre administrativa/)
   assert.match(html, /nonce="nonce-seguro"/)
+  assert.match(html, /data-copy/)
+  assert.match(html, /navigator\.clipboard\.writeText/)
   assert.doesNotMatch(html, /Cliente Teste|123\.456/)
 })
 
