@@ -18612,6 +18612,7 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
     const metadataEvento = evento.metadata || evento.extendedProperties?.private || {}
     const dealId = sanitizarTextoEntrada(metadataEvento.dealId)
     const contactId = sanitizarTextoEntrada(metadataEvento.contactId || metadataEvento.personId)
+    let numeroCaso = sanitizarTextoEntrada(metadataEvento.numeroCaso || metadataEvento.caseNumber)
     const inicioConsulta = evento.inicio || evento.start?.dateTime || evento.start?.date || null
     if (!inicioConsulta) return res.status(400).json({ erro: "inicio da consulta ausente" })
 
@@ -18653,10 +18654,11 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
       name = (props.firstname || "cliente").trim()
     }
 
-    if (!phone && dealId) {
+    if (dealId && (!phone || !numeroCaso)) {
       const localizado = await localizarUsuarioAgendamento({ eventId, dealId })
-      phone = localizado.from || localizado.u?.whatsappContato || null
+      phone = phone || localizado.from || localizado.u?.whatsappContato || null
       name = localizado.u?.nome || localizado.u?.nomeCliente || name
+      numeroCaso = numeroCaso || sanitizarTextoEntrada(localizado.u?.numeroCaso)
     }
 
     const numero = normalizarNumeroWhatsAppEnvio(phone)
@@ -18667,7 +18669,8 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
       name,
       eventId: evento.eventId || eventId,
       dealId: dealId || null,
-      casoId: dealId || null,
+      numeroCaso: numeroCaso || null,
+      casoId: numeroCaso || dealId || null,
       datetime: inicioConsulta,
       reminders: {
         "24h": new Date(new Date(inicioConsulta).getTime() - 24 * 60 * 60 * 1000).toISOString(),

@@ -111,7 +111,7 @@ function close(server) {
   const server = await listen(app)
   try {
     scenario = {
-      metadata: { contactId: "contact-current", dealId: "deal-1" },
+      metadata: { contactId: "contact-current", dealId: "deal-1", numeroCaso: "PRV.TESTE.001" },
       async get(url) {
         if (url.includes("/contacts/contact-current?")) {
           return { data: { id: "contact-current", properties: { firstname: "Cliente", phone: "5511999999999" } } }
@@ -123,10 +123,12 @@ function close(server) {
     const normal = await postJson(server, { eventId: "event-normal" })
     assert.equal(normal.status, 200)
     assert.equal(normal.body.phone, "5511999999999")
+    assert.equal(normal.body.numeroCaso, "PRV.TESTE.001")
+    assert.equal(normal.body.casoId, "PRV.TESTE.001")
     assert.equal(calls.some(url => url.includes("/associations/contacts")), false)
 
     scenario = {
-      metadata: { contactId: "contact-stale", dealId: "deal-1" },
+      metadata: { contactId: "contact-stale", dealId: "deal-1", numeroCaso: "PRV.TESTE.001" },
       async get(url) {
         if (url.includes("/contacts/contact-stale?")) {
           throw Object.assign(new Error("not found"), { response: { status: 404 } })

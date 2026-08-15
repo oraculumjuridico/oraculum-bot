@@ -242,6 +242,7 @@ async function criarEventoConsulta(cliente, dataHora, duracaoMin, opcoes = {}) {
             dealId,
             personId: String(cliente.personId || cliente.contatoId || ""),
             contactId: String(cliente.contatoId || ""),
+            numeroCaso: String(cliente.numeroCaso || ""),
             tipoConsulta: String(cliente.tipoConsulta || "inicial"),
             versaoIntegracao: "3",
             chaveIdempotencia,

@@ -14,6 +14,8 @@ assert.equal(automationTargetAllowed({}, {}), false)
 assert.equal(automationTargetAllowed({ numeroCaso: "PVR.260801.813" }, env), true)
 assert.equal(automationTargetAllowed({ dealId: "DEAL-PILOT" }, env), true)
 assert.equal(automationTargetAllowed({ phone: "5581999990000" }, env), true)
+assert.equal(automationTargetAllowed({ phone: "81999990000" }, env), true)
+assert.equal(automationTargetAllowed({ phone: "558199990000" }, env), true)
 assert.equal(automationTargetAllowed({ numeroCaso: "OUTRO", dealId: "outro", phone: "5581888880000" }, env), false)
 assert.equal(automationTargetAllowed({}, { AUTOMATION_ALLOW_ALL: "true" }), true)
 
