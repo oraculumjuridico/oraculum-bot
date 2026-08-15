@@ -78,7 +78,9 @@ Módulos principais: `client-mode-ui.js`, `client-menu-ui.js`, `client-navigatio
 
 Nome, telefone, cidade, endereço e demais dados são coletados e confirmados de forma incremental. Correção por texto ou áudio atualiza somente o campo identificado. Os demais valores permanecem intactos. Credenciais do Meu INSS nunca são aceitas como campo comum nem armazenadas em notas abertas.
 
-No WhatsApp Admin, a opção **Credenciais** apresenta o CPF confirmado em uma linha própria para cópia. Senhas permanecem exclusivamente em um cofre externo restrito, acessível pela URL HTTPS configurada em `ADMIN_CREDENTIALS_VAULT_URL`. O bot, o HubSpot, o Drive e as notas não armazenam nem registram a senha.
+No WhatsApp Admin, a opção **Credenciais** apresenta o CPF confirmado e o link individual do registro seguro. O mesmo link é mantido em uma nota operacional idempotente do Negócio no HubSpot. O cofre interno usa o Neon, criptografia AES-256-GCM e a senha administrativa já configurada como senha mestre. Dados pessoais são atualizados automaticamente; somente a senha Gov.br/Meu INSS é informada ou alterada manualmente. A senha nunca aparece em notas, propriedades comuns do HubSpot, Drive, WhatsApp ou logs.
+
+Cada Negócio possui um registro isolado. Abrir o link exige a senha mestre, cria uma sessão segura de dez minutos e permite visualizar/copiar ou atualizar a senha. O link sozinho não revela dados. A rotação da senha administrativa requer recriptografia planejada dos registros existentes; não se deve trocar essa variável diretamente em produção.
 
 O HubSpot recebe propriedades permitidas pelo contrato. Divergência entre valor manual e extração automática não autoriza sobrescrita silenciosa.
 

@@ -54,6 +54,12 @@ function senhaAdminConfigurada() {
   return Boolean(ADMIN_WHATSAPP_PASSWORD || ADMIN_WHATSAPP_PASSWORD_HASH)
 }
 
+// Material estável usado apenas para derivar a chave do cofre. Nunca deve ser
+// devolvido por endpoint, registrado em log ou persistido no banco.
+function obterMaterialChaveAdmin() {
+  return ADMIN_WHATSAPP_PASSWORD ? hashSenhaAdmin(ADMIN_WHATSAPP_PASSWORD) : (ADMIN_WHATSAPP_PASSWORD_HASH || "")
+}
+
 function senhaAdminValida(valor) {
   const senhaInformada = sanitizarTextoEntrada(valor)
   if (!senhaInformada || !senhaAdminConfigurada()) return false
@@ -152,6 +158,7 @@ module.exports = {
   hashSenhaAdmin,
   compararTextoSeguro,
   senhaAdminConfigurada,
+  obterMaterialChaveAdmin,
   senhaAdminValida,
   obterTentativaAdminWhatsApp,
   adminWhatsAppBloqueado,

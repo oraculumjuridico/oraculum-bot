@@ -512,6 +512,36 @@ async function hsSincronizarNotaAnalise(input = {}) {
   })
 }
 
+async function hsSincronizarNotaOperacional({ dealId, contactId, caseNumber, vaultUrl } = {}) {
+  if (!process.env.HUBSPOT_TOKEN) return { ok: false, skipped: true, reason: "hubspot_not_configured" }
+  if (!dealId || !caseNumber || !vaultUrl) return { ok: false, skipped: true, reason: "operational_note_incomplete" }
+  const marker = `[ORACULUM_OPERATIONAL:${String(caseNumber).trim().toUpperCase()}]`
+  const body = [
+    "DADOS PESSOAIS E CREDENCIAIS",
+    "",
+    `Caso: ${String(caseNumber).trim()}`,
+    "Abra o registro seguro para consultar os dados reunidos e atualizar a senha Gov.br / Meu INSS:",
+    String(vaultUrl).trim(),
+    "",
+    "A senha não é armazenada nesta nota nem em propriedades comuns do HubSpot.",
+    marker
+  ].join("\n")
+  try {
+    const notes = await hubspotAnalysisNoteAdapter.findByDealAndMarker({ dealId, marker })
+    const existing = notes[0]
+    if (existing?.id) {
+      const updated = await hubspotAnalysisNoteAdapter.update({ noteId: existing.id, body })
+      if (contactId) await hubspotAnalysisNoteAdapter.associateContact({ noteId: existing.id, contactId })
+      return { ok: true, action: "updated", noteId: updated?.id || existing.id }
+    }
+    const created = await hubspotAnalysisNoteAdapter.create({ body, dealId, contactId })
+    return { ok: true, action: "created", noteId: created?.id }
+  } catch (error) {
+    logErroHubSpot(error, { operation: "sincronizarNotaOperacional", dealId })
+    return { ok: false, reason: "hubspot_operational_note_failed" }
+  }
+}
+
 module.exports = {
   configurarHubSpotCore,
   HS,
@@ -529,5 +559,6 @@ module.exports = {
   hsCriarNota,
   hsCriarNotaNegocio,
   hsSincronizarNotaAnalise,
+  hsSincronizarNotaOperacional,
   emailValidoHubSpot
 }

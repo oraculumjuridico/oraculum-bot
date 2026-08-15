@@ -459,6 +459,7 @@ const {
   hsCriarNota,
   hsCriarNotaNegocio,
   hsSincronizarNotaAnalise,
+  hsSincronizarNotaOperacional,
   hsAtualizarNegocio
 } = require("./src/domain/hubspot-core")
 const {
@@ -466,7 +467,7 @@ const {
   hsAtualizarNegocioComEstado,
   hsAtualizarNegocioSerializado,
   atualizarDealstage,
-  sincronizarNegocio,
+  sincronizarNegocio: sincronizarNegocioBase,
   restaurarEstadoNegocioHubSpot,
   deveSincronizarEstadoHubSpot,
   sincronizarContatoNegocioHubSpot,
@@ -496,6 +497,7 @@ const {
   chaveAdminWhatsApp,
   logSegurancaAdmin,
   senhaAdminConfigurada,
+  obterMaterialChaveAdmin,
   senhaAdminValida,
   adminWhatsAppBloqueado,
   registrarFalhaSenhaAdmin,
@@ -504,6 +506,10 @@ const {
   autenticarAdminWhatsApp,
   bloquearAdminWhatsApp
 } = require("./src/domain/admin-auth")
+const {
+  createCredentialsVault,
+  vaultPage
+} = require("./src/domain/credentials-vault")
 const {
   atendimentoAssistidoAdminAtivo,
   iniciarAtendimentoAssistidoAdmin,
@@ -594,6 +600,7 @@ const {
 } = require("./src/domain/finalization-invariants")
 
 const app = express()
+let credentialsVault = null
 app.set("trust proxy", 1)
 app.disable("x-powered-by")
 app.use(aplicarHeadersSeguranca)
@@ -701,6 +708,36 @@ app.use(express.json({
     req.rawBody = Buffer.from(buf)
   }
 }))
+
+const limitarCofreCredenciais = criarRateLimiter({
+  limite: 60,
+  janelaMs: 60 * 1000,
+  escopo: "credentials-vault"
+})
+
+app.get("/admin/credenciais/:token", limitarCofreCredenciais, async (req, res) => {
+  if (!credentialsVault) return res.status(503).send("Cofre temporariamente indisponível.")
+  if (!await credentialsVault.findByToken(req.params.token)) return res.sendStatus(404)
+  const nonce = crypto.randomBytes(18).toString("base64")
+  res.setHeader("Cache-Control", "no-store, max-age=0")
+  res.setHeader("Content-Security-Policy", `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`)
+  return res.type("html").send(vaultPage(nonce))
+})
+
+app.post("/admin/credenciais/:token/entrar", limitarCofreCredenciais, async (req, res) => {
+  if (!credentialsVault) return res.sendStatus(503)
+  return credentialsVault.login(req, res)
+})
+
+app.get("/admin/credenciais/:token/dados", limitarCofreCredenciais, async (req, res) => {
+  if (!credentialsVault) return res.sendStatus(503)
+  return credentialsVault.data(req, res)
+})
+
+app.post("/admin/credenciais/:token/senha", limitarCofreCredenciais, async (req, res) => {
+  if (!credentialsVault) return res.sendStatus(503)
+  return credentialsVault.savePassword(req, res)
+})
 app.use((req, res, next) => {
   if (!ROTAS_OBSERVADAS.has(req.path)) return next()
   const startedAt = Date.now()
@@ -6167,15 +6204,28 @@ function formatarCpfAdmin(valor) {
   return digitos.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4")
 }
 
-function resolverUrlCofreCredenciaisAdmin() {
-  const valor = String(process.env.ADMIN_CREDENTIALS_VAULT_URL || "").trim()
-  if (!valor) return ""
+async function sincronizarCofreCasoSegura(u = {}) {
+  if (!credentialsVault || !u.negocioId || !u.numeroCaso) return { ok: false, skipped: true }
   try {
-    const url = new URL(valor)
-    return url.protocol === "https:" ? url.toString() : ""
-  } catch {
-    return ""
+    const result = await credentialsVault.ensureCase(u)
+    if (!result.ok) return result
+    await hsSincronizarNotaOperacional({
+      dealId: u.negocioId,
+      contactId: u.contatoId,
+      caseNumber: u.numeroCaso,
+      vaultUrl: result.url
+    })
+    return result
+  } catch (error) {
+    logErro("credentials_vault", "Falha não bloqueante ao sincronizar registro seguro", error)
+    return { ok: false, reason: "vault_sync_failed" }
   }
+}
+
+async function sincronizarNegocio(u, ...args) {
+  const result = await sincronizarNegocioBase(u, ...args)
+  if (u?.negocioId && u?.numeroCaso) await sincronizarCofreCasoSegura(u)
+  return result
 }
 
 async function telaCredenciaisCasoAdmin(from) {
@@ -6188,7 +6238,7 @@ async function telaCredenciaisCasoAdmin(from) {
   }
 
   const cpf = formatarCpfAdmin(item.u.cpf || item.u._cpf)
-  const cofre = resolverUrlCofreCredenciaisAdmin()
+  const cofre = await sincronizarCofreCasoSegura(item.u)
   return {
     texto: [
       "🔐 *Credenciais do cliente*",
@@ -6197,8 +6247,8 @@ async function telaCredenciaisCasoAdmin(from) {
       cpf ? "CPF para copiar:" : "CPF: não informado",
       cpf || "",
       "",
-      cofre ? "Senha e demais acessos ficam somente no cofre seguro:" : "Senha: não armazenada no bot, HubSpot, Drive ou notas.",
-      cofre || "Configure ADMIN_CREDENTIALS_VAULT_URL para abrir o cofre seguro por esta tela.",
+      cofre.ok ? "Dados reunidos e senha ficam no registro seguro:" : "Registro seguro temporariamente indisponível.",
+      cofre.url || "A senha não é armazenada no WhatsApp, HubSpot, Drive ou notas.",
       "",
       "Nunca envie a senha ao cliente nem registre a senha nesta conversa."
     ].filter(Boolean).join("\n"),
@@ -8062,6 +8112,7 @@ async function finalizarCadastro(from, u) {
     assertFinalizationOperation("hubspot_association", associado)
     const estadoAtualizado = await hsAtualizarNegocioSerializado(u.negocioId, getHubSpotDealStateProps(u))
     assertFinalizationOperation("hubspot_state", estadoAtualizado)
+    await sincronizarCofreCasoSegura(u)
 
     if (contatoId) {
       await hsCriarNota(contatoId, "CADASTRO COMPLETO", resumoCaso(u) + `\n\nScore: ${u.score}\nDrive: ${u.pastaDriveLink || "—"}\nWhatsApp: ${telefoneContato}`)
@@ -19139,6 +19190,19 @@ async function iniciarServidor() {
   try {
     const externalState = await initializeExternalStateRepository({ directory: DATA_DIR })
     console.log(`[PERSISTENCIA_EXTERNA] enabled=${externalState.enabled} restored=${externalState.restoredFiles || 0}`)
+    if (getPool() && senhaAdminConfigurada()) {
+      credentialsVault = createCredentialsVault({
+        pool: getPool(),
+        baseUrl: obterBaseUrlPublica(),
+        masterSecret: obterMaterialChaveAdmin(),
+        validateMasterPassword: senhaAdminValida,
+        logger: event => logInfo({ event, status: "ok" })
+      })
+      await credentialsVault.initialize()
+      console.log("[COFRE_CREDENCIAIS] enabled=true provider=postgres encryption=aes-256-gcm")
+    } else {
+      console.warn("[COFRE_CREDENCIAIS] enabled=false motivo=configuracao_indisponivel")
+    }
     if (INTERNAL_SCHEDULER_ENABLED) {
       const schedulerPool = getPool()
       if (!schedulerPool) throw new Error("INTERNAL_SCHEDULER_DATABASE_REQUIRED")
