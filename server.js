@@ -19203,6 +19203,17 @@ async function iniciarServidor() {
         baseUrl: obterBaseUrlPublica(),
         masterSecret: obterMaterialChaveAdmin(),
         validateMasterPassword: senhaAdminValida,
+        resolveCurrentUser: async record => {
+          const usuario = Object.values(users).find(item =>
+            String(item?.negocioId || "") === String(record?.deal_id || "") ||
+            String(item?.numeroCaso || "").toUpperCase() === String(record?.case_number || "").toUpperCase())
+          if (!usuario) return null
+          if (usuario.negocioId) {
+            const contato = await hsAdminBuscarContatoDoNegocio(usuario.negocioId)
+            if (contato) hidratarDadosContatoAdmin({ u: usuario }, contato)
+          }
+          return usuario
+        },
         logger: event => logInfo({ event, status: "ok" })
       })
       await credentialsVault.initialize()

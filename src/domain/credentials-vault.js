@@ -1,6 +1,7 @@
 "use strict"
 
 const crypto = require("node:crypto")
+const { formatarTelefoneExibicao } = require("./phone-name")
 
 const SESSION_TTL_MS = 10 * 60 * 1000
 const LOGIN_WINDOW_MS = 15 * 60 * 1000
@@ -89,7 +90,7 @@ function profileFromUser(user = {}) {
     maritalStatus: firstText(user.estadoCivil, user.estado_civil),
     profession: firstText(user.profissao, user.ocupacao),
     nitPis: firstText(user.nit, user.pis, user.nitPis, user.nit_pis),
-    phone: text(user.whatsappContato || user._numero, 40),
+    phone: formatarTelefoneExibicao(user.whatsappContato || user._numero) || text(user.whatsappContato || user._numero, 40),
     email: text(user.email, 254),
     city: text(user.cidade, 120),
     state: text(user.uf, 10),
@@ -116,7 +117,7 @@ function cookieValue(req, name) {
   return ""
 }
 
-function createCredentialsVault({ pool, baseUrl, masterSecret, validateMasterPassword, logger = () => {} }) {
+function createCredentialsVault({ pool, baseUrl, masterSecret, validateMasterPassword, resolveCurrentUser, logger = () => {} }) {
   if (!pool) throw new Error("CREDENTIALS_VAULT_DATABASE_REQUIRED")
   const key = deriveKey(masterSecret)
   const sessions = new Map()
@@ -260,13 +261,24 @@ function createCredentialsVault({ pool, baseUrl, masterSecret, validateMasterPas
     const token = text(req.params.token, 128)
     const session = authenticatedSession(req, token)
     if (!session) return res.status(401).json({ ok: false })
-    const record = await findByToken(token)
+    let record = await findByToken(token)
     if (!record) return res.sendStatus(404)
+    if (typeof resolveCurrentUser === "function") {
+      const currentUser = await resolveCurrentUser(record)
+      if (currentUser?.negocioId && currentUser?.numeroCaso) {
+        await ensureCase(currentUser)
+        record = await findByToken(token) || record
+      }
+    }
     const profile = decryptJson({
       ciphertext: record.profile_ciphertext,
       iv: record.profile_iv,
       tag: record.profile_tag
     }, key)
+    if (profile) {
+      profile.birthDate = formatBrazilianDate(profile.birthDate)
+      profile.phone = formatarTelefoneExibicao(profile.phone) || profile.phone
+    }
     const password = record.password_ciphertext ? decryptJson({
       ciphertext: record.password_ciphertext,
       iv: record.password_iv,

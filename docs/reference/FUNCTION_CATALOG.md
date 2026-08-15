@@ -1839,30 +1839,30 @@ Regra de domínio: credentials vault.
 
 | Função | Linha | Visibilidade | Responsabilidade |
 | --- | ---: | --- | --- |
-| `text` | 8 | interna | Executa a responsabilidade interna “text”. |
-| `formatBrazilianDate` | 12 | pública | Executa a responsabilidade interna “format brazilian date”. |
-| `validDateParts` | 28 | interna | Executa a responsabilidade interna “valid date parts”. |
-| `firstText` | 37 | interna | Executa a responsabilidade interna “first text”. |
-| `deriveKey` | 45 | pública | Executa a responsabilidade interna “derive key”. |
-| `encryptJson` | 51 | pública | Executa a responsabilidade interna “encrypt json”. |
-| `decryptJson` | 62 | pública | Executa a responsabilidade interna “decrypt json”. |
-| `profileFromUser` | 73 | pública | Executa a responsabilidade interna “profile from user”. |
-| `hashToken` | 105 | pública | Determina se existe h token. |
-| `cookieValue` | 109 | interna | Executa a responsabilidade interna “cookie value”. |
-| `createCredentialsVault` | 118 | pública | Executa a responsabilidade interna “create credentials vault”. |
-| `initialize` | 125 | interna | Executa a responsabilidade interna “initialize”. |
-| `urlForToken` | 148 | interna | Executa a responsabilidade interna “url for token”. |
-| `ensureCase` | 153 | interna | Executa a responsabilidade interna “ensure case”. |
-| `findByToken` | 188 | interna | Executa a responsabilidade interna “find by token”. |
-| `authenticatedSession` | 199 | interna | Executa a responsabilidade interna “authenticated session”. |
-| `failureKey` | 209 | interna | Executa a responsabilidade interna “failure key”. |
-| `loginAllowed` | 213 | interna | Executa a responsabilidade interna “login allowed”. |
-| `recordFailure` | 223 | interna | Executa a responsabilidade interna “record failure”. |
-| `setNoStore` | 231 | interna | Executa a responsabilidade interna “set no store”. |
-| `login` | 238 | interna | Executa a responsabilidade interna “login”. |
-| `data` | 257 | interna | Executa a responsabilidade interna “data”. |
-| `savePassword` | 277 | interna | Executa a responsabilidade interna “save password”. |
-| `vaultPage` | 303 | pública | Executa a responsabilidade interna “vault page”. |
+| `text` | 9 | interna | Executa a responsabilidade interna “text”. |
+| `formatBrazilianDate` | 13 | pública | Executa a responsabilidade interna “format brazilian date”. |
+| `validDateParts` | 29 | interna | Executa a responsabilidade interna “valid date parts”. |
+| `firstText` | 38 | interna | Executa a responsabilidade interna “first text”. |
+| `deriveKey` | 46 | pública | Executa a responsabilidade interna “derive key”. |
+| `encryptJson` | 52 | pública | Executa a responsabilidade interna “encrypt json”. |
+| `decryptJson` | 63 | pública | Executa a responsabilidade interna “decrypt json”. |
+| `profileFromUser` | 74 | pública | Executa a responsabilidade interna “profile from user”. |
+| `hashToken` | 106 | pública | Determina se existe h token. |
+| `cookieValue` | 110 | interna | Executa a responsabilidade interna “cookie value”. |
+| `createCredentialsVault` | 119 | pública | Executa a responsabilidade interna “create credentials vault”. |
+| `initialize` | 126 | interna | Executa a responsabilidade interna “initialize”. |
+| `urlForToken` | 149 | interna | Executa a responsabilidade interna “url for token”. |
+| `ensureCase` | 154 | interna | Executa a responsabilidade interna “ensure case”. |
+| `findByToken` | 189 | interna | Executa a responsabilidade interna “find by token”. |
+| `authenticatedSession` | 200 | interna | Executa a responsabilidade interna “authenticated session”. |
+| `failureKey` | 210 | interna | Executa a responsabilidade interna “failure key”. |
+| `loginAllowed` | 214 | interna | Executa a responsabilidade interna “login allowed”. |
+| `recordFailure` | 224 | interna | Executa a responsabilidade interna “record failure”. |
+| `setNoStore` | 232 | interna | Executa a responsabilidade interna “set no store”. |
+| `login` | 239 | interna | Executa a responsabilidade interna “login”. |
+| `data` | 258 | interna | Executa a responsabilidade interna “data”. |
+| `savePassword` | 289 | interna | Executa a responsabilidade interna “save password”. |
+| `vaultPage` | 315 | pública | Executa a responsabilidade interna “vault page”. |
 
 ## `src/domain/crm-identity/case-party-context-resolver.js`
 

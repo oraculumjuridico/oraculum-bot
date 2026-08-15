@@ -73,6 +73,7 @@ test("cofre apenas lê o telefone e não possui operação de atualização de C
   const vaultSource = fs.readFileSync(path.join(__dirname, "..", "src", "domain", "credentials-vault.js"), "utf8")
   assert.match(vaultSource, /user\.whatsappContato \|\| user\._numero/)
   assert.doesNotMatch(vaultSource, /hsAtualizarContato|crm\/v3\/objects\/contacts|axios\.(?:patch|post|put)/)
+  assert.match(server, /resolveCurrentUser/)
 })
 
 test("token é comparado por hash e página não contém dados de cliente", () => {
