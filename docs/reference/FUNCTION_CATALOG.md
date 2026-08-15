@@ -4,7 +4,7 @@
 
 Este índice cobre as funções nomeadas de `server.js`, `tts.js` e `src/`. A explicação conceitual dos fluxos está em `docs/ORACULUM_SYSTEM_GUIDE.md`.
 
-Total: **2464 funções** em **237 módulos**.
+Total: **2469 funções** em **237 módulos**.
 
 - **pública**: aparece no contrato `module.exports` do módulo;
 - **interna**: detalhe de implementação usado dentro do próprio módulo.
@@ -1862,7 +1862,11 @@ Regra de domínio: credentials vault.
 | `login` | 239 | interna | Executa a responsabilidade interna “login”. |
 | `data` | 258 | interna | Executa a responsabilidade interna “data”. |
 | `savePassword` | 289 | interna | Executa a responsabilidade interna “save password”. |
-| `vaultPage` | 315 | pública | Executa a responsabilidade interna “vault page”. |
+| `legacyVaultPage` | 315 | interna | Executa a responsabilidade interna “legacy vault page”. |
+| `vaultPage` | 319 | pública | Executa a responsabilidade interna “vault page”. |
+| `field` | 336 | interna | Executa a responsabilidade interna “field”. |
+| `renderProfile` | 337 | interna | Executa a responsabilidade interna “render profile”. |
+| `load` | 350 | interna | Executa a responsabilidade interna “load”. |
 
 ## `src/domain/crm-identity/case-party-context-resolver.js`
 
@@ -2758,6 +2762,7 @@ Regra de domínio: hubspot core.
 | `hsCriarNotaNegocio` | 412 | pública | Executa a responsabilidade interna “hs criar nota negocio”. |
 | `hsSincronizarNotaAnalise` | 501 | pública | Executa a responsabilidade interna “hs sincronizar nota analise”. |
 | `hsSincronizarNotaOperacional` | 514 | pública | Executa a responsabilidade interna “hs sincronizar nota operacional”. |
+| `escapeHtml` | 521 | interna | Executa a responsabilidade interna “escape html”. |
 
 ## `src/domain/hubspot-deal-title.js`
 

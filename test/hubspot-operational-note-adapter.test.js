@@ -44,7 +44,9 @@ async function main() {
   assert.equal(updated.action, "updated")
   assert.equal(requests.filter(item => item[0] === "post" && item[1].endsWith("/objects/notes")).length, 1)
   const body = requests.find(item => item[0] === "post" && item[1].endsWith("/objects/notes"))[2].properties.hs_note_body
-  assert.match(body, /ORACULUM_OPERATIONAL:PRV\.1/)
+  assert.match(body, /DADOS PESSOAIS E CREDENCIAIS · PRV\.1/)
+  assert.match(body, /ABRIR REGISTRO SEGURO/)
+  assert.match(body, /<a href=/)
   assert.match(body, /token-seguro/)
   assert.doesNotMatch(body, /senha123|password_ciphertext/)
   console.log("hubspot-operational-note-adapter.test.js: ok")

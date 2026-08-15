@@ -515,19 +515,26 @@ async function hsSincronizarNotaAnalise(input = {}) {
 async function hsSincronizarNotaOperacional({ dealId, contactId, caseNumber, vaultUrl } = {}) {
   if (!process.env.HUBSPOT_TOKEN) return { ok: false, skipped: true, reason: "hubspot_not_configured" }
   if (!dealId || !caseNumber || !vaultUrl) return { ok: false, skipped: true, reason: "operational_note_incomplete" }
-  const marker = `[ORACULUM_OPERATIONAL:${String(caseNumber).trim().toUpperCase()}]`
+  const caseLabel = String(caseNumber).trim().toUpperCase()
+  const legacyMarker = `[ORACULUM_OPERATIONAL:${caseLabel}]`
+  const marker = `DADOS PESSOAIS E CREDENCIAIS · ${caseLabel}`
+  const escapeHtml = value => String(value || "").replace(/[&<>\"]/g, character => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"
+  })[character])
+  const safeCase = escapeHtml(caseLabel)
+  const safeUrl = escapeHtml(String(vaultUrl).trim())
   const body = [
-    "DADOS PESSOAIS E CREDENCIAIS",
-    "",
-    `Caso: ${String(caseNumber).trim()}`,
-    "Abra o registro seguro para consultar os dados reunidos e atualizar a senha Gov.br / Meu INSS:",
-    String(vaultUrl).trim(),
-    "",
-    "A senha não é armazenada nesta nota nem em propriedades comuns do HubSpot.",
-    marker
-  ].join("\n")
+    `<p><strong>🔐 DADOS PESSOAIS E CREDENCIAIS</strong><br><small>Caso ${safeCase}</small></p>`,
+    "<p>Consulte os dados reunidos do cliente e atualize a senha Gov.br / Meu INSS no registro protegido.</p>",
+    `<p><a href="${safeUrl}" target="_blank" rel="noopener noreferrer"><strong>ABRIR REGISTRO SEGURO</strong></a></p>`,
+    "<p><small>A senha não fica armazenada nesta nota, nas propriedades comuns do HubSpot, no Drive ou no WhatsApp.</small></p>",
+    `<p><small>${escapeHtml(marker)}</small></p>`
+  ].join("")
   try {
-    const notes = await hubspotAnalysisNoteAdapter.findByDealAndMarker({ dealId, marker })
+    const legacyNotes = await hubspotAnalysisNoteAdapter.findByDealAndMarker({ dealId, marker: legacyMarker })
+    const notes = legacyNotes.length
+      ? legacyNotes
+      : await hubspotAnalysisNoteAdapter.findByDealAndMarker({ dealId, marker })
     const existing = notes[0]
     if (existing?.id) {
       const updated = await hubspotAnalysisNoteAdapter.update({ noteId: existing.id, body })

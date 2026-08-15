@@ -84,13 +84,18 @@ test("token é comparado por hash e página não contém dados de cliente", () =
   assert.match(html, /nonce="nonce-seguro"/)
   assert.match(html, /data-copy/)
   assert.match(html, /navigator\.clipboard\.writeText/)
+  assert.match(html, /Identificação/)
+  assert.match(html, /Dados profissionais/)
+  assert.match(html, /field\("Pasta no Drive"/)
   assert.doesNotMatch(html, /Cliente Teste|123\.456/)
 })
 
 test("HubSpot recebe somente link e marcador operacional idempotente", () => {
-  assert.match(hubspotCore, /ORACULUM_OPERATIONAL/)
+  assert.match(hubspotCore, /DADOS PESSOAIS E CREDENCIAIS/)
   assert.match(hubspotCore, /findByDealAndMarker/)
-  assert.match(hubspotCore, /A senha não é armazenada nesta nota/)
+  assert.match(hubspotCore, /A senha não fica armazenada nesta nota/)
+  assert.match(hubspotCore, /ABRIR REGISTRO SEGURO/)
+  assert.match(hubspotCore, /legacyMarker/)
 })
 
 test("registro no Neon é idempotente por Negócio e mantém token estável", async () => {
