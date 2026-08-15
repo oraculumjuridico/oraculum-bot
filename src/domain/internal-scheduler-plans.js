@@ -11,13 +11,16 @@ function reminderToday(inicio, hour = 9) {
     timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit"
   }).formatToParts(date)
   const map = Object.fromEntries(parts.map(part => [part.type, part.value]))
-  return new Date(`${map.year}-${map.month}-${map.day}T${String(hour).padStart(2, "0")}:00:00-03:00`)
+  const configured = new Date(`${map.year}-${map.month}-${map.day}T${String(hour).padStart(2, "0")}:00:00-03:00`)
+  if (configured < date) return configured
+  const earliest = new Date(`${map.year}-${map.month}-${map.day}T07:00:00-03:00`)
+  return new Date(Math.max(earliest.getTime(), date.getTime() - 2 * 60 * 60 * 1000))
 }
 function consultationScope(data, { todayHour = 9, now = new Date(), maxReminderDelayMs = 30 * 60 * 1000 } = {}) {
   const start = validDate(data?.datetime)
   const current = validDate(now)
   if (!start || !data?.eventId || !data?.phone) return null
-  const reminders = [
+  const reminderCandidates = [
     ["24h", validDate(data.reminders?.["24h"]) || new Date(start.getTime() - 86400000)],
     ["hoje", reminderToday(start, todayHour)],
     ["1h", validDate(data.reminders?.["1h"]) || new Date(start.getTime() - 3600000)]
@@ -26,6 +29,9 @@ function consultationScope(data, { todayHour = 9, now = new Date(), maxReminderD
     scheduled < start &&
     (!current || scheduled.getTime() >= current.getTime() - maxReminderDelayMs)
   )
+  const remindersByInstant = new Map()
+  for (const reminder of reminderCandidates) remindersByInstant.set(reminder[1].toISOString(), reminder)
+  const reminders = [...remindersByInstant.values()]
   const base = {
     phone: data.phone, name: data.name, eventId: data.eventId,
     dealId: data.dealId || null, casoId: data.casoId || null, datetime: start.toISOString()

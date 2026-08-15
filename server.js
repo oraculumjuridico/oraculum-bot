@@ -4167,6 +4167,23 @@ async function localizarUsuarioAgendamento({ eventId = "", dealId = "", phone = 
     if (numero && normalizarNumeroWhatsAppEnvio(u?.whatsappContato) === numero) return { from, u }
   }
 
+  if (negocio) {
+    const item = await hsAdminItemPorDealId(negocio)
+    if (item?.u) {
+      const contato = await hsAdminBuscarContatoDoNegocio(negocio)
+      if (contato) hidratarDadosContatoAdmin(item, contato)
+      const fromRecuperado = numero || normalizarNumeroWhatsAppEnvio(
+        item.from || item.u._numero || item.u.whatsappContato
+      )
+      if (fromRecuperado) {
+        item.u._numero = item.u._numero || fromRecuperado
+        item.u.whatsappContato = item.u.whatsappContato || fromRecuperado
+        logInfo({ event: "consultation_user_resolution", status: "recovered", source: "hubspot" })
+        return { from: fromRecuperado, u: item.u, recovered: true }
+      }
+    }
+  }
+
   return { from: null, u: null }
 }
 
@@ -19123,6 +19140,14 @@ async function planejarConsultasNoAgendador() {
           { ...response.body, end: state.fim || null },
           { todayHour: INTERNAL_SCHEDULER_TODAY_HOUR, now }
         )
+      } else {
+        logInfo({
+          event: "consultation_planning_skipped",
+          queue: "internal_scheduler",
+          status: response.status === 200 ? "target_not_allowed" : "data_unavailable",
+          httpStatus: response.status,
+          reasonCode: sanitizarTextoEntrada(response.body?.reason || response.body?.erro || "")
+        })
       }
     } else if (state.status === "cancelada" && automationTargetAllowed({ dealId: state.metadata?.dealId })) {
       scope = consultationLifecycleScope({
@@ -19173,7 +19198,14 @@ async function despacharRotaAgendada(pathname, payload) {
     throw error
   }
   if (response.status >= 400) {
-    return { outcome: "skipped", httpStatus: response.status, reason: response.body?.reason || response.body?.erro || "rejected" }
+    const reason = response.body?.reason || response.body?.erro || "rejected"
+    if (response.status === 404 && reason === "usuario_nao_encontrado_para_contexto") {
+      const error = new Error("CONSULTATION_CONTEXT_TEMPORARILY_UNAVAILABLE")
+      error.code = "CONSULTATION_CONTEXT_TEMPORARILY_UNAVAILABLE"
+      error.retryable = true
+      throw error
+    }
+    return { outcome: "skipped", httpStatus: response.status, reason }
   }
   const skipped = response.body?.status === "skipped"
   return {
@@ -19225,6 +19257,9 @@ async function executarAgendadorInterno() {
     },
     limit: Number(process.env.INTERNAL_SCHEDULER_BATCH_SIZE || 25),
     logger: (event, data) => logInfo({ event, queue: "internal_scheduler", ...data })
+  }).then(summary => {
+    logInfo({ event: "scheduler_cycle_completed", queue: "internal_scheduler", ...summary })
+    return summary
   }).finally(() => { internalSchedulerExecution = null })
   return internalSchedulerExecution
 }

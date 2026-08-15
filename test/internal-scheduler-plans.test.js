@@ -35,7 +35,36 @@ const {
 
 {
   assert.equal(reminderToday("2026-08-20T15:00:00.000Z", 9).toISOString(), "2026-08-20T12:00:00.000Z")
+  assert.equal(reminderToday("2026-08-20T12:00:00.000Z", 9).toISOString(), "2026-08-20T10:00:00.000Z")
   assert.equal(consultationScope({}), null)
+}
+
+{
+  const scope = consultationScope({
+    phone: "5585999990000",
+    eventId: "event-next-morning",
+    datetime: "2026-08-20T12:00:00.000Z",
+    reminders: {
+      "24h": "2026-08-19T12:00:00.000Z",
+      "1h": "2026-08-20T11:00:00.000Z"
+    }
+  }, { todayHour: 9, now: "2026-08-20T00:13:00.000Z" })
+  assert.deepEqual(
+    scope.jobs.filter(job => job.kind === "consultation_reminder").map(job => [job.payload.tipo, job.scheduledFor]),
+    [["hoje", "2026-08-20T10:00:00.000Z"], ["1h", "2026-08-20T11:00:00.000Z"]]
+  )
+}
+
+{
+  const scope = consultationScope({
+    phone: "5585999990000",
+    eventId: "event-no-duplicate",
+    datetime: "2026-08-20T13:00:00.000Z"
+  }, { todayHour: 9, now: "2026-08-20T00:13:00.000Z" })
+  assert.deepEqual(
+    scope.jobs.filter(job => job.kind === "consultation_reminder").map(job => job.payload.tipo),
+    ["1h"]
+  )
 }
 
 {
