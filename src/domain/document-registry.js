@@ -23,6 +23,7 @@ const EMPTY_GROUPS = Object.freeze([
   "documentosPrevidenciarios",
   "documentosTrabalhistas",
   "documentosProcessuais",
+  "comprovantesCras",
   "outros"
 ])
 

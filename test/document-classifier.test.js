@@ -154,6 +154,17 @@ function main() {
     confiancaMinima: 0.7
   })
 
+  assertClassificacao({
+    textoOCR: "Cadastro Unico CadUnico folha resumo Centro de Referencia de Assistencia Social CRAS NIS responsavel familiar data da atualizacao",
+    metadadosImagem: { mimeType: "image/jpeg" },
+    quantidadePaginas: 1
+  }, {
+    tipoDocumento: "Comprovante de atualizacao do Cadastro Unico CRAS",
+    categoria: CATEGORIAS_DOCUMENTAIS.SOCIAL,
+    subtipo: "cadastro_unico_cras",
+    confiancaMinima: 0.75
+  })
+
   const processual = assertClassificacao({
     textoOCR: "Excelentissimo Senhor Doutor Juiz peticao inicial processo advogado OAB requer a citacao",
     metadadosImagem: { mimeType: "image/png" },

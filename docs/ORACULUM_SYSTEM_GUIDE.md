@@ -142,10 +142,13 @@ Regras essenciais:
 - CPF, nome e nascimento só são promovidos quando documento, titularidade, confiança e ausência de divergência permitem;
 - versões incertas ou conflitantes entram em revisão;
 - documentos são consolidados por grupo: pessoais, residência e carteira de trabalho, mantendo ocorrências distintas quando necessário;
+- **Outros documentos** é um fluxo complementar e nunca altera a lista obrigatória: o cliente escolhe entre comprovante do CRAS/Cadastro Único, prova adicional ou outro documento, envia um arquivo por vez, confirma o anexo e pode repetir;
+- comprovantes do CRAS têm reconhecimento próprio, podem extrair nome, CPF, NIS, data de atualização e município quando a evidência for confiável e são consolidados em `05_Comprovantes_Cadastro_Unico_CRAS.pdf`;
+- todo arquivo complementar preserva o original em `00 - Originais recebidos`, atualiza a análise do Negócio no HubSpot e mantém o caso em **Aguardando documentos** enquanto houver item obrigatório faltante;
 - a pasta é única por caso, identificada também por `appProperties.oraculumCaseNumber`;
 - nenhum upload cria permissão pública `anyone/reader`.
 
-Módulos principais: `document-input-normalizer.js`, `document-scanner.js`, `document-ai-assistant.js`, `document-image-*`, `document-ocr.js`, `document-classifier.js`, `document-evidence-model.js`, `document-registry.js`, `document-requirement-engine.js`, `document-grouper.js`, `document-pdf-composer.js`, `document-human-review.js`, `document-hubspot-sync.js`, `document-state-repository.js` e `drive-files.js`.
+Módulos principais: `document-input-normalizer.js`, `document-scanner.js`, `document-ai-assistant.js`, `document-image-*`, `document-ocr.js`, `document-classifier.js`, `document-evidence-model.js`, `document-registry.js`, `document-requirement-engine.js`, `document-grouper.js`, `document-pdf-composer.js`, `supplemental-documents.js`, `document-human-review.js`, `document-hubspot-sync.js`, `document-state-repository.js` e `drive-files.js`.
 
 ## 11. WhatsApp Admin
 

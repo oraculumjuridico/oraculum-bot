@@ -557,15 +557,16 @@ function aplicarContextoDocsCasoAtual(u) {
 
 function detectarComandoDocumento(texto = "") {
   const raw = String(texto || "").trim()
-  if (["doc_cpf_skip", "docs_reenviar", "docs_maisFotos", "docs_proxdoc", "docs_pular_doc", "docs_depois", "docs_rg_verso_junto", "docs_rg_sem_verso", "docs_enviar_faltantes", "docs_ver_status"].includes(raw)) return raw
+  if (["doc_cpf_skip", "docs_reenviar", "docs_maisFotos", "docs_proxdoc", "docs_pular_doc", "docs_depois", "docs_rg_verso_junto", "docs_rg_sem_verso", "docs_enviar_faltantes", "docs_ver_status", "docs_outros"].includes(raw)) return raw
   const t = normalizarTextoGatilho(raw)
+  if (/\bpular documento\b|\bpular esse documento\b|\bnao enviar esse documento\b|\bnão enviar esse documento\b|\bproximo documento sem\b|\bseguir para outro documento\b/.test(t)) return "docs_pular_doc"
+  if (/\b(enviar|mandar|anexar|adicionar)?\s*(outros? documentos?|documentos? adicionais?|documentos? complementares?)\b/.test(t)) return "docs_outros"
   if (/\bpular cpf\b/.test(t)) return "doc_cpf_skip"
   if (/\benviar faltantes\b|\benviar pendentes\b|\bmandar faltantes\b|\bmandar pendentes\b/.test(t)) return "docs_enviar_faltantes"
   if (/\bver status\b|\bstatus dos documentos\b|\bstatus documental\b/.test(t)) return "docs_ver_status"
   if (/\breenviar\b|\brefazer\b|\bmandar de novo\b/.test(t)) return "docs_reenviar"
   if (/\bmais fotos?\b|\boutra foto\b|\badicionar foto\b/.test(t)) return "docs_maisFotos"
   if (/\bpausar envio\b|\bpausar\b|\benviar depois\b|\bdepois\b|\bmais tarde\b/.test(t)) return "docs_depois"
-  if (/\bpular documento\b|\bpular esse documento\b|\bnao enviar esse documento\b|\bnão enviar esse documento\b|\bproximo documento sem\b|\bseguir para outro documento\b|\boutro documento\b/.test(t)) return "docs_pular_doc"
   if (/\bverso junto\b|\bverso esta junto\b|\bverso est[aá] junto\b|\bfrente e verso junto\b|\bfrente e verso na mesma\b/.test(t)) return "docs_rg_verso_junto"
   if (/\bseguir sem verso\b|\bsem verso\b|\bnao tenho verso\b|\bnão tenho verso\b/.test(t)) return "docs_rg_sem_verso"
   if (/\bproxim[oa] documento\b|\bpr[oó]ximo documento\b|\bavancar documento\b|\bavançar documento\b/.test(t)) return "docs_proxdoc"

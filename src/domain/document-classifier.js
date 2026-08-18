@@ -4,6 +4,7 @@ const CATEGORIAS_DOCUMENTAIS = Object.freeze({
   PREVIDENCIARIO: "previdenciario",
   MEDICO: "medico",
   PROCESSUAL: "processual",
+  SOCIAL: "cadastro_social",
   OUTROS: "outros"
 })
 
@@ -183,6 +184,14 @@ const TIPOS_DOCUMENTAIS = Object.freeze([
     subtipo: "afastamento",
     fortes: ["atestado medico", "atesto para os devidos fins", "atestado"],
     apoio: ["afastamento", "dias", "cid", "crm", "paciente", "repouso"]
+  },
+  {
+    id: "cadastro_unico_cras",
+    tipoDocumento: "Comprovante de atualizacao do Cadastro Unico CRAS",
+    categoria: CATEGORIAS_DOCUMENTAIS.SOCIAL,
+    subtipo: "cadastro_unico_cras",
+    fortes: ["cadastro unico", "cadunico", "centro de referencia de assistencia social", "cras"],
+    apoio: ["nis", "codigo familiar", "responsavel familiar", "data da atualizacao", "programas sociais", "folha resumo"]
   },
   {
     id: "peticao",

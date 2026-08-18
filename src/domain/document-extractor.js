@@ -8,7 +8,8 @@ const CAMPOS_POR_DOCUMENTO = Object.freeze({
   cartaInss: ["nb", "tipoDecisao", "data", "beneficio"],
   laudo: ["medico", "crm", "especialidade", "cid", "dataLaudo"],
   processo: ["numero", "vara", "tribunal"],
-  cpf: ["cpf", "nome"]
+  cpf: ["cpf", "nome"],
+  cadastroSocial: ["nome", "cpf", "nis", "dataAtualizacao", "municipio"]
 })
 
 function normalizarTexto(texto = "") {
@@ -65,6 +66,7 @@ function resolverFamiliaDocumento(tipoDocumento, resultadoClassificador = {}) {
   if (tipo.includes("cnis")) return "cnis"
   if (tipo.includes("carta do inss") || tipo.includes("indeferimento") || tipo.includes("comunicacao de decisao")) return "cartaInss"
   if (tipo.includes("laudo") || subtipo.includes("laudo")) return "laudo"
+  if (categoria.includes("cadastro_social") || tipo.includes("cadastro unico") || tipo.includes("cras")) return "cadastroSocial"
   if (categoria.includes("processual") || ["peticao", "sentenca", "decisao", "andamento"].some(item => tipo.includes(item))) return "processo"
 
   return null
@@ -293,6 +295,30 @@ function extrairCPF(texto) {
   }
 }
 
+function extrairCadastroSocial(texto) {
+  return {
+    nome: primeiroValor(
+      encontrarPorLinha(texto, ["nome do responsavel familiar", "responsavel familiar", "nome completo", "nome"], 0.84),
+      encontrarPorRegex(texto, [/\bnome\s*[:.-]?\s*([A-ZÀ-Ý][A-ZÀ-Ý\s.'-]{4,})/i], 0.76)
+    ),
+    cpf: primeiroValor(
+      encontrarPorRegex(texto, [
+        /\bcpf\s*[:.-]?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})/i,
+        /\b(\d{3}\.\d{3}\.\d{3}-\d{2})\b/
+      ], 0.9),
+      encontrarPorRegex(texto, [/\bcpf\s*[:.-]?\s*(\d{11})\b/i], 0.82)
+    ),
+    nis: encontrarPorRegex(texto, [
+      /\b(?:nis|nit|pis|pasep)\s*[:.-]?\s*(\d{3}\.?\d{5}\.?\d{2}-?\d|\d{11})\b/i
+    ], 0.9),
+    dataAtualizacao: primeiroValor(
+      dataPorRotulo(texto, ["data da atualizacao", "atualizado em", "ultima atualizacao", "data da entrevista"]),
+      encontrarPorRegex(texto, [/\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/], 0.64)
+    ),
+    municipio: encontrarPorLinha(texto, ["municipio", "cidade"], 0.8)
+  }
+}
+
 const EXTRATORES = Object.freeze({
   rg: extrairRG,
   cnh: extrairCNH,
@@ -303,7 +329,8 @@ const EXTRATORES = Object.freeze({
   cartaInss: extrairCartaINSS,
   laudo: extrairLaudo,
   processo: extrairProcesso,
-  cpf: extrairCPF
+  cpf: extrairCPF,
+  cadastroSocial: extrairCadastroSocial
 })
 
 function extrairDadosDocumento(input = {}) {

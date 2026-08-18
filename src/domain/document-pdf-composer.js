@@ -52,6 +52,11 @@ const PDF_DEFINITIONS = Object.freeze([
     getDocumentos: grupos => grupos.documentosProcessuais || []
   },
   {
+    tipo: "ComprovantesCras",
+    arquivo: "05_Comprovantes_Cadastro_Unico_CRAS.pdf",
+    getDocumentos: grupos => grupos.comprovantesCras || []
+  },
+  {
     tipo: "Outros",
     arquivo: "Outros.pdf",
     getDocumentos: grupos => grupos.outros || []

@@ -174,6 +174,24 @@ function main() {
   assertCampo(processo, "vara", "12a Vara do Trabalho de Sao Paulo")
   assertCampo(processo, "tribunal", "TRT-2")
 
+  const cadastroSocial = extrairDadosDocumento({
+    tipoDocumento: "Comprovante de atualizacao do Cadastro Unico CRAS",
+    resultadoClassificador: { categoria: "cadastro_social", subtipo: "cadastro_unico_cras" },
+    textoOCR: `
+      Cadastro Unico
+      Responsavel familiar: MARIA DA SILVA
+      CPF: 123.456.789-09
+      NIS: 123.45678.90-1
+      Data da atualizacao: 15/08/2026
+      Municipio: Recife
+    `
+  })
+  assertCampo(cadastroSocial, "nome", "MARIA DA SILVA")
+  assertCampo(cadastroSocial, "cpf", "123.456.789-09")
+  assertCampo(cadastroSocial, "nis", "123.45678.90-1")
+  assertCampo(cadastroSocial, "dataAtualizacao", "15/08/2026")
+  assertCampo(cadastroSocial, "municipio", "Recife")
+
   const incompleto = extrairDadosDocumento({
     tipoDocumento: "RG frente",
     textoOCR: "Nome: APENAS NOME"

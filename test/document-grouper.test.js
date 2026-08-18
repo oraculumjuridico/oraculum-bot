@@ -19,6 +19,7 @@ function doc(tipoDocumento, categoria, subtipo, camposExtraidos, referenciaArqui
 function main() {
   assert.ok(GRUPOS_DOCUMENTAIS.includes("rgPares"))
   assert.ok(GRUPOS_DOCUMENTAIS.includes("documentosProcessuais"))
+  assert.ok(GRUPOS_DOCUMENTAIS.includes("comprovantesCras"))
 
   const documentos = [
     doc("RG frente", "documentos_pessoais", "identidade", { rg: "12.345.678-9", nome: "MARIA" }, "rg-frente.jpg"),
@@ -127,6 +128,21 @@ function main() {
   assert.equal(tentativasVerso.documentosPessoais.length, 1)
   assert.equal(tentativasVerso.outros.length, 0)
   assert.ok(tentativasVerso.avisos.some(aviso => aviso.code === "DOCUMENT_GROUPER_REPEATED_GUIDED_SIDE_REVIEW"))
+
+  const complementarCras = agruparDocumentosProcessados([
+    {
+      ...doc("Documento desconhecido", "outros", null, {}, "cras-1.jpg"),
+      contexto: {
+        fluxoDocumento: "complementar",
+        documentoId: "doc_extra_cras",
+        documentoLabel: "Comprovante de atualização do Cadastro Único/CRAS",
+        categoriaComplementar: "cadastro_social"
+      }
+    }
+  ])
+  assert.equal(complementarCras.comprovantesCras.length, 1)
+  assert.equal(complementarCras.comprovantesCras[0].categoria, "cadastro_social")
+  assert.equal(complementarCras.outros.length, 0)
 
   const invalido = agruparDocumentosProcessados(null)
   assert.equal(invalido.erros[0].code, "DOCUMENT_GROUPER_INPUT_INVALID")

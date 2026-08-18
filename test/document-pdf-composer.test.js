@@ -41,6 +41,7 @@ function gruposVazios() {
     documentosPrevidenciarios: [],
     documentosTrabalhistas: [],
     documentosProcessuais: [],
+    comprovantesCras: [],
     outros: []
   }
 }
@@ -83,6 +84,7 @@ async function main() {
   const laudo1 = doc("Laudo", await imagem("#ffe0e0"), "laudo-1", { categoria: "medico" })
   const laudo2 = doc("Laudo", await imagem("#ffd0d0"), "laudo-2", { categoria: "medico" })
   const desconhecido = doc("Documento desconhecido", await imagem("#dddddd"), "outro-1", { categoria: "outros" })
+  const cras = doc("Comprovante de atualização do Cadastro Único/CRAS", await imagem("#fff7d6"), "cras-1", { categoria: "cadastro_social" })
 
   const gruposRGCompleto = gruposVazios()
   gruposRGCompleto.documentosPessoais.push(frente, verso, certidao)
@@ -133,6 +135,12 @@ async function main() {
   const resultadoOutros = await comporPdfsDocumentais(gruposOutros)
   assertPdfValido(porTipo(resultadoOutros, "Outros"), 1)
   assert.equal(porTipo(resultadoOutros, "Outros").originais[0].tipoDocumento, "Documento desconhecido")
+
+  const gruposCras = gruposVazios()
+  gruposCras.comprovantesCras.push(cras)
+  const resultadoCras = await comporPdfsDocumentais(gruposCras)
+  assertPdfValido(porTipo(resultadoCras, "ComprovantesCras"), 1)
+  assert.equal(porTipo(resultadoCras, "ComprovantesCras").arquivo, "05_Comprovantes_Cadastro_Unico_CRAS.pdf")
 
   const gruposScanner = gruposVazios()
   gruposScanner.outros.push(doc("Documento desconhecido", await imagemDocumentoInclinado(), "scanner-1", { categoria: "outros" }))

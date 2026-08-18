@@ -66,6 +66,12 @@ const {
   IMAGEM_DOCS_FINAL_URL
 } = require("./src/domain/documents-ui")
 const {
+  getSupplementalDocumentType,
+  buildSupplementalFilename,
+  registerSupplementalDocument,
+  supplementalDocumentCount
+} = require("./src/domain/supplemental-documents")
+const {
   descricaoRelacaoTerceiroPreAtendimento,
   perguntaAtualPreAtendimento,
   gerarMensagemAcolhimento
@@ -1210,6 +1216,8 @@ function novoUsuario(nomeWA) {
     contextoConversa: null,
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
+    documentosComplementares: [],
+    _docsComplementaresAtivo: false, _docsComplementaresTipo: null, _docClientePendenteTipoComplementar: null,
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
     corrigirCampo: null, historiaIA: [],
     lastPergunta: null, lastPerguntaPayload: null,
@@ -2373,6 +2381,7 @@ function criarSnapshotCasoCliente(u) {
     docsPulados: Array.isArray(u.docsPulados) ? [...u.docsPulados] : [],
     docsParciais: Array.isArray(u.docsParciais) ? [...u.docsParciais] : [],
     docsDispensados: Array.isArray(u.docsDispensados) ? [...u.docsDispensados] : [],
+    documentosComplementares: Array.isArray(u.documentosComplementares) ? [...u.documentosComplementares] : [],
     docAtualIdx: u.docAtualIdx || 0,
     documentosEnviados: Boolean(u.documentosEnviados),
     ultimoArqId: u.ultimoArqId || null,
@@ -2427,6 +2436,7 @@ function restaurarCasoAnteriorCliente(u, fromAtual = null) {
     docsPulados: Array.isArray(caso.docsPulados) ? [...caso.docsPulados] : [],
     docsParciais: Array.isArray(caso.docsParciais) ? [...caso.docsParciais] : [],
     docsDispensados: Array.isArray(caso.docsDispensados) ? [...caso.docsDispensados] : [],
+    documentosComplementares: Array.isArray(caso.documentosComplementares) ? [...caso.documentosComplementares] : [],
     docAtualIdx: caso.docAtualIdx || 0,
     documentosEnviados: Boolean(caso.documentosEnviados),
     ultimoArqId: caso.ultimoArqId || null,
@@ -2771,7 +2781,7 @@ function identificarEtapaAtual(u, payload) {
   if (
     origem === "documentos" ||
     /documentos do caso/i.test(payload?.texto || "") ||
-    (payload?.opcoes || []).some(o => ["docs_reenviar", "docs_maisFotos", "docs_proxdoc", "docs_pular_doc", "docs_rg_verso_junto", "docs_rg_sem_verso", "docs_enviar_faltantes", "docs_ver_status", "doc_cpf_skip", "docs_confirmar_envio_extra"].includes(o.id))
+    (payload?.opcoes || []).some(o => ["docs_reenviar", "docs_maisFotos", "docs_proxdoc", "docs_pular_doc", "docs_rg_verso_junto", "docs_rg_sem_verso", "docs_enviar_faltantes", "docs_ver_status", "doc_cpf_skip", "docs_confirmar_envio_extra", "docs_outros", "docs_extra_cras", "docs_extra_prova", "docs_extra_outro", "docs_extra_enviar_outro", "docs_extra_concluir"].includes(o.id))
   ) return "documentos"
   if (origem === STAGES.AREA || origem === "area") return "area"
 
@@ -2849,6 +2859,8 @@ function limparDadosCasoAtual(u, { preservarNome = true, marcarFluxoEncerrado = 
     tipoConsulta: "inicial",
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
+    documentosComplementares: [],
+    _docsComplementaresAtivo: false, _docsComplementaresTipo: null, _docClientePendenteTipoComplementar: null,
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
     corrigirCampo: null, historiaIA: [],
     lastPergunta: null, lastPerguntaPayload: null,
@@ -2934,6 +2946,8 @@ function limparDadosAtendimento(u) {
     consultaStatus: "sem_consulta", tipoConsulta: "inicial",
     score: 0, documentosEnviados: false,
     docsEntregues: [], docsAusentes: [], docsPulados: [], docsParciais: [], docsDispensados: [],
+    documentosComplementares: [],
+    _docsComplementaresAtivo: false, _docsComplementaresTipo: null, _docClientePendenteTipoComplementar: null,
     docAtualIdx: 0, ultimoArqId: null, ultimoArqNome: null,
     corrigirCampo: null,
     lastPergunta: null, lastPerguntaPayload: null,
@@ -2994,6 +3008,7 @@ function prepararNovaEntradaAposFluxoEncerrado(u, nomeWA = "") {
   const docsPulados       = u.docsPulados || null
   const docsParciais      = u.docsParciais || null
   const docsDispensados   = u.docsDispensados || null
+  const documentosComplementares = Array.isArray(u.documentosComplementares) ? [...u.documentosComplementares] : []
   const quantidadeCasos   = u.quantidadeCasos || null
   const temCadastroCompleto = Boolean(u.temCadastroCompleto)
   const modoTexto           = Boolean(u.modoTexto)
@@ -3024,6 +3039,7 @@ function prepararNovaEntradaAposFluxoEncerrado(u, nomeWA = "") {
     docsPulados,
     docsParciais,
     docsDispensados,
+    documentosComplementares,
     quantidadeCasos,
     temCadastroCompleto,
     modoTexto,
@@ -7810,7 +7826,7 @@ const TEXTO_INTRO_DOCS = [
   "",
   "Quando estiver pronto, toque em *Entendi, continuar*."
 ].join("\n")
-const AUDIO_GUIA_DOCS_TEXTO = "Antes de enviar seus documentos, veja estas orientações. Coloque o documento sobre uma superfície plana, em local bem iluminado, tire a foto enquadrando o documento inteiro e envie aqui pelo WhatsApp. Se a foto já estiver salva no celular, toque no clipe, abra a galeria e selecione. Seus documentos são tratados com sigilo e segurança. Na tela, você tem três opções: Entendi, para continuar para a lista do seu caso; Continuar depois, se quiser deixar para outro momento; ou Menu do cliente, para voltar."
+const AUDIO_GUIA_DOCS_TEXTO = "Antes de enviar seus documentos, veja estas orientações. Coloque o documento sobre uma superfície plana, em local bem iluminado, tire a foto enquadrando o documento inteiro e envie aqui pelo WhatsApp. Se a foto já estiver salva no celular, toque no clipe, abra a galeria e selecione. Seus documentos são tratados com sigilo e segurança. Toque em Entendi para continuar a lista principal, em Outros documentos para acrescentar um comprovante do CRAS ou outro arquivo, em Continuar depois para deixar para outro momento, ou em Menu do cliente para voltar."
 
 function textoAudioConfirmacaoDados(u) {
   const primeiroNome = primeiroNomeCliente(u) || "você"
@@ -7889,6 +7905,7 @@ async function enviarIntroDocumentos(from, u) {
     textoAudioBase: AUDIO_GUIA_DOCS_TEXTO,
     acoes: [
       { id: "docs_intro_ok", label: "✅ Entendi" },
+      { id: "docs_outros", label: "📂 Outros documentos" },
       { id: "docs_depois", label: "Continuar depois" },
       { id: "m_inicio", label: "🏠 Menu do cliente" }
     ]
@@ -7909,6 +7926,51 @@ async function enviarIntroDocumentos(from, u) {
     logErro("intro_docs", "Falha ao enviar introducao de documentos", e)
     await enviar(from, textoIntroDocumentos, opcoes, false)
   }
+}
+
+function telaTiposDocumentosComplementares(u) {
+  return criarTela({
+    id: "documentos_complementares_tipos",
+    titulo: "Outros documentos",
+    texto: `📂 *Outros documentos*\n\n${cabecalhoCasoAtivo(u)}\n\nEscolha o tipo do arquivo que deseja acrescentar. Esses arquivos complementam o caso e não substituem os documentos que ainda estiverem pendentes.`,
+    textoAudioBase: "Você pode acrescentar outros documentos ao caso. Escolha o tipo do arquivo. Ele será guardado como complemento e não substituirá documentos pendentes",
+    acoes: [
+      { id: "docs_extra_cras", label: "🏛️ Comprovante do CRAS" },
+      { id: "docs_extra_prova", label: "📄 Prova adicional" },
+      { id: "docs_extra_outro", label: "📎 Outro documento" },
+      { id: "m_inicio", label: "🏠 Menu do cliente" }
+    ]
+  })
+}
+
+function telaAguardarDocumentoComplementar(u, type) {
+  return criarTela({
+    id: `documento_complementar_${type.id}_aguardando`,
+    titulo: "Enviar documento complementar",
+    texto: `📎 *Envie agora:* ${type.label}\n\n${cabecalhoCasoAtivo(u)}\n\nPode enviar foto ou PDF. Se houver mais de uma página ou mais de um comprovante, envie um arquivo por vez; depois de cada confirmação, você poderá enviar o próximo.\n\nO original será preservado e a cópia organizada no conjunto documental do caso.`,
+    textoAudioBase: `Envie agora ${type.label}. Pode ser foto ou PDF. Se houver mais de um arquivo, envie um por vez`,
+    imagemUrl: IMAGEM_ENVIO_EXTRA_URL,
+    acoes: [
+      { id: "docs_outros", label: "↩️ Escolher outro tipo" },
+      { id: "m_inicio", label: "🏠 Menu do cliente" }
+    ]
+  })
+}
+
+function telaFinalizarDocumentosComplementares(u) {
+  const total = supplementalDocumentCount(u)
+  const pendentes = getDocsPendentes(u).length
+  return criarTela({
+    id: "documentos_complementares_finalizados",
+    titulo: "Documentos complementares salvos",
+    texto: `✅ *Documentos complementares salvos no caso*\n\n${cabecalhoCasoAtivo(u)}\n\nTotal registrado nesta sessão do caso: *${total}*.${pendentes ? `\n\nAinda existem *${pendentes}* item(ns) na lista principal de documentos.` : ""}`,
+    textoAudioBase: `Os documentos complementares foram salvos no caso.${pendentes ? " Ainda existem documentos da lista principal para enviar" : ""}`,
+    acoes: [
+      ...(pendentes ? [{ id: "docs_intro_ok", label: "📋 Continuar lista principal" }] : []),
+      { id: "docs_outros", label: "📂 Enviar outro documento" },
+      { id: "m_inicio", label: "🏠 Menu do cliente" }
+    ]
+  })
 }
 
 async function prepararFluxoResumoOutro(from, u) {
@@ -7947,8 +8009,8 @@ async function uploadDocumentoCano(u, pastaId, nome, buffer, mimeType, contexto 
   return arquivo
 }
 
-async function pastaUploadDocumento(u) {
-  if (!isPilotCaseAllowed(u?.numeroCaso)) return u?.pastaDriveId || null
+async function pastaUploadDocumento(u, { preservarOriginal = false } = {}) {
+  if (!preservarOriginal && !isPilotCaseAllowed(u?.numeroCaso)) return u?.pastaDriveId || null
   const pasta = await obterOuCriarSubpastaDrive(u?.pastaDriveId, "00 - Originais recebidos")
   return pasta?.id || null
 }
@@ -11252,6 +11314,15 @@ function rotulosDocumentosCaso(u, valores = []) {
     .filter(Boolean)
 }
 
+function rotulosDocumentosComplementares(u = {}) {
+  const contagem = new Map()
+  for (const item of Array.isArray(u.documentosComplementares) ? u.documentosComplementares : []) {
+    const label = item?.label || "Documento complementar"
+    contagem.set(label, (contagem.get(label) || 0) + 1)
+  }
+  return [...contagem.entries()].map(([label, total]) => total > 1 ? `${label} (${total} arquivos)` : label)
+}
+
 async function sincronizarNotaAnaliseCasoSegura(u, extra = {}) {
   if (!u?.negocioId || !u?.numeroCaso) return { ok: false, skipped: true }
   try {
@@ -11280,6 +11351,7 @@ async function sincronizarNotaAnaliseCasoSegura(u, extra = {}) {
       preliminaryAnalysis: u.analisePreliminar || u.analise_preliminar || [],
       documentsReceived: [
         ...rotulosDocumentosCaso(u, u.docsEntregues),
+        ...rotulosDocumentosComplementares(u),
         ...(extra.documentsReceived || [])
       ],
       documentsPending: rotulosDocumentosCaso(u, [
@@ -11601,13 +11673,28 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
   if (audioIntakeResult.handled) return audioIntakeResult.response
 
   if (u.stage === STAGES.CLIENTE && ehDoc && !u._docsClienteGuiado) {
+    const tipoComplementar = u._docsComplementaresAtivo
+      ? getSupplementalDocumentType(u._docsComplementaresTipo)
+      : null
     const prN = formatarNome(u.nome || nomeWA || "cliente").split(" ")[0]
     const ulN = formatarNome(u.nome || nomeWA || "").split(" ").filter(Boolean).slice(-1)[0] || ""
     const nCli = ulN && ulN !== prN ? `${prN} ${ulN}` : prN
     const ext = (nomeArq || "").split(".").pop()
-    const nomeFinal = `Aguardando classificacao - ${nCli}${ext && ext.length <= 4 ? "." + ext : ".jpg"}`
-    const pastaOriginais = await pastaUploadDocumento(u)
-    const arquivo = await uploadDocumentoCano(u, pastaOriginais, nomeFinal, midia.buffer, midia.mimeType, { fluxoDocumento: "avulso_pendente", nomeSalvo: nomeFinal })
+    const sequenciaComplementar = supplementalDocumentCount(u, tipoComplementar) + 1
+    const nomeFinal = tipoComplementar
+      ? buildSupplementalFilename(tipoComplementar, nCli, nomeArq, sequenciaComplementar)
+      : `Aguardando classificacao - ${nCli}${ext && ext.length <= 4 ? "." + ext : ".jpg"}`
+    const contextoAvulso = tipoComplementar
+      ? {
+          fluxoDocumento: "complementar",
+          documentoId: tipoComplementar.id,
+          documentoLabel: tipoComplementar.label,
+          categoriaComplementar: tipoComplementar.category,
+          nomeSalvo: nomeFinal
+        }
+      : { fluxoDocumento: "avulso_pendente", nomeSalvo: nomeFinal }
+    const pastaOriginais = await pastaUploadDocumento(u, { preservarOriginal: Boolean(tipoComplementar) })
+    const arquivo = await uploadDocumentoCano(u, pastaOriginais, nomeFinal, midia.buffer, midia.mimeType, contextoAvulso)
     if (!arquivo) {
       return responderTelaDocumento(from, u, criarTela({
         id: "documento_avulso_upload_falhou",
@@ -11626,34 +11713,34 @@ async function processarMidia(from, nomeWA, u, msgObj, tipo, ehAudio, ehDoc) {
       buffer: midia.buffer,
       mimeType: midia.mimeType,
       nomeOriginal: nomeArq,
-      contexto: {
-        fluxoDocumento: "avulso_pendente",
-        nomeSalvo: nomeFinal
-      }
+      contexto: contextoAvulso
     })
     if (!resultadoAnalise?.skipped) {
       await sincronizarNotaAnaliseCasoSegura(u, {
         analysisStatus: "review_required",
         reviewReasons: resultadoAnalise?.ok
-          ? ["Documento recebido e aguardando classificação."]
+          ? [tipoComplementar ? "Documento complementar recebido e aguardando confirmação." : "Documento recebido e aguardando classificação."]
           : ["A análise documental requer revisão humana."]
       })
     }
-    await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: "avulso_pendente" })
+    await registrarDocumentoNoCicloPosHumano(u, { mediaType: tipo, fluxo: tipoComplementar ? "complementar" : "avulso_pendente" })
     u._docClientePendenteArquivo = arquivo.webViewLink || null
     u._docClientePendenteId = arquivo.id || null
     u._docClientePendenteNome = nomeFinal
+    u._docClientePendenteTipoComplementar = tipoComplementar ? u._docsComplementaresTipo : null
     await hsCriarNota(
       u.contatoId,
-      "DOCUMENTO RECEBIDO - AGUARDANDO CLASSIFICACAO",
-      `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinal}\nStatus: aguardando classificacao pelo cliente${arquivo.webViewLink ? `\nDrive: ${arquivo.webViewLink}` : ""}`
+      tipoComplementar ? "DOCUMENTO COMPLEMENTAR RECEBIDO" : "DOCUMENTO RECEBIDO - AGUARDANDO CLASSIFICACAO",
+      `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}${tipoComplementar ? `\nTipo: ${tipoComplementar.label}` : ""}\nArquivo: ${nomeFinal}\nStatus: aguardando confirmacao pelo cliente${arquivo.webViewLink ? `\nDrive: ${arquivo.webViewLink}` : ""}`
     )
     const casoInfoAvulso = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "Não informada"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
     const telaAvulso = criarTela({
       id: "documento_avulso_recebido",
       titulo: "Arquivo recebido",
-      texto: `📎 *Recebi seu arquivo!*${casoInfoAvulso}\n\nDeseja anexar ao seu caso?`,
-      textoAudioBase: "Recebi um arquivo. Deseja anexar esse documento ao seu caso?",
+      texto: `📎 *Recebi seu arquivo!*${casoInfoAvulso}${tipoComplementar ? `\n\nTipo selecionado: *${tipoComplementar.label}*.` : ""}\n\nDeseja anexar ao seu caso?`,
+      textoAudioBase: tipoComplementar
+        ? `Recebi ${tipoComplementar.shortLabel}. Deseja anexar ao seu caso?`
+        : "Recebi um arquivo. Deseja anexar esse documento ao seu caso?",
       imagemUrl: IMAGEM_DOC_AVULSO_URL,
       acoes: [
         { id: "doc_cliente_anexar", label: "✅ Sim, anexar" },
@@ -13848,7 +13935,7 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       !ehAudio &&
       !ehDoc &&
       !text.startsWith("m_caso_") &&
-      !["dir_agendar", "adv_ag", "adv_urg", "adv_agendar_ligacao", "cliente_cancelar_consulta", "cliente_cancelar_consulta_sim", "m_adv", "m_status", "m_docs", "docs_pedido_admin", "docs_intro_ok", "doc_cpf_skip", "docs_reenviar", "docs_maisFotos", "docs_proxdoc", "docs_pular_doc", "docs_depois", "docs_rg_verso_junto", "docs_rg_sem_verso", "docs_enviar_faltantes", "docs_ver_status", "doc_cliente_anexar", "doc_cliente_tipo_pessoal", "doc_cliente_tipo_prova", "doc_cliente_tipo_outro", "docs_confirmar_envio_extra", "m_novocaso", "novo_caso_confirmar", "m_encerrar", "m_inicio"].includes(text)) {
+      !["dir_agendar", "adv_ag", "adv_urg", "adv_agendar_ligacao", "cliente_cancelar_consulta", "cliente_cancelar_consulta_sim", "m_adv", "m_status", "m_docs", "docs_pedido_admin", "docs_intro_ok", "doc_cpf_skip", "docs_reenviar", "docs_maisFotos", "docs_proxdoc", "docs_pular_doc", "docs_depois", "docs_rg_verso_junto", "docs_rg_sem_verso", "docs_enviar_faltantes", "docs_ver_status", "docs_outros", "docs_extra_cras", "docs_extra_prova", "docs_extra_outro", "docs_extra_enviar_outro", "docs_extra_concluir", "doc_cliente_anexar", "doc_cliente_tipo_pessoal", "doc_cliente_tipo_prova", "doc_cliente_tipo_outro", "docs_confirmar_envio_extra", "m_novocaso", "novo_caso_confirmar", "m_encerrar", "m_inicio"].includes(text)) {
     setStage(u, STAGES.CLIENTE)
     iniciarTimer(from)
     return await menuClienteComAudio(from, u)
@@ -17025,6 +17112,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       const nomeDoc = u._docClientePendenteNome || "Documento recebido"
       const linkDoc = u._docClientePendenteArquivo || ""
       const fileIdDoc = u._docClientePendenteId || null
+      const chaveTipoComplementar = u._docClientePendenteTipoComplementar || null
+      const tipoComplementar = getSupplementalDocumentType(chaveTipoComplementar)
       if (!linkDoc) {
         u._docClientePendenteNome = null
         u._docClientePendenteArquivo = null
@@ -17042,7 +17131,9 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
           ]
         }))
       }
-      const nomeRenomeado = `Documento anexado - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
+      const nomeRenomeado = tipoComplementar
+        ? nomeDoc
+        : `Documento anexado - ${primeiroEUltimoNome(u.nome || "cliente") || "cliente"}${path.extname(nomeDoc) || ""}`
       const arquivoRenomeado = await renomearArquivoDrive(fileIdDoc, nomeRenomeado)
       if (!arquivoRenomeado?.id) {
         return await responderTelaDocumento(from, u, criarTela({
@@ -17057,37 +17148,59 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         }))
       }
       if (u.negocioId) {
-        const moveu1 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.DOCS, u.negocioStageId, u.consultaStatus === "agendada")
-        if (moveu1) u.negocioStageId = HS_STAGE.DOCS
+        const stageDocumental = calcularStatusDocumentos(u).faltantesCriticos.length > 0 ? HS_STAGE.AGUARDANDO_DOCS : HS_STAGE.DOCS
+        const moveu1 = await hsMoverStageSeguro(u.negocioId, stageDocumental, u.negocioStageId, u.consultaStatus === "agendada")
+        if (moveu1) u.negocioStageId = stageDocumental
       }
       const nomeFinalDoc = arquivoRenomeado?.name || nomeDoc
       const linkFinalDoc = arquivoRenomeado?.webViewLink || linkDoc
       await hsCriarNota(
         u.contatoId,
         "DOCUMENTO ANEXADO AO CASO",
-        `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\nArquivo: ${nomeFinalDoc}${linkFinalDoc ? `\nDrive: ${linkFinalDoc}` : ""}`
+        `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}${tipoComplementar ? `\nTipo: ${tipoComplementar.label}\nCategoria: documento complementar` : ""}\nArquivo: ${nomeFinalDoc}${linkFinalDoc ? `\nDrive: ${linkFinalDoc}` : ""}`
       )
       await confirmarDocumentoCanonicoSeguro(u, fileIdDoc, { origem: "doc_cliente_anexar" })
-      if (isPilotCaseAllowed(u.numeroCaso)) {
+      if (tipoComplementar || isPilotCaseAllowed(u.numeroCaso)) {
         await consolidarDocumentosDoCasoSeguro({ u, contexto: { origem: "documento_avulso_confirmado" } })
+      }
+      if (tipoComplementar) {
+        registerSupplementalDocument(u, {
+          type: tipoComplementar,
+          fileId: fileIdDoc,
+          fileName: nomeFinalDoc
+        })
+        await sincronizarNotaAnaliseCasoSegura(u, {
+          nextAction: calcularStatusDocumentos(u).faltantesCriticos.length
+            ? "Conferir os documentos complementares e continuar a coleta dos documentos pendentes."
+            : "Conferir os documentos complementares recebidos."
+        })
       }
       u.documentosEnviados = true
       u._docsClienteGuiado = false
       u._docClientePendenteNome = null
       u._docClientePendenteArquivo = null
       u._docClientePendenteId = null
+      u._docClientePendenteTipoComplementar = null
+      await api.persistirUsersAgora({ propagarErro: false })
       const casoInfoAnexado = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "Não informada"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
       const telaAnexado = criarTela({
         id: "documento_avulso_anexado",
         titulo: "Documento anexado",
-        texto: `✅ *Documento anexado ao caso!*${casoInfoAnexado}\n\nNossa equipe poderá consultar esse arquivo na análise.`,
-        textoAudioBase: "Documento anexado ao caso. Nossa equipe poderá consultar esse arquivo na análise",
+        texto: `✅ *${tipoComplementar ? tipoComplementar.label : "Documento"} anexado ao caso!*${casoInfoAnexado}\n\nNossa equipe poderá consultar esse arquivo na análise.${tipoComplementar ? " O documento foi registrado como complementar e não substituiu nenhum item pendente." : ""}`,
+        textoAudioBase: `${tipoComplementar ? tipoComplementar.shortLabel : "Documento"} anexado ao caso. Nossa equipe poderá consultar esse arquivo na análise`,
         imagemUrl: IMAGEM_DOC_ANEXADO_URL,
-        acoes: [
-          { id: "m_docs", label: "📎 Enviar documentos" },
-          { id: "m_adv", label: "👨‍⚖️ Falar com advogado" },
-          { id: "m_inicio", label: "🏠 Menu do cliente" }
-        ]
+        acoes: tipoComplementar
+          ? [
+              { id: "docs_extra_enviar_outro", label: "📎 Enviar outro igual" },
+              { id: "docs_extra_concluir", label: "✅ Concluir adicionais" },
+              { id: "docs_outros", label: "📂 Outro tipo" },
+              { id: "m_inicio", label: "🏠 Menu do cliente" }
+            ]
+          : [
+              { id: "m_docs", label: "📎 Enviar documentos" },
+              { id: "m_adv", label: "👨‍⚖️ Falar com advogado" },
+              { id: "m_inicio", label: "🏠 Menu do cliente" }
+            ]
       })
       await enviarGuiaDocs(from, u, telaAnexado)
       registrarUltimaPergunta(u, telaAnexado)
@@ -17209,6 +17322,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       return await cancelarConsultaCliente(from, u)
     }
     if (text === "docs_intro_ok") {
+      u._docsComplementaresAtivo = false
+      u._docsComplementaresTipo = null
       aplicarContextoDocsCasoAtual(u)
       if (u.negocioId) {
         const moveu3 = await hsMoverStageSeguro(u.negocioId, HS_STAGE.AGUARDANDO_DOCS, u.negocioStageId, u.consultaStatus === "agendada")
@@ -17227,22 +17342,50 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       iniciarTimer(from)
       return null
     }
-    if (text === "docs_confirmar_envio_extra") {
-      const casoInfoExtra = u.numeroCaso ? `\n\n📄 *${u.numeroCaso}* · ${iconeAreaJuridica(u.area || "")} ${u.area || "Não informada"}\n_${formatarSituacaoJuridica(u.situacao, u.tipo, u.subTipo) || "Em análise"}_` : ""
-      const telaEnvioExtra = criarTela({
-        id: "documento_envio_extra",
-        titulo: "Enviar arquivo adicional",
-        texto: `📎 *Pode enviar o arquivo agora.*${casoInfoExtra}\n\nAssim que receber, vou salvar no seu caso.`,
-        textoAudioBase: "Pode enviar o arquivo agora. Assim que receber, vou salvar no seu caso",
-        imagemUrl: IMAGEM_ENVIO_EXTRA_URL,
-        acoes: [
-          { id: "m_inicio", label: "🏠 Menu do cliente" }
-        ]
-      })
-      await enviarGuiaDocs(from, u, telaEnvioExtra)
-      registrarUltimaPergunta(u, telaEnvioExtra)
+    if (text === "docs_outros") {
+      aplicarContextoDocsCasoAtual(u)
+      u._docsClienteGuiado = false
+      u._docsComplementaresAtivo = false
+      u._docsComplementaresTipo = null
+      salvarEtapa(u._numero, "documentos")
+      setStage(u, STAGES.CLIENTE)
       iniciarTimer(from)
-      return {}
+      return await responderTelaDocumento(from, u, telaTiposDocumentosComplementares(u))
+    }
+    if (["docs_extra_cras", "docs_extra_prova", "docs_extra_outro"].includes(text)) {
+      const chaveTipo = text.replace("docs_extra_", "")
+      const tipoComplementar = getSupplementalDocumentType(chaveTipo)
+      if (!tipoComplementar) return await responderTelaDocumento(from, u, telaTiposDocumentosComplementares(u))
+      u._docsClienteGuiado = false
+      u._docsComplementaresAtivo = true
+      u._docsComplementaresTipo = chaveTipo
+      u.etapa = "documentos"
+      salvarEtapa(u._numero, "documentos")
+      setStage(u, STAGES.CLIENTE)
+      iniciarTimer(from)
+      return await responderTelaDocumento(from, u, telaAguardarDocumentoComplementar(u, tipoComplementar))
+    }
+    if (text === "docs_extra_enviar_outro") {
+      const tipoComplementar = getSupplementalDocumentType(u._docsComplementaresTipo)
+      if (!tipoComplementar) return await responderTelaDocumento(from, u, telaTiposDocumentosComplementares(u))
+      u._docsClienteGuiado = false
+      u._docsComplementaresAtivo = true
+      salvarEtapa(u._numero, "documentos")
+      setStage(u, STAGES.CLIENTE)
+      iniciarTimer(from)
+      return await responderTelaDocumento(from, u, telaAguardarDocumentoComplementar(u, tipoComplementar))
+    }
+    if (text === "docs_extra_concluir") {
+      u._docsClienteGuiado = false
+      u._docsComplementaresAtivo = false
+      u._docsComplementaresTipo = null
+      salvarEtapa(u._numero, "documentos")
+      iniciarTimer(from)
+      return await responderTelaDocumento(from, u, telaFinalizarDocumentosComplementares(u))
+    }
+    if (text === "docs_confirmar_envio_extra") {
+      iniciarTimer(from)
+      return await responderTelaDocumento(from, u, telaTiposDocumentosComplementares(u))
     }
     const emFluxoDocumento = Boolean(
       u._docsClienteGuiado ||
@@ -17251,6 +17394,16 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       identificarEtapaAtual(u, u.lastPerguntaPayload || {}) === "documentos"
     )
     const comandoDoc = emFluxoDocumento ? detectarComandoDocumento(text) : null
+    if (comandoDoc === "docs_outros") {
+      aplicarContextoDocsCasoAtual(u)
+      u._docsClienteGuiado = false
+      u._docsComplementaresAtivo = false
+      u._docsComplementaresTipo = null
+      salvarEtapa(u._numero, "documentos")
+      setStage(u, STAGES.CLIENTE)
+      iniciarTimer(from)
+      return await responderTelaDocumento(from, u, telaTiposDocumentosComplementares(u))
+    }
     if (emFluxoDocumento && text && !comandoDoc && !text.startsWith("m_") && !text.startsWith("doc_cliente_tipo_")) {
       const indicaAusenciaDocumento = textoIndicaDocumentoAusente(text)
       const intencaoDocumento = indicaAusenciaDocumento ? null : detectarIntencaoCliente(text)
@@ -17615,6 +17768,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
     }
     if (text === "m_inicio") {
       u._docsClienteGuiado = false
+      u._docsComplementaresAtivo = false
+      u._docsComplementaresTipo = null
       u._menuClienteCasoAtivo = false
       u._mostrarPainelCasosCliente = false
       u._acaoPendente = null

@@ -12,6 +12,7 @@ const GRUPOS_DOCUMENTAIS = Object.freeze([
   "documentosPrevidenciarios",
   "documentosTrabalhistas",
   "documentosProcessuais",
+  "comprovantesCras",
   "revisaoHumana",
   "outros"
 ])
@@ -26,10 +27,25 @@ function normalizarTexto(texto = "") {
 
 function classificacaoGuiadaParaAgrupamento(documento = {}) {
   const contexto = documento.contexto || documento.arquivo?.contexto || {}
-  if (normalizarTexto(contexto.fluxoDocumento) !== "guiado") return null
+  const fluxoDocumento = normalizarTexto(contexto.fluxoDocumento)
+  if (!["guiado", "complementar"].includes(fluxoDocumento)) return null
   const id = normalizarTexto(contexto.documentoId)
   const label = normalizarTexto(contexto.documentoLabel)
   const folha = normalizarTexto(contexto.folha)
+  if (fluxoDocumento === "complementar" && id === "doc_extra_cras") {
+    return {
+      tipoDocumento: contexto.documentoLabel || "Comprovante de atualizacao do Cadastro Unico CRAS",
+      categoria: "cadastro_social",
+      subtipo: "cadastro_unico_cras"
+    }
+  }
+  if (fluxoDocumento === "complementar") {
+    return {
+      tipoDocumento: contexto.documentoLabel || "Documento complementar",
+      categoria: contexto.categoriaComplementar || "outros",
+      subtipo: id || null
+    }
+  }
   if (id === "doc_rg" || /\b(rg|cnh)\b/.test(label)) {
     const lado = folha.includes("verso") ? "verso" : folha.includes("frente") ? "frente" : ""
     return { tipoDocumento: lado ? `RG ${lado}` : "Documento de identidade", categoria: "documentos_pessoais", subtipo: "identidade" }
@@ -53,18 +69,24 @@ function classificacaoGuiadaParaAgrupamento(documento = {}) {
 function normalizarDocumento(documento = {}, index = 0) {
   const classificacao = documento.classificacao || {}
   const guiada = classificacaoGuiadaParaAgrupamento(documento) || {}
+  const contexto = documento.contexto || documento.arquivo?.contexto || {}
+  const classificacaoComplementar = normalizarTexto(contexto.fluxoDocumento) === "complementar"
   const extracao = documento.extracao || {}
   const camposExtraidos = documento.camposExtraidos || extracao.camposExtraidos || {}
 
   return {
     ...documento,
-    tipoDocumento: documento.tipoDocumento && normalizarTexto(documento.tipoDocumento) !== "documento desconhecido"
-      ? documento.tipoDocumento
-      : guiada.tipoDocumento || classificacao.tipoDocumento || null,
-    categoria: documento.categoria && normalizarTexto(documento.categoria) !== "outros"
-      ? documento.categoria
-      : guiada.categoria || classificacao.categoria || null,
-    subtipo: documento.subtipo || guiada.subtipo || classificacao.subtipo || null,
+    tipoDocumento: classificacaoComplementar
+      ? guiada.tipoDocumento
+      : documento.tipoDocumento && normalizarTexto(documento.tipoDocumento) !== "documento desconhecido"
+        ? documento.tipoDocumento
+        : guiada.tipoDocumento || classificacao.tipoDocumento || null,
+    categoria: classificacaoComplementar
+      ? guiada.categoria
+      : documento.categoria && normalizarTexto(documento.categoria) !== "outros"
+        ? documento.categoria
+        : guiada.categoria || classificacao.categoria || null,
+    subtipo: classificacaoComplementar ? guiada.subtipo : documento.subtipo || guiada.subtipo || classificacao.subtipo || null,
     confianca: documento.confianca ?? classificacao.confianca ?? null,
     camposExtraidos,
     referenciaArquivoOriginal: documento.referenciaArquivoOriginal || documento.arquivoOriginal || documento.fileRef || documento.fileId || null,
@@ -165,6 +187,20 @@ function adicionarDocumentoJuridico(documento, grupos) {
   }
 }
 
+function adicionarDocumentoSocial(documento, grupos) {
+  const tipo = normalizarTexto(documento.tipoDocumento)
+  const categoria = normalizarTexto(documento.categoria)
+  const subtipo = normalizarTexto(documento.subtipo)
+  if (
+    categoria === "cadastro_social" ||
+    subtipo === "cadastro_unico_cras" ||
+    tipo.includes("cadastro unico") ||
+    tipo.includes("cras")
+  ) {
+    grupos.comprovantesCras.push(documento)
+  }
+}
+
 function chaveCTPS(documento) {
   const campos = documento.camposExtraidos || {}
   const explicita = documento.grupoDocumento || documento.documentGroup || documento.groupId || documento.carteiraId || documento.ctpsId
@@ -246,6 +282,7 @@ function documentoFoiAgrupado(documento, grupos) {
     grupos.documentosPrevidenciarios,
     grupos.documentosTrabalhistas,
     grupos.documentosProcessuais,
+    grupos.comprovantesCras,
     grupos.revisaoHumana
   ].some(lista => lista.includes(documento))
 }
@@ -291,6 +328,7 @@ function agruparDocumentosProcessados(documentos = []) {
     adicionarDocumentoPessoal(documento, grupos)
     adicionarDocumentoMedico(documento, grupos)
     adicionarDocumentoJuridico(documento, grupos)
+    adicionarDocumentoSocial(documento, grupos)
   }
 
   agruparRG(normalizados, grupos)
