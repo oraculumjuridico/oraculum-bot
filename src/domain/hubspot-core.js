@@ -101,7 +101,7 @@ function emailValidoHubSpot(email) {
 }
 
 function montarPropsContatoHubSpot(from, u = {}) {
-  const telefoneInformado = Object.hasOwn(u, "whatsappContato")
+  const telefoneInformado = normalizarTelefoneHubSpot(u.whatsappContato)
     ? u.whatsappContato
     : (Object.hasOwn(u, "telefone") ? u.telefone : from)
   const telefone = normalizarTelefoneHubSpot(telefoneInformado)
@@ -155,6 +155,19 @@ function montarPropsContatoHubSpot(from, u = {}) {
   )
 }
 
+function variantesTelefoneHubSpot(phone) {
+  const telefone = normalizarTelefoneHubSpot(phone)
+  if (!/^55\d{10,11}$/.test(telefone)) return telefone ? [telefone] : []
+
+  const variantes = new Set([telefone])
+  if (telefone.length === 13 && telefone[4] === "9") {
+    variantes.add(`${telefone.slice(0, 4)}${telefone.slice(5)}`)
+  } else if (telefone.length === 12 && /[6-9]/.test(telefone[4])) {
+    variantes.add(`${telefone.slice(0, 4)}9${telefone.slice(4)}`)
+  }
+  return [...variantes]
+}
+
 function montarPropsAusentesContatoHubSpot(contatoExistente = {}, props = {}) {
   const atuais = contatoExistente?.properties || {}
   return Object.fromEntries(
@@ -170,15 +183,15 @@ function montarPropsAusentesContatoHubSpot(contatoExistente = {}, props = {}) {
 
 async function hsBuscarPorPhone(phone) {
   try {
-    const phoneNormalizado = normalizarTelefoneHubSpot(phone)
-    if (!phoneNormalizado) return null
+    const variantes = variantesTelefoneHubSpot(phone)
+    if (!variantes.length) return null
     const res = await axios.post(
       "https://api.hubapi.com/crm/v3/objects/contacts/search",
       {
-        filterGroups: [
-          { filters: [{ propertyName: "phone", operator: "EQ", value: phoneNormalizado }] },
-          { filters: [{ propertyName: "mobilephone", operator: "EQ", value: phoneNormalizado }] }
-        ],
+        filterGroups: variantes.flatMap(value => [
+          { filters: [{ propertyName: "phone", operator: "EQ", value }] },
+          { filters: [{ propertyName: "mobilephone", operator: "EQ", value }] }
+        ]),
         properties: CONTACT_SEARCH_PROPERTIES,
         limit: 100
       },
