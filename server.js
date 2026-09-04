@@ -19541,7 +19541,23 @@ async function limparLeadsDuplicadosConhecidos() {
         { headers: HS() }
       )
     } catch (error) {
-      if (error?.response?.status === 404) continue
+      if (error?.response?.status === 404) {
+        try {
+          const contato = await axios.get(
+            `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}?properties=num_associated_deals`,
+            { headers: HS() }
+          )
+          if (!Number(contato.data?.properties?.num_associated_deals || 0)) {
+            await axios.delete(
+              `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}`,
+              { headers: HS() }
+            )
+          }
+        } catch (contactError) {
+          if (contactError?.response?.status !== 404) throw contactError
+        }
+        continue
+      }
       throw error
     }
     const props = deal.data?.properties || {}
@@ -19562,16 +19578,12 @@ async function limparLeadsDuplicadosConhecidos() {
       `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}`,
       { headers: HS() }
     )
-    const negociosRestantes = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}/associations/deals`,
+    // A guarda anterior comprovou que este contato estava associado somente
+    // ao lead sem caso que acabou de ser arquivado.
+    await axios.delete(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}`,
       { headers: HS() }
     )
-    if ((negociosRestantes.data?.results || []).length === 0) {
-      await axios.delete(
-        `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}`,
-        { headers: HS() }
-      )
-    }
     console.log(`[HUBSPOT_IDENTITY_CLEANUP] completed dealId=${item.dealId}`)
   }
 }
