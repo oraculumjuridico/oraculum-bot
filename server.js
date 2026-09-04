@@ -19525,68 +19525,6 @@ app.get("/internal/agendador-status", validarWebhookInterno, async (_req, res) =
 })
 
 let httpServer = null
-const LIMPEZA_LEADS_DUPLICADOS = Object.freeze([
-  { dealId: "64658317618", contactId: "246497213965" },
-  { dealId: "64292873537", contactId: "244194303550" },
-  { dealId: "64566737489", contactId: "245955685764" }
-])
-
-async function limparLeadsDuplicadosConhecidos() {
-  if (process.env.NODE_ENV !== "production" || !process.env.HUBSPOT_TOKEN) return
-  for (const item of LIMPEZA_LEADS_DUPLICADOS) {
-    let deal
-    try {
-      deal = await axios.get(
-        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}?properties=dealname,numero_de_caso`,
-        { headers: HS() }
-      )
-    } catch (error) {
-      if (error?.response?.status === 404) {
-        try {
-          const contato = await axios.get(
-            `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}?properties=num_associated_deals`,
-            { headers: HS() }
-          )
-          if (!Number(contato.data?.properties?.num_associated_deals || 0)) {
-            await axios.delete(
-              `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}`,
-              { headers: HS() }
-            )
-          }
-        } catch (contactError) {
-          if (contactError?.response?.status !== 404) throw contactError
-        }
-        continue
-      }
-      throw error
-    }
-    const props = deal.data?.properties || {}
-    if (sanitizarTextoEntrada(props.numero_de_caso) || sanitizarTextoEntrada(props.dealname) !== "⚪ LF-Jur") {
-      console.warn(`[HUBSPOT_IDENTITY_CLEANUP] skipped dealId=${item.dealId} reason=guard`)
-      continue
-    }
-    const associacoes = await axios.get(
-      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}/associations/contacts`,
-      { headers: HS() }
-    )
-    const contatos = (associacoes.data?.results || []).map(entry => String(entry.id))
-    if (contatos.length !== 1 || contatos[0] !== item.contactId) {
-      console.warn(`[HUBSPOT_IDENTITY_CLEANUP] skipped dealId=${item.dealId} reason=association_guard`)
-      continue
-    }
-    await axios.delete(
-      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}`,
-      { headers: HS() }
-    )
-    // A guarda anterior comprovou que este contato estava associado somente
-    // ao lead sem caso que acabou de ser arquivado.
-    await axios.delete(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}`,
-      { headers: HS() }
-    )
-    console.log(`[HUBSPOT_IDENTITY_CLEANUP] completed dealId=${item.dealId}`)
-  }
-}
 
 async function iniciarServidor() {
   const prontidao = avaliarProntidaoProducao(process.env)
@@ -19746,11 +19684,6 @@ async function iniciarServidor() {
     setImmediate(() => {
       reconciliarFormatoNotasAnaliseHubSpot().catch(error =>
         logErro("hubspot_analysis_note", "Falha não bloqueante na reconciliação de formato", error)
-      )
-    })
-    setImmediate(() => {
-      limparLeadsDuplicadosConhecidos().catch(error =>
-        logErro("hubspot_identity_cleanup", "Falha não bloqueante na limpeza controlada", error)
       )
     })
   })
