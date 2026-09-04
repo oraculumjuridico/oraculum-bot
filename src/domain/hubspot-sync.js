@@ -383,10 +383,10 @@ async function hsBuscarNegociosComCasoDoContato(contactId) {
         const numeroCaso = sanitizarTextoEntrada(props.numero_de_caso) || null
         const info = { id: dealId, stageId: stage, dealname: props.dealname || null, properties: props }
 
-        if (!stage || HS_STAGES_FINALIZADOS.has(stage)) {
+        if (numeroCaso) {
+          casosOficiais.push({ ...info, numeroCaso, finalizado: !stage || HS_STAGES_FINALIZADOS.has(stage) })
+        } else if (!stage || HS_STAGES_FINALIZADOS.has(stage)) {
           finalizados.push(info)
-        } else if (numeroCaso) {
-          casosOficiais.push({ ...info, numeroCaso })
         } else {
           leads.push(info)
         }

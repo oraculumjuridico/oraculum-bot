@@ -181,23 +181,37 @@ function montarPropsAusentesContatoHubSpot(contatoExistente = {}, props = {}) {
   )
 }
 
-async function hsBuscarPorPhone(phone) {
+async function hsBuscarContatosPorPhone(phone) {
   try {
     const variantes = variantesTelefoneHubSpot(phone)
-    if (!variantes.length) return null
-    const res = await axios.post(
-      "https://api.hubapi.com/crm/v3/objects/contacts/search",
-      {
-        filterGroups: variantes.flatMap(value => [
-          { filters: [{ propertyName: "phone", operator: "EQ", value }] },
-          { filters: [{ propertyName: "mobilephone", operator: "EQ", value }] }
-        ]),
-        properties: CONTACT_SEARCH_PROPERTIES,
-        limit: 100
-      },
-      { headers: HS() }
-    )
-    const unicos = [...new Map((res.data?.results || []).filter(item => item?.id).map(item => [String(item.id), item])).values()]
+    if (!variantes.length) return []
+    const resultados = []
+    for (const value of variantes) {
+      const formatos = [...new Set([value, `+${value}`])]
+      const res = await axios.post(
+        "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        {
+          filterGroups: formatos.flatMap(formato => [
+            { filters: [{ propertyName: "phone", operator: "EQ", value: formato }] },
+            { filters: [{ propertyName: "mobilephone", operator: "EQ", value: formato }] }
+          ]),
+          properties: CONTACT_SEARCH_PROPERTIES,
+          limit: 100
+        },
+        { headers: HS() }
+      )
+      resultados.push(...(res.data?.results || []))
+    }
+    return [...new Map(resultados.filter(item => item?.id).map(item => [String(item.id), item])).values()]
+  } catch (e) {
+    logErroHubSpot(e, { operation: "buscarContatosPorPhone" })
+    throw e
+  }
+}
+
+async function hsBuscarPorPhone(phone) {
+  try {
+    const unicos = await hsBuscarContatosPorPhone(phone)
     if (unicos.length > 1) {
       throw Object.assign(new Error("telefone corresponde a múltiplos contatos"), {
         code: "HUBSPOT_CONTACT_PHONE_AMBIGUOUS"
@@ -214,7 +228,9 @@ async function hsBuscarContatoSeguro(phone) {
   const phoneNormalizado = normalizarTelefoneHubSpot(phone)
   if (!phoneNormalizado) return { status: "invalid", contato: null }
   try {
-    const contato = await hsBuscarPorPhone(phoneNormalizado)
+    const contatos = await hsBuscarContatosPorPhone(phoneNormalizado)
+    if (contatos.length > 1) return { status: "ambiguous", contato: null, contatos }
+    const contato = contatos[0] || null
     return contato ? { status: "found", contato } : { status: "not_found", contato: null }
   } catch (error) {
     return { status: error?.code === "ECONNABORTED" ? "timeout" : "error", contato: null, error }
@@ -566,6 +582,7 @@ module.exports = {
   configurarHubSpotCore,
   HS,
   hsBuscarPorCpf,
+  hsBuscarContatosPorPhone,
   hsBuscarPorPhone,
   hsBuscarContatoSeguro,
   hsCriarContato,

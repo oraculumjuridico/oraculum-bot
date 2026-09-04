@@ -469,6 +469,9 @@ const {
   hsAtualizarNegocio
 } = require("./src/domain/hubspot-core")
 const {
+  resolverContatoExistenteComCaso
+} = require("./src/domain/hubspot-existing-client-resolver")
+const {
   configurarHubSpotSync,
   hsAtualizarNegocioComEstado,
   hsAtualizarNegocioSerializado,
@@ -1315,6 +1318,7 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     (Date.now() - sessaoAtual._hubspotConsultadoEm < 5 * 60 * 1000)
   
   let contato = null
+  let negociosContatoSelecionado = null
   
   // Só consultar HubSpot se não consultou recentemente
   if (!jaConsultouHubSpot) {
@@ -1322,7 +1326,19 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     if (resultadoBusca.status === "error" || resultadoBusca.status === "timeout") {
       throw Object.assign(new Error("HUBSPOT_CONTACT_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_CONTACT_LOOKUP_UNCERTAIN" })
     }
-    contato = resultadoBusca.contato
+    if (resultadoBusca.status === "ambiguous") {
+      const resolvido = await resolverContatoExistenteComCaso(resultadoBusca, hsBuscarNegociosComCasoDoContato)
+      // Se um cadastro duplicado sem caso surgiu para o mesmo telefone, o
+      // contato que já possui caso oficial é a identidade canônica. Qualquer
+      // ambiguidade restante falha de modo seguro e não cria outro lead.
+      if (!resolvido.seguro) {
+        throw Object.assign(new Error("HUBSPOT_CONTACT_LOOKUP_UNCERTAIN"), { code: "HUBSPOT_CONTACT_LOOKUP_UNCERTAIN" })
+      }
+      contato = resolvido.contato
+      negociosContatoSelecionado = resolvido.negocios
+    } else {
+      contato = resultadoBusca.contato
+    }
     if (sessaoAtual) {
       sessaoAtual._hubspotConsultadoEm = Date.now()
       sessaoAtual._hubspotResultadoId = contato?.id || null
@@ -1364,7 +1380,7 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     definirContatoId(u, contato.id)
 
     // Buscar negócios associados ao contato para localizar caso existente
-    const negociosHubSpot = await hsBuscarNegociosComCasoDoContato(contato.id)
+    const negociosHubSpot = negociosContatoSelecionado || await hsBuscarNegociosComCasoDoContato(contato.id)
     if (negociosHubSpot) {
       const casosComNumeroCaso = negociosHubSpot.casosOficiais
       // Se houver exatamente um caso oficial, restaurar o negócio
@@ -11252,9 +11268,18 @@ async function verificarRetomadaAutomatica(from, u) {
 
 async function tentarRestaurarClienteHubSpotParaMenu(from, u) {
   if (!u || u.numeroCaso) return false
-  const contato = await hsBuscarPorPhone(getTelefoneContato(from, u))
+  const resultadoBusca = await hsBuscarContatoSeguro(getTelefoneContato(from, u))
+  let contato = resultadoBusca.contato
+  let negocios = null
+  if (resultadoBusca.status === "ambiguous") {
+    const resolvido = await resolverContatoExistenteComCaso(resultadoBusca, hsBuscarNegociosComCasoDoContato)
+    if (!resolvido.seguro) return false
+    contato = resolvido.contato
+    negocios = resolvido.negocios
+  }
   if (!contato?.id) return false
-  const negocio = await hsBuscarNegocioAbertoInfoDoContato(contato.id)
+  negocios = negocios || await hsBuscarNegociosComCasoDoContato(contato.id)
+  const negocio = negocios?.casosOficiais?.[0] || null
   if (!negocio?.id) return false
   u.contatoId = contato.id
   u.negocioId = negocio.id
@@ -19500,6 +19525,57 @@ app.get("/internal/agendador-status", validarWebhookInterno, async (_req, res) =
 })
 
 let httpServer = null
+const LIMPEZA_LEADS_DUPLICADOS = Object.freeze([
+  { dealId: "64658317618", contactId: "246497213965" },
+  { dealId: "64292873537", contactId: "244194303550" },
+  { dealId: "64566737489", contactId: "245955685764" }
+])
+
+async function limparLeadsDuplicadosConhecidos() {
+  if (process.env.NODE_ENV !== "production" || !process.env.HUBSPOT_TOKEN) return
+  for (const item of LIMPEZA_LEADS_DUPLICADOS) {
+    let deal
+    try {
+      deal = await axios.get(
+        `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}?properties=dealname,numero_de_caso`,
+        { headers: HS() }
+      )
+    } catch (error) {
+      if (error?.response?.status === 404) continue
+      throw error
+    }
+    const props = deal.data?.properties || {}
+    if (sanitizarTextoEntrada(props.numero_de_caso) || sanitizarTextoEntrada(props.dealname) !== "⚪ LF-Jur") {
+      console.warn(`[HUBSPOT_IDENTITY_CLEANUP] skipped dealId=${item.dealId} reason=guard`)
+      continue
+    }
+    const associacoes = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}/associations/contacts`,
+      { headers: HS() }
+    )
+    const contatos = (associacoes.data?.results || []).map(entry => String(entry.id))
+    if (contatos.length !== 1 || contatos[0] !== item.contactId) {
+      console.warn(`[HUBSPOT_IDENTITY_CLEANUP] skipped dealId=${item.dealId} reason=association_guard`)
+      continue
+    }
+    await axios.delete(
+      `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(item.dealId)}`,
+      { headers: HS() }
+    )
+    const negociosRestantes = await axios.get(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}/associations/deals`,
+      { headers: HS() }
+    )
+    if ((negociosRestantes.data?.results || []).length === 0) {
+      await axios.delete(
+        `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(item.contactId)}`,
+        { headers: HS() }
+      )
+    }
+    console.log(`[HUBSPOT_IDENTITY_CLEANUP] completed dealId=${item.dealId}`)
+  }
+}
+
 async function iniciarServidor() {
   const prontidao = avaliarProntidaoProducao(process.env)
   logInfo({
@@ -19658,6 +19734,11 @@ async function iniciarServidor() {
     setImmediate(() => {
       reconciliarFormatoNotasAnaliseHubSpot().catch(error =>
         logErro("hubspot_analysis_note", "Falha não bloqueante na reconciliação de formato", error)
+      )
+    })
+    setImmediate(() => {
+      limparLeadsDuplicadosConhecidos().catch(error =>
+        logErro("hubspot_identity_cleanup", "Falha não bloqueante na limpeza controlada", error)
       )
     })
   })
