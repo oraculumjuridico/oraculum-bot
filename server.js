@@ -196,6 +196,7 @@ const {
   cabecalhoCasoAtivo,
   textoAudioResumoCasosCliente,
   deveMostrarBoasVindasMenuCliente,
+  deveAgruparSaudacaoClienteRecente,
   montarCasosMenuCliente,
   menuCliente
 } = require("./src/domain/client-menu-ui")
@@ -13781,6 +13782,21 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
       const resultado = await flowFn(u, ctx)
       if (resultado) return resultado
     }
+    return null
+  }
+
+  if (
+    !ehAudio &&
+    !ehDoc &&
+    [STAGES.INICIO, STAGES.CLIENTE].includes(u.stage) &&
+    deveAgruparSaudacaoClienteRecente(u, text)
+  ) {
+    logInfo({
+      event: "client_menu.greeting_coalesced",
+      status: "ignored",
+      reason: "menu_recently_presented"
+    })
+    iniciarTimer(from)
     return null
   }
 

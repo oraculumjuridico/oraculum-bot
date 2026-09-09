@@ -30,6 +30,16 @@ function ehMensagemEntradaGlobal(valor) {
   ].includes(normalizarTextoGatilho(valor))
 }
 
+function ehSaudacaoCurta(valor) {
+  return [
+    "oi",
+    "ola",
+    "bom dia",
+    "boa tarde",
+    "boa noite"
+  ].includes(normalizarTextoGatilho(valor))
+}
+
 function normalizarNomeCidadeBusca(valor) {
   return sanitizarTextoEntrada(valor)
     .toLowerCase()
@@ -85,6 +95,7 @@ module.exports = {
   normalizarStageKey,
   normalizarTextoGatilho,
   ehMensagemEntradaGlobal,
+  ehSaudacaoCurta,
   normalizarNomeCidadeBusca,
   formatarNome,
   formatarCidade,

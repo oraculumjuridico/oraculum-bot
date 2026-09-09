@@ -4,7 +4,8 @@ const path = require("node:path")
 
 const {
   configurarClientMenuUi,
-  menuCliente
+  menuCliente,
+  deveAgruparSaudacaoClienteRecente
 } = require("../src/domain/client-menu-ui")
 const {
   isClientScreen,
@@ -33,6 +34,18 @@ const menu = menuCliente(usuario, null, {
   textoAudioBase: "Bom dia, Maria. Seu atendimento atual está em análise"
 })
 const idsMenu = ["m_status", "m_docs", "m_adv"]
+
+const agora = Date.now()
+const clienteComMenuRecente = {
+  numeroCaso: "ORA-1001",
+  _menuClienteJaApresentado: true,
+  _ultimoMenuClienteAt: agora - 5_000
+}
+assert.equal(deveAgruparSaudacaoClienteRecente(clienteComMenuRecente, "Boa noite", agora), true)
+assert.equal(deveAgruparSaudacaoClienteRecente(clienteComMenuRecente, "Olá", agora), true)
+assert.equal(deveAgruparSaudacaoClienteRecente(clienteComMenuRecente, "Quero enviar documentos", agora), false)
+assert.equal(deveAgruparSaudacaoClienteRecente({ ...clienteComMenuRecente, numeroCaso: "" }, "Oi", agora), false)
+assert.equal(deveAgruparSaudacaoClienteRecente({ ...clienteComMenuRecente, _ultimoMenuClienteAt: agora - 61_000 }, "Oi", agora), false)
 
 assert.equal(isClientScreen(menu), true)
 assert.equal(menu.id, "menu_principal_cliente")
@@ -112,6 +125,7 @@ assert.match(server, /function saudacaoGenero\(\)[\s\S]*?Seja bem-vindo\(a\)/)
 assert.doesNotMatch(server, /api\.anthropic\.com/)
 assert.doesNotMatch(apresentador, /textoAudioOpcoesMenuCliente/)
 assert.doesNotMatch(apresentador, /textoAudioSelecaoCaso/)
+assert.match(server, /client_menu\.greeting_coalesced/)
 
 for (const trecho of [
   'if (text?.startsWith("m_caso_"))',

@@ -1,4 +1,4 @@
-const { sanitizarTextoEntrada } = require("../utils/text")
+const { sanitizarTextoEntrada, ehSaudacaoCurta } = require("../utils/text")
 const { getPrimeiroNome } = require("./phone-name")
 const { createClientScreen } = require("./declarative-screen-guard")
 
@@ -60,6 +60,19 @@ function textoAudioResumoCasosCliente(casos = []) {
 function deveMostrarBoasVindasMenuCliente(u, agora = Date.now()) {
   const ultimo = Number(u?._ultimoMenuClienteAt || 0)
   return !u?._menuClienteJaApresentado || !ultimo || (agora - ultimo) > 6 * 60 * 60 * 1000
+}
+
+function deveAgruparSaudacaoClienteRecente(u, texto, agora = Date.now(), janelaMs = 60 * 1000) {
+  const ultimo = Number(u?._ultimoMenuClienteAt || 0)
+  const intervalo = agora - ultimo
+  return Boolean(
+    u?.numeroCaso &&
+    u?._menuClienteJaApresentado &&
+    ehSaudacaoCurta(texto) &&
+    ultimo > 0 &&
+    intervalo >= 0 &&
+    intervalo <= janelaMs
+  )
 }
 
 function textoAudioSelecaoCaso(acao) {
@@ -229,6 +242,7 @@ module.exports = {
   textoAudioCasosCliente,
   textoAudioResumoCasosCliente,
   deveMostrarBoasVindasMenuCliente,
+  deveAgruparSaudacaoClienteRecente,
   textoAudioSelecaoCaso,
   resumoCasoMenuCliente,
   montarCasosMenuCliente,
