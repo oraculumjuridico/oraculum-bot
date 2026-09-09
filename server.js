@@ -521,6 +521,9 @@ const {
   vaultPage
 } = require("./src/domain/credentials-vault")
 const {
+  planejarCofresCasosAtivos
+} = require("./src/domain/credentials-vault-backfill")
+const {
   atendimentoAssistidoAdminAtivo,
   iniciarAtendimentoAssistidoAdmin,
   processarAtendimentoAssistidoAdmin,
@@ -11398,6 +11401,7 @@ async function sincronizarNotaAnaliseCasoSegura(u, extra = {}) {
 }
 
 const ANALYSIS_NOTE_LAYOUT_MIGRATION_ID = "hubspot-analysis-note-layout-v2"
+const ACTIVE_CASE_CREDENTIALS_MIGRATION_ID = "active-case-credentials-vault-v1"
 
 async function reconciliarFormatoNotasAnaliseHubSpot() {
   const pool = getPool()
@@ -11445,6 +11449,60 @@ async function reconciliarFormatoNotasAnaliseHubSpot() {
   } catch (error) {
     logErro("hubspot_analysis_note", `reconciliação de formato não bloqueante: ${error.code || "ANALYSIS_NOTE_LAYOUT_FAILED"}`)
     return { ok: false, skipped: false, reason: error.code || "ANALYSIS_NOTE_LAYOUT_FAILED" }
+  }
+}
+
+async function reconciliarCofresCasosAtivosHubSpot() {
+  const pool = getPool()
+  if (!pool || !credentialsVault) return { ok: false, skipped: true, reason: "vault_unavailable" }
+  try {
+    const registry = await pool.query("SELECT to_regclass('oraculum_state_migrations') AS table_name")
+    if (!registry.rows?.[0]?.table_name) return { ok: false, skipped: true, reason: "migration_registry_unavailable" }
+    const prior = await pool.query(
+      "SELECT migration_id FROM oraculum_state_migrations WHERE migration_id=$1",
+      [ACTIVE_CASE_CREDENTIALS_MIGRATION_ID]
+    )
+    if (prior.rowCount) return { ok: true, skipped: true, reason: "already_applied" }
+
+    const busca = await hsAdminBuscarTodosNegociosPorStages([...new Set(Object.values(HS_STAGE))], "credentials_vault_backfill")
+    if (!busca.ok) return { ok: false, skipped: false, reason: "hubspot_search_failed" }
+    const elegiveis = planejarCofresCasosAtivos(busca.deals, HS_STAGE.FINAL)
+    let createdOrUpdated = 0
+    let failed = 0
+
+    for (const negocio of elegiveis) {
+      const item = normalizarItemAdminLocal("", null, negocio, null)
+      if (!item.u?.negocioId || !item.u?.numeroCaso) {
+        failed++
+        continue
+      }
+      const contato = await hsAdminBuscarContatoDoNegocio(item.u.negocioId)
+      if (contato) hidratarDadosContatoAdmin(item, contato)
+      const vaultResult = await credentialsVault.ensureCase(item.u)
+      const noteResult = vaultResult.ok
+        ? await hsSincronizarNotaOperacional({
+            dealId: item.u.negocioId,
+            contactId: item.u.contatoId,
+            caseNumber: item.u.numeroCaso,
+            vaultUrl: vaultResult.url
+          })
+        : { ok: false }
+      if (vaultResult.ok && noteResult.ok) createdOrUpdated++
+      else failed++
+      await new Promise(resolve => setTimeout(resolve, 150))
+    }
+
+    if (failed === 0) {
+      await pool.query(
+        "INSERT INTO oraculum_state_migrations(migration_id, details, applied_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(migration_id) DO NOTHING",
+        [ACTIVE_CASE_CREDENTIALS_MIGRATION_ID, JSON.stringify({ eligible: elegiveis.length, createdOrUpdated })]
+      )
+    }
+    logInfo({ event: "hubspot.credentials_vault_backfill", status: failed ? "partial" : "complete", eligible: elegiveis.length, createdOrUpdated, failed })
+    return { ok: failed === 0, eligible: elegiveis.length, createdOrUpdated, failed }
+  } catch (error) {
+    logErro("credentials_vault", `reconciliação não bloqueante: ${error.code || "ACTIVE_CASE_CREDENTIALS_BACKFILL_FAILED"}`)
+    return { ok: false, skipped: false, reason: error.code || "ACTIVE_CASE_CREDENTIALS_BACKFILL_FAILED" }
   }
 }
 
@@ -19684,6 +19742,11 @@ async function iniciarServidor() {
     setImmediate(() => {
       reconciliarFormatoNotasAnaliseHubSpot().catch(error =>
         logErro("hubspot_analysis_note", "Falha não bloqueante na reconciliação de formato", error)
+      )
+    })
+    setImmediate(() => {
+      reconciliarCofresCasosAtivosHubSpot().catch(error =>
+        logErro("credentials_vault", "Falha não bloqueante na implantação dos links", error)
       )
     })
   })
