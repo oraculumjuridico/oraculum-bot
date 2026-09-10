@@ -5,6 +5,12 @@ const os = require("os")
 const { Readable } = require("stream")
 const { sanitizarTextoEntrada } = require("../utils/text")
 const { logDebug, logErro } = require("../utils/logging")
+const {
+  CASE_ORIGINALS_FOLDER,
+  CASE_ORIGINALS_LEGACY_FOLDERS,
+  CASE_AUDIO_FOLDER,
+  audioFileName
+} = require("./drive-case-layout")
 
 const {
   GOOGLE_CLIENT_ID,
@@ -203,6 +209,41 @@ async function obterOuCriarSubpastaDrive(pastaPaiId, nomePasta) {
   }
 }
 
+async function buscarSubpastaDrivePorNomes(pastaPaiId, nomes = []) {
+  if (!pastaPaiId || !Array.isArray(nomes) || !nomes.length) return null
+  for (const nome of nomes) {
+    try {
+      const resposta = await getDrive().files.list({
+        q: [
+          "mimeType = 'application/vnd.google-apps.folder'",
+          `name = '${escapeDriveQueryValue(nome)}'`,
+          `'${pastaPaiId}' in parents`,
+          "trashed = false"
+        ].join(" and "),
+        fields: "files(id,name,webViewLink)",
+        pageSize: 2
+      })
+      if ((resposta.data.files || []).length > 1) {
+        logErro("drive", `[DRIVE] Subpasta duplicada encontrada: ${nome}`)
+        return null
+      }
+      if (resposta.data.files?.length === 1) return resposta.data.files[0]
+    } catch (e) {
+      logErro("drive", detalhesErroDrive(e, "buscarSubpastaPorNomes"))
+      return null
+    }
+  }
+  return null
+}
+
+async function obterOuCriarPastaOriginaisDrive(pastaPaiId) {
+  const existente = await buscarSubpastaDrivePorNomes(
+    pastaPaiId,
+    [CASE_ORIGINALS_FOLDER, ...CASE_ORIGINALS_LEGACY_FOLDERS]
+  )
+  return existente || obterOuCriarSubpastaDrive(pastaPaiId, CASE_ORIGINALS_FOLDER)
+}
+
 async function buscarArquivoDrivePorNome(pastaId, nomeArquivo) {
   if (!pastaId || !nomeArquivo) return null
   try {
@@ -374,25 +415,23 @@ async function renomearArquivoDrive(fileId, novoNome = "") {
 }
 
 async function uploadPastaAudio(pastaDriveId, nomeCliente, nomePasta, buffer, mimeType) {
-  // Cria subpasta "Áudios - <nomePasta>" dentro da pasta do cliente
+  // Todos os áudios ficam em uma única pasta por caso. O nome do arquivo
+  // preserva o contexto e o instante, sem multiplicar pastas na raiz.
   try {
     const drive = getDrive()
-    const pasta = await drive.files.create({
-      requestBody: { name: `Áudios - ${nomePasta}`, mimeType: "application/vnd.google-apps.folder", parents: [pastaDriveId] },
-      fields: "id"
-    })
-    const ext = mimeType?.includes("ogg") ? ".ogg" : mimeType?.includes("mpeg") ? ".mp3" : ".ogg"
-    const nomeArq = `Audio - ${nomeCliente}${ext}`
+    const pasta = await obterOuCriarSubpastaDrive(pastaDriveId, CASE_AUDIO_FOLDER)
+    if (!pasta?.id) return null
+    const nomeArq = audioFileName({ clientName: nomeCliente, label: nomePasta, mimeType })
     const tmp = path.join(os.tmpdir(), `orac_audio_${Date.now()}`)
     fs.writeFileSync(tmp, buffer)
     const res = await drive.files.create({
-      requestBody: { name: nomeArq, parents: [pasta.data.id] },
+      requestBody: { name: nomeArq, parents: [pasta.id] },
       media: { mimeType: mimeType || "audio/ogg", body: fs.createReadStream(tmp) },
       fields: "id,name,webViewLink"
     })
   try { fs.unlinkSync(tmp) } catch {}
   logDebug(`[DRIVE] Áudio: ${res.data.name}`)
-  return { ...res.data, folderId: pasta.data.id }
+  return { ...res.data, folderId: pasta.id }
   } catch (e) { logErro("drive", detalhesErroDrive(e, "uploadAudio")); return null }
 }
 
@@ -426,6 +465,8 @@ module.exports = {
   criarPastaCliente,
   uploadDrive,
   obterOuCriarSubpastaDrive,
+  buscarSubpastaDrivePorNomes,
+  obterOuCriarPastaOriginaisDrive,
   buscarArquivoDrivePorNome,
   listarArquivosDriveNaPasta,
   baixarArquivoDrive,

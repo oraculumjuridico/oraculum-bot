@@ -306,7 +306,7 @@ const {
 const {
   criarPastaCliente,
   uploadDrive,
-  obterOuCriarSubpastaDrive,
+  obterOuCriarPastaOriginaisDrive,
   marcarArquivoDriveSubstituido,
   renomearArquivoDrive,
   uploadPastaAudio,
@@ -8031,7 +8031,7 @@ async function uploadDocumentoCano(u, pastaId, nome, buffer, mimeType, contexto 
 
 async function pastaUploadDocumento(u, { preservarOriginal = false } = {}) {
   if (!preservarOriginal && !isPilotCaseAllowed(u?.numeroCaso)) return u?.pastaDriveId || null
-  const pasta = await obterOuCriarSubpastaDrive(u?.pastaDriveId, "00 - Originais recebidos")
+  const pasta = await obterOuCriarPastaOriginaisDrive(u?.pastaDriveId)
   return pasta?.id || null
 }
 

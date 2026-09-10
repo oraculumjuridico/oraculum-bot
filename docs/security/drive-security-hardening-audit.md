@@ -240,13 +240,14 @@ Helper: `salvarAudioTranscritoNoCaso()`
 Chamadas em `server.js`: aproximadamente 13489, 13503 e 13520
 
 Áudios urgentes confirmados ou corrigidos passam indiretamente por
-`uploadPastaAudio()` e também se tornam públicos.
+`uploadPastaAudio()` e permanecem privados no Drive.
 
-### 4.5 Subpastas de áudio
+### 4.5 Subpasta de áudio
 
-Cada chamada de `uploadPastaAudio()` cria uma nova subpasta. Essas subpastas não
-recebem permissão pública explícita. Somente o arquivo de áudio recebe
-`anyone/reader`.
+O comportamento atual de `uploadPastaAudio()` reutiliza a pasta única
+`90 - Áudios do atendimento` em cada caso. O contexto e o instante ficam no nome
+do arquivo, evitando a criação de uma subpasta por áudio. O módulo atual não cria
+permissão pública `anyone/reader` para a pasta nem para o arquivo.
 
 ## 5. Consumidores dos links
 

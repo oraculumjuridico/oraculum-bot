@@ -169,12 +169,11 @@ async function main() {
         }
         let pdfCount = 0
         for (const [cat, docs] of groups) {
-          const catFolder = await folder(caseFolder.id, `category:${record.importId}:${sha(cat).slice(0, 12)}`, cat, { caseImportId: record.importId, category: cat })
           const images = docs.filter(item => /\.(jpe?g|png|webp|tiff?)$/i.test(item.file))
           if (images.length > 1) {
             const composed = await comporPdfsDocumentais({}, { definicoes: [{ tipo: cat, arquivo: `${cat.replace(/^\d+\s*-\s*/, "")}.pdf`, getDocumentos: () => images.map(item => ({ buffer: item.bytes, mimeType: "image/jpeg", nome: path.basename(item.file) })) }] })
             for (const pdf of composed.pdfsGerados) {
-              await upload(catFolder.id, pdf.arquivo, pdf.buffer, { caseImportId: record.importId, kind: "consolidated" }, "application/pdf")
+              await upload(caseFolder.id, pdf.arquivo, pdf.buffer, { caseImportId: record.importId, kind: "consolidated", category: cat }, "application/pdf")
               pdfCount++
             }
           }

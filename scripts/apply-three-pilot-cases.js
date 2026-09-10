@@ -202,6 +202,8 @@ async function main() {
     if (!area) return { folderId: null, reference: null, verified: false, uploaded: 0 }
     const caseFolder = await ensureDriveFolder(area.id, `case:${selected.importId}`, `${caseNumber} - ${selected.name} - ${typeLabel}`, { caseImportId: selected.importId })
     if (!caseFolder) return { folderId: null, reference: null, verified: false, uploaded: 0 }
+    const originalsFolder = await ensureDriveFolder(caseFolder.id, `originals:${selected.importId}`, "00 - Originais preservados", { caseImportId: selected.importId })
+    if (!originalsFolder) return { folderId: caseFolder.id, reference: `https://drive.google.com/drive/folders/${caseFolder.id}`, verified: true, uploaded: 0 }
     const sourceRoot = path.join("C:\\Users\\jesai\\Documents\\ARQUIVOS PESSOAIS\\Direito\\INSS", selected.folder)
     const files = walkFiles(sourceRoot)
     const hashes = new Set()
@@ -211,10 +213,8 @@ async function main() {
       if (hashes.has(hash)) continue
       hashes.add(hash)
       const category = driveCategory(file)
-      const categoryFolder = await ensureDriveFolder(caseFolder.id, `category:${selected.importId}:${crypto.createHash("sha256").update(category).digest("hex").slice(0, 12)}`, category, { caseImportId: selected.importId, category })
-      if (!categoryFolder) continue
       const existing = await drive.files.list({
-        q: `'${escapeDriveQuery(categoryFolder.id)}' in parents and trashed=false and appProperties has { key='sha256' and value='${hash}' }`,
+        q: `'${escapeDriveQuery(originalsFolder.id)}' in parents and trashed=false and appProperties has { key='sha256' and value='${hash}' }`,
         fields: "files(id)",
         pageSize: 10
       })
@@ -223,7 +223,7 @@ async function main() {
         await drive.files.create({
           requestBody: {
             name: path.basename(file),
-            parents: [categoryFolder.id],
+            parents: [originalsFolder.id],
             appProperties: { sha256: hash, caseImportId: selected.importId, category }
           },
           media: { mimeType: "application/octet-stream", body: fs.createReadStream(file) },

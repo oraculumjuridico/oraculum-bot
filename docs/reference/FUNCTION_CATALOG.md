@@ -4,7 +4,7 @@
 
 Este índice cobre as funções nomeadas de `server.js`, `tts.js` e `src/`. A explicação conceitual dos fluxos está em `docs/ORACULUM_SYSTEM_GUIDE.md`.
 
-Total: **2484 funções** em **238 módulos**.
+Total: **2500 funções** em **241 módulos**.
 
 - **pública**: aparece no contrato `module.exports` do módulo;
 - **interna**: detalhe de implementação usado dentro do próprio módulo.
@@ -15,443 +15,444 @@ Composição principal, rotas HTTP e orquestração dos fluxos WhatsApp.
 
 | Função | Linha | Visibilidade | Responsabilidade |
 | --- | ---: | --- | --- |
-| `criarRequestId` | 614 | interna | Cria request id. |
-| `primeiroValorObservabilidade` | 619 | interna | Executa a responsabilidade interna “primeiro valor observabilidade”. |
-| `telefoneRemetenteWebhookMeta` | 623 | interna | Executa a responsabilidade interna “telefone remetente webhook meta”. |
-| `contextoObservabilidade` | 633 | interna | Executa a responsabilidade interna “contexto observabilidade”. |
-| `logOperacional` | 647 | interna | Executa a responsabilidade interna “log operacional”. |
-| `logSkipOperacional` | 654 | interna | Executa a responsabilidade interna “log skip operacional”. |
-| `validarAdminHttp` | 770 | interna | Valida admin http. |
-| `linkHubSpot` | 833 | interna | Executa a responsabilidade interna “link hub spot”. |
-| `criarTransporteEmail` | 838 | interna | Cria transporte email. |
-| `enviarEmailNotificacao` | 846 | interna | Envia email notificacao. |
-| `enviarWhatsAppAdmin` | 874 | interna | Envia whats app admin. |
-| `enviarWhatsAppAdmin_para` | 899 | interna | Envia whats app admin para. |
-| `enviarRespostaAdmin` | 923 | interna | Envia resposta admin. |
-| `notificarMensagemUrgente` | 938 | interna | Executa a responsabilidade interna “notificar mensagem urgente”. |
-| `notificarAgendamento` | 969 | interna | Executa a responsabilidade interna “notificar agendamento”. |
-| `sortearAtendente` | 1023 | interna | Executa a responsabilidade interna “sortear atendente”. |
-| `criarRespostaFallbackProcessamento` | 1037 | interna | Cria resposta fallback processamento. |
-| `obterBaseUrlPublica` | 1045 | interna | Obtém base url publica. |
-| `montarUrlPublica` | 1055 | interna | Monta url publica. |
-| `urlAudioAtendente` | 1065 | interna | Executa a responsabilidade interna “url audio atendente”. |
-| `etapaValida` | 1070 | interna | Executa a responsabilidade interna “etapa valida”. |
-| `telefonePreferenciaComunicacao` | 1089 | interna | Executa a responsabilidade interna “telefone preferencia comunicacao”. |
-| `obterPreferenciaComunicacao` | 1093 | interna | Obtém preferencia comunicacao. |
-| `promoverPreferenciaComunicacao` | 1105 | interna | Executa a responsabilidade interna “promover preferencia comunicacao”. |
-| `definirPreferenciaComunicacao` | 1111 | interna | Executa a responsabilidade interna “definir preferencia comunicacao”. |
-| `rotuloPreferenciaComunicacao` | 1123 | interna | Executa a responsabilidade interna “rotulo preferencia comunicacao”. |
-| `invalidarCacheResumoOperacional` | 1136 | interna | Executa a responsabilidade interna “invalidar cache resumo operacional”. |
-| `executarComLockUsuario` | 1141 | interna | Executa com lock usuario. |
-| `criarChaveMensagemDuplicada` | 1168 | interna | Cria chave mensagem duplicada. |
-| `mensagemJaProcessada` | 1177 | interna | Executa a responsabilidade interna “mensagem ja processada”. |
-| `novoUsuario` | 1193 | interna | Executa a responsabilidade interna “novo usuario”. |
-| `nomeValidoParaExibicao` | 1272 | interna | Executa a responsabilidade interna “nome valido para exibicao”. |
-| `resolverNomeBaseWhatsApp` | 1277 | interna | Resolve nome base whats app. |
-| `resolverNomeBriefing` | 1284 | interna | Resolve nome briefing. |
-| `resolverUsuarioPorHubSpot` | 1299 | interna | Resolve usuario por hub spot. |
-| `salvarEtapa` | 1418 | interna | Salva etapa. |
-| `obterEtapaSegura` | 1434 | interna | Obtém etapa segura. |
-| `podeRetomar` | 1443 | interna | Executa a responsabilidade interna “pode retomar”. |
-| `setStage` | 1449 | interna | Executa a responsabilidade interna “set stage”. |
-| `telaConfirmarTranscricao` | 1634 | interna | Executa a responsabilidade interna “tela confirmar transcricao”. |
-| `telaConfirmarArea` | 1657 | interna | Executa a responsabilidade interna “tela confirmar area”. |
-| `telaConfirmarAreaAudio` | 1676 | interna | Executa a responsabilidade interna “tela confirmar area audio”. |
-| `telaConfirmarDadosAudio` | 1705 | interna | Executa a responsabilidade interna “tela confirmar dados audio”. |
-| `enviarAudioPedidoCidade` | 1810 | interna | Envia audio pedido cidade. |
-| `enviarAudioConfirmacaoLocalizacao` | 1825 | interna | Envia audio confirmacao localizacao. |
-| `respostaAposCidade` | 1835 | interna | Executa a responsabilidade interna “resposta apos cidade”. |
-| `textoContextoTitularCaso` | 1871 | interna | Executa a responsabilidade interna “texto contexto titular caso”. |
-| `detectarAmbiguidadeTitularNome` | 1882 | interna | Detecta ambiguidade titular nome. |
-| `telaEscolhaModo` | 1900 | interna | Executa a responsabilidade interna “tela escolha modo”. |
-| `telaParaQuem` | 1927 | interna | Executa a responsabilidade interna “tela para quem”. |
-| `perguntarTitularNomePreCadastro` | 1976 | interna | Executa a responsabilidade interna “perguntar titular nome pre cadastro”. |
-| `gerarCaso` | 2005 | interna | Gera caso. |
-| `gerarBriefingCaso` | 2008 | interna | Gera briefing caso. |
-| `proximaAcao` | 2018 | interna | Executa a responsabilidade interna “proxima acao”. |
-| `resumoCaso` | 2055 | interna | Executa a responsabilidade interna “resumo caso”. |
-| `getHubSpotResumoCliente` | 2071 | interna | Executa a responsabilidade interna “get hub spot resumo cliente”. |
-| `getHubSpotDescricaoCompleta` | 2085 | interna | Executa a responsabilidade interna “get hub spot descricao completa”. |
-| `restaurarTipoCasoHubSpot` | 2129 | interna | Restaura tipo caso hub spot. |
-| `garantirNomenclaturaJuridicaUsuario` | 2151 | interna | Garante nomenclatura juridica usuario. |
-| `getHubSpotDealStateProps` | 2179 | interna | Executa a responsabilidade interna “get hub spot deal state props”. |
-| `getHubSpotDealProps` | 2207 | interna | Executa a responsabilidade interna “get hub spot deal props”. |
-| `mapearStageParaDealstage` | 2215 | interna | Executa a responsabilidade interna “mapear stage para dealstage”. |
-| `getLabelOrigemCaptacao` | 2255 | interna | Executa a responsabilidade interna “get label origem captacao”. |
-| `getNomeDeal` | 2263 | interna | Executa a responsabilidade interna “get nome deal”. |
-| `getNotaLead` | 2275 | interna | Executa a responsabilidade interna “get nota lead”. |
-| `ehFinalizacaoCasoTerceiro` | 2302 | interna | Determina se finalizacao caso terceiro. |
-| `telaVoltarConfirmacaoTerceiro` | 2321 | interna | Executa a responsabilidade interna “tela voltar confirmacao terceiro”. |
-| `criarSnapshotCasoCliente` | 2342 | interna | Cria snapshot caso cliente. |
-| `restaurarCasoAnteriorCliente` | 2391 | interna | Restaura caso anterior cliente. |
-| `voltarMenuCasoAnteriorCliente` | 2462 | interna | Executa a responsabilidade interna “voltar menu caso anterior cliente”. |
-| `temDadosUteisTerceiroIncompleto` | 2468 | interna | Executa a responsabilidade interna “tem dados uteis terceiro incompleto”. |
-| `capturarLeadTerceiroIncompleto` | 2479 | interna | Executa a responsabilidade interna “capturar lead terceiro incompleto”. |
-| `cancelarNovoCasoClienteEVoltarMenu` | 2552 | interna | Cancela novo caso cliente evoltar menu. |
-| `registrarCasoTerceiroNoWhatsAppInformado` | 2583 | interna | Registra caso terceiro no whats app informado. |
-| `finalizarCadastroTerceiroEVoltarOrigem` | 2657 | interna | Executa a responsabilidade interna “finalizar cadastro terceiro evoltar origem”. |
-| `encerrarNovoCasoClienteEVoltarMenu` | 2697 | interna | Encerra novo caso cliente evoltar menu. |
-| `usuarioTemRelatoParaRetomada` | 2720 | pública | Executa a responsabilidade interna “usuario tem relato para retomada”. |
-| `usuarioTemProgressoParaRetomada` | 2730 | pública | Executa a responsabilidade interna “usuario tem progresso para retomada”. |
-| `identificarEtapaAtual` | 2773 | interna | Executa a responsabilidade interna “identificar etapa atual”. |
-| `registrarUltimaPergunta` | 2790 | interna | Registra ultima pergunta. |
-| `limparDadosCasoAtual` | 2816 | interna | Executa a responsabilidade interna “limpar dados caso atual”. |
-| `limparDadosAtendimento` | 2931 | interna | Executa a responsabilidade interna “limpar dados atendimento”. |
-| `prepararNovaEntradaAposFluxoEncerrado` | 2981 | interna | Executa a responsabilidade interna “preparar nova entrada apos fluxo encerrado”. |
-| `enviarOpcoesPadrao` | 3054 | interna | Envia opcoes padrao. |
-| `prepararConfirmacaoEntrada` | 3068 | interna | Executa a responsabilidade interna “preparar confirmacao entrada”. |
-| `limparEntradaPendente` | 3110 | interna | Executa a responsabilidade interna “limpar entrada pendente”. |
-| `resetarSessaoAtendimento` | 3116 | interna | Executa a responsabilidade interna “resetar sessao atendimento”. |
-| `responderEncerramento` | 3155 | interna | Responde encerramento. |
-| `encerrarComCaptura` | 3176 | interna | Encerra com captura. |
-| `encerrarAtendimento` | 3205 | interna | Encerra atendimento. |
-| `encerrarClienteCadastrado` | 3211 | interna | Encerra cliente cadastrado. |
-| `executarEncerramentoFluxo` | 3238 | interna | Executa encerramento fluxo. |
-| `executarRecomecoFluxo` | 3271 | interna | Executa recomeco fluxo. |
-| `stageAceitaTextoLivre` | 3307 | interna | Executa a responsabilidade interna “stage aceita texto livre”. |
-| `ehStageFluxoAntigo` | 3329 | interna | Determina se stage fluxo antigo. |
-| `migrarFluxoAntigoParaRelatoLivre` | 3386 | interna | Executa a responsabilidade interna “migrar fluxo antigo para relato livre”. |
-| `podeMostrarMenuCliente` | 3397 | pública | Executa a responsabilidade interna “pode mostrar menu cliente”. |
-| `etapaPermitidaComCasoOficial` | 3402 | interna | Executa a responsabilidade interna “etapa permitida com caso oficial”. |
-| `getNumeroCasoOficialDoNegocio` | 3415 | interna | Executa a responsabilidade interna “get numero caso oficial do negocio”. |
-| `avancarAposTelefoneConfirmado` | 3419 | interna | Executa a responsabilidade interna “avancar apos telefone confirmado”. |
-| `retomarUltimaPergunta` | 3436 | interna | Executa a responsabilidade interna “retomar ultima pergunta”. |
-| `reapresentarPerguntaAtual` | 3442 | interna | Executa a responsabilidade interna “reapresentar pergunta atual”. |
-| `perguntarNome` | 3446 | interna | Executa a responsabilidade interna “perguntar nome”. |
-| `perguntarNomeProprio` | 3465 | interna | Executa a responsabilidade interna “perguntar nome proprio”. |
-| `textoSolicitarNomeRepresentante` | 3497 | interna | Executa a responsabilidade interna “texto solicitar nome representante”. |
-| `textoConfirmarNomeRepresentante` | 3507 | interna | Executa a responsabilidade interna “texto confirmar nome representante”. |
-| `textoSolicitarNomePessoaAtendida` | 3519 | interna | Executa a responsabilidade interna “texto solicitar nome pessoa atendida”. |
-| `textoConfirmarNomePessoaAtendida` | 3529 | interna | Executa a responsabilidade interna “texto confirmar nome pessoa atendida”. |
-| `textoExplicarSituacaoTerceiro` | 3539 | interna | Executa a responsabilidade interna “texto explicar situacao terceiro”. |
-| `audioSolicitarNomeRepresentante` | 3551 | interna | Executa a responsabilidade interna “audio solicitar nome representante”. |
-| `audioConfirmarNomeRepresentante` | 3555 | interna | Executa a responsabilidade interna “audio confirmar nome representante”. |
-| `audioSolicitarNomePessoaAtendida` | 3559 | interna | Executa a responsabilidade interna “audio solicitar nome pessoa atendida”. |
-| `audioConfirmarNomePessoaAtendida` | 3563 | interna | Executa a responsabilidade interna “audio confirmar nome pessoa atendida”. |
-| `audioExplicarSituacaoTerceiro` | 3567 | interna | Executa a responsabilidade interna “audio explicar situacao terceiro”. |
-| `pedirRelatoAposNome` | 3574 | interna | Executa a responsabilidade interna “pedir relato apos nome”. |
-| `perguntarCidade` | 3629 | interna | Executa a responsabilidade interna “perguntar cidade”. |
-| `perguntarDescricao` | 3640 | interna | Executa a responsabilidade interna “perguntar descricao”. |
-| `perguntarDocumentos` | 3646 | interna | Executa a responsabilidade interna “perguntar documentos”. |
-| `enviarTelaDocumentosCaso` | 3656 | interna | Envia tela documentos caso. |
-| `respostaRecomecoMenuPrincipal` | 3667 | interna | Executa a responsabilidade interna “resposta recomeco menu principal”. |
-| `iniciarFluxoRelatoLivre` | 3677 | interna | Inicia fluxo relato livre. |
-| `deveCapturarLeadIncompleto` | 3698 | interna | Executa a responsabilidade interna “deve capturar lead incompleto”. |
-| `pularDescricaoPorAgora` | 3716 | interna | Executa a responsabilidade interna “pular descricao por agora”. |
-| `ehStageDescricaoCaso` | 3760 | interna | Determina se stage descricao caso. |
-| `entrarEtapaDescricao` | 3764 | interna | Executa a responsabilidade interna “entrar etapa descricao”. |
-| `limparTimer` | 3770 | interna | Executa a responsabilidade interna “limpar timer”. |
-| `limparTimerIncentivoDescricao` | 3774 | interna | Executa a responsabilidade interna “limpar timer incentivo descricao”. |
-| `executarCallbackTimerUsuario` | 3781 | interna | Executa callback timer usuario. |
-| `agendarIncentivoDescricao` | 3791 | interna | Agenda incentivo descricao. |
-| `iniciarTimer` | 3840 | interna | Inicia timer. |
-| `restaurarTimersPersistidos` | 3988 | interna | Restaura timers persistidos. |
-| `telaRegioes` | 4025 | interna | Executa a responsabilidade interna “tela regioes”. |
-| `telaUFsRegiao` | 4032 | interna | Executa a responsabilidade interna “tela ufs regiao”. |
-| `criarCtx` | 4037 | interna | Cria ctx. |
-| `textoOuTraco` | 4089 | interna | Executa a responsabilidade interna “texto ou traco”. |
-| `resumoFatosJuridico` | 4093 | interna | Executa a responsabilidade interna “resumo fatos juridico”. |
-| `pedidoClienteJuridico` | 4101 | interna | Executa a responsabilidade interna “pedido cliente juridico”. |
-| `riscoPrazoJuridico` | 4129 | interna | Executa a responsabilidade interna “risco prazo juridico”. |
-| `documentosEssenciaisJuridico` | 4138 | interna | Executa a responsabilidade interna “documentos essenciais juridico”. |
-| `proximaEtapaConfirmacao` | 4145 | interna | Executa a responsabilidade interna “proxima etapa confirmacao”. |
-| `calcularStageAposAgendamento` | 4153 | interna | Calcula stage apos agendamento. |
-| `atualizarEstadoConsultaUsuario` | 4160 | interna | Atualiza estado consulta usuario. |
-| `localizarUsuarioAgendamento` | 4170 | interna | Executa a responsabilidade interna “localizar usuario agendamento”. |
-| `localizarUsuarioReengajamento` | 4205 | interna | Executa a responsabilidade interna “localizar usuario reengajamento”. |
-| `telefoneCandidatoReengajamento` | 4221 | interna | Executa a responsabilidade interna “telefone candidato reengajamento”. |
-| `candidateReasonsReengajamento` | 4238 | interna | Executa a responsabilidade interna “candidate reasons reengajamento”. |
-| `montarCandidatoReengajamento` | 4254 | interna | Monta candidato reengajamento. |
-| `adicionarCandidatoReengajamento` | 4269 | interna | Executa a responsabilidade interna “adicionar candidato reengajamento”. |
-| `lerUsersPersistidosParaReengajamento` | 4278 | interna | Executa a responsabilidade interna “ler users persistidos para reengajamento”. |
-| `descobrirCandidatosReengajamento` | 4291 | interna | Executa a responsabilidade interna “descobrir candidatos reengajamento”. |
-| `criarContextoReengajamentoTemplate` | 4306 | interna | Cria contexto reengajamento template. |
-| `validarJanelaEnvioReengajamento` | 4324 | interna | Valida janela envio reengajamento. |
-| `validarScheduledForReengajamento` | 4340 | interna | Valida scheduled for reengajamento. |
-| `validarExpiracaoReengajamento` | 4360 | interna | Valida expiracao reengajamento. |
-| `enviarJobReengajamento` | 4378 | interna | Envia job reengajamento. |
-| `validarCadenciaReengajamento` | 4403 | interna | Valida cadencia reengajamento. |
-| `registrarEnvioReengajamento` | 4413 | interna | Registra envio reengajamento. |
-| `tipoLembreteConsultaValido` | 4421 | interna | Executa a responsabilidade interna “tipo lembrete consulta valido”. |
-| `calcularAlvoLembreteConsulta` | 4425 | interna | Calcula alvo lembrete consulta. |
-| `validarJanelaEnvioLembreteConsulta` | 4437 | interna | Valida janela envio lembrete consulta. |
-| `criarContextoConsultaTemplate` | 4463 | interna | Cria contexto consulta template. |
-| `liberarAgendamentoERecalcularStage` | 4485 | interna | Executa a responsabilidade interna “liberar agendamento erecalcular stage”. |
-| `labelStageAdmin` | 4553 | interna | Executa a responsabilidade interna “label stage admin”. |
-| `montarNotificacaoCancelamentoClienteAdmin` | 4632 | interna | Monta notificacao cancelamento cliente admin. |
-| `normalizarItemAdminLocal` | 4659 | interna | Normaliza item admin local. |
-| `hsAdminContarNegociosPorStages` | 4694 | interna | Executa a responsabilidade interna “hs admin contar negocios por stages”. |
-| `hsAdminBuscarContatoDoNegocio` | 4707 | interna | Executa a responsabilidade interna “hs admin buscar contato do negocio”. |
-| `hsAdminBuscarDadosDoNegocio` | 4738 | interna | Executa a responsabilidade interna “hs admin buscar dados do negocio”. |
-| `hidratarDadosContatoAdmin` | 4765 | interna | Executa a responsabilidade interna “hidratar dados contato admin”. |
-| `hsAdminBuscarNegociosPorStages` | 4788 | interna | Executa a responsabilidade interna “hs admin buscar negocios por stages”. |
-| `hsAdminBuscarTodosNegociosPorStages` | 4859 | interna | Executa a responsabilidade interna “hs admin buscar todos negocios por stages”. |
-| `hsAdminBuscarNegociosDireto` | 4891 | interna | Executa a responsabilidade interna “hs admin buscar negocios direto”. |
-| `deduplicarDealsAdmin` | 4925 | interna | Executa a responsabilidade interna “deduplicar deals admin”. |
-| `hsAdminBuscarDealsPorNumeroCaso` | 4929 | interna | Executa a responsabilidade interna “hs admin buscar deals por numero caso”. |
-| `confirmarVinculoPosHumanoHubSpot` | 4948 | interna | Executa a responsabilidade interna “confirmar vinculo pos humano hub spot”. |
-| `hsAdminBuscarContatosPorNome` | 4967 | interna | Executa a responsabilidade interna “hs admin buscar contatos por nome”. |
-| `hsAdminBuscarContatosPorTelefone` | 4980 | interna | Executa a responsabilidade interna “hs admin buscar contatos por telefone”. |
-| `cpfValidoConsultaAdmin` | 5000 | interna | Executa a responsabilidade interna “cpf valido consulta admin”. |
-| `classificarConsultaCasoAdmin` | 5012 | interna | Classifica consulta caso admin. |
-| `hsAdminListarDealsDosContatosEstrito` | 5023 | interna | Executa a responsabilidade interna “hs admin listar deals dos contatos estrito”. |
-| `resolverConsultaCasoAdmin` | 5029 | interna | Resolve consulta caso admin. |
-| `mapearComLimite` | 5064 | interna | Executa a responsabilidade interna “mapear com limite”. |
-| `worker` | 5070 | interna | Executa a responsabilidade interna “worker”. |
-| `reconciliarTituloNegocioHubSpotAdmin` | 5081 | interna | Executa a responsabilidade interna “reconciliar titulo negocio hub spot admin”. |
-| `hsAdminItensPorStages` | 5109 | interna | Executa a responsabilidade interna “hs admin itens por stages”. |
-| `hsAdminItemPorDealId` | 5122 | interna | Executa a responsabilidade interna “hs admin item por deal id”. |
-| `adminItensAtivosHubSpot` | 5147 | interna | Executa a responsabilidade interna “admin itens ativos hub spot”. |
-| `adminFonteCasos` | 5152 | interna | Executa a responsabilidade interna “admin fonte casos”. |
-| `adminResumoOperacional` | 5171 | interna | Executa a responsabilidade interna “admin resumo operacional”. |
-| `gerarAlertasOperacionaisAdmin` | 5223 | interna | Gera alertas operacionais admin. |
-| `maiorAlertaOperacionalAdmin` | 5287 | interna | Executa a responsabilidade interna “maior alerta operacional admin”. |
-| `gerarResumoDiarioOperacional` | 5291 | interna | Gera resumo diario operacional. |
-| `ordenarPorRisco` | 5306 | interna | Executa a responsabilidade interna “ordenar por risco”. |
-| `chaveResumo` | 5341 | interna | Executa a responsabilidade interna “chave resumo”. |
-| `usuariosAdminOrdenados` | 5384 | interna | Executa a responsabilidade interna “usuarios admin ordenados”. |
-| `salvarListaCasosAdmin` | 5391 | interna | Salva lista casos admin. |
-| `obterCasoAdmin` | 5411 | interna | Obtém caso admin. |
-| `prepararSessaoClienteAcaoAdmin` | 5425 | interna | Executa a responsabilidade interna “preparar sessao cliente acao admin”. |
-| `chaveCasoAdmin` | 5454 | interna | Executa a responsabilidade interna “chave caso admin”. |
-| `limparRevisoesCasosAdmin` | 5466 | interna | Executa a responsabilidade interna “limpar revisoes casos admin”. |
-| `obterRevisaoCasoAdmin` | 5473 | interna | Obtém revisao caso admin. |
-| `casoAdminRevisado` | 5480 | interna | Executa a responsabilidade interna “caso admin revisado”. |
-| `marcarCasoAdminRevisado` | 5484 | interna | Marca caso admin revisado. |
-| `motivoPrioridadeAdmin` | 5496 | interna | Executa a responsabilidade interna “motivo prioridade admin”. |
-| `scorePrioridadeAdmin` | 5501 | interna | Executa a responsabilidade interna “score prioridade admin”. |
-| `gerarPrioridadesAdmin` | 5505 | interna | Gera prioridades admin. |
-| `hidratarNomesPrioridadesAdmin` | 5522 | interna | Executa a responsabilidade interna “hidratar nomes prioridades admin”. |
-| `hidratarNomesCasosNumeradosAdmin` | 5530 | interna | Executa a responsabilidade interna “hidratar nomes casos numerados admin”. |
-| `nomePrioridadeAdmin` | 5539 | interna | Executa a responsabilidade interna “nome prioridade admin”. |
-| `resolverTelefoneInterfaceAdmin` | 5545 | interna | Resolve telefone interface admin. |
-| `linhaPrioridadeAdmin` | 5550 | interna | Executa a responsabilidade interna “linha prioridade admin”. |
-| `textoDetalheCasoAdmin` | 5570 | interna | Executa a responsabilidade interna “texto detalhe caso admin”. |
-| `telaAdminPrincipal` | 5635 | interna | Executa a responsabilidade interna “tela admin principal”. |
-| `iniciarConsultaCasoAdmin` | 5676 | interna | Inicia consulta caso admin. |
-| `encerrarConsultaPendenteAdmin` | 5702 | interna | Encerra consulta pendente admin. |
-| `encerrarAcaoCasoPendenteAdmin` | 5709 | interna | Encerra acao caso pendente admin. |
-| `executarConsultaCasoAdmin` | 5716 | interna | Executa consulta caso admin. |
-| `iniciarComplementacaoCasoAdmin` | 5775 | interna | Inicia complementacao caso admin. |
-| `executarComplementacaoCasoAdmin` | 5803 | interna | Executa complementacao caso admin. |
-| `iniciarEnvioDocumentoCasoAdmin` | 5840 | interna | Inicia envio documento caso admin. |
-| `executarDocumentoCasoSelecionadoAdmin` | 5854 | interna | Executa documento caso selecionado admin. |
-| `iniciarAgendamentoCasoAdmin` | 5915 | interna | Inicia agendamento caso admin. |
-| `executarAgendamentoCasoAdmin` | 5931 | interna | Executa agendamento caso admin. |
-| `telaAdminPrioridades` | 5951 | interna | Executa a responsabilidade interna “tela admin prioridades”. |
-| `telaAdminCasos` | 6036 | interna | Executa a responsabilidade interna “tela admin casos”. |
-| `telaAdminAlertas` | 6064 | interna | Executa a responsabilidade interna “tela admin alertas”. |
-| `telaAdminListaCasos` | 6101 | interna | Executa a responsabilidade interna “tela admin lista casos”. |
-| `telaAdminFalhaHubSpot` | 6149 | interna | Executa a responsabilidade interna “tela admin falha hub spot”. |
-| `telaAdminCasosNovos` | 6157 | interna | Executa a responsabilidade interna “tela admin casos novos”. |
-| `filtro` | 6159 | interna | Executa a responsabilidade interna “filtro”. |
-| `telaAdminCasosAnalise` | 6166 | interna | Executa a responsabilidade interna “tela admin casos analise”. |
-| `telaAdminCasosDocumentos` | 6178 | interna | Executa a responsabilidade interna “tela admin casos documentos”. |
-| `telaAdminCasosAtivos` | 6187 | interna | Executa a responsabilidade interna “tela admin casos ativos”. |
-| `telaAdminAlertasUrgentes` | 6197 | interna | Executa a responsabilidade interna “tela admin alertas urgentes”. |
-| `telaAdminAlertasSemResposta` | 6206 | interna | Executa a responsabilidade interna “tela admin alertas sem resposta”. |
-| `telaAdminAlertasDocs` | 6218 | interna | Executa a responsabilidade interna “tela admin alertas docs”. |
-| `telaAdminAlertasAgenda` | 6227 | interna | Executa a responsabilidade interna “tela admin alertas agenda”. |
-| `telaAdminResumoDiario` | 6232 | interna | Executa a responsabilidade interna “tela admin resumo diario”. |
-| `telaDetalheCasoAdmin` | 6248 | pública | Executa a responsabilidade interna “tela detalhe caso admin”. |
-| `montarTela` | 6280 | interna | Monta tela. |
-| `botaoVoltarCasoAdmin` | 6299 | interna | Executa a responsabilidade interna “botao voltar caso admin”. |
-| `formatarCpfAdmin` | 6304 | pública | Formata cpf admin. |
-| `sincronizarCofreCasoSegura` | 6310 | interna | Executa a responsabilidade interna “sincronizar cofre caso segura”. |
-| `sincronizarNegocio` | 6328 | interna | Executa a responsabilidade interna “sincronizar negocio”. |
-| `telaCredenciaisCasoAdmin` | 6334 | pública | Executa a responsabilidade interna “tela credenciais caso admin”. |
-| `telaDocumentosCasoAdmin` | 6370 | interna | Executa a responsabilidade interna “tela documentos caso admin”. |
-| `telaComunicacaoCasoAdmin` | 6397 | interna | Executa a responsabilidade interna “tela comunicacao caso admin”. |
-| `confirmarPedidoDocumentosAdmin` | 6413 | interna | Executa a responsabilidade interna “confirmar pedido documentos admin”. |
-| `confirmarLembreteCasoAdmin` | 6437 | interna | Executa a responsabilidade interna “confirmar lembrete caso admin”. |
-| `telaRevisaoDocumentalAdmin` | 6451 | interna | Executa a responsabilidade interna “tela revisao documental admin”. |
-| `aplicarRevisaoDocumentalAdmin` | 6490 | interna | Aplica revisao documental admin. |
-| `telaPreferenciaComunicacaoAdmin` | 6526 | interna | Executa a responsabilidade interna “tela preferencia comunicacao admin”. |
-| `atualizarPreferenciaComunicacaoAdmin` | 6541 | interna | Atualiza preferencia comunicacao admin. |
-| `telaLinksCasoAdmin` | 6548 | interna | Executa a responsabilidade interna “tela links caso admin”. |
-| `marcarCasoRevisadoAdmin` | 6582 | interna | Marca caso revisado admin. |
-| `preferenciaAudioSempreCanonica` | 6617 | interna | Executa a responsabilidade interna “preferencia audio sempre canonica”. |
-| `chaveAtivaAudioPedidoDocumentos` | 6627 | interna | Executa a responsabilidade interna “chave ativa audio pedido documentos”. |
-| `consumirPendenciaAudioPedidoDocumentos` | 6634 | interna | Executa a responsabilidade interna “consumir pendencia audio pedido documentos”. |
-| `pedirDocsCasoAdmin` | 6674 | interna | Executa a responsabilidade interna “pedir docs caso admin”. |
-| `marcarCasoUrgenteAdmin` | 6780 | interna | Marca caso urgente admin. |
-| `enviarAnaliseCasoAdmin` | 6835 | interna | Envia analise caso admin. |
-| `enviarLembreteCasoAdmin` | 6881 | interna | Envia lembrete caso admin. |
-| `resumoConsultaAdmin` | 6940 | interna | Executa a responsabilidade interna “resumo consulta admin”. |
-| `obterConsultasAtivasAdmin` | 6948 | interna | Obtém consultas ativas admin. |
-| `telaConsultasAdmin` | 6991 | interna | Executa a responsabilidade interna “tela consultas admin”. |
-| `obterItemAdmin` | 7023 | interna | Obtém item admin. |
-| `telaDetalheConsultaAdmin` | 7037 | interna | Executa a responsabilidade interna “tela detalhe consulta admin”. |
-| `telaConfirmarCancelamentoAdmin` | 7083 | interna | Executa a responsabilidade interna “tela confirmar cancelamento admin”. |
-| `cancelarConsultaAdmin` | 7121 | interna | Cancela consulta admin. |
-| `obterConsultaAtivaCliente` | 7200 | interna | Obtém consulta ativa cliente. |
-| `cancelarEventoConsultaUsuario` | 7230 | interna | Cancela evento consulta usuario. |
-| `processarAdminWhatsApp` | 7272 | interna | Processa admin whats app. |
-| `detalharErroHubspot` | 7605 | interna | Executa a responsabilidade interna “detalhar erro hubspot”. |
-| `capturarLeadIncompleto` | 7609 | interna | Executa a responsabilidade interna “capturar lead incompleto”. |
-| `getCalendar` | 7771 | interna | Executa a responsabilidade interna “get calendar”. |
-| `baixarMidia` | 7781 | interna | Executa a responsabilidade interna “baixar midia”. |
-| `textoAudioConfirmacaoDados` | 7830 | interna | Executa a responsabilidade interna “texto audio confirmacao dados”. |
-| `enviarTelaImagemOuTexto` | 7842 | interna | Envia tela imagem ou texto. |
-| `enviarGuiaDocs` | 7868 | interna | Envia guia docs. |
-| `responderTelaDocumento` | 7890 | interna | Responde tela documento. |
-| `enviarIntroDocumentos` | 7898 | interna | Envia intro documentos. |
-| `telaTiposDocumentosComplementares` | 7930 | interna | Executa a responsabilidade interna “tela tipos documentos complementares”. |
-| `telaAguardarDocumentoComplementar` | 7945 | interna | Executa a responsabilidade interna “tela aguardar documento complementar”. |
-| `telaFinalizarDocumentosComplementares` | 7959 | interna | Executa a responsabilidade interna “tela finalizar documentos complementares”. |
-| `prepararFluxoResumoOutro` | 7975 | interna | Executa a responsabilidade interna “preparar fluxo resumo outro”. |
-| `uploadDocumentoCano` | 7989 | interna | Executa a responsabilidade interna “upload documento cano”. |
-| `pastaUploadDocumento` | 8011 | interna | Executa a responsabilidade interna “pasta upload documento”. |
-| `detectarEncerramentoPorAudio` | 8017 | interna | Detecta encerramento por audio. |
-| `finalizarCadastro` | 8038 | interna | Executa a responsabilidade interna “finalizar cadastro”. |
-| `finalizarCadastroAssistidoAdmin` | 8321 | interna | Executa a responsabilidade interna “finalizar cadastro assistido admin”. |
-| `tela_confirmacao` | 8345 | interna | Executa a responsabilidade interna “tela confirmacao”. |
-| `telaConfirmacaoComImagem` | 8389 | interna | Executa a responsabilidade interna “tela confirmacao com imagem”. |
-| `voltarParaConfirmacao` | 8409 | interna | Executa a responsabilidade interna “voltar para confirmacao”. |
-| `limparCorrecaoPendente` | 8428 | interna | Executa a responsabilidade interna “limpar correcao pendente”. |
-| `pedirCampoCorrecao` | 8435 | interna | Executa a responsabilidade interna “pedir campo correcao”. |
-| `reabrirCorrecaoPendente` | 8452 | interna | Executa a responsabilidade interna “reabrir correcao pendente”. |
-| `responderFalhaAudioCorrecao` | 8505 | interna | Responde falha audio correcao. |
-| `textoAudioConfirmacaoNome` | 8516 | interna | Executa a responsabilidade interna “texto audio confirmacao nome”. |
-| `prepararConfirmacaoCorrecao` | 8523 | interna | Executa a responsabilidade interna “preparar confirmacao correcao”. |
-| `aplicarCorrecaoPendente` | 8579 | interna | Aplica correcao pendente. |
-| `horarioAindaPodeSerAgendado` | 8651 | interna | Executa a responsabilidade interna “horario ainda pode ser agendado”. |
-| `iniciarAgendamento` | 8659 | interna | Inicia agendamento. |
-| `telaAdvogadoCliente` | 8709 | interna | Executa a responsabilidade interna “tela advogado cliente”. |
-| `deveEnviarAudioAutomatico` | 8720 | interna | Executa a responsabilidade interna “deve enviar audio automatico”. |
-| `enviarAudio` | 8743 | interna | Envia audio. |
-| `enviarAudioModoVoz` | 8748 | interna | Envia audio modo voz. |
-| `aplicarEmojiTelaCliente` | 8766 | interna | Aplica emoji tela cliente. |
-| `ehContatoAdmin` | 8776 | interna | Determina se contato admin. |
-| `enviarAudioAutomaticoTela` | 8782 | interna | Envia audio automatico tela. |
-| `responderTelaComAudio` | 8795 | interna | Responde tela com audio. |
-| `saudacaoPorHorarioCliente` | 8800 | interna | Executa a responsabilidade interna “saudacao por horario cliente”. |
-| `saudacaoGenero` | 8826 | interna | Executa a responsabilidade interna “saudacao genero”. |
-| `menuClienteComAudio` | 8829 | interna | Executa a responsabilidade interna “menu cliente com audio”. |
-| `apresentarMenuClientePosHumano` | 8890 | interna | Executa a responsabilidade interna “apresentar menu cliente pos humano”. |
-| `abrirSelecaoCasoParaAcao` | 8898 | interna | Executa a responsabilidade interna “abrir selecao caso para acao”. |
-| `executarAcaoPendenteCliente` | 8917 | interna | Executa acao pendente cliente. |
-| `telaAdvogadoClienteComAudio` | 8929 | interna | Executa a responsabilidade interna “tela advogado cliente com audio”. |
-| `telaStatusCliente` | 8935 | interna | Executa a responsabilidade interna “tela status cliente”. |
-| `telaConfirmarCancelamentoConsultaCliente` | 9048 | interna | Executa a responsabilidade interna “tela confirmar cancelamento consulta cliente”. |
-| `cancelarConsultaCliente` | 9078 | interna | Cancela consulta cliente. |
-| `confirmarAberturaNovoCasoCliente` | 9136 | interna | Executa a responsabilidade interna “confirmar abertura novo caso cliente”. |
-| `abrirNovoCasoCliente` | 9155 | interna | Executa a responsabilidade interna “abrir novo caso cliente”. |
-| `iniciarMensagemUrgenteCliente` | 9191 | interna | Inicia mensagem urgente cliente. |
-| `gerarConfortoUrgenteCliente` | 9209 | interna | Gera conforto urgente cliente. |
-| `respostaUrgenteRegistradaComAudio` | 9239 | interna | Executa a responsabilidade interna “resposta urgente registrada com audio”. |
-| `aproveitarRelatoAudioClienteNovoCaso` | 9258 | interna | Executa a responsabilidade interna “aproveitar relato audio cliente novo caso”. |
-| `proximaEtapaNovoCasoClienteAposModo` | 9276 | interna | Executa a responsabilidade interna “proxima etapa novo caso cliente apos modo”. |
-| `executarIntencaoDetectadaCliente` | 9329 | interna | Executa intencao detectada cliente. |
-| `executarIntencaoCliente` | 9337 | interna | Executa intencao cliente. |
-| `sairContextoDocumentosCliente` | 9404 | interna | Executa a responsabilidade interna “sair contexto documentos cliente”. |
-| `responderComTimer` | 9415 | interna | Responde com timer. |
-| `telaDescreverCaso` | 9420 | interna | Executa a responsabilidade interna “tela descrever caso”. |
-| `telaConfirmarUrgente` | 9430 | interna | Executa a responsabilidade interna “tela confirmar urgente”. |
-| `telaConfirmarUrgenteComAudio` | 9437 | interna | Executa a responsabilidade interna “tela confirmar urgente com audio”. |
-| `deveOferecerExplicarTudo` | 9452 | interna | Executa a responsabilidade interna “deve oferecer explicar tudo”. |
-| `prepararOfertaExplicarTudoFinal` | 9458 | interna | Executa a responsabilidade interna “preparar oferta explicar tudo final”. |
-| `iniciarConfirmacaoDescricao` | 9467 | interna | Inicia confirmacao descricao. |
-| `respostaAposConfirmarDescricao` | 9482 | interna | Executa a responsabilidade interna “resposta apos confirmar descricao”. |
-| `flowInicio` | 9513 | interna | Executa a responsabilidade interna “flow inicio”. |
-| `flowInicioRetorno` | 9535 | interna | Executa a responsabilidade interna “flow inicio retorno”. |
-| `obterStageRetomadaOriginal` | 9553 | pública | Obtém stage retomada original. |
-| `obterCamposResumo` | 9572 | interna | Obtém campos resumo. |
-| `formatarResumoValor` | 9574 | interna | Formata resumo valor. |
-| `possuiResumoValido` | 9598 | interna | Executa a responsabilidade interna “possui resumo valido”. |
-| `flowMenuCorrecaoRetomada` | 9616 | interna | Executa a responsabilidade interna “flow menu correcao retomada”. |
-| `flowRetomadaAutomatica` | 9652 | interna | Executa a responsabilidade interna “flow retomada automatica”. |
-| `flowRetomadaMenu` | 9680 | pública | Executa a responsabilidade interna “flow retomada menu”. |
-| `flowResumoRetomada` | 9708 | interna | Executa a responsabilidade interna “flow resumo retomada”. |
-| `flowResumoAtendimento` | 9779 | interna | Executa a responsabilidade interna “flow resumo atendimento”. |
-| `reiniciarFluxoRetomada` | 9805 | interna | Executa a responsabilidade interna “reiniciar fluxo retomada”. |
-| `respostaOpcaoInvalidaRetomada` | 9827 | interna | Executa a responsabilidade interna “resposta opcao invalida retomada”. |
-| `responderImprevistoPreAtendimento` | 9839 | interna | Responde imprevisto pre atendimento. |
-| `redirecionarCorrecaoPreAtendimento` | 9919 | interna | Executa a responsabilidade interna “redirecionar correcao pre atendimento”. |
-| `jaTemDadosParaConfirmacao` | 9926 | interna | Executa a responsabilidade interna “ja tem dados para confirmacao”. |
-| `irParaEditar` | 9929 | interna | Executa a responsabilidade interna “ir para editar”. |
-| `tratarImprevistoPreAtendimento` | 10067 | interna | Executa a responsabilidade interna “tratar imprevisto pre atendimento”. |
-| `tratarIntervencaoPreAtendimento` | 10092 | interna | Executa a responsabilidade interna “tratar intervencao pre atendimento”. |
-| `conduzirPreAtendimentoIA` | 10139 | interna | Executa a responsabilidade interna “conduzir pre atendimento ia”. |
-| `flowAcolhimentoCidade` | 10252 | interna | Executa a responsabilidade interna “flow acolhimento cidade”. |
-| `flowAcolhimentoConfirmaWhatsapp` | 10292 | interna | Executa a responsabilidade interna “flow acolhimento confirma whatsapp”. |
-| `telaEsclarecimentoConfuso` | 10341 | interna | Executa a responsabilidade interna “tela esclarecimento confuso”. |
-| `flowNome` | 10371 | interna | Executa a responsabilidade interna “flow nome”. |
-| `flowCidade` | 10375 | interna | Executa a responsabilidade interna “flow cidade”. |
-| `flowDescricao` | 10379 | interna | Executa a responsabilidade interna “flow descricao”. |
-| `flowDocumentos` | 10396 | interna | Executa a responsabilidade interna “flow documentos”. |
-| `flowDescConfirma` | 10400 | interna | Executa a responsabilidade interna “flow desc confirma”. |
-| `flowConfirmacao` | 10431 | interna | Executa a responsabilidade interna “flow confirmacao”. |
-| `flowCliente` | 10450 | interna | Executa a responsabilidade interna “flow cliente”. |
-| `flowConfirmarEntrada` | 10460 | interna | Executa a responsabilidade interna “flow confirmar entrada”. |
-| `flowNovoCasoConfirma` | 10486 | interna | Executa a responsabilidade interna “flow novo caso confirma”. |
-| `flowColetaTelOutro` | 10505 | interna | Executa a responsabilidade interna “flow coleta tel outro”. |
-| `flowColetaTelWpp` | 10510 | interna | Executa a responsabilidade interna “flow coleta tel wpp”. |
-| `flowColetaTelWppContato` | 10516 | interna | Executa a responsabilidade interna “flow coleta tel wpp contato”. |
-| `flowDescErroTranscricao` | 10536 | interna | Executa a responsabilidade interna “flow desc erro transcricao”. |
-| `flowAguardandoUrgente` | 10546 | interna | Executa a responsabilidade interna “flow aguardando urgente”. |
-| `flowUrgenteAudioErroTranscricao` | 10551 | interna | Executa a responsabilidade interna “flow urgente audio erro transcricao”. |
-| `flowUrgenteAudioConfirma` | 10556 | interna | Executa a responsabilidade interna “flow urgente audio confirma”. |
-| `flowAudioFluxoConfirma` | 10561 | interna | Executa a responsabilidade interna “flow audio fluxo confirma”. |
-| `flowAudioConfirmarDados` | 10566 | interna | Executa a responsabilidade interna “flow audio confirmar dados”. |
-| `flowAudioConfirmarTranscricao` | 10581 | interna | Executa a responsabilidade interna “flow audio confirmar transcricao”. |
-| `flowAudioConfirmarAreaCanal` | 10594 | interna | Executa a responsabilidade interna “flow audio confirmar area canal”. |
-| `flowMenuCorrecao` | 10607 | interna | Executa a responsabilidade interna “flow menu correcao”. |
-| `flowCorrigirValor` | 10624 | interna | Executa a responsabilidade interna “flow corrigir valor”. |
-| `flowCorrigirUf` | 10631 | interna | Executa a responsabilidade interna “flow corrigir uf”. |
-| `flowCorrigirSel` | 10636 | interna | Executa a responsabilidade interna “flow corrigir sel”. |
-| `flowConfirmarCorrecao` | 10644 | interna | Executa a responsabilidade interna “flow confirmar correcao”. |
-| `flowRetomadaFallback` | 10651 | interna | Executa a responsabilidade interna “flow retomada fallback”. |
-| `flowAssessoriaInicial` | 10669 | interna | Executa a responsabilidade interna “flow assessoria inicial”. |
-| `limparLinhaComentario` | 10712 | interna | Executa a responsabilidade interna “limpar linha comentario”. |
-| `obterNomeFlow` | 10844 | interna | Obtém nome flow. |
-| `executarFlowSeguro` | 10848 | interna | Executa flow seguro. |
-| `retomarFluxo` | 10866 | interna | Executa a responsabilidade interna “retomar fluxo”. |
-| `processarRetomadaOuReinicio` | 10911 | pública | Processa retomada ou reinicio. |
-| `verificarRetomadaAutomatica` | 11171 | interna | Verifica retomada automatica. |
-| `tentarRestaurarClienteHubSpotParaMenu` | 11252 | interna | Executa a responsabilidade interna “tentar restaurar cliente hub spot para menu”. |
-| `processarAnaliseDocumentalSegura` | 11271 | interna | Processa analise documental segura. |
-| `rotulosDocumentosCaso` | 11306 | interna | Executa a responsabilidade interna “rotulos documentos caso”. |
-| `rotulosDocumentosComplementares` | 11316 | interna | Executa a responsabilidade interna “rotulos documentos complementares”. |
-| `sincronizarNotaAnaliseCasoSegura` | 11325 | interna | Executa a responsabilidade interna “sincronizar nota analise caso segura”. |
-| `reconciliarFormatoNotasAnaliseHubSpot` | 11376 | interna | Executa a responsabilidade interna “reconciliar formato notas analise hub spot”. |
-| `dependenciasReavaliacaoDocumentalPosHumana` | 11425 | interna | Executa a responsabilidade interna “dependencias reavaliacao documental pos humana”. |
-| `sincronizarDecisaoDocumentalCanonicaHubSpotSeguro` | 11443 | interna | Executa a responsabilidade interna “sincronizar decisao documental canonica hub spot seguro”. |
-| `confirmarDocumentoCanonicoSeguro` | 11494 | interna | Executa a responsabilidade interna “confirmar documento canonico seguro”. |
-| `consolidarDocumentosDoCasoSeguro` | 11530 | interna | Executa a responsabilidade interna “consolidar documentos do caso seguro”. |
-| `registrarDocumentoNoCicloPosHumano` | 11544 | interna | Registra documento no ciclo pos humano. |
-| `processarMidia` | 11565 | interna | Processa midia. |
-| `proximaConfirmacaoProgressiva` | 11961 | interna | Executa a responsabilidade interna “proxima confirmacao progressiva”. |
-| `textoComIntroducaoAudio` | 11966 | interna | Executa a responsabilidade interna “texto com introducao audio”. |
-| `processarAudioCanalAtendimento` | 12109 | interna | Processa audio canal atendimento. |
-| `adaptarTextoAudioCadastral` | 12205 | interna | Executa a responsabilidade interna “adaptar texto audio cadastral”. |
-| `transcreverAudioRespostaCadastral` | 12235 | interna | Executa a responsabilidade interna “transcrever audio resposta cadastral”. |
-| `processarAudioNoFluxo` | 12247 | interna | Processa audio no fluxo. |
-| `processarUrgenciaOuCorrecao` | 12333 | interna | Processa urgencia ou correcao. |
-| `processarInterno` | 13360 | pública | Processa interno. |
-| `processar` | 17845 | interna | Processa processar. |
-| `drenaFilaUsuario` | 17883 | interna | Executa a responsabilidade interna “drena fila usuario”. |
-| `carregarPendenciasComplementaresPosHumanas` | 17904 | interna | Carrega pendencias complementares pos humanas. |
-| `complementoPosHumanoEstaCompleto` | 17954 | interna | Executa a responsabilidade interna “complemento pos humano esta completo”. |
-| `criarVerificadorCompletudePosHumana` | 17963 | interna | Cria verificador completude pos humana. |
-| `criarDispatcherPosHumano` | 17970 | interna | Cria dispatcher pos humano. |
-| `withLegalNomenclature` | 18034 | interna | Executa a responsabilidade interna “with legal nomenclature”. |
-| `processarComLock` | 18206 | interna | Processa com lock. |
-| `arquivoExiste` | 18290 | interna | Executa a responsabilidade interna “arquivo existe”. |
-| `dataModificacaoArquivo` | 18295 | interna | Executa a responsabilidade interna “data modificacao arquivo”. |
-| `resumirCallbackIdempotency` | 18304 | interna | Executa a responsabilidade interna “resumir callback idempotency”. |
-| `resumirWebhookInbox` | 18328 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
-| `agruparUltimosErrosPorCategoria` | 18349 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
-| `montarHealthInternoOperacional` | 18357 | interna | Monta health interno operacional. |
-| `processarMensagemWebhook` | 18421 | interna | Processa mensagem webhook. |
-| `drenarWebhookInbox` | 18459 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
-| `postRotaInterna` | 19303 | interna | Executa a responsabilidade interna “post rota interna”. |
-| `planejarConsultasNoAgendador` | 19319 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
-| `planejarReengajamentosNoAgendador` | 19367 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
-| `despacharRotaAgendada` | 19383 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
-| `sincronizarConsultaNoAgendador` | 19412 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
-| `executarAgendadorInterno` | 19436 | interna | Executa agendador interno. |
-| `iniciarServidor` | 19503 | pública | Inicia servidor. |
+| `criarRequestId` | 621 | interna | Cria request id. |
+| `primeiroValorObservabilidade` | 626 | interna | Executa a responsabilidade interna “primeiro valor observabilidade”. |
+| `telefoneRemetenteWebhookMeta` | 630 | interna | Executa a responsabilidade interna “telefone remetente webhook meta”. |
+| `contextoObservabilidade` | 640 | interna | Executa a responsabilidade interna “contexto observabilidade”. |
+| `logOperacional` | 654 | interna | Executa a responsabilidade interna “log operacional”. |
+| `logSkipOperacional` | 661 | interna | Executa a responsabilidade interna “log skip operacional”. |
+| `validarAdminHttp` | 777 | interna | Valida admin http. |
+| `linkHubSpot` | 840 | interna | Executa a responsabilidade interna “link hub spot”. |
+| `criarTransporteEmail` | 845 | interna | Cria transporte email. |
+| `enviarEmailNotificacao` | 853 | interna | Envia email notificacao. |
+| `enviarWhatsAppAdmin` | 881 | interna | Envia whats app admin. |
+| `enviarWhatsAppAdmin_para` | 906 | interna | Envia whats app admin para. |
+| `enviarRespostaAdmin` | 930 | interna | Envia resposta admin. |
+| `notificarMensagemUrgente` | 945 | interna | Executa a responsabilidade interna “notificar mensagem urgente”. |
+| `notificarAgendamento` | 976 | interna | Executa a responsabilidade interna “notificar agendamento”. |
+| `sortearAtendente` | 1030 | interna | Executa a responsabilidade interna “sortear atendente”. |
+| `criarRespostaFallbackProcessamento` | 1044 | interna | Cria resposta fallback processamento. |
+| `obterBaseUrlPublica` | 1052 | interna | Obtém base url publica. |
+| `montarUrlPublica` | 1062 | interna | Monta url publica. |
+| `urlAudioAtendente` | 1072 | interna | Executa a responsabilidade interna “url audio atendente”. |
+| `etapaValida` | 1077 | interna | Executa a responsabilidade interna “etapa valida”. |
+| `telefonePreferenciaComunicacao` | 1096 | interna | Executa a responsabilidade interna “telefone preferencia comunicacao”. |
+| `obterPreferenciaComunicacao` | 1100 | interna | Obtém preferencia comunicacao. |
+| `promoverPreferenciaComunicacao` | 1112 | interna | Executa a responsabilidade interna “promover preferencia comunicacao”. |
+| `definirPreferenciaComunicacao` | 1118 | interna | Executa a responsabilidade interna “definir preferencia comunicacao”. |
+| `rotuloPreferenciaComunicacao` | 1130 | interna | Executa a responsabilidade interna “rotulo preferencia comunicacao”. |
+| `invalidarCacheResumoOperacional` | 1143 | interna | Executa a responsabilidade interna “invalidar cache resumo operacional”. |
+| `executarComLockUsuario` | 1148 | interna | Executa com lock usuario. |
+| `criarChaveMensagemDuplicada` | 1175 | interna | Cria chave mensagem duplicada. |
+| `mensagemJaProcessada` | 1184 | interna | Executa a responsabilidade interna “mensagem ja processada”. |
+| `novoUsuario` | 1200 | interna | Executa a responsabilidade interna “novo usuario”. |
+| `nomeValidoParaExibicao` | 1279 | interna | Executa a responsabilidade interna “nome valido para exibicao”. |
+| `resolverNomeBaseWhatsApp` | 1284 | interna | Resolve nome base whats app. |
+| `resolverNomeBriefing` | 1291 | interna | Resolve nome briefing. |
+| `resolverUsuarioPorHubSpot` | 1306 | interna | Resolve usuario por hub spot. |
+| `salvarEtapa` | 1438 | interna | Salva etapa. |
+| `obterEtapaSegura` | 1454 | interna | Obtém etapa segura. |
+| `podeRetomar` | 1463 | interna | Executa a responsabilidade interna “pode retomar”. |
+| `setStage` | 1469 | interna | Executa a responsabilidade interna “set stage”. |
+| `telaConfirmarTranscricao` | 1654 | interna | Executa a responsabilidade interna “tela confirmar transcricao”. |
+| `telaConfirmarArea` | 1677 | interna | Executa a responsabilidade interna “tela confirmar area”. |
+| `telaConfirmarAreaAudio` | 1696 | interna | Executa a responsabilidade interna “tela confirmar area audio”. |
+| `telaConfirmarDadosAudio` | 1725 | interna | Executa a responsabilidade interna “tela confirmar dados audio”. |
+| `enviarAudioPedidoCidade` | 1830 | interna | Envia audio pedido cidade. |
+| `enviarAudioConfirmacaoLocalizacao` | 1845 | interna | Envia audio confirmacao localizacao. |
+| `respostaAposCidade` | 1855 | interna | Executa a responsabilidade interna “resposta apos cidade”. |
+| `textoContextoTitularCaso` | 1891 | interna | Executa a responsabilidade interna “texto contexto titular caso”. |
+| `detectarAmbiguidadeTitularNome` | 1902 | interna | Detecta ambiguidade titular nome. |
+| `telaEscolhaModo` | 1920 | interna | Executa a responsabilidade interna “tela escolha modo”. |
+| `telaParaQuem` | 1947 | interna | Executa a responsabilidade interna “tela para quem”. |
+| `perguntarTitularNomePreCadastro` | 1996 | interna | Executa a responsabilidade interna “perguntar titular nome pre cadastro”. |
+| `gerarCaso` | 2025 | interna | Gera caso. |
+| `gerarBriefingCaso` | 2028 | interna | Gera briefing caso. |
+| `proximaAcao` | 2038 | interna | Executa a responsabilidade interna “proxima acao”. |
+| `resumoCaso` | 2075 | interna | Executa a responsabilidade interna “resumo caso”. |
+| `getHubSpotResumoCliente` | 2091 | interna | Executa a responsabilidade interna “get hub spot resumo cliente”. |
+| `getHubSpotDescricaoCompleta` | 2105 | interna | Executa a responsabilidade interna “get hub spot descricao completa”. |
+| `restaurarTipoCasoHubSpot` | 2149 | interna | Restaura tipo caso hub spot. |
+| `garantirNomenclaturaJuridicaUsuario` | 2171 | interna | Garante nomenclatura juridica usuario. |
+| `getHubSpotDealStateProps` | 2199 | interna | Executa a responsabilidade interna “get hub spot deal state props”. |
+| `getHubSpotDealProps` | 2227 | interna | Executa a responsabilidade interna “get hub spot deal props”. |
+| `mapearStageParaDealstage` | 2235 | interna | Executa a responsabilidade interna “mapear stage para dealstage”. |
+| `getLabelOrigemCaptacao` | 2275 | interna | Executa a responsabilidade interna “get label origem captacao”. |
+| `getNomeDeal` | 2283 | interna | Executa a responsabilidade interna “get nome deal”. |
+| `getNotaLead` | 2295 | interna | Executa a responsabilidade interna “get nota lead”. |
+| `ehFinalizacaoCasoTerceiro` | 2322 | interna | Determina se finalizacao caso terceiro. |
+| `telaVoltarConfirmacaoTerceiro` | 2341 | interna | Executa a responsabilidade interna “tela voltar confirmacao terceiro”. |
+| `criarSnapshotCasoCliente` | 2362 | interna | Cria snapshot caso cliente. |
+| `restaurarCasoAnteriorCliente` | 2411 | interna | Restaura caso anterior cliente. |
+| `voltarMenuCasoAnteriorCliente` | 2482 | interna | Executa a responsabilidade interna “voltar menu caso anterior cliente”. |
+| `temDadosUteisTerceiroIncompleto` | 2488 | interna | Executa a responsabilidade interna “tem dados uteis terceiro incompleto”. |
+| `capturarLeadTerceiroIncompleto` | 2499 | interna | Executa a responsabilidade interna “capturar lead terceiro incompleto”. |
+| `cancelarNovoCasoClienteEVoltarMenu` | 2572 | interna | Cancela novo caso cliente evoltar menu. |
+| `registrarCasoTerceiroNoWhatsAppInformado` | 2603 | interna | Registra caso terceiro no whats app informado. |
+| `finalizarCadastroTerceiroEVoltarOrigem` | 2677 | interna | Executa a responsabilidade interna “finalizar cadastro terceiro evoltar origem”. |
+| `encerrarNovoCasoClienteEVoltarMenu` | 2717 | interna | Encerra novo caso cliente evoltar menu. |
+| `usuarioTemRelatoParaRetomada` | 2740 | pública | Executa a responsabilidade interna “usuario tem relato para retomada”. |
+| `usuarioTemProgressoParaRetomada` | 2750 | pública | Executa a responsabilidade interna “usuario tem progresso para retomada”. |
+| `identificarEtapaAtual` | 2793 | interna | Executa a responsabilidade interna “identificar etapa atual”. |
+| `registrarUltimaPergunta` | 2810 | interna | Registra ultima pergunta. |
+| `limparDadosCasoAtual` | 2836 | interna | Executa a responsabilidade interna “limpar dados caso atual”. |
+| `limparDadosAtendimento` | 2951 | interna | Executa a responsabilidade interna “limpar dados atendimento”. |
+| `prepararNovaEntradaAposFluxoEncerrado` | 3001 | interna | Executa a responsabilidade interna “preparar nova entrada apos fluxo encerrado”. |
+| `enviarOpcoesPadrao` | 3074 | interna | Envia opcoes padrao. |
+| `prepararConfirmacaoEntrada` | 3088 | interna | Executa a responsabilidade interna “preparar confirmacao entrada”. |
+| `limparEntradaPendente` | 3130 | interna | Executa a responsabilidade interna “limpar entrada pendente”. |
+| `resetarSessaoAtendimento` | 3136 | interna | Executa a responsabilidade interna “resetar sessao atendimento”. |
+| `responderEncerramento` | 3175 | interna | Responde encerramento. |
+| `encerrarComCaptura` | 3196 | interna | Encerra com captura. |
+| `encerrarAtendimento` | 3225 | interna | Encerra atendimento. |
+| `encerrarClienteCadastrado` | 3231 | interna | Encerra cliente cadastrado. |
+| `executarEncerramentoFluxo` | 3258 | interna | Executa encerramento fluxo. |
+| `executarRecomecoFluxo` | 3291 | interna | Executa recomeco fluxo. |
+| `stageAceitaTextoLivre` | 3327 | interna | Executa a responsabilidade interna “stage aceita texto livre”. |
+| `ehStageFluxoAntigo` | 3349 | interna | Determina se stage fluxo antigo. |
+| `migrarFluxoAntigoParaRelatoLivre` | 3406 | interna | Executa a responsabilidade interna “migrar fluxo antigo para relato livre”. |
+| `podeMostrarMenuCliente` | 3417 | pública | Executa a responsabilidade interna “pode mostrar menu cliente”. |
+| `etapaPermitidaComCasoOficial` | 3422 | interna | Executa a responsabilidade interna “etapa permitida com caso oficial”. |
+| `getNumeroCasoOficialDoNegocio` | 3435 | interna | Executa a responsabilidade interna “get numero caso oficial do negocio”. |
+| `avancarAposTelefoneConfirmado` | 3439 | interna | Executa a responsabilidade interna “avancar apos telefone confirmado”. |
+| `retomarUltimaPergunta` | 3456 | interna | Executa a responsabilidade interna “retomar ultima pergunta”. |
+| `reapresentarPerguntaAtual` | 3462 | interna | Executa a responsabilidade interna “reapresentar pergunta atual”. |
+| `perguntarNome` | 3466 | interna | Executa a responsabilidade interna “perguntar nome”. |
+| `perguntarNomeProprio` | 3485 | interna | Executa a responsabilidade interna “perguntar nome proprio”. |
+| `textoSolicitarNomeRepresentante` | 3517 | interna | Executa a responsabilidade interna “texto solicitar nome representante”. |
+| `textoConfirmarNomeRepresentante` | 3527 | interna | Executa a responsabilidade interna “texto confirmar nome representante”. |
+| `textoSolicitarNomePessoaAtendida` | 3539 | interna | Executa a responsabilidade interna “texto solicitar nome pessoa atendida”. |
+| `textoConfirmarNomePessoaAtendida` | 3549 | interna | Executa a responsabilidade interna “texto confirmar nome pessoa atendida”. |
+| `textoExplicarSituacaoTerceiro` | 3559 | interna | Executa a responsabilidade interna “texto explicar situacao terceiro”. |
+| `audioSolicitarNomeRepresentante` | 3571 | interna | Executa a responsabilidade interna “audio solicitar nome representante”. |
+| `audioConfirmarNomeRepresentante` | 3575 | interna | Executa a responsabilidade interna “audio confirmar nome representante”. |
+| `audioSolicitarNomePessoaAtendida` | 3579 | interna | Executa a responsabilidade interna “audio solicitar nome pessoa atendida”. |
+| `audioConfirmarNomePessoaAtendida` | 3583 | interna | Executa a responsabilidade interna “audio confirmar nome pessoa atendida”. |
+| `audioExplicarSituacaoTerceiro` | 3587 | interna | Executa a responsabilidade interna “audio explicar situacao terceiro”. |
+| `pedirRelatoAposNome` | 3594 | interna | Executa a responsabilidade interna “pedir relato apos nome”. |
+| `perguntarCidade` | 3649 | interna | Executa a responsabilidade interna “perguntar cidade”. |
+| `perguntarDescricao` | 3660 | interna | Executa a responsabilidade interna “perguntar descricao”. |
+| `perguntarDocumentos` | 3666 | interna | Executa a responsabilidade interna “perguntar documentos”. |
+| `enviarTelaDocumentosCaso` | 3676 | interna | Envia tela documentos caso. |
+| `respostaRecomecoMenuPrincipal` | 3687 | interna | Executa a responsabilidade interna “resposta recomeco menu principal”. |
+| `iniciarFluxoRelatoLivre` | 3697 | interna | Inicia fluxo relato livre. |
+| `deveCapturarLeadIncompleto` | 3718 | interna | Executa a responsabilidade interna “deve capturar lead incompleto”. |
+| `pularDescricaoPorAgora` | 3736 | interna | Executa a responsabilidade interna “pular descricao por agora”. |
+| `ehStageDescricaoCaso` | 3780 | interna | Determina se stage descricao caso. |
+| `entrarEtapaDescricao` | 3784 | interna | Executa a responsabilidade interna “entrar etapa descricao”. |
+| `limparTimer` | 3790 | interna | Executa a responsabilidade interna “limpar timer”. |
+| `limparTimerIncentivoDescricao` | 3794 | interna | Executa a responsabilidade interna “limpar timer incentivo descricao”. |
+| `executarCallbackTimerUsuario` | 3801 | interna | Executa callback timer usuario. |
+| `agendarIncentivoDescricao` | 3811 | interna | Agenda incentivo descricao. |
+| `iniciarTimer` | 3860 | interna | Inicia timer. |
+| `restaurarTimersPersistidos` | 4008 | interna | Restaura timers persistidos. |
+| `telaRegioes` | 4045 | interna | Executa a responsabilidade interna “tela regioes”. |
+| `telaUFsRegiao` | 4052 | interna | Executa a responsabilidade interna “tela ufs regiao”. |
+| `criarCtx` | 4057 | interna | Cria ctx. |
+| `textoOuTraco` | 4109 | interna | Executa a responsabilidade interna “texto ou traco”. |
+| `resumoFatosJuridico` | 4113 | interna | Executa a responsabilidade interna “resumo fatos juridico”. |
+| `pedidoClienteJuridico` | 4121 | interna | Executa a responsabilidade interna “pedido cliente juridico”. |
+| `riscoPrazoJuridico` | 4149 | interna | Executa a responsabilidade interna “risco prazo juridico”. |
+| `documentosEssenciaisJuridico` | 4158 | interna | Executa a responsabilidade interna “documentos essenciais juridico”. |
+| `proximaEtapaConfirmacao` | 4165 | interna | Executa a responsabilidade interna “proxima etapa confirmacao”. |
+| `calcularStageAposAgendamento` | 4173 | interna | Calcula stage apos agendamento. |
+| `atualizarEstadoConsultaUsuario` | 4180 | interna | Atualiza estado consulta usuario. |
+| `localizarUsuarioAgendamento` | 4190 | interna | Executa a responsabilidade interna “localizar usuario agendamento”. |
+| `localizarUsuarioReengajamento` | 4225 | interna | Executa a responsabilidade interna “localizar usuario reengajamento”. |
+| `telefoneCandidatoReengajamento` | 4241 | interna | Executa a responsabilidade interna “telefone candidato reengajamento”. |
+| `candidateReasonsReengajamento` | 4258 | interna | Executa a responsabilidade interna “candidate reasons reengajamento”. |
+| `montarCandidatoReengajamento` | 4274 | interna | Monta candidato reengajamento. |
+| `adicionarCandidatoReengajamento` | 4289 | interna | Executa a responsabilidade interna “adicionar candidato reengajamento”. |
+| `lerUsersPersistidosParaReengajamento` | 4298 | interna | Executa a responsabilidade interna “ler users persistidos para reengajamento”. |
+| `descobrirCandidatosReengajamento` | 4311 | interna | Executa a responsabilidade interna “descobrir candidatos reengajamento”. |
+| `criarContextoReengajamentoTemplate` | 4326 | interna | Cria contexto reengajamento template. |
+| `validarJanelaEnvioReengajamento` | 4344 | interna | Valida janela envio reengajamento. |
+| `validarScheduledForReengajamento` | 4360 | interna | Valida scheduled for reengajamento. |
+| `validarExpiracaoReengajamento` | 4380 | interna | Valida expiracao reengajamento. |
+| `enviarJobReengajamento` | 4398 | interna | Envia job reengajamento. |
+| `validarCadenciaReengajamento` | 4423 | interna | Valida cadencia reengajamento. |
+| `registrarEnvioReengajamento` | 4433 | interna | Registra envio reengajamento. |
+| `tipoLembreteConsultaValido` | 4441 | interna | Executa a responsabilidade interna “tipo lembrete consulta valido”. |
+| `calcularAlvoLembreteConsulta` | 4445 | interna | Calcula alvo lembrete consulta. |
+| `validarJanelaEnvioLembreteConsulta` | 4457 | interna | Valida janela envio lembrete consulta. |
+| `criarContextoConsultaTemplate` | 4483 | interna | Cria contexto consulta template. |
+| `liberarAgendamentoERecalcularStage` | 4505 | interna | Executa a responsabilidade interna “liberar agendamento erecalcular stage”. |
+| `labelStageAdmin` | 4573 | interna | Executa a responsabilidade interna “label stage admin”. |
+| `montarNotificacaoCancelamentoClienteAdmin` | 4652 | interna | Monta notificacao cancelamento cliente admin. |
+| `normalizarItemAdminLocal` | 4679 | interna | Normaliza item admin local. |
+| `hsAdminContarNegociosPorStages` | 4714 | interna | Executa a responsabilidade interna “hs admin contar negocios por stages”. |
+| `hsAdminBuscarContatoDoNegocio` | 4727 | interna | Executa a responsabilidade interna “hs admin buscar contato do negocio”. |
+| `hsAdminBuscarDadosDoNegocio` | 4758 | interna | Executa a responsabilidade interna “hs admin buscar dados do negocio”. |
+| `hidratarDadosContatoAdmin` | 4785 | interna | Executa a responsabilidade interna “hidratar dados contato admin”. |
+| `hsAdminBuscarNegociosPorStages` | 4808 | interna | Executa a responsabilidade interna “hs admin buscar negocios por stages”. |
+| `hsAdminBuscarTodosNegociosPorStages` | 4879 | interna | Executa a responsabilidade interna “hs admin buscar todos negocios por stages”. |
+| `hsAdminBuscarNegociosDireto` | 4911 | interna | Executa a responsabilidade interna “hs admin buscar negocios direto”. |
+| `deduplicarDealsAdmin` | 4945 | interna | Executa a responsabilidade interna “deduplicar deals admin”. |
+| `hsAdminBuscarDealsPorNumeroCaso` | 4949 | interna | Executa a responsabilidade interna “hs admin buscar deals por numero caso”. |
+| `confirmarVinculoPosHumanoHubSpot` | 4968 | interna | Executa a responsabilidade interna “confirmar vinculo pos humano hub spot”. |
+| `hsAdminBuscarContatosPorNome` | 4987 | interna | Executa a responsabilidade interna “hs admin buscar contatos por nome”. |
+| `hsAdminBuscarContatosPorTelefone` | 5000 | interna | Executa a responsabilidade interna “hs admin buscar contatos por telefone”. |
+| `cpfValidoConsultaAdmin` | 5020 | interna | Executa a responsabilidade interna “cpf valido consulta admin”. |
+| `classificarConsultaCasoAdmin` | 5032 | interna | Classifica consulta caso admin. |
+| `hsAdminListarDealsDosContatosEstrito` | 5043 | interna | Executa a responsabilidade interna “hs admin listar deals dos contatos estrito”. |
+| `resolverConsultaCasoAdmin` | 5049 | interna | Resolve consulta caso admin. |
+| `mapearComLimite` | 5084 | interna | Executa a responsabilidade interna “mapear com limite”. |
+| `worker` | 5090 | interna | Executa a responsabilidade interna “worker”. |
+| `reconciliarTituloNegocioHubSpotAdmin` | 5101 | interna | Executa a responsabilidade interna “reconciliar titulo negocio hub spot admin”. |
+| `hsAdminItensPorStages` | 5129 | interna | Executa a responsabilidade interna “hs admin itens por stages”. |
+| `hsAdminItemPorDealId` | 5142 | interna | Executa a responsabilidade interna “hs admin item por deal id”. |
+| `adminItensAtivosHubSpot` | 5167 | interna | Executa a responsabilidade interna “admin itens ativos hub spot”. |
+| `adminFonteCasos` | 5172 | interna | Executa a responsabilidade interna “admin fonte casos”. |
+| `adminResumoOperacional` | 5191 | interna | Executa a responsabilidade interna “admin resumo operacional”. |
+| `gerarAlertasOperacionaisAdmin` | 5243 | interna | Gera alertas operacionais admin. |
+| `maiorAlertaOperacionalAdmin` | 5307 | interna | Executa a responsabilidade interna “maior alerta operacional admin”. |
+| `gerarResumoDiarioOperacional` | 5311 | interna | Gera resumo diario operacional. |
+| `ordenarPorRisco` | 5326 | interna | Executa a responsabilidade interna “ordenar por risco”. |
+| `chaveResumo` | 5361 | interna | Executa a responsabilidade interna “chave resumo”. |
+| `usuariosAdminOrdenados` | 5404 | interna | Executa a responsabilidade interna “usuarios admin ordenados”. |
+| `salvarListaCasosAdmin` | 5411 | interna | Salva lista casos admin. |
+| `obterCasoAdmin` | 5431 | interna | Obtém caso admin. |
+| `prepararSessaoClienteAcaoAdmin` | 5445 | interna | Executa a responsabilidade interna “preparar sessao cliente acao admin”. |
+| `chaveCasoAdmin` | 5474 | interna | Executa a responsabilidade interna “chave caso admin”. |
+| `limparRevisoesCasosAdmin` | 5486 | interna | Executa a responsabilidade interna “limpar revisoes casos admin”. |
+| `obterRevisaoCasoAdmin` | 5493 | interna | Obtém revisao caso admin. |
+| `casoAdminRevisado` | 5500 | interna | Executa a responsabilidade interna “caso admin revisado”. |
+| `marcarCasoAdminRevisado` | 5504 | interna | Marca caso admin revisado. |
+| `motivoPrioridadeAdmin` | 5516 | interna | Executa a responsabilidade interna “motivo prioridade admin”. |
+| `scorePrioridadeAdmin` | 5521 | interna | Executa a responsabilidade interna “score prioridade admin”. |
+| `gerarPrioridadesAdmin` | 5525 | interna | Gera prioridades admin. |
+| `hidratarNomesPrioridadesAdmin` | 5542 | interna | Executa a responsabilidade interna “hidratar nomes prioridades admin”. |
+| `hidratarNomesCasosNumeradosAdmin` | 5550 | interna | Executa a responsabilidade interna “hidratar nomes casos numerados admin”. |
+| `nomePrioridadeAdmin` | 5559 | interna | Executa a responsabilidade interna “nome prioridade admin”. |
+| `resolverTelefoneInterfaceAdmin` | 5565 | interna | Resolve telefone interface admin. |
+| `linhaPrioridadeAdmin` | 5570 | interna | Executa a responsabilidade interna “linha prioridade admin”. |
+| `textoDetalheCasoAdmin` | 5590 | interna | Executa a responsabilidade interna “texto detalhe caso admin”. |
+| `telaAdminPrincipal` | 5655 | interna | Executa a responsabilidade interna “tela admin principal”. |
+| `iniciarConsultaCasoAdmin` | 5696 | interna | Inicia consulta caso admin. |
+| `encerrarConsultaPendenteAdmin` | 5722 | interna | Encerra consulta pendente admin. |
+| `encerrarAcaoCasoPendenteAdmin` | 5729 | interna | Encerra acao caso pendente admin. |
+| `executarConsultaCasoAdmin` | 5736 | interna | Executa consulta caso admin. |
+| `iniciarComplementacaoCasoAdmin` | 5795 | interna | Inicia complementacao caso admin. |
+| `executarComplementacaoCasoAdmin` | 5823 | interna | Executa complementacao caso admin. |
+| `iniciarEnvioDocumentoCasoAdmin` | 5860 | interna | Inicia envio documento caso admin. |
+| `executarDocumentoCasoSelecionadoAdmin` | 5874 | interna | Executa documento caso selecionado admin. |
+| `iniciarAgendamentoCasoAdmin` | 5935 | interna | Inicia agendamento caso admin. |
+| `executarAgendamentoCasoAdmin` | 5951 | interna | Executa agendamento caso admin. |
+| `telaAdminPrioridades` | 5971 | interna | Executa a responsabilidade interna “tela admin prioridades”. |
+| `telaAdminCasos` | 6056 | interna | Executa a responsabilidade interna “tela admin casos”. |
+| `telaAdminAlertas` | 6084 | interna | Executa a responsabilidade interna “tela admin alertas”. |
+| `telaAdminListaCasos` | 6121 | interna | Executa a responsabilidade interna “tela admin lista casos”. |
+| `telaAdminFalhaHubSpot` | 6169 | interna | Executa a responsabilidade interna “tela admin falha hub spot”. |
+| `telaAdminCasosNovos` | 6177 | interna | Executa a responsabilidade interna “tela admin casos novos”. |
+| `filtro` | 6179 | interna | Executa a responsabilidade interna “filtro”. |
+| `telaAdminCasosAnalise` | 6186 | interna | Executa a responsabilidade interna “tela admin casos analise”. |
+| `telaAdminCasosDocumentos` | 6198 | interna | Executa a responsabilidade interna “tela admin casos documentos”. |
+| `telaAdminCasosAtivos` | 6207 | interna | Executa a responsabilidade interna “tela admin casos ativos”. |
+| `telaAdminAlertasUrgentes` | 6217 | interna | Executa a responsabilidade interna “tela admin alertas urgentes”. |
+| `telaAdminAlertasSemResposta` | 6226 | interna | Executa a responsabilidade interna “tela admin alertas sem resposta”. |
+| `telaAdminAlertasDocs` | 6238 | interna | Executa a responsabilidade interna “tela admin alertas docs”. |
+| `telaAdminAlertasAgenda` | 6247 | interna | Executa a responsabilidade interna “tela admin alertas agenda”. |
+| `telaAdminResumoDiario` | 6252 | interna | Executa a responsabilidade interna “tela admin resumo diario”. |
+| `telaDetalheCasoAdmin` | 6268 | pública | Executa a responsabilidade interna “tela detalhe caso admin”. |
+| `montarTela` | 6300 | interna | Monta tela. |
+| `botaoVoltarCasoAdmin` | 6319 | interna | Executa a responsabilidade interna “botao voltar caso admin”. |
+| `formatarCpfAdmin` | 6324 | pública | Formata cpf admin. |
+| `sincronizarCofreCasoSegura` | 6330 | interna | Executa a responsabilidade interna “sincronizar cofre caso segura”. |
+| `sincronizarNegocio` | 6348 | interna | Executa a responsabilidade interna “sincronizar negocio”. |
+| `telaCredenciaisCasoAdmin` | 6354 | pública | Executa a responsabilidade interna “tela credenciais caso admin”. |
+| `telaDocumentosCasoAdmin` | 6390 | interna | Executa a responsabilidade interna “tela documentos caso admin”. |
+| `telaComunicacaoCasoAdmin` | 6417 | interna | Executa a responsabilidade interna “tela comunicacao caso admin”. |
+| `confirmarPedidoDocumentosAdmin` | 6433 | interna | Executa a responsabilidade interna “confirmar pedido documentos admin”. |
+| `confirmarLembreteCasoAdmin` | 6457 | interna | Executa a responsabilidade interna “confirmar lembrete caso admin”. |
+| `telaRevisaoDocumentalAdmin` | 6471 | interna | Executa a responsabilidade interna “tela revisao documental admin”. |
+| `aplicarRevisaoDocumentalAdmin` | 6510 | interna | Aplica revisao documental admin. |
+| `telaPreferenciaComunicacaoAdmin` | 6546 | interna | Executa a responsabilidade interna “tela preferencia comunicacao admin”. |
+| `atualizarPreferenciaComunicacaoAdmin` | 6561 | interna | Atualiza preferencia comunicacao admin. |
+| `telaLinksCasoAdmin` | 6568 | interna | Executa a responsabilidade interna “tela links caso admin”. |
+| `marcarCasoRevisadoAdmin` | 6602 | interna | Marca caso revisado admin. |
+| `preferenciaAudioSempreCanonica` | 6637 | interna | Executa a responsabilidade interna “preferencia audio sempre canonica”. |
+| `chaveAtivaAudioPedidoDocumentos` | 6647 | interna | Executa a responsabilidade interna “chave ativa audio pedido documentos”. |
+| `consumirPendenciaAudioPedidoDocumentos` | 6654 | interna | Executa a responsabilidade interna “consumir pendencia audio pedido documentos”. |
+| `pedirDocsCasoAdmin` | 6694 | interna | Executa a responsabilidade interna “pedir docs caso admin”. |
+| `marcarCasoUrgenteAdmin` | 6800 | interna | Marca caso urgente admin. |
+| `enviarAnaliseCasoAdmin` | 6855 | interna | Envia analise caso admin. |
+| `enviarLembreteCasoAdmin` | 6901 | interna | Envia lembrete caso admin. |
+| `resumoConsultaAdmin` | 6960 | interna | Executa a responsabilidade interna “resumo consulta admin”. |
+| `obterConsultasAtivasAdmin` | 6968 | interna | Obtém consultas ativas admin. |
+| `telaConsultasAdmin` | 7011 | interna | Executa a responsabilidade interna “tela consultas admin”. |
+| `obterItemAdmin` | 7043 | interna | Obtém item admin. |
+| `telaDetalheConsultaAdmin` | 7057 | interna | Executa a responsabilidade interna “tela detalhe consulta admin”. |
+| `telaConfirmarCancelamentoAdmin` | 7103 | interna | Executa a responsabilidade interna “tela confirmar cancelamento admin”. |
+| `cancelarConsultaAdmin` | 7141 | interna | Cancela consulta admin. |
+| `obterConsultaAtivaCliente` | 7220 | interna | Obtém consulta ativa cliente. |
+| `cancelarEventoConsultaUsuario` | 7250 | interna | Cancela evento consulta usuario. |
+| `processarAdminWhatsApp` | 7292 | interna | Processa admin whats app. |
+| `detalharErroHubspot` | 7625 | interna | Executa a responsabilidade interna “detalhar erro hubspot”. |
+| `capturarLeadIncompleto` | 7629 | interna | Executa a responsabilidade interna “capturar lead incompleto”. |
+| `getCalendar` | 7791 | interna | Executa a responsabilidade interna “get calendar”. |
+| `baixarMidia` | 7801 | interna | Executa a responsabilidade interna “baixar midia”. |
+| `textoAudioConfirmacaoDados` | 7850 | interna | Executa a responsabilidade interna “texto audio confirmacao dados”. |
+| `enviarTelaImagemOuTexto` | 7862 | interna | Envia tela imagem ou texto. |
+| `enviarGuiaDocs` | 7888 | interna | Envia guia docs. |
+| `responderTelaDocumento` | 7910 | interna | Responde tela documento. |
+| `enviarIntroDocumentos` | 7918 | interna | Envia intro documentos. |
+| `telaTiposDocumentosComplementares` | 7950 | interna | Executa a responsabilidade interna “tela tipos documentos complementares”. |
+| `telaAguardarDocumentoComplementar` | 7965 | interna | Executa a responsabilidade interna “tela aguardar documento complementar”. |
+| `telaFinalizarDocumentosComplementares` | 7979 | interna | Executa a responsabilidade interna “tela finalizar documentos complementares”. |
+| `prepararFluxoResumoOutro` | 7995 | interna | Executa a responsabilidade interna “preparar fluxo resumo outro”. |
+| `uploadDocumentoCano` | 8009 | interna | Executa a responsabilidade interna “upload documento cano”. |
+| `pastaUploadDocumento` | 8031 | interna | Executa a responsabilidade interna “pasta upload documento”. |
+| `detectarEncerramentoPorAudio` | 8037 | interna | Detecta encerramento por audio. |
+| `finalizarCadastro` | 8058 | interna | Executa a responsabilidade interna “finalizar cadastro”. |
+| `finalizarCadastroAssistidoAdmin` | 8341 | interna | Executa a responsabilidade interna “finalizar cadastro assistido admin”. |
+| `tela_confirmacao` | 8365 | interna | Executa a responsabilidade interna “tela confirmacao”. |
+| `telaConfirmacaoComImagem` | 8409 | interna | Executa a responsabilidade interna “tela confirmacao com imagem”. |
+| `voltarParaConfirmacao` | 8429 | interna | Executa a responsabilidade interna “voltar para confirmacao”. |
+| `limparCorrecaoPendente` | 8448 | interna | Executa a responsabilidade interna “limpar correcao pendente”. |
+| `pedirCampoCorrecao` | 8455 | interna | Executa a responsabilidade interna “pedir campo correcao”. |
+| `reabrirCorrecaoPendente` | 8472 | interna | Executa a responsabilidade interna “reabrir correcao pendente”. |
+| `responderFalhaAudioCorrecao` | 8525 | interna | Responde falha audio correcao. |
+| `textoAudioConfirmacaoNome` | 8536 | interna | Executa a responsabilidade interna “texto audio confirmacao nome”. |
+| `prepararConfirmacaoCorrecao` | 8543 | interna | Executa a responsabilidade interna “preparar confirmacao correcao”. |
+| `aplicarCorrecaoPendente` | 8599 | interna | Aplica correcao pendente. |
+| `horarioAindaPodeSerAgendado` | 8671 | interna | Executa a responsabilidade interna “horario ainda pode ser agendado”. |
+| `iniciarAgendamento` | 8679 | interna | Inicia agendamento. |
+| `telaAdvogadoCliente` | 8729 | interna | Executa a responsabilidade interna “tela advogado cliente”. |
+| `deveEnviarAudioAutomatico` | 8740 | interna | Executa a responsabilidade interna “deve enviar audio automatico”. |
+| `enviarAudio` | 8763 | interna | Envia audio. |
+| `enviarAudioModoVoz` | 8768 | interna | Envia audio modo voz. |
+| `aplicarEmojiTelaCliente` | 8786 | interna | Aplica emoji tela cliente. |
+| `ehContatoAdmin` | 8796 | interna | Determina se contato admin. |
+| `enviarAudioAutomaticoTela` | 8802 | interna | Envia audio automatico tela. |
+| `responderTelaComAudio` | 8815 | interna | Responde tela com audio. |
+| `saudacaoPorHorarioCliente` | 8820 | interna | Executa a responsabilidade interna “saudacao por horario cliente”. |
+| `saudacaoGenero` | 8846 | interna | Executa a responsabilidade interna “saudacao genero”. |
+| `menuClienteComAudio` | 8849 | interna | Executa a responsabilidade interna “menu cliente com audio”. |
+| `apresentarMenuClientePosHumano` | 8910 | interna | Executa a responsabilidade interna “apresentar menu cliente pos humano”. |
+| `abrirSelecaoCasoParaAcao` | 8918 | interna | Executa a responsabilidade interna “abrir selecao caso para acao”. |
+| `executarAcaoPendenteCliente` | 8937 | interna | Executa acao pendente cliente. |
+| `telaAdvogadoClienteComAudio` | 8949 | interna | Executa a responsabilidade interna “tela advogado cliente com audio”. |
+| `telaStatusCliente` | 8955 | interna | Executa a responsabilidade interna “tela status cliente”. |
+| `telaConfirmarCancelamentoConsultaCliente` | 9068 | interna | Executa a responsabilidade interna “tela confirmar cancelamento consulta cliente”. |
+| `cancelarConsultaCliente` | 9098 | interna | Cancela consulta cliente. |
+| `confirmarAberturaNovoCasoCliente` | 9156 | interna | Executa a responsabilidade interna “confirmar abertura novo caso cliente”. |
+| `abrirNovoCasoCliente` | 9175 | interna | Executa a responsabilidade interna “abrir novo caso cliente”. |
+| `iniciarMensagemUrgenteCliente` | 9211 | interna | Inicia mensagem urgente cliente. |
+| `gerarConfortoUrgenteCliente` | 9229 | interna | Gera conforto urgente cliente. |
+| `respostaUrgenteRegistradaComAudio` | 9259 | interna | Executa a responsabilidade interna “resposta urgente registrada com audio”. |
+| `aproveitarRelatoAudioClienteNovoCaso` | 9278 | interna | Executa a responsabilidade interna “aproveitar relato audio cliente novo caso”. |
+| `proximaEtapaNovoCasoClienteAposModo` | 9296 | interna | Executa a responsabilidade interna “proxima etapa novo caso cliente apos modo”. |
+| `executarIntencaoDetectadaCliente` | 9349 | interna | Executa intencao detectada cliente. |
+| `executarIntencaoCliente` | 9357 | interna | Executa intencao cliente. |
+| `sairContextoDocumentosCliente` | 9424 | interna | Executa a responsabilidade interna “sair contexto documentos cliente”. |
+| `responderComTimer` | 9435 | interna | Responde com timer. |
+| `telaDescreverCaso` | 9440 | interna | Executa a responsabilidade interna “tela descrever caso”. |
+| `telaConfirmarUrgente` | 9450 | interna | Executa a responsabilidade interna “tela confirmar urgente”. |
+| `telaConfirmarUrgenteComAudio` | 9457 | interna | Executa a responsabilidade interna “tela confirmar urgente com audio”. |
+| `deveOferecerExplicarTudo` | 9472 | interna | Executa a responsabilidade interna “deve oferecer explicar tudo”. |
+| `prepararOfertaExplicarTudoFinal` | 9478 | interna | Executa a responsabilidade interna “preparar oferta explicar tudo final”. |
+| `iniciarConfirmacaoDescricao` | 9487 | interna | Inicia confirmacao descricao. |
+| `respostaAposConfirmarDescricao` | 9502 | interna | Executa a responsabilidade interna “resposta apos confirmar descricao”. |
+| `flowInicio` | 9533 | interna | Executa a responsabilidade interna “flow inicio”. |
+| `flowInicioRetorno` | 9555 | interna | Executa a responsabilidade interna “flow inicio retorno”. |
+| `obterStageRetomadaOriginal` | 9573 | pública | Obtém stage retomada original. |
+| `obterCamposResumo` | 9592 | interna | Obtém campos resumo. |
+| `formatarResumoValor` | 9594 | interna | Formata resumo valor. |
+| `possuiResumoValido` | 9618 | interna | Executa a responsabilidade interna “possui resumo valido”. |
+| `flowMenuCorrecaoRetomada` | 9636 | interna | Executa a responsabilidade interna “flow menu correcao retomada”. |
+| `flowRetomadaAutomatica` | 9672 | interna | Executa a responsabilidade interna “flow retomada automatica”. |
+| `flowRetomadaMenu` | 9700 | pública | Executa a responsabilidade interna “flow retomada menu”. |
+| `flowResumoRetomada` | 9728 | interna | Executa a responsabilidade interna “flow resumo retomada”. |
+| `flowResumoAtendimento` | 9799 | interna | Executa a responsabilidade interna “flow resumo atendimento”. |
+| `reiniciarFluxoRetomada` | 9825 | interna | Executa a responsabilidade interna “reiniciar fluxo retomada”. |
+| `respostaOpcaoInvalidaRetomada` | 9847 | interna | Executa a responsabilidade interna “resposta opcao invalida retomada”. |
+| `responderImprevistoPreAtendimento` | 9859 | interna | Responde imprevisto pre atendimento. |
+| `redirecionarCorrecaoPreAtendimento` | 9939 | interna | Executa a responsabilidade interna “redirecionar correcao pre atendimento”. |
+| `jaTemDadosParaConfirmacao` | 9946 | interna | Executa a responsabilidade interna “ja tem dados para confirmacao”. |
+| `irParaEditar` | 9949 | interna | Executa a responsabilidade interna “ir para editar”. |
+| `tratarImprevistoPreAtendimento` | 10087 | interna | Executa a responsabilidade interna “tratar imprevisto pre atendimento”. |
+| `tratarIntervencaoPreAtendimento` | 10112 | interna | Executa a responsabilidade interna “tratar intervencao pre atendimento”. |
+| `conduzirPreAtendimentoIA` | 10159 | interna | Executa a responsabilidade interna “conduzir pre atendimento ia”. |
+| `flowAcolhimentoCidade` | 10272 | interna | Executa a responsabilidade interna “flow acolhimento cidade”. |
+| `flowAcolhimentoConfirmaWhatsapp` | 10312 | interna | Executa a responsabilidade interna “flow acolhimento confirma whatsapp”. |
+| `telaEsclarecimentoConfuso` | 10361 | interna | Executa a responsabilidade interna “tela esclarecimento confuso”. |
+| `flowNome` | 10391 | interna | Executa a responsabilidade interna “flow nome”. |
+| `flowCidade` | 10395 | interna | Executa a responsabilidade interna “flow cidade”. |
+| `flowDescricao` | 10399 | interna | Executa a responsabilidade interna “flow descricao”. |
+| `flowDocumentos` | 10416 | interna | Executa a responsabilidade interna “flow documentos”. |
+| `flowDescConfirma` | 10420 | interna | Executa a responsabilidade interna “flow desc confirma”. |
+| `flowConfirmacao` | 10451 | interna | Executa a responsabilidade interna “flow confirmacao”. |
+| `flowCliente` | 10470 | interna | Executa a responsabilidade interna “flow cliente”. |
+| `flowConfirmarEntrada` | 10480 | interna | Executa a responsabilidade interna “flow confirmar entrada”. |
+| `flowNovoCasoConfirma` | 10506 | interna | Executa a responsabilidade interna “flow novo caso confirma”. |
+| `flowColetaTelOutro` | 10525 | interna | Executa a responsabilidade interna “flow coleta tel outro”. |
+| `flowColetaTelWpp` | 10530 | interna | Executa a responsabilidade interna “flow coleta tel wpp”. |
+| `flowColetaTelWppContato` | 10536 | interna | Executa a responsabilidade interna “flow coleta tel wpp contato”. |
+| `flowDescErroTranscricao` | 10556 | interna | Executa a responsabilidade interna “flow desc erro transcricao”. |
+| `flowAguardandoUrgente` | 10566 | interna | Executa a responsabilidade interna “flow aguardando urgente”. |
+| `flowUrgenteAudioErroTranscricao` | 10571 | interna | Executa a responsabilidade interna “flow urgente audio erro transcricao”. |
+| `flowUrgenteAudioConfirma` | 10576 | interna | Executa a responsabilidade interna “flow urgente audio confirma”. |
+| `flowAudioFluxoConfirma` | 10581 | interna | Executa a responsabilidade interna “flow audio fluxo confirma”. |
+| `flowAudioConfirmarDados` | 10586 | interna | Executa a responsabilidade interna “flow audio confirmar dados”. |
+| `flowAudioConfirmarTranscricao` | 10601 | interna | Executa a responsabilidade interna “flow audio confirmar transcricao”. |
+| `flowAudioConfirmarAreaCanal` | 10614 | interna | Executa a responsabilidade interna “flow audio confirmar area canal”. |
+| `flowMenuCorrecao` | 10627 | interna | Executa a responsabilidade interna “flow menu correcao”. |
+| `flowCorrigirValor` | 10644 | interna | Executa a responsabilidade interna “flow corrigir valor”. |
+| `flowCorrigirUf` | 10651 | interna | Executa a responsabilidade interna “flow corrigir uf”. |
+| `flowCorrigirSel` | 10656 | interna | Executa a responsabilidade interna “flow corrigir sel”. |
+| `flowConfirmarCorrecao` | 10664 | interna | Executa a responsabilidade interna “flow confirmar correcao”. |
+| `flowRetomadaFallback` | 10671 | interna | Executa a responsabilidade interna “flow retomada fallback”. |
+| `flowAssessoriaInicial` | 10689 | interna | Executa a responsabilidade interna “flow assessoria inicial”. |
+| `limparLinhaComentario` | 10732 | interna | Executa a responsabilidade interna “limpar linha comentario”. |
+| `obterNomeFlow` | 10864 | interna | Obtém nome flow. |
+| `executarFlowSeguro` | 10868 | interna | Executa flow seguro. |
+| `retomarFluxo` | 10886 | interna | Executa a responsabilidade interna “retomar fluxo”. |
+| `processarRetomadaOuReinicio` | 10931 | pública | Processa retomada ou reinicio. |
+| `verificarRetomadaAutomatica` | 11191 | interna | Verifica retomada automatica. |
+| `tentarRestaurarClienteHubSpotParaMenu` | 11272 | interna | Executa a responsabilidade interna “tentar restaurar cliente hub spot para menu”. |
+| `processarAnaliseDocumentalSegura` | 11300 | interna | Processa analise documental segura. |
+| `rotulosDocumentosCaso` | 11335 | interna | Executa a responsabilidade interna “rotulos documentos caso”. |
+| `rotulosDocumentosComplementares` | 11345 | interna | Executa a responsabilidade interna “rotulos documentos complementares”. |
+| `sincronizarNotaAnaliseCasoSegura` | 11354 | interna | Executa a responsabilidade interna “sincronizar nota analise caso segura”. |
+| `reconciliarFormatoNotasAnaliseHubSpot` | 11406 | interna | Executa a responsabilidade interna “reconciliar formato notas analise hub spot”. |
+| `reconciliarCofresCasosAtivosHubSpot` | 11455 | interna | Executa a responsabilidade interna “reconciliar cofres casos ativos hub spot”. |
+| `dependenciasReavaliacaoDocumentalPosHumana` | 11509 | interna | Executa a responsabilidade interna “dependencias reavaliacao documental pos humana”. |
+| `sincronizarDecisaoDocumentalCanonicaHubSpotSeguro` | 11527 | interna | Executa a responsabilidade interna “sincronizar decisao documental canonica hub spot seguro”. |
+| `confirmarDocumentoCanonicoSeguro` | 11578 | interna | Executa a responsabilidade interna “confirmar documento canonico seguro”. |
+| `consolidarDocumentosDoCasoSeguro` | 11614 | interna | Executa a responsabilidade interna “consolidar documentos do caso seguro”. |
+| `registrarDocumentoNoCicloPosHumano` | 11628 | interna | Registra documento no ciclo pos humano. |
+| `processarMidia` | 11649 | interna | Processa midia. |
+| `proximaConfirmacaoProgressiva` | 12045 | interna | Executa a responsabilidade interna “proxima confirmacao progressiva”. |
+| `textoComIntroducaoAudio` | 12050 | interna | Executa a responsabilidade interna “texto com introducao audio”. |
+| `processarAudioCanalAtendimento` | 12193 | interna | Processa audio canal atendimento. |
+| `adaptarTextoAudioCadastral` | 12289 | interna | Executa a responsabilidade interna “adaptar texto audio cadastral”. |
+| `transcreverAudioRespostaCadastral` | 12319 | interna | Executa a responsabilidade interna “transcrever audio resposta cadastral”. |
+| `processarAudioNoFluxo` | 12331 | interna | Processa audio no fluxo. |
+| `processarUrgenciaOuCorrecao` | 12417 | interna | Processa urgencia ou correcao. |
+| `processarInterno` | 13444 | pública | Processa interno. |
+| `processar` | 17944 | interna | Processa processar. |
+| `drenaFilaUsuario` | 17982 | interna | Executa a responsabilidade interna “drena fila usuario”. |
+| `carregarPendenciasComplementaresPosHumanas` | 18003 | interna | Carrega pendencias complementares pos humanas. |
+| `complementoPosHumanoEstaCompleto` | 18053 | interna | Executa a responsabilidade interna “complemento pos humano esta completo”. |
+| `criarVerificadorCompletudePosHumana` | 18062 | interna | Cria verificador completude pos humana. |
+| `criarDispatcherPosHumano` | 18069 | interna | Cria dispatcher pos humano. |
+| `withLegalNomenclature` | 18133 | interna | Executa a responsabilidade interna “with legal nomenclature”. |
+| `processarComLock` | 18305 | interna | Processa com lock. |
+| `arquivoExiste` | 18389 | interna | Executa a responsabilidade interna “arquivo existe”. |
+| `dataModificacaoArquivo` | 18394 | interna | Executa a responsabilidade interna “data modificacao arquivo”. |
+| `resumirCallbackIdempotency` | 18403 | interna | Executa a responsabilidade interna “resumir callback idempotency”. |
+| `resumirWebhookInbox` | 18427 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
+| `agruparUltimosErrosPorCategoria` | 18448 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
+| `montarHealthInternoOperacional` | 18456 | interna | Monta health interno operacional. |
+| `processarMensagemWebhook` | 18520 | interna | Processa mensagem webhook. |
+| `drenarWebhookInbox` | 18558 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
+| `postRotaInterna` | 19402 | interna | Executa a responsabilidade interna “post rota interna”. |
+| `planejarConsultasNoAgendador` | 19418 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
+| `planejarReengajamentosNoAgendador` | 19466 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
+| `despacharRotaAgendada` | 19482 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
+| `sincronizarConsultaNoAgendador` | 19511 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
+| `executarAgendadorInterno` | 19535 | interna | Executa agendador interno. |
+| `iniciarServidor` | 19602 | pública | Inicia servidor. |
 
 ## `src/adapters/drive-single-case-adapter.js`
 
@@ -1341,11 +1342,12 @@ Regra de domínio: client menu ui.
 | `textoAudioCasosCliente` | 46 | pública | Executa a responsabilidade interna “texto audio casos cliente”. |
 | `textoAudioResumoCasosCliente` | 53 | pública | Executa a responsabilidade interna “texto audio resumo casos cliente”. |
 | `deveMostrarBoasVindasMenuCliente` | 59 | pública | Executa a responsabilidade interna “deve mostrar boas vindas menu cliente”. |
-| `textoAudioSelecaoCaso` | 64 | pública | Executa a responsabilidade interna “texto audio selecao caso”. |
-| `resumoCasoMenuCliente` | 72 | pública | Executa a responsabilidade interna “resumo caso menu cliente”. |
-| `montarCasosMenuCliente` | 111 | pública | Monta casos menu cliente. |
-| `montarPainelCasosCliente` | 142 | pública | Monta painel casos cliente. |
-| `menuCliente` | 175 | pública | Executa a responsabilidade interna “menu cliente”. |
+| `deveAgruparSaudacaoClienteRecente` | 64 | pública | Executa a responsabilidade interna “deve agrupar saudacao cliente recente”. |
+| `textoAudioSelecaoCaso` | 77 | pública | Executa a responsabilidade interna “texto audio selecao caso”. |
+| `resumoCasoMenuCliente` | 85 | pública | Executa a responsabilidade interna “resumo caso menu cliente”. |
+| `montarCasosMenuCliente` | 124 | pública | Monta casos menu cliente. |
+| `montarPainelCasosCliente` | 155 | pública | Monta painel casos cliente. |
+| `menuCliente` | 188 | pública | Executa a responsabilidade interna “menu cliente”. |
 
 ## `src/domain/client-message-builders.js`
 
@@ -1840,6 +1842,14 @@ Regra de domínio: conversation context.
 | `normalizarContextoConversa` | 10 | pública | Normaliza contexto conversa. |
 | `obterContextoConversaAtivo` | 28 | pública | Obtém contexto conversa ativo. |
 | `limparContextoConversa` | 35 | pública | Executa a responsabilidade interna “limpar contexto conversa”. |
+
+## `src/domain/credentials-vault-backfill.js`
+
+Regra de domínio: credentials vault backfill.
+
+| Função | Linha | Visibilidade | Responsabilidade |
+| --- | ---: | --- | --- |
+| `planejarCofresCasosAtivos` | 2 | pública | Executa a responsabilidade interna “planejar cofres casos ativos”. |
 
 ## `src/domain/credentials-vault.js`
 
@@ -2618,33 +2628,49 @@ Regra de domínio: documents ui.
 | `telaConcluido` | 191 | pública | Executa a responsabilidade interna “tela concluido”. |
 | `telaEnvioDoc` | 221 | pública | Executa a responsabilidade interna “tela envio doc”. |
 
+## `src/domain/drive-case-layout.js`
+
+Regra de domínio: drive case layout.
+
+| Função | Linha | Visibilidade | Responsabilidade |
+| --- | ---: | --- | --- |
+| `texto` | 32 | interna | Executa a responsabilidade interna “texto”. |
+| `isCaseFolderName` | 36 | pública | Determina se case folder name. |
+| `isOriginalsFolder` | 40 | pública | Determina se originals folder. |
+| `isLegacyAudioFolder` | 44 | pública | Determina se legacy audio folder. |
+| `isLegacyCategoryFolder` | 48 | pública | Determina se legacy category folder. |
+| `safeFilePart` | 54 | pública | Executa a responsabilidade interna “safe file part”. |
+| `audioFileName` | 62 | pública | Executa a responsabilidade interna “audio file name”. |
+
 ## `src/domain/drive-files.js`
 
 Regra de domínio: drive files.
 
 | Função | Linha | Visibilidade | Responsabilidade |
 | --- | ---: | --- | --- |
-| `getDrive` | 15 | interna | Executa a responsabilidade interna “get drive”. |
-| `detalhesErroDrive` | 21 | pública | Executa a responsabilidade interna “detalhes erro drive”. |
-| `escapeDriveQueryValue` | 29 | pública | Executa a responsabilidade interna “escape drive query value”. |
-| `getNomePastaArea` | 33 | pública | Executa a responsabilidade interna “get nome pasta area”. |
-| `obterOuCriarPastaArea` | 41 | pública | Obtém ou criar pasta area. |
-| `criarPastaCliente` | 72 | pública | Cria pasta cliente. |
-| `uploadDrive` | 147 | pública | Executa a responsabilidade interna “upload drive”. |
-| `obterOuCriarSubpastaDrive` | 172 | pública | Obtém ou criar subpasta drive. |
-| `buscarArquivoDrivePorNome` | 205 | pública | Busca arquivo drive por nome. |
-| `listarArquivosDriveNaPasta` | 224 | pública | Lista arquivos drive na pasta. |
-| `baixarArquivoDrive` | 247 | pública | Executa a responsabilidade interna “baixar arquivo drive”. |
-| `salvarArquivoBinarioDrive` | 258 | pública | Salva arquivo binario drive. |
-| `lerJsonDrive` | 274 | pública | Executa a responsabilidade interna “ler json drive”. |
-| `salvarJsonDrive` | 289 | pública | Salva json drive. |
-| `lerJsonEmSubpastaDrive` | 323 | pública | Executa a responsabilidade interna “ler json em subpasta drive”. |
-| `salvarJsonEmSubpastaDrive` | 331 | pública | Salva json em subpasta drive. |
-| `marcarArquivoDriveSubstituido` | 338 | pública | Marca arquivo drive substituido. |
-| `renomearArquivoDrive` | 358 | pública | Executa a responsabilidade interna “renomear arquivo drive”. |
-| `uploadPastaAudio` | 375 | pública | Executa a responsabilidade interna “upload pasta audio”. |
-| `normalizeDriveFolderResult` | 406 | pública | Executa a responsabilidade interna “normalize drive folder result”. |
-| `salvarAudioTranscritoNoCaso` | 413 | pública | Salva audio transcrito no caso. |
+| `getDrive` | 21 | interna | Executa a responsabilidade interna “get drive”. |
+| `detalhesErroDrive` | 27 | pública | Executa a responsabilidade interna “detalhes erro drive”. |
+| `escapeDriveQueryValue` | 35 | pública | Executa a responsabilidade interna “escape drive query value”. |
+| `getNomePastaArea` | 39 | pública | Executa a responsabilidade interna “get nome pasta area”. |
+| `obterOuCriarPastaArea` | 47 | pública | Obtém ou criar pasta area. |
+| `criarPastaCliente` | 78 | pública | Cria pasta cliente. |
+| `uploadDrive` | 153 | pública | Executa a responsabilidade interna “upload drive”. |
+| `obterOuCriarSubpastaDrive` | 178 | pública | Obtém ou criar subpasta drive. |
+| `buscarSubpastaDrivePorNomes` | 211 | pública | Busca subpasta drive por nomes. |
+| `obterOuCriarPastaOriginaisDrive` | 238 | pública | Obtém ou criar pasta originais drive. |
+| `buscarArquivoDrivePorNome` | 246 | pública | Busca arquivo drive por nome. |
+| `listarArquivosDriveNaPasta` | 265 | pública | Lista arquivos drive na pasta. |
+| `baixarArquivoDrive` | 288 | pública | Executa a responsabilidade interna “baixar arquivo drive”. |
+| `salvarArquivoBinarioDrive` | 299 | pública | Salva arquivo binario drive. |
+| `lerJsonDrive` | 315 | pública | Executa a responsabilidade interna “ler json drive”. |
+| `salvarJsonDrive` | 330 | pública | Salva json drive. |
+| `lerJsonEmSubpastaDrive` | 364 | pública | Executa a responsabilidade interna “ler json em subpasta drive”. |
+| `salvarJsonEmSubpastaDrive` | 372 | pública | Salva json em subpasta drive. |
+| `marcarArquivoDriveSubstituido` | 379 | pública | Marca arquivo drive substituido. |
+| `renomearArquivoDrive` | 399 | pública | Executa a responsabilidade interna “renomear arquivo drive”. |
+| `uploadPastaAudio` | 416 | pública | Executa a responsabilidade interna “upload pasta audio”. |
+| `normalizeDriveFolderResult` | 445 | pública | Executa a responsabilidade interna “normalize drive folder result”. |
+| `salvarAudioTranscritoNoCaso` | 452 | pública | Salva audio transcrito no caso. |
 
 ## `src/domain/finalization-invariants.js`
 
@@ -2757,22 +2783,24 @@ Regra de domínio: hubspot core.
 | `normalizarTipoContatoHubSpot` | 64 | interna | Normaliza tipo contato hub spot. |
 | `emailValidoHubSpot` | 94 | pública | Executa a responsabilidade interna “email valido hub spot”. |
 | `montarPropsContatoHubSpot` | 102 | pública | Monta props contato hub spot. |
-| `montarPropsAusentesContatoHubSpot` | 157 | pública | Monta props ausentes contato hub spot. |
-| `hsBuscarPorPhone` | 170 | pública | Executa a responsabilidade interna “hs buscar por phone”. |
-| `hsBuscarContatoSeguro` | 199 | pública | Executa a responsabilidade interna “hs buscar contato seguro”. |
-| `hsBuscarPorCpf` | 210 | pública | Executa a responsabilidade interna “hs buscar por cpf”. |
-| `hsCriarContato` | 237 | pública | Executa a responsabilidade interna “hs criar contato”. |
-| `criacao` | 250 | interna | Executa a responsabilidade interna “criacao”. |
-| `hsCriarNegocio` | 279 | pública | Executa a responsabilidade interna “hs criar negocio”. |
-| `hsAssociar` | 323 | pública | Executa a responsabilidade interna “hs associar”. |
-| `filtrarPropsHubSpot` | 333 | pública | Executa a responsabilidade interna “filtrar props hub spot”. |
-| `hsAtualizarContato` | 344 | pública | Executa a responsabilidade interna “hs atualizar contato”. |
-| `hsAtualizarNegocio` | 368 | pública | Executa a responsabilidade interna “hs atualizar negocio”. |
-| `hsCriarNota` | 392 | pública | Executa a responsabilidade interna “hs criar nota”. |
-| `hsCriarNotaNegocio` | 412 | pública | Executa a responsabilidade interna “hs criar nota negocio”. |
-| `hsSincronizarNotaAnalise` | 501 | pública | Executa a responsabilidade interna “hs sincronizar nota analise”. |
-| `hsSincronizarNotaOperacional` | 514 | pública | Executa a responsabilidade interna “hs sincronizar nota operacional”. |
-| `escapeHtml` | 521 | interna | Executa a responsabilidade interna “escape html”. |
+| `variantesTelefoneHubSpot` | 157 | interna | Executa a responsabilidade interna “variantes telefone hub spot”. |
+| `montarPropsAusentesContatoHubSpot` | 170 | pública | Monta props ausentes contato hub spot. |
+| `hsBuscarContatosPorPhone` | 183 | pública | Executa a responsabilidade interna “hs buscar contatos por phone”. |
+| `hsBuscarPorPhone` | 211 | pública | Executa a responsabilidade interna “hs buscar por phone”. |
+| `hsBuscarContatoSeguro` | 226 | pública | Executa a responsabilidade interna “hs buscar contato seguro”. |
+| `hsBuscarPorCpf` | 239 | pública | Executa a responsabilidade interna “hs buscar por cpf”. |
+| `hsCriarContato` | 266 | pública | Executa a responsabilidade interna “hs criar contato”. |
+| `criacao` | 279 | interna | Executa a responsabilidade interna “criacao”. |
+| `hsCriarNegocio` | 308 | pública | Executa a responsabilidade interna “hs criar negocio”. |
+| `hsAssociar` | 352 | pública | Executa a responsabilidade interna “hs associar”. |
+| `filtrarPropsHubSpot` | 362 | pública | Executa a responsabilidade interna “filtrar props hub spot”. |
+| `hsAtualizarContato` | 373 | pública | Executa a responsabilidade interna “hs atualizar contato”. |
+| `hsAtualizarNegocio` | 397 | pública | Executa a responsabilidade interna “hs atualizar negocio”. |
+| `hsCriarNota` | 421 | pública | Executa a responsabilidade interna “hs criar nota”. |
+| `hsCriarNotaNegocio` | 441 | pública | Executa a responsabilidade interna “hs criar nota negocio”. |
+| `hsSincronizarNotaAnalise` | 530 | pública | Executa a responsabilidade interna “hs sincronizar nota analise”. |
+| `hsSincronizarNotaOperacional` | 543 | pública | Executa a responsabilidade interna “hs sincronizar nota operacional”. |
+| `escapeHtml` | 550 | interna | Executa a responsabilidade interna “escape html”. |
 
 ## `src/domain/hubspot-deal-title.js`
 
@@ -2793,6 +2821,14 @@ Regra de domínio: hubspot deal title.
 | `classificacaoTituloNegocio` | 142 | pública | Executa a responsabilidade interna “classificacao titulo negocio”. |
 | `montarTituloNegocioHubSpot` | 164 | pública | Monta titulo negocio hub spot. |
 | `aplicarTituloNegocioHubSpot` | 175 | pública | Aplica titulo negocio hub spot. |
+
+## `src/domain/hubspot-existing-client-resolver.js`
+
+Regra de domínio: hubspot existing client resolver.
+
+| Função | Linha | Visibilidade | Responsabilidade |
+| --- | ---: | --- | --- |
+| `resolverContatoExistenteComCaso` | 2 | pública | Resolve contato existente com caso. |
 
 ## `src/domain/hubspot-sync.js`
 
@@ -4126,11 +4162,12 @@ Utilitário compartilhado: text.
 | `normalizarStageKey` | 6 | pública | Normaliza stage key. |
 | `normalizarTextoGatilho` | 10 | pública | Normaliza texto gatilho. |
 | `ehMensagemEntradaGlobal` | 19 | pública | Determina se mensagem entrada global. |
-| `normalizarNomeCidadeBusca` | 32 | pública | Normaliza nome cidade busca. |
-| `formatarNome` | 43 | pública | Formata nome. |
-| `formatarCidade` | 55 | pública | Formata cidade. |
-| `normalizarTextoCRM` | 62 | pública | Normaliza texto crm. |
-| `limparTextoSomenteLetras` | 75 | pública | Executa a responsabilidade interna “limpar texto somente letras”. |
+| `ehSaudacaoCurta` | 32 | pública | Determina se saudacao curta. |
+| `normalizarNomeCidadeBusca` | 42 | pública | Normaliza nome cidade busca. |
+| `formatarNome` | 53 | pública | Formata nome. |
+| `formatarCidade` | 65 | pública | Formata cidade. |
+| `normalizarTextoCRM` | 72 | pública | Normaliza texto crm. |
+| `limparTextoSomenteLetras` | 85 | pública | Executa a responsabilidade interna “limpar texto somente letras”. |
 
 ## `tts.js`
 

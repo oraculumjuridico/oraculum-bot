@@ -51,6 +51,7 @@ async function main() {
       list: async options => {
         listagens.push(options)
         operacoes.push({ tipo: "list", q: options.q })
+        if (options.q.includes("90 - Áudios do atendimento")) return { data: { files: [] } }
         if (options.q.includes("Novo-Consolidado.pdf")) return { data: { files: [] } }
         if (options.q.includes("Consolidado.pdf")) return { data: { files: [{ id: "pdf-existente", name: "Consolidado.pdf", mimeType: "application/pdf" }] } }
         if (options.pageToken === "pagina-2") return { data: { files: [{ id: "arquivo-2", name: "B.png", mimeType: "image/png", parents: ["pasta-cliente"] }] } }
@@ -133,21 +134,17 @@ async function main() {
     "audio/ogg"
   )
 
-  assert.deepEqual(audio, {
-    id: "arquivo-audio",
-    name: "Audio - Cliente.ogg",
-    webViewLink: "https://drive.google.com/file/d/arquivo-audio/view",
-    folderId: "pasta-audio"
-  })
+  assert.equal(audio.id, "arquivo-audio")
+  assert.equal(audio.webViewLink, "https://drive.google.com/file/d/arquivo-audio/view")
+  assert.equal(audio.folderId, "pasta-audio")
+  assert.match(audio.name, /^Áudio - Cliente - Audio Geral - \d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.ogg$/)
   assert.deepEqual(criacoes[1].requestBody, {
-    name: "Áudios - Audio Geral",
+    name: "90 - Áudios do atendimento",
     mimeType: "application/vnd.google-apps.folder",
     parents: ["pasta-cliente"]
   })
-  assert.deepEqual(criacoes[2].requestBody, {
-    name: "Audio - Cliente.ogg",
-    parents: ["pasta-audio"]
-  })
+  assert.equal(criacoes[2].requestBody.name, audio.name)
+  assert.deepEqual(criacoes[2].requestBody.parents, ["pasta-audio"])
   assert.equal("directDownloadUrl" in audio, false)
   assert.equal(permissoesCriadas, 0)
 
