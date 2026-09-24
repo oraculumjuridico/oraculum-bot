@@ -134,6 +134,18 @@ const MANAGED_DEAL_PROPERTIES = new Set([
   ,"oraculum_next_action"
   ,"oraculum_review_reasons"
   ,"oraculum_third_parties"
+  ,"oraculum_finance_applies"
+  ,"oraculum_finance_status"
+  ,"oraculum_finance_agreement_type"
+  ,"oraculum_finance_trigger"
+  ,"oraculum_finance_total_amount"
+  ,"oraculum_finance_installment_amount"
+  ,"oraculum_finance_installments_total"
+  ,"oraculum_finance_installments_paid"
+  ,"oraculum_finance_next_due_date"
+  ,"oraculum_finance_outstanding_amount"
+  ,"oraculum_finance_last_payment_date"
+  ,"oraculum_finance_register_payment"
 ])
 
 const DEAL_WRITE_PROPERTIES = new Set([
@@ -172,6 +184,18 @@ const DEAL_WRITE_PROPERTIES = new Set([
   ,"oraculum_next_action"
   ,"oraculum_review_reasons"
   ,"oraculum_third_parties"
+  ,"oraculum_finance_applies"
+  ,"oraculum_finance_status"
+  ,"oraculum_finance_agreement_type"
+  ,"oraculum_finance_trigger"
+  ,"oraculum_finance_total_amount"
+  ,"oraculum_finance_installment_amount"
+  ,"oraculum_finance_installments_total"
+  ,"oraculum_finance_installments_paid"
+  ,"oraculum_finance_next_due_date"
+  ,"oraculum_finance_outstanding_amount"
+  ,"oraculum_finance_last_payment_date"
+  ,"oraculum_finance_register_payment"
 ])
 
 const DEAL_ENUM_VALUES = {
@@ -190,7 +214,11 @@ const DEAL_ENUM_VALUES = {
     "outros_livre"
   ]),
   temperatura_lead: new Set(["Frio", "Morno", "Quente"]),
-  hs_priority: new Set(["low", "medium", "high"])
+  hs_priority: new Set(["low", "medium", "high"]),
+  oraculum_finance_status: new Set([
+    "nao_configurado", "aguardando_gatilho", "em_dia", "vencido",
+    "renegociado", "quitado", "suspenso", "nao_se_aplica"
+  ])
 }
 
 const CONTACT_ENUM_VALUES = {
@@ -229,6 +257,10 @@ function validateHubSpotProperties(objectType, properties = {}, onWarning = () =
       continue
     }
     if (value === null || value === undefined) continue
+    if (property.startsWith("oraculum_finance_") && value === "") {
+      validProperties[property] = ""
+      continue
+    }
     if (typeof value === "string" && !value.trim()) continue
     if (isPlaceholderValue(value)) continue
     if (property === "cpf_do_cliente") {

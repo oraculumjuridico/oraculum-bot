@@ -365,6 +365,7 @@ function filtrarPropsHubSpot(props = {}) {
     Object.entries(props).filter(([key, value]) => {
       if (value === null || value === undefined) return false
       if (key === "etapa_do_bot" && value === "") return true
+      if (key.startsWith("oraculum_finance_") && value === "") return true
       if (typeof value === "string" && !value.trim()) return false
       return true
     })

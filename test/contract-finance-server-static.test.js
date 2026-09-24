@@ -1,0 +1,19 @@
+const assert = require("node:assert/strict")
+const fs = require("node:fs")
+const path = require("node:path")
+
+const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
+const start = source.indexOf("function financeiroDoItemAdmin")
+const end = source.indexOf("async function telaAdminResumoDiario", start)
+assert.ok(start > 0 && end > start, "bloco financeiro administrativo não encontrado")
+const financeBlock = source.slice(start, end)
+
+assert.match(financeBlock, /hsAtualizarNegocio\(item\.u\.negocioId, properties\)/)
+assert.match(financeBlock, /contractFinanceRepository\.upsert/)
+assert.match(financeBlock, /contractFinanceTaskService\.ensureTask/)
+assert.doesNotMatch(financeBlock, /deals?tage\s*:/)
+assert.doesNotMatch(financeBlock, /enviarTemplateWhatsApp|enviar\(item\.from|enviar\(item\.u/)
+assert.match(source, /notifications=admin_only/)
+assert.match(source, /oraculum_finance_register_payment/)
+
+console.log("contract-finance-server-static.test.js: ok")

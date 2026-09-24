@@ -29,15 +29,16 @@ function normalizeTaskSpec(spec = {}) {
 }
 
 function taskProperties(task) {
-  return {
+  const properties = {
     hs_task_subject: task.subject,
     hs_task_body: task.body,
     hs_task_status: task.status,
     hs_task_priority: task.priority,
     hs_task_type: task.type,
-    hs_timestamp: task.dueAt,
-    hubspot_owner_id: task.ownerId
+    hs_timestamp: task.dueAt
   }
+  if (task.ownerId) properties.hubspot_owner_id = task.ownerId
+  return properties
 }
 
 function createHubSpotTaskService(adapter = {}) {

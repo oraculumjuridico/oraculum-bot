@@ -67,6 +67,8 @@ function textoResumoDiarioOperacional(resumo) {
     `Documentos pendentes: ${resumo.totais.documentosPendentes}`,
     `Urgentes: ${resumo.totais.alertasUrgentes}`,
     `Pré-atendimentos em aberto: ${resumo.totais.preAtendimentos || 0}`,
+    `Parcelas vencidas: ${resumo.totais.financeiroVencido || 0}`,
+    `Parcelas nos próximos 7 dias: ${resumo.totais.financeiroProximosSeteDias || 0}`,
     "",
     "*Prioridades de hoje*",
     ...(proximasAcoes.length ? proximasAcoes : ["✅ Nenhuma ação prioritária agora."]),

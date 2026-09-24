@@ -42,5 +42,7 @@ const adapter = {
   assert.match(records[0].properties.hs_task_body, new RegExp(taskMarker(spec.key).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   assert.equal(associations.includes("1:contacts:contact-test"), true)
   assert.equal(associations.includes("1:deals:deal-test"), true)
+  await service.ensureTask({ ...spec, key: "CASE.TEST.002-NO-OWNER", ownerId: "" })
+  assert.equal("hubspot_owner_id" in records[1].properties, false)
   console.log("hubspot-task-service.test.js: ok")
 })().catch(error => { console.error(error); process.exitCode = 1 })

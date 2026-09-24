@@ -432,6 +432,25 @@ const {
   createInternalSchedulerRepository
 } = require("./src/infrastructure/internal-scheduler-postgres")
 const { processInternalSchedule } = require("./src/domain/internal-scheduler")
+const {
+  FINANCE_STATUS,
+  FINANCE_PROPERTIES,
+  normalizeFinance,
+  toHubSpotProperties,
+  parseAgreementInput,
+  parsePaymentInput,
+  registerPayment,
+  financeSummary,
+  formatMoney,
+  todaySaoPaulo
+} = require("./src/domain/contract-finance")
+const {
+  initializeContractFinance,
+  createContractFinanceRepository
+} = require("./src/infrastructure/contract-finance-postgres")
+const { createHubSpotTaskAdapter } = require("./src/adapters/hubspot-task-adapter")
+const { createHubSpotTaskService } = require("./src/domain/hubspot-task-service")
+const { ensureContractFinanceProperties } = require("./src/adapters/hubspot-contract-finance-schema")
 const { verifyGitHubActionsOidc, bearerToken } = require("./src/domain/github-oidc")
 const {
   consultationScope,
@@ -4570,6 +4589,10 @@ async function liberarAgendamentoERecalcularStage(u, motivo = "agendamento_liber
 
 let postHumanCycleRepository = null
 let postHumanActionContextRepository = null
+let contractFinanceRepository = null
+let contractFinanceTaskService = null
+let contractFinanceHubSpotReady = false
+function financePropertiesAdmin() { return contractFinanceHubSpotReady ? FINANCE_PROPERTIES : [] }
 function labelStageAdmin(stage) {
   const mapa = {
     [HS_STAGE.LEAD]: "🟡 Lead",
@@ -4603,6 +4626,7 @@ const ADMIN_IDS = {
   alertasUrgentes: "adm_alertas_urgentes",
   alertasSemResposta: "adm_alertas_sem_resposta",
   resumo: "adm_resumo_diario",
+  financeiro: "adm_financeiro",
   atendimentoAssistidoIa: "adm_atendimento_assistido_ia",
   consultarCaso: "adm_consultar_caso",
   completarInformacoes: "adm_completar_informacoes",
@@ -4619,6 +4643,11 @@ const ADMIN_IDS = {
   casoAgendar: "adm_caso_agendar",
   casoPreferenciaComunicacao: "adm_caso_preferencia_comunicacao",
   casoComunicacao: "adm_caso_comunicacao",
+  casoFinanceiro: "adm_caso_financeiro",
+  financeiroConfigurar: "adm_financeiro_configurar",
+  financeiroPagamento: "adm_financeiro_pagamento",
+  financeiroQuitar: "adm_financeiro_quitar",
+  financeiroSuspender: "adm_financeiro_suspender",
   preferenciaTexto: "adm_preferencia_texto",
   preferenciaAudioSempre: "adm_preferencia_audio_sempre",
   preferenciaNaoDefinida: "adm_preferencia_nao_definida",
@@ -4708,6 +4737,8 @@ function normalizarItemAdminLocal(from, u, negocio = null, contato = null) {
     assuntoResumo: props.resumo_cliente || snapshot.assuntoResumo || u?.assuntoResumo || null
   })
   garantirNomenclaturaJuridicaUsuario(base)
+  const possuiFinanceiroHubSpot = financePropertiesAdmin().some(property => props[property] !== null && props[property] !== undefined && props[property] !== "")
+  base.financeiro = normalizeFinance(possuiFinanceiroHubSpot ? props : (snapshot.financeiro || u?.financeiro || {}))
   base._numero = telefone || from || null
   return { from: telefone || from || "", u: base, negocio, contato }
 }
@@ -4763,7 +4794,7 @@ async function hsAdminBuscarDadosDoNegocio(dealId) {
     return await executarComRetryHubSpot(
       async () => {
         const negocio = await axios.get(
-          `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(id)}?properties=numero_de_caso,pasta_drive`,
+          `https://api.hubapi.com/crm/v3/objects/deals/${encodeURIComponent(id)}?properties=${["numero_de_caso", "pasta_drive", "hubspot_owner_id", ...financePropertiesAdmin()].join(",")}`,
           { headers: HS() }
         )
         return negocio.data || null
@@ -4820,7 +4851,7 @@ async function hsAdminBuscarNegociosPorStages(stages = [], limit = 50, after = n
             "dealstage", "dealname", "createdate", "closedate", "description",
             "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot",
             "etapa_do_bot", "tipo_de_caso", "temperatura_lead", "hs_priority", "numero_de_caso",
-            "urgencia", "oraculum_case_subtype"
+            "urgencia", "oraculum_case_subtype", ...financePropertiesAdmin()
           ],
           limit
         }
@@ -4917,7 +4948,7 @@ async function hsAdminBuscarNegociosDireto(query, after = null) {
     const res = await executarComRetryHubSpot(async () => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
       query: texto,
       sorts: [{ propertyName: "createdate", direction: "DESCENDING" }],
-      properties: ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso"],
+      properties: ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso", ...financePropertiesAdmin()],
       limit: 100,
       ...(after ? { after } : {})
     }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarNegociosDireto", idempotente: true })
@@ -4941,7 +4972,9 @@ async function hsAdminBuscarNegociosDireto(query, after = null) {
   }
 }
 
-const ADMIN_DEAL_SEARCH_PROPERTIES = ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso"]
+function adminDealSearchProperties() {
+  return ["dealstage", "dealname", "area_juridica", "estado_bot_snapshot", "numero_de_caso", ...financePropertiesAdmin()]
+}
 
 function deduplicarDealsAdmin(deals = []) {
   return [...new Map((Array.isArray(deals) ? deals : []).filter(deal => deal?.id).map(deal => [String(deal.id), deal])).values()]
@@ -4951,7 +4984,7 @@ async function hsAdminBuscarDealsPorNumeroCaso(numeroCaso) {
   try {
     const res = await executarComRetryHubSpot(() => axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
       filterGroups: [{ filters: [{ propertyName: "numero_de_caso", operator: "EQ", value: numeroCaso }] }],
-      properties: ADMIN_DEAL_SEARCH_PROPERTIES,
+      properties: adminDealSearchProperties(),
       limit: 100
     }, { headers: HS() }), { maxTentativas: 3, operacao: "adminBuscarDealPorNumeroCaso", idempotente: true })
     const inspecao = inspecionarRespostaBuscaHubSpotAdmin(res)
@@ -5147,7 +5180,7 @@ async function hsAdminItemPorDealId(dealId) {
   try {
     const res = await executarComRetryHubSpot(
       async () => axios.get(
-        `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,oraculum_case_subtype,temperatura_lead,hs_priority,numero_de_caso,urgencia`,
+        `https://api.hubapi.com/crm/v3/objects/deals/${id}?properties=${["dealstage", "dealname", "createdate", "closedate", "description", "resumo_cliente", "descricao_completa", "area_juridica", "estado_bot_snapshot", "etapa_do_bot", "tipo_de_caso", "oraculum_case_subtype", "temperatura_lead", "hs_priority", "numero_de_caso", "urgencia", ...financePropertiesAdmin()].join(",")}`,
         { headers: HS() }
       ),
       { operacao: "adminBuscarDealPorCalendar", maxTentativas: 3 }
@@ -5376,6 +5409,15 @@ async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
     item.alertas = gerarAlertasOperacionaisAdmin({ from: item.from, u: item.u })
   })
 
+  let financeiroVencido = []
+  let financeiroSeteDias = []
+  if (contractFinanceRepository) {
+    const hoje = todaySaoPaulo()
+    const limiteFinanceiro = todaySaoPaulo(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000))
+    financeiroVencido = await contractFinanceRepository.listDue({ throughDate: hoje, limit: 100 }).catch(() => [])
+    financeiroSeteDias = await contractFinanceRepository.listDue({ throughDate: limiteFinanceiro, limit: 100 }).catch(() => [])
+  }
+
   return {
     ok: true,
     geradoEm: new Date().toISOString(),
@@ -5387,7 +5429,9 @@ async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
       documentosPendentes: resumo.docsPendentes,
       alertasUrgentes: resumo.urgentes,
       itensAnalisados: briefings.length,
-      preAtendimentos: resumo.totalPreAtendimentos
+      preAtendimentos: resumo.totalPreAtendimentos,
+      financeiroVencido: financeiroVencido.length,
+      financeiroProximosSeteDias: financeiroSeteDias.length
     },
     filas: {
       urgentes,
@@ -5396,7 +5440,9 @@ async function gerarResumoDiarioOperacional({ limite = 10 } = {}) {
       recentes,
       alertasOperacionais,
       proximasAcoes,
-      documentosComplementares
+      documentosComplementares,
+      financeiroVencido,
+      financeiroProximosSeteDias: financeiroSeteDias
     },
     checklistProducao: checklistProducaoAdmin()
   }
@@ -5686,6 +5732,7 @@ async function telaAdminPrincipal() {
       { id: ADMIN_IDS.casos, title: "📂 Casos" },
       { id: ADMIN_IDS.consultarCaso, title: "🔎 Consultar caso" },
       { id: ADMIN_IDS.agenda, title: "📅 Agendamentos" },
+      { id: ADMIN_IDS.financeiro, title: "💰 Financeiro" },
       { id: ADMIN_IDS.alertas, title: "🚨 Alertas" },
       { id: ADMIN_IDS.resumo, title: "📊 Resumo diário" },
       { id: ADMIN_IDS.atendimentoAssistidoIa, title: "👨‍⚖️ Novo atendimento IA" }
@@ -6250,6 +6297,182 @@ async function telaAdminAlertasAgenda(from, pagina = 1) {
   return telaAdminListaCasos(from, "📅 *Alertas de agendamentos*", itens, "✅ Não encontrei agendamentos futuros ativos.", ADMIN_IDS.alertas, pagina, Math.max(1, Math.ceil(itens.length / ADMIN_CASE_PAGE_SIZE)), ADMIN_IDS.alertasAgenda)
 }
 
+function financeiroDoItemAdmin(item) {
+  const props = item?.negocio?.properties || {}
+  const possuiFinanceiroHubSpot = FINANCE_PROPERTIES.some(property => props[property] !== null && props[property] !== undefined && props[property] !== "")
+  return normalizeFinance(possuiFinanceiroHubSpot ? props : (item?.u?.financeiro || {}))
+}
+
+async function persistirFinanceiroAdmin(item, finance, { source = "whatsapp_admin", actorId = null, eventType = "synchronized" } = {}) {
+  item.u.financeiro = normalizeFinance(finance)
+  item.negocio = item.negocio || { id: item.u.negocioId, properties: {} }
+  item.negocio.properties = { ...(item.negocio.properties || {}), ...toHubSpotProperties(item.u.financeiro) }
+  if (contractFinanceRepository) {
+    await contractFinanceRepository.upsert({
+      dealId: item.u.negocioId,
+      contactId: item.u.contatoId,
+      caseNumber: item.u.numeroCaso,
+      snapshot: item.u.financeiro,
+      source,
+      actorId,
+      eventType
+    })
+  }
+  if (contractFinanceTaskService && item.u.financeiro.applies) {
+    const finalizado = [FINANCE_STATUS.PAID, FINANCE_STATUS.SUSPENDED, FINANCE_STATUS.NOT_APPLICABLE].includes(item.u.financeiro.status)
+    const taskDate = item.u.financeiro.nextDueDate || todaySaoPaulo()
+    await contractFinanceTaskService.ensureTask({
+      key: `CONTRACT-FINANCE:${item.u.negocioId}`,
+      subject: `Contrato INSS · ${item.u.numeroCaso || item.u.negocioId}`,
+      body: `Conferir parcela contratual. Saldo: ${formatMoney(item.u.financeiro.outstandingCents)}. Esta tarefa é interna e não envia mensagem ao cliente.`,
+      status: finalizado ? "COMPLETED" : "NOT_STARTED",
+      priority: item.u.financeiro.status === FINANCE_STATUS.OVERDUE ? "HIGH" : "MEDIUM",
+      dueAt: `${taskDate}T12:00:00-03:00`,
+      ownerId: item.negocio?.properties?.hubspot_owner_id || process.env.HUBSPOT_OWNER_ID || "",
+      contactId: item.u.contatoId,
+      dealId: item.u.negocioId
+    })
+  }
+  return item.u.financeiro
+}
+
+async function carregarFinanceiroCasoAdmin(item, actorId = null) {
+  if (!item?.u?.negocioId) return normalizeFinance({})
+  const fresh = await hsAdminBuscarDadosDoNegocio(item.u.negocioId)
+  if (fresh?.properties) {
+    item.negocio = { ...(item.negocio || {}), ...fresh, properties: { ...(item.negocio?.properties || {}), ...fresh.properties } }
+  }
+  const finance = financeiroDoItemAdmin(item)
+  if (!finance.applies && finance.status === FINANCE_STATUS.NOT_CONFIGURED) return finance
+  await persistirFinanceiroAdmin(item, finance, { source: "hubspot", actorId, eventType: "hubspot_synchronized" }).catch(error => {
+    logErro("contract_finance", `sincronização não bloqueante: ${error.code || "FINANCE_SYNC_FAILED"}`)
+  })
+  return finance
+}
+
+async function telaAdminFinanceiro(from, pagina = 1) {
+  if (!contractFinanceHubSpotReady) return {
+    texto: "O controle financeiro está temporariamente indisponível. Os demais recursos do bot continuam funcionando e nenhum dado foi alterado.",
+    opcoes: [{ id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }],
+    registrarPergunta: false
+  }
+  const resultado = await adminFonteCasos(
+    u => Boolean(u.numeroCaso) && normalizeFinance(u.financeiro || {}).applies,
+    [...new Set(Object.values(HS_STAGE))],
+    100
+  )
+  if (!resultado.ok) return telaAdminFalhaHubSpot()
+  const itens = resultado.items.sort((a, b) => {
+    const left = financeiroDoItemAdmin(a).nextDueDate || "9999-12-31"
+    const right = financeiroDoItemAdmin(b).nextDueDate || "9999-12-31"
+    return left.localeCompare(right)
+  })
+  return telaAdminListaCasos(
+    from,
+    "💰 *Contratos administrativos INSS*",
+    itens,
+    "Nenhuma cobrança contratual foi configurada.",
+    ADMIN_IDS.menu,
+    pagina,
+    Math.max(1, Math.ceil(itens.length / ADMIN_CASE_PAGE_SIZE)),
+    ADMIN_IDS.financeiro
+  )
+}
+
+async function telaFinanceiroCasoAdmin(from) {
+  if (!contractFinanceHubSpotReady) return {
+    texto: "O controle financeiro está temporariamente indisponível. Tente novamente mais tarde.",
+    opcoes: [botaoVoltarCasoAdmin(from)],
+    registrarPergunta: false
+  }
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.negocioId) return { texto: "Selecione novamente o caso.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const finance = await carregarFinanceiroCasoAdmin(item, normalizarNumeroWhatsAppEnvio(from))
+  return {
+    texto: [
+      "💰 *Controle financeiro interno*",
+      `Cliente: ${resolverNomeBriefing(item.u)}`,
+      `Caso: ${item.u.numeroCaso || "-"}`,
+      "",
+      financeSummary(finance),
+      "",
+      "Este controle não altera a etapa jurídica e não envia cobrança ao cliente."
+    ].join("\n"),
+    opcoes: [
+      { id: ADMIN_IDS.financeiroConfigurar, title: finance.applies ? "✏️ Alterar acordo" : "➕ Configurar acordo" },
+      finance.applies && finance.status !== FINANCE_STATUS.PAID ? { id: ADMIN_IDS.financeiroPagamento, title: "✅ Registrar pagamento" } : null,
+      finance.applies && finance.status !== FINANCE_STATUS.PAID ? { id: ADMIN_IDS.financeiroQuitar, title: "🏁 Marcar quitado" } : null,
+      finance.applies && finance.status !== FINANCE_STATUS.SUSPENDED ? { id: ADMIN_IDS.financeiroSuspender, title: "⏸️ Suspender cobrança" } : null,
+      botaoVoltarCasoAdmin(from),
+      { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
+    ].filter(Boolean),
+    registrarPergunta: false
+  }
+}
+
+function iniciarConfiguracaoFinanceiraAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.negocioId) return { texto: "Selecione novamente o caso.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "financeiro_configurar", ts: Date.now() })
+  return {
+    texto: "Envie os dados em uma única mensagem:\n\n`total: 6000; parcelas: 12; valor: 500; vencimento: 10/10/2026; gatilho: primeiro pagamento do benefício`\n\nNada será enviado ao cliente.",
+    opcoes: [botaoVoltarCasoAdmin(from)],
+    registrarPergunta: false
+  }
+}
+
+function iniciarPagamentoFinanceiroAdmin(from) {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.negocioId) return { texto: "Selecione novamente o caso.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "financeiro_pagamento", ts: Date.now() })
+  return {
+    texto: "Informe o pagamento:\n\n`valor: 500; data: 23/09/2026`\n\nO saldo, a quantidade paga e o próximo vencimento serão recalculados.",
+    opcoes: [botaoVoltarCasoAdmin(from)],
+    registrarPergunta: false
+  }
+}
+
+async function atualizarFinanceiroCasoAdmin(from, finance, eventType, note = "") {
+  const item = obterCasoAdmin(from)
+  if (!item?.u?.negocioId) return { texto: "Selecione novamente o caso.", opcoes: [{ id: ADMIN_IDS.casos, title: "📂 Casos" }], registrarPergunta: false }
+  const properties = toHubSpotProperties(finance)
+  const updated = await hsAtualizarNegocio(item.u.negocioId, properties)
+  if (!updated) return { texto: "Não foi possível atualizar o HubSpot. Nenhum dado local foi confirmado.", opcoes: [botaoVoltarCasoAdmin(from)], registrarPergunta: false }
+  await persistirFinanceiroAdmin(item, finance, { source: "whatsapp_admin", actorId: normalizarNumeroWhatsAppEnvio(from), eventType })
+  if (note) await hsCriarNotaNegocio(item.u.negocioId, "FINANCEIRO INTERNO", note)
+  const chave = normalizarNumeroWhatsAppEnvio(from)
+  const sessao = sessoesAdminWhatsApp.get(chave) || {}
+  sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: null, ts: Date.now() })
+  return telaFinanceiroCasoAdmin(from)
+}
+
+async function executarConfiguracaoFinanceiraAdmin(from, text) {
+  const parsed = parseAgreementInput(text)
+  if (!parsed.ok) return { texto: "Formato inválido. Use: `total: 6000; parcelas: 12; valor: 500; vencimento: 10/10/2026; gatilho: primeiro pagamento do benefício`.", opcoes: [botaoVoltarCasoAdmin(from)], registrarPergunta: false }
+  return atualizarFinanceiroCasoAdmin(from, parsed.finance, "agreement_configured", "Acordo financeiro administrativo configurado ou atualizado pelo WhatsApp Admin.")
+}
+
+async function executarPagamentoFinanceiroAdmin(from, text) {
+  const item = obterCasoAdmin(from)
+  const current = await carregarFinanceiroCasoAdmin(item, normalizarNumeroWhatsAppEnvio(from))
+  const payment = parsePaymentInput(text, current.installmentCents)
+  if (!payment.ok) return { texto: "Formato inválido. Use: `valor: 500; data: 23/09/2026`.", opcoes: [botaoVoltarCasoAdmin(from)], registrarPergunta: false }
+  const next = registerPayment(current, payment)
+  const note = `Pagamento registrado em ${payment.paidAt.split("-").reverse().join("/")}. Valor: ${formatMoney(payment.amountCents)}. Parcelas: ${next.installmentsPaid}/${next.installmentsTotal}. Saldo: ${formatMoney(next.outstandingCents)}.`
+  return atualizarFinanceiroCasoAdmin(from, next, "payment_registered", note)
+}
+
+async function definirStatusFinanceiroAdmin(from, status) {
+  const item = obterCasoAdmin(from)
+  const current = await carregarFinanceiroCasoAdmin(item, normalizarNumeroWhatsAppEnvio(from))
+  const next = normalizeFinance({ ...current, status, nextDueDate: status === FINANCE_STATUS.PAID ? null : current.nextDueDate })
+  return atualizarFinanceiroCasoAdmin(from, next, status === FINANCE_STATUS.PAID ? "agreement_paid" : "agreement_suspended", `Situação financeira alterada para ${status}.`)
+}
+
 async function telaAdminResumoDiario() {
   const resumo = await gerarResumoDiarioOperacional({ limite: 10 })
   if (!resumo.ok) return telaAdminFalhaHubSpot()
@@ -6309,6 +6532,7 @@ async function telaDetalheCasoAdmin(from, idx) {
       { id: ADMIN_IDS.casoDocumentos, title: "📎 Documentos" },
       { id: ADMIN_IDS.casoAgendar, title: "📅 Agendar atendimento" },
       { id: ADMIN_IDS.casoComunicacao, title: "💬 Comunicação" },
+      { id: ADMIN_IDS.casoFinanceiro, title: "💰 Financeiro" },
       { id: voltar, title: `⬅️ ${tituloVoltar}` },
       { id: ADMIN_IDS.menu, title: `🏠 ${ADMIN_MENU_LABELS.voltarMenu}` }
     ],
@@ -7420,6 +7644,12 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (sessaoAcaoAdmin.acaoCasoPendente === "agendar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
     return executarAgendamentoCasoAdmin(from, text)
   }
+  if (sessaoAcaoAdmin.acaoCasoPendente === "financeiro_configurar" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
+    return executarConfiguracaoFinanceiraAdmin(from, text)
+  }
+  if (sessaoAcaoAdmin.acaoCasoPendente === "financeiro_pagamento" && sanitizarTextoEntrada(text) && !navegacaoAdmin.has(comando)) {
+    return executarPagamentoFinanceiroAdmin(from, text)
+  }
 
   if (["voltar", "retornar", "cancelar", "admin_voltar", "admin_cancelar"].includes(comando)) {
     const chave = normalizarNumeroWhatsAppEnvio(from)
@@ -7448,6 +7678,10 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     return await telaConsultasAdmin(from)
   }
 
+  if (["financeiro", "cobrancas", "cobranças", ADMIN_IDS.financeiro].includes(comando)) {
+    return await telaAdminFinanceiro(from)
+  }
+
   if (["consultar caso", ADMIN_IDS.consultarCaso].includes(comando)) {
     iniciouNovaConsulta = true
     return iniciarConsultaCasoAdmin(from)
@@ -7458,6 +7692,11 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
   if (["enviar documentos", ADMIN_IDS.enviarDocumentos].includes(comando)) return await telaAdminCasosDocumentos(from)
   if (["completar caso", ADMIN_IDS.casoCompletar].includes(comando)) return iniciarComplementacaoCasoAdmin(from)
   if (["credenciais", ADMIN_IDS.casoCredenciais].includes(comando)) return await telaCredenciaisCasoAdmin(from)
+  if (["financeiro do caso", ADMIN_IDS.casoFinanceiro].includes(comando)) return await telaFinanceiroCasoAdmin(from)
+  if (comando === ADMIN_IDS.financeiroConfigurar) return iniciarConfiguracaoFinanceiraAdmin(from)
+  if (comando === ADMIN_IDS.financeiroPagamento) return iniciarPagamentoFinanceiroAdmin(from)
+  if (comando === ADMIN_IDS.financeiroQuitar) return definirStatusFinanceiroAdmin(from, FINANCE_STATUS.PAID)
+  if (comando === ADMIN_IDS.financeiroSuspender) return definirStatusFinanceiroAdmin(from, FINANCE_STATUS.SUSPENDED)
   if (["documentos do caso", ADMIN_IDS.casoDocumentos].includes(comando)) return telaDocumentosCasoAdmin(from)
   if (["anexar documento", ADMIN_IDS.casoEnviarDocumento].includes(comando)) return iniciarEnvioDocumentoCasoAdmin(from)
   if (["revisar documentos", ADMIN_IDS.casoRevisarDocumentos].includes(comando)) return await telaRevisaoDocumentalAdmin(from)
@@ -7540,6 +7779,7 @@ async function processarAdminWhatsApp(from, text, msgObj = null) {
     if ([ADMIN_IDS.alertasParados, ADMIN_IDS.alertasSemResposta].includes(origem)) return await telaAdminAlertasSemResposta(from, pagina)
     if (origem === ADMIN_IDS.alertasDocs) return await telaAdminAlertasDocs(from, pagina)
     if (origem === ADMIN_IDS.alertasAgenda) return await telaAdminAlertasAgenda(from, pagina)
+    if (origem === ADMIN_IDS.financeiro) return await telaAdminFinanceiro(from, pagina)
     return await telaAdminListaCasos(from, "📂 *Casos*", sessaoAdmin.casos || [], "Nenhum caso encontrado.", sessaoAdmin.retornoCasos || ADMIN_IDS.casos, pagina, sessaoAdmin.totalPaginas || 1, origem)
   }
 
@@ -19399,6 +19639,7 @@ const INTERNAL_SCHEDULER_TODAY_HOUR = Math.max(
 let internalSchedulerRepository = null
 let internalSchedulerExecution = null
 let internalSchedulerTimer = null
+let lastContractFinanceSyncAt = 0
 
 async function postRotaInterna(pathname, payload) {
   const response = await axios.post(
@@ -19533,10 +19774,51 @@ async function sincronizarConsultaNoAgendador(payload = {}) {
   }
 }
 
+async function sincronizarPagamentosMarcadosHubSpot() {
+  if (!contractFinanceHubSpotReady || !contractFinanceRepository || !contractFinanceTaskService) return { processed: 0, skipped: true }
+  const response = await axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
+    filterGroups: [{ filters: [{ propertyName: "oraculum_finance_register_payment", operator: "EQ", value: "true" }] }],
+    properties: ["dealname", "dealstage", "numero_de_caso", "estado_bot_snapshot", ...FINANCE_PROPERTIES],
+    limit: 100
+  }, { headers: HS() })
+  const deals = response.data?.results || []
+  let processed = 0
+  let rejected = 0
+  for (const deal of deals) {
+    const item = normalizarItemAdminLocal("", null, deal, null)
+    const current = financeiroDoItemAdmin(item)
+    if (!current.applies || !current.installmentCents || current.status === FINANCE_STATUS.PAID) {
+      await hsAtualizarNegocio(deal.id, { oraculum_finance_register_payment: "false" })
+      await hsCriarNotaNegocio(deal.id, "FINANCEIRO INTERNO", "Solicitação de baixa não processada: acordo incompleto ou já quitado.")
+      rejected++
+      continue
+    }
+    const paidAt = todaySaoPaulo()
+    const next = registerPayment(current, { amountCents: current.installmentCents, paidAt })
+    const updated = await hsAtualizarNegocio(deal.id, toHubSpotProperties(next))
+    if (!updated) throw Object.assign(new Error("FINANCE_HUBSPOT_UPDATE_FAILED"), { code: "FINANCE_HUBSPOT_UPDATE_FAILED" })
+    await persistirFinanceiroAdmin(item, next, { source: "hubspot", eventType: "payment_registered", actorId: "hubspot_manual" })
+    await hsCriarNotaNegocio(
+      deal.id,
+      "FINANCEIRO INTERNO",
+      `Parcela registrada pelo comando do HubSpot. Valor: ${formatMoney(current.installmentCents)}. Parcelas: ${next.installmentsPaid}/${next.installmentsTotal}. Saldo: ${formatMoney(next.outstandingCents)}.`
+    )
+    processed++
+  }
+  if (deals.length) logInfo({ event: "contract_finance_hubspot_sync", status: "complete", found: deals.length, processed, rejected })
+  return { processed, rejected }
+}
+
 async function executarAgendadorInterno() {
   if (!INTERNAL_SCHEDULER_ENABLED) return { status: "disabled" }
   if (!internalSchedulerRepository) throw new Error("INTERNAL_SCHEDULER_NOT_READY")
   if (internalSchedulerExecution) return internalSchedulerExecution
+  if (Date.now() - lastContractFinanceSyncAt >= 15 * 60 * 1000) {
+    lastContractFinanceSyncAt = Date.now()
+    await sincronizarPagamentosMarcadosHubSpot().catch(error =>
+      logErro("contract_finance", `sincronização HubSpot não bloqueante: ${error.code || error.message}`)
+    )
+  }
   internalSchedulerExecution = processInternalSchedule({
     repository: internalSchedulerRepository,
     planners: [planejarConsultasNoAgendador, planejarReengajamentosNoAgendador],
@@ -19672,6 +19954,20 @@ async function iniciarServidor() {
       await initializeInternalScheduler(schedulerPool)
       internalSchedulerRepository = createInternalSchedulerRepository({ pool: schedulerPool })
       console.log("[AGENDADOR_INTERNO] enabled=true provider=postgres")
+    }
+    if (getPool()) {
+      await initializeContractFinance(getPool())
+      contractFinanceRepository = createContractFinanceRepository({ pool: getPool() })
+      try {
+        const schema = await ensureContractFinanceProperties()
+        contractFinanceHubSpotReady = schema.ok === true
+        contractFinanceTaskService = createHubSpotTaskService(createHubSpotTaskAdapter())
+        const created = schema.result.filter(item => item.action === "created").length
+        console.log(`[FINANCEIRO_CONTRATOS] enabled=true provider=hubspot+postgres notifications=admin_only propertiesCreated=${created}`)
+      } catch (error) {
+        contractFinanceHubSpotReady = false
+        logErro("contract_finance", `HubSpot financeiro indisponível; bot preservado: ${error.code || "FINANCE_SCHEMA_FAILED"}`)
+      }
     }
     carregarUsersPersistidos()
     communicationPreferences.load()

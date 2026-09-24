@@ -121,6 +121,7 @@ async function executar() {
   assert.equal(CONTACT_WRITE_PROPERTIES.has("email"), true)
   assert.equal(CONTACT_WRITE_PROPERTIES.has("dealstage"), false)
   assert.equal(DEAL_WRITE_PROPERTIES.has("dealstage"), true)
+  assert.equal(DEAL_WRITE_PROPERTIES.has("oraculum_finance_status"), true)
   assert.equal(DEAL_WRITE_PROPERTIES.has("phone"), false)
 
   assert.deepEqual(
@@ -137,6 +138,13 @@ async function executar() {
       urgencia: "Urgentissima"
     }, warning => warnings.push(warning)),
     { dealname: "Caso", urgencia: "Urgentissima" }
+  )
+  assert.deepEqual(
+    validateHubSpotProperties("deals", {
+      oraculum_finance_status: "quitado",
+      oraculum_finance_next_due_date: ""
+    }),
+    { oraculum_finance_status: "quitado", oraculum_finance_next_due_date: "" }
   )
   assert.deepEqual(warnings, [
     {
@@ -195,9 +203,10 @@ async function executar() {
       vazio: "",
       nulo: null,
       ausente: undefined,
-      etapa_do_bot: ""
+      etapa_do_bot: "",
+      oraculum_finance_next_due_date: ""
     }),
-    { valido: "ok", etapa_do_bot: "" }
+    { valido: "ok", etapa_do_bot: "", oraculum_finance_next_due_date: "" }
   )
 
   const contactId = await hsCriarContato("5511999999999", {
