@@ -451,6 +451,7 @@ const {
 const { createHubSpotTaskAdapter } = require("./src/adapters/hubspot-task-adapter")
 const { createHubSpotTaskService } = require("./src/domain/hubspot-task-service")
 const { ensureContractFinanceProperties } = require("./src/adapters/hubspot-contract-finance-schema")
+const { createHubSpotCommercePayments } = require("./src/adapters/hubspot-commerce-payments")
 const { verifyGitHubActionsOidc, bearerToken } = require("./src/domain/github-oidc")
 const {
   consultationScope,
@@ -4592,6 +4593,9 @@ let postHumanActionContextRepository = null
 let contractFinanceRepository = null
 let contractFinanceTaskService = null
 let contractFinanceHubSpotReady = false
+let contractFinanceNativePayments = null
+let contractFinanceNativePaymentsReady = false
+let contractFinanceNativePaymentsCreateReady = false
 function financePropertiesAdmin() { return contractFinanceHubSpotReady ? FINANCE_PROPERTIES : [] }
 function labelStageAdmin(stage) {
   const mapa = {
@@ -6347,7 +6351,11 @@ async function carregarFinanceiroCasoAdmin(item, actorId = null) {
   await persistirFinanceiroAdmin(item, finance, { source: "hubspot", actorId, eventType: "hubspot_synchronized" }).catch(error => {
     logErro("contract_finance", `sincronização não bloqueante: ${error.code || "FINANCE_SYNC_FAILED"}`)
   })
-  return finance
+  if (contractFinanceNativePaymentsReady) {
+    await sincronizarPagamentosNativosDoNegocio(item.u.negocioId, item).catch(error =>
+      logErro("contract_finance", `pagamentos nativos não sincronizados: ${error.code || error.message}`))
+  }
+  return financeiroDoItemAdmin(item)
 }
 
 async function telaAdminFinanceiro(from, pagina = 1) {
@@ -6396,11 +6404,13 @@ async function telaFinanceiroCasoAdmin(from) {
       "",
       financeSummary(finance),
       "",
-      "Este controle não altera a etapa jurídica e não envia cobrança ao cliente."
+      contractFinanceNativePaymentsReady
+        ? "Recebimentos usam o registro nativo Pagamentos do HubSpot. Este controle não altera a etapa jurídica nem envia cobrança ao cliente."
+        : "O acordo está disponível, mas a credencial do bot ainda não pode ler Pagamentos do HubSpot. Nenhuma baixa automática será presumida."
     ].join("\n"),
     opcoes: [
       { id: ADMIN_IDS.financeiroConfigurar, title: finance.applies ? "✏️ Alterar acordo" : "➕ Configurar acordo" },
-      finance.applies && finance.status !== FINANCE_STATUS.PAID ? { id: ADMIN_IDS.financeiroPagamento, title: "✅ Registrar pagamento" } : null,
+      finance.applies && finance.status !== FINANCE_STATUS.PAID && contractFinanceNativePaymentsCreateReady ? { id: ADMIN_IDS.financeiroPagamento, title: "✅ Registrar pagamento" } : null,
       finance.applies && finance.status !== FINANCE_STATUS.PAID ? { id: ADMIN_IDS.financeiroQuitar, title: "🏁 Marcar quitado" } : null,
       finance.applies && finance.status !== FINANCE_STATUS.SUSPENDED ? { id: ADMIN_IDS.financeiroSuspender, title: "⏸️ Suspender cobrança" } : null,
       botaoVoltarCasoAdmin(from),
@@ -6430,7 +6440,7 @@ function iniciarPagamentoFinanceiroAdmin(from) {
   const sessao = sessoesAdminWhatsApp.get(chave) || {}
   sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: "financeiro_pagamento", ts: Date.now() })
   return {
-    texto: "Informe o pagamento:\n\n`valor: 500; data: 23/09/2026`\n\nO saldo, a quantidade paga e o próximo vencimento serão recalculados.",
+    texto: "Informe o pagamento:\n\n`valor: 500; data: 23/09/2026`\n\nSerá criado um Pagamento nativo associado ao Negócio. Depois, saldo, parcelas pagas e próximo vencimento serão recalculados.",
     opcoes: [botaoVoltarCasoAdmin(from)],
     registrarPergunta: false
   }
@@ -6461,9 +6471,26 @@ async function executarPagamentoFinanceiroAdmin(from, text) {
   const current = await carregarFinanceiroCasoAdmin(item, normalizarNumeroWhatsAppEnvio(from))
   const payment = parsePaymentInput(text, current.installmentCents)
   if (!payment.ok) return { texto: "Formato inválido. Use: `valor: 500; data: 23/09/2026`.", opcoes: [botaoVoltarCasoAdmin(from)], registrarPergunta: false }
-  const next = registerPayment(current, payment)
-  const note = `Pagamento registrado em ${payment.paidAt.split("-").reverse().join("/")}. Valor: ${formatMoney(payment.amountCents)}. Parcelas: ${next.installmentsPaid}/${next.installmentsTotal}. Saldo: ${formatMoney(next.outstandingCents)}.`
-  return atualizarFinanceiroCasoAdmin(from, next, "payment_registered", note)
+  if (!contractFinanceNativePaymentsCreateReady || !contractFinanceNativePayments) {
+    return { texto: "A integração nativa de Pagamentos do HubSpot ainda não está autorizada. Registre o pagamento diretamente no cartão Pagamentos do Negócio.", opcoes: [botaoVoltarCasoAdmin(from)], registrarPergunta: false }
+  }
+  const reference = `ORACULUM-${item.u.negocioId}-${current.installmentsPaid + 1}-${payment.paidAt}-${payment.amountCents}`
+  try {
+    const native = await contractFinanceNativePayments.createManualPayment({
+      dealId: item.u.negocioId,
+      amountCents: payment.amountCents,
+      paidAt: payment.paidAt,
+      reference
+    })
+    await aplicarPagamentoNativoAoAcordo(item, native.payment, "whatsapp_admin")
+    const chave = normalizarNumeroWhatsAppEnvio(from)
+    const sessao = sessoesAdminWhatsApp.get(chave) || {}
+    sessoesAdminWhatsApp.set(chave, { ...sessao, acaoCasoPendente: null, ts: Date.now() })
+    return telaFinanceiroCasoAdmin(from)
+  } catch (error) {
+    logErro("contract_finance", `falha ao criar Pagamento nativo: ${error.response?.status || error.code || error.message}`)
+    return { texto: "Não foi possível criar o Pagamento nativo. Nenhuma parcela foi baixada. Registre pelo cartão Pagamentos do Negócio ou revise o escopo de pagamentos da credencial do bot.", opcoes: [botaoVoltarCasoAdmin(from)], registrarPergunta: false }
+  }
 }
 
 async function definirStatusFinanceiroAdmin(from, status) {
@@ -19774,39 +19801,80 @@ async function sincronizarConsultaNoAgendador(payload = {}) {
   }
 }
 
-async function sincronizarPagamentosMarcadosHubSpot() {
-  if (!contractFinanceHubSpotReady || !contractFinanceRepository || !contractFinanceTaskService) return { processed: 0, skipped: true }
-  const response = await axios.post("https://api.hubapi.com/crm/v3/objects/deals/search", {
-    filterGroups: [{ filters: [{ propertyName: "oraculum_finance_register_payment", operator: "EQ", value: "true" }] }],
-    properties: ["dealname", "dealstage", "numero_de_caso", "estado_bot_snapshot", ...FINANCE_PROPERTIES],
-    limit: 100
-  }, { headers: HS() })
-  const deals = response.data?.results || []
-  let processed = 0
-  let rejected = 0
-  for (const deal of deals) {
-    const item = normalizarItemAdminLocal("", null, deal, null)
-    const current = financeiroDoItemAdmin(item)
-    if (!current.applies || !current.installmentCents || current.status === FINANCE_STATUS.PAID) {
-      await hsAtualizarNegocio(deal.id, { oraculum_finance_register_payment: "false" })
-      await hsCriarNotaNegocio(deal.id, "FINANCEIRO INTERNO", "Solicitação de baixa não processada: acordo incompleto ou já quitado.")
-      rejected++
-      continue
-    }
-    const paidAt = todaySaoPaulo()
-    const next = registerPayment(current, { amountCents: current.installmentCents, paidAt })
-    const updated = await hsAtualizarNegocio(deal.id, toHubSpotProperties(next))
-    if (!updated) throw Object.assign(new Error("FINANCE_HUBSPOT_UPDATE_FAILED"), { code: "FINANCE_HUBSPOT_UPDATE_FAILED" })
-    await persistirFinanceiroAdmin(item, next, { source: "hubspot", eventType: "payment_registered", actorId: "hubspot_manual" })
-    await hsCriarNotaNegocio(
-      deal.id,
-      "FINANCEIRO INTERNO",
-      `Parcela registrada pelo comando do HubSpot. Valor: ${formatMoney(current.installmentCents)}. Parcelas: ${next.installmentsPaid}/${next.installmentsTotal}. Saldo: ${formatMoney(next.outstandingCents)}.`
-    )
-    processed++
+async function aplicarPagamentoNativoAoAcordo(item, payment, actorId = "hubspot_native") {
+  if (!item?.u?.negocioId || !payment?.id || !payment.settled || !payment.amountCents || !payment.paidAt) return { processed: false, reason: "invalid_or_unsettled" }
+  if (payment.currency && payment.currency.toUpperCase() !== "BRL") return { processed: false, reason: "currency_not_brl" }
+  const existing = await contractFinanceRepository.getPayment(payment.id)
+  if (existing?.processingState === "applied") return { processed: false, reason: "already_processed" }
+  const current = financeiroDoItemAdmin(item)
+  let next
+  if (existing?.processingState === "pending" && existing.targetSnapshot) {
+    next = normalizeFinance(existing.targetSnapshot, payment.paidAt)
+  } else {
+    if (!current.applies || current.status === FINANCE_STATUS.PAID) return { processed: false, reason: "agreement_inactive" }
+    if (current.trackingSince && payment.paidAt < current.trackingSince) return { processed: false, reason: "before_tracking_start" }
+    const calculated = registerPayment(current, { amountCents: payment.amountCents, paidAt: payment.paidAt })
+    const prepared = await contractFinanceRepository.preparePayment({
+      paymentId: payment.id,
+      dealId: item.u.negocioId,
+      amountCents: payment.amountCents,
+      paidAt: payment.paidAt,
+      status: payment.status,
+      source: "hubspot_native",
+      targetSnapshot: calculated
+    })
+    next = normalizeFinance(prepared?.targetSnapshot || calculated, payment.paidAt)
   }
-  if (deals.length) logInfo({ event: "contract_finance_hubspot_sync", status: "complete", found: deals.length, processed, rejected })
-  return { processed, rejected }
+  const updated = await hsAtualizarNegocio(item.u.negocioId, toHubSpotProperties(next))
+  if (!updated) throw Object.assign(new Error("FINANCE_HUBSPOT_UPDATE_FAILED"), { code: "FINANCE_HUBSPOT_UPDATE_FAILED" })
+  await persistirFinanceiroAdmin(item, next, { source: "hubspot_native", eventType: "native_payment_registered", actorId })
+  await contractFinanceRepository.completePayment(payment.id)
+  await hsCriarNotaNegocio(
+    item.u.negocioId,
+    "FINANCEIRO INTERNO",
+    `Pagamento nativo HubSpot conciliado. Valor: ${formatMoney(payment.amountCents)}. Parcelas: ${next.installmentsPaid}/${next.installmentsTotal}. Saldo: ${formatMoney(next.outstandingCents)}.`
+  ).catch(error => logErro("contract_finance", `nota financeira não bloqueante: ${error.code || error.message}`))
+  return { processed: true, finance: next }
+}
+
+async function sincronizarPagamentosNativosDoNegocio(dealId, existingItem = null) {
+  if (!contractFinanceNativePaymentsReady || !contractFinanceNativePayments || !contractFinanceRepository) return { processed: 0, skipped: true }
+  const saved = await contractFinanceRepository.get(dealId)
+  if (!saved?.snapshot?.applies) return { processed: 0, skipped: true }
+  let item = existingItem
+  if (!item) {
+    const deal = await hsAdminBuscarDadosDoNegocio(dealId)
+    if (!deal?.id) return { processed: 0, skipped: true }
+    item = normalizarItemAdminLocal("", {
+      negocioId: String(dealId), contatoId: saved.contactId || null,
+      numeroCaso: saved.caseNumber || null, financeiro: saved.snapshot
+    }, deal, null)
+  }
+  const payments = await contractFinanceNativePayments.listDealPayments(dealId)
+  let processed = 0
+  for (const payment of payments.sort((a, b) => String(a.paidAt || "").localeCompare(String(b.paidAt || "")))) {
+    const result = await aplicarPagamentoNativoAoAcordo(item, payment)
+    if (result.processed) processed++
+  }
+  return { processed, found: payments.length }
+}
+
+async function sincronizarPagamentosNativosHubSpot() {
+  if (!contractFinanceNativePaymentsReady || !contractFinanceRepository) return { processed: 0, skipped: true }
+  const contracts = await contractFinanceRepository.listConfigured({ limit: 100 })
+  let processed = 0
+  let failed = 0
+  for (const contract of contracts) {
+    try {
+      const result = await sincronizarPagamentosNativosDoNegocio(contract.dealId)
+      processed += result.processed || 0
+    } catch (error) {
+      failed++
+      logErro("contract_finance", `conciliação nativa não bloqueante deal=${contract.dealId}: ${error.response?.status || error.code || error.message}`)
+    }
+  }
+  if (contracts.length) logInfo({ event: "contract_finance_native_sync", status: "complete", contracts: contracts.length, processed, failed })
+  return { processed, failed }
 }
 
 async function executarAgendadorInterno() {
@@ -19815,7 +19883,7 @@ async function executarAgendadorInterno() {
   if (internalSchedulerExecution) return internalSchedulerExecution
   if (Date.now() - lastContractFinanceSyncAt >= 15 * 60 * 1000) {
     lastContractFinanceSyncAt = Date.now()
-    await sincronizarPagamentosMarcadosHubSpot().catch(error =>
+    await sincronizarPagamentosNativosHubSpot().catch(error =>
       logErro("contract_finance", `sincronização HubSpot não bloqueante: ${error.code || error.message}`)
     )
   }
@@ -19963,7 +20031,18 @@ async function iniciarServidor() {
         contractFinanceHubSpotReady = schema.ok === true
         contractFinanceTaskService = createHubSpotTaskService(createHubSpotTaskAdapter())
         const created = schema.result.filter(item => item.action === "created").length
-        console.log(`[FINANCEIRO_CONTRATOS] enabled=true provider=hubspot+postgres notifications=admin_only propertiesCreated=${created}`)
+        try {
+          contractFinanceNativePayments = createHubSpotCommercePayments()
+          const paymentCapability = await contractFinanceNativePayments.initialize()
+          contractFinanceNativePaymentsReady = true
+          contractFinanceNativePaymentsCreateReady = paymentCapability.schema.canCreate === true
+        } catch (paymentError) {
+          contractFinanceNativePayments = null
+          contractFinanceNativePaymentsReady = false
+          contractFinanceNativePaymentsCreateReady = false
+          logErro("contract_finance", `Pagamentos nativos sem acesso; acordos preservados: ${paymentError.response?.status || paymentError.code || "HUBSPOT_PAYMENTS_SCOPE_REQUIRED"}`)
+        }
+        console.log(`[FINANCEIRO_CONTRATOS] enabled=true provider=hubspot+postgres payments=${contractFinanceNativePaymentsReady ? "hubspot_native" : "scope_required"} paymentCreate=${contractFinanceNativePaymentsCreateReady} notifications=admin_only propertiesCreated=${created}`)
       } catch (error) {
         contractFinanceHubSpotReady = false
         logErro("contract_finance", `HubSpot financeiro indisponível; bot preservado: ${error.code || "FINANCE_SCHEMA_FAILED"}`)

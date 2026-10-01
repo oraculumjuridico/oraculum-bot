@@ -34,7 +34,7 @@
     "hubspot:deal-titles:apply": "node scripts/audit-hubspot-deal-titles.js --apply --confirm=RECONCILE_DEAL_NOMENCLATURE",
     "hubspot:finance:setup:dry": "node scripts/setup-contract-finance-hubspot.js",
     "hubspot:finance:setup": "node scripts/setup-contract-finance-hubspot.js --apply --confirm=CREATE_CONTRACT_FINANCE_PROPERTIES",
-    "test:contract-finance": "node test/contract-finance.test.js && node test/contract-finance-postgres.test.js && node test/hubspot-contract-finance-schema.test.js && node test/contract-finance-server-static.test.js",
+    "test:contract-finance": "node test/contract-finance.test.js && node test/contract-finance-postgres.test.js && node test/hubspot-contract-finance-schema.test.js && node test/hubspot-commerce-payments.test.js && node test/contract-finance-server-static.test.js",
     "cases:audit": "node scripts/import-real-cases.js audit",
     "cases:import-todo": "node scripts/import-todo-cases.js",
     "cases:analyze": "node scripts/analyze-real-case-documents.js",

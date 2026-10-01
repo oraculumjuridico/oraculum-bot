@@ -22,8 +22,8 @@ const FINANCE_PROPERTIES = Object.freeze([
   "oraculum_finance_installments_paid",
   "oraculum_finance_next_due_date",
   "oraculum_finance_outstanding_amount",
-  "oraculum_finance_last_payment_date"
-  ,"oraculum_finance_register_payment"
+  "oraculum_finance_last_payment_date",
+  "oraculum_finance_tracking_since"
 ])
 
 const STATUS_LABELS = Object.freeze({
@@ -128,7 +128,8 @@ function normalizeFinance(input = {}, today = todaySaoPaulo()) {
     installmentsPaid,
     nextDueDate,
     outstandingCents,
-    lastPaymentDate: isoDate(source.oraculum_finance_last_payment_date ?? source.lastPaymentDate)
+    lastPaymentDate: isoDate(source.oraculum_finance_last_payment_date ?? source.lastPaymentDate),
+    trackingSince: isoDate(source.oraculum_finance_tracking_since ?? source.trackingSince)
   }
 }
 
@@ -147,7 +148,7 @@ function toHubSpotProperties(finance) {
     oraculum_finance_next_due_date: state.nextDueDate || "",
     oraculum_finance_outstanding_amount: amount(state.outstandingCents),
     oraculum_finance_last_payment_date: state.lastPaymentDate || "",
-    oraculum_finance_register_payment: "false"
+    oraculum_finance_tracking_since: state.trackingSince || ""
   }
 }
 
@@ -178,7 +179,8 @@ function parseAgreementInput(text) {
       installmentAmount: installmentCents / 100,
       installmentsTotal,
       installmentsPaid: integer(pairs.pagas),
-      nextDueDate
+      nextDueDate,
+      trackingSince: isoDate(pairs.inicio || pairs.início) || todaySaoPaulo()
     })
   }
 }
@@ -217,6 +219,7 @@ function financeSummary(finance) {
     `Parcelas: ${state.installmentsPaid}/${state.installmentsTotal || 0}`,
     `Valor da parcela: ${formatMoney(state.installmentCents)}`,
     `Próximo vencimento: ${formatDate(state.nextDueDate)}`,
+    `Pagamentos controlados desde: ${formatDate(state.trackingSince)}`,
     `Saldo: ${formatMoney(state.outstandingCents)}`
   ].join("\n")
 }

@@ -28,7 +28,7 @@ const CONTRACT_FINANCE_PROPERTY_DEFINITIONS = Object.freeze([
   { name: "oraculum_finance_next_due_date", label: "Próximo vencimento", type: "date", fieldType: "date" },
   { name: "oraculum_finance_outstanding_amount", label: "Saldo a receber", type: "number", fieldType: "number" },
   { name: "oraculum_finance_last_payment_date", label: "Último pagamento", type: "date", fieldType: "date" },
-  { name: "oraculum_finance_register_payment", label: "Registrar próxima parcela como paga", type: "bool", fieldType: "booleancheckbox" }
+  { name: "oraculum_finance_tracking_since", label: "Controlar pagamentos a partir de", type: "date", fieldType: "date" }
 ])
 
 async function ensureContractFinanceProperties({ token = process.env.HUBSPOT_TOKEN, client = axios } = {}) {

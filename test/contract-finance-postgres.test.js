@@ -9,8 +9,9 @@ const {
 ;(async () => {
   const init = []
   await initializeContractFinance({ query: async sql => { init.push(String(sql)); return { rows: [], rowCount: 0 } } })
-  assert.equal(init.length, 3)
+  assert.equal(init.length, 8)
   assert.match(init.join("\n"), /oraculum_contract_finance_events/)
+  assert.match(init.join("\n"), /oraculum_contract_finance_payments/)
 
   const statements = []
   const client = {
@@ -41,5 +42,12 @@ const {
   assert.match(statements.join("\n"), /COMMIT/)
 
   await repository.listDue({ throughDate: "2026-10-10" })
+  await repository.listConfigured()
+  assert.equal(await repository.getPayment("payment-1"), null)
+  await repository.preparePayment({
+    paymentId: "payment-1", dealId: "deal-1", amountCents: 50000,
+    paidAt: "2026-10-10", status: "succeeded", targetSnapshot: { installmentsPaid: 1 }
+  })
+  await repository.completePayment("payment-1")
   console.log("contract-finance-postgres.test.js: ok")
 })().catch(error => { console.error(error); process.exitCode = 1 })

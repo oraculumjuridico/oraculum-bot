@@ -145,7 +145,7 @@ const MANAGED_DEAL_PROPERTIES = new Set([
   ,"oraculum_finance_next_due_date"
   ,"oraculum_finance_outstanding_amount"
   ,"oraculum_finance_last_payment_date"
-  ,"oraculum_finance_register_payment"
+  ,"oraculum_finance_tracking_since"
 ])
 
 const DEAL_WRITE_PROPERTIES = new Set([
@@ -195,7 +195,7 @@ const DEAL_WRITE_PROPERTIES = new Set([
   ,"oraculum_finance_next_due_date"
   ,"oraculum_finance_outstanding_amount"
   ,"oraculum_finance_last_payment_date"
-  ,"oraculum_finance_register_payment"
+  ,"oraculum_finance_tracking_since"
 ])
 
 const DEAL_ENUM_VALUES = {

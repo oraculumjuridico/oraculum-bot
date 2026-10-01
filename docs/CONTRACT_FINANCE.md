@@ -6,7 +6,8 @@ O andamento jurídico e o financeiro são independentes. Um Negócio pode estar 
 
 ## Onde cada informação fica
 
-- **HubSpot (Negócio):** visão operacional atual do acordo, parcelas e saldo.
+- **HubSpot (Pagamentos):** fonte oficial de cada valor efetivamente recebido.
+- **HubSpot (Negócio):** resumo do acordo, parcelas previstas, saldo e próximo vencimento.
 - **Neon/PostgreSQL:** espelho atual e histórico de alterações/pagamentos.
 - **WhatsApp Admin:** consulta, configuração do acordo e registro de pagamentos.
 - **Tarefa HubSpot:** lembrete interno do próximo vencimento.
@@ -18,17 +19,19 @@ Abra `Financeiro`, selecione o caso e use `Configurar acordo`. Envie uma linha c
 
 `total: 6000; parcelas: 12; valor: 500; vencimento: 10/10/2026; gatilho: primeiro pagamento do benefício`
 
-Para registrar uma parcela, use `Registrar pagamento` e informe:
+Para registrar uma parcela pelo WhatsApp Admin, use `Registrar pagamento` e informe:
 
 `valor: 500; data: 23/09/2026`
 
-O sistema incrementa as parcelas pagas, reduz o saldo, avança o vencimento e atualiza a tarefa interna.
+O sistema cria um registro nativo em `Pagamentos`, associa-o ao Negócio e, somente depois dessa confirmação, reduz o saldo, avança o vencimento e atualiza a tarefa interna.
 
 ## Registro diretamente no HubSpot
 
-Na seção financeira do Negócio, marque `Registrar próxima parcela como paga`. O agendador interno processa a marcação em até 15 minutos, registra uma parcela pelo valor configurado, recalcula o acordo, cria a nota interna e desmarca o comando. Essa ação nunca envia mensagem ao cliente.
+Registre o recebimento no cartão nativo `Pagamentos` do Negócio. O agendador interno consulta pagamentos associados em até 15 minutos e, para cada pagamento concluído ainda não conciliado, recalcula o acordo e cria a nota interna. A abertura da tela financeira no WhatsApp Admin também solicita a conciliação imediata.
 
-Alterações manuais nos demais campos aparecem no WhatsApp Admin na próxima abertura do controle daquele caso e são espelhadas no Neon.
+Pagamentos anteriores à data `Controlar pagamentos a partir de` não são baixados automaticamente. Isso evita que transações antigas sejam contadas por engano.
+
+Alterações manuais nos campos do acordo aparecem no WhatsApp Admin na próxima abertura do controle daquele caso e são espelhadas no Neon.
 
 ## Situações financeiras
 
@@ -46,5 +49,7 @@ Alterações manuais nos demais campos aparecem no WhatsApp Admin na próxima ab
 - Nenhum caso existente recebe valor ou dívida automaticamente.
 - O pipeline jurídico não é modificado.
 - Não há comunicação financeira automática com clientes.
-- Cada baixa gera histórico no PostgreSQL e nota interna no Negócio.
+- Cada baixa exige um Pagamento nativo concluído, gera histórico idempotente no PostgreSQL e nota interna no Negócio.
+- O mesmo ID de Pagamento nunca é contabilizado duas vezes.
+- Se a credencial do bot não tiver acesso a `commerce_payments`, o acordo continua visível, mas nenhuma baixa é presumida.
 - A tarefa de vencimento usa uma chave idempotente por Negócio, evitando duplicação.

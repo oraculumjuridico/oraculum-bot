@@ -15,6 +15,7 @@ assert.equal(agreement.ok, true)
 assert.equal(agreement.finance.totalCents, 600000)
 assert.equal(agreement.finance.installmentsTotal, 12)
 assert.equal(agreement.finance.nextDueDate, "2026-09-30")
+assert.match(agreement.finance.trackingSince, /^\d{4}-\d{2}-\d{2}$/)
 
 const payment = parsePaymentInput("valor: 500,00; data: 30/09/2026", agreement.finance.installmentCents)
 assert.equal(payment.ok, true)
@@ -28,6 +29,7 @@ assert.equal(addMonth("2026-01-31"), "2026-02-28")
 assert.equal(todaySaoPaulo(new Date("2026-09-24T01:30:00Z")), "2026-09-23")
 assert.equal(normalizeFinance({ applies: true, status: "em_dia", nextDueDate: "01/09/2026" }, "2026-09-23").status, FINANCE_STATUS.OVERDUE)
 assert.equal(toHubSpotProperties(afterPayment).oraculum_finance_outstanding_amount, "5500.00")
+assert.equal(toHubSpotProperties(afterPayment).oraculum_finance_register_payment, undefined)
 
 let current = agreement.finance
 for (let index = 0; index < 12; index++) current = registerPayment(current, { amountCents: 50000, paidAt: "2026-09-30" })
