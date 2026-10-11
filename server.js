@@ -503,6 +503,7 @@ const {
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
   hsBuscarNegociosComCasoDoContato,
+  selecionarLeadRetomavel,
   hsListarNegociosAtivosDoContato,
   hsListarNegociosAtivosDoContatoEstrito,
   hsAtualizarEtapaNegocio,
@@ -1405,16 +1406,47 @@ async function resolverUsuarioPorHubSpot(from, nomeWA) {
     // Buscar negócios associados ao contato para localizar caso existente
     const negociosHubSpot = negociosContatoSelecionado || await hsBuscarNegociosComCasoDoContato(contato.id)
     if (negociosHubSpot) {
-      const casosComNumeroCaso = negociosHubSpot.casosOficiais
-      // Se houver exatamente um caso oficial, restaurar o negócio
-      if (casosComNumeroCaso.length === 1) {
-        const negocio = casosComNumeroCaso[0]
+      const casosAtivos = Array.isArray(negociosHubSpot.casosAtivos)
+        ? negociosHubSpot.casosAtivos
+        : (negociosHubSpot.casosOficiais || []).filter(caso => !caso.finalizado)
+      const casosFinalizados = Array.isArray(negociosHubSpot.casosFinalizados)
+        ? negociosHubSpot.casosFinalizados
+        : (negociosHubSpot.casosOficiais || []).filter(caso => caso.finalizado)
+      const historicoVisivel = casosFinalizados.filter(caso =>
+        !/caso\s+unificado\s+em\s+/i.test(sanitizarTextoEntrada(caso.dealname || caso.properties?.dealname))
+      )
+
+      u._casosDisponiveis = null
+      u._casosFinalizadosDisponiveis = historicoVisivel.map(caso => ({
+        id: caso.id,
+        numeroCaso: caso.numeroCaso,
+        area: caso.properties?.area_juridica || null,
+        dealname: caso.properties?.dealname || caso.dealname || null,
+        closedate: caso.properties?.closedate || null
+      }))
+      u._clienteAnteriorSemCasoAtivo = casosAtivos.length === 0 && historicoVisivel.length > 0
+
+      // Somente casos ativos retornam ao menu operacional.
+      if (casosAtivos.length === 1) {
+        const negocio = casosAtivos[0]
         restaurarEstadoNegocioHubSpot(u, negocio.negocio || negocio)
         definirNegocioId(u, negocio.id)
+        u._clienteAnteriorSemCasoAtivo = false
       }
-      // Se houver múltiplos casos oficiais, reconhecer como cliente e armazenar a lista
-      if (casosComNumeroCaso.length > 1) {
-        u._casosDisponiveis = casosComNumeroCaso.map(c => ({ id: c.id, numeroCaso: c.numeroCaso, area: c.properties?.area_juridica, dealname: c.properties?.dealname || null }))
+      // Se houver múltiplos casos ativos, reconhecer como cliente sem escolher arbitrariamente.
+      if (casosAtivos.length > 1) {
+        u._casosDisponiveis = casosAtivos.map(c => ({ id: c.id, numeroCaso: c.numeroCaso, area: c.properties?.area_juridica, dealname: c.properties?.dealname || null }))
+        u._clienteAnteriorSemCasoAtivo = false
+      }
+
+      // Pré-atendimentos sem número só são retomados por 30 dias corridos.
+      if (casosAtivos.length === 0) {
+        const leadRetomavel = selecionarLeadRetomavel(negociosHubSpot.leads || [])
+        if (leadRetomavel) {
+          restaurarEstadoNegocioHubSpot(u, leadRetomavel)
+          definirNegocioId(u, leadRetomavel.id)
+          u._clienteAnteriorSemCasoAtivo = false
+        }
       }
     }
   } else if (podeReutilizarSessaoLocalSemHubSpot) {
@@ -1501,7 +1533,7 @@ function setStage(u, newStage) {
     return u?.stage
   }
 
-  if (stageNormalizado === STAGES.CLIENTE && !u?.numeroCaso) {
+  if (stageNormalizado === STAGES.CLIENTE && !podeMostrarMenuCliente(u)) {
     logDebug("[BLOCK] acesso indevido ao menu cliente sem numeroCaso")
     Reflect.set(u, "stage", STAGES.AUDIO_AGUARDANDO)
     void atualizarDealstage(u)
@@ -9218,6 +9250,31 @@ async function telaAdvogadoClienteComAudio(from, u) {
   return await enviarTelaImagemOuTexto(from, IMAGEM_ADV_URL, tela.texto, gerarBotoesDaTela(tela))
 }
 
+function casoImportadoSemSnapshot(u) {
+  return Boolean(u?._hubspotImportedCase && !u?._hubspotCaseHasSnapshot)
+}
+
+function resumirCampoDocumentalHubSpot(valor, limite = 900) {
+  const texto = sanitizarTextoEntrada(valor)
+  if (!texto) return "Não informado"
+  return texto.length > limite ? `${texto.slice(0, limite).trim()}…` : texto
+}
+
+function blocoDocumentosCasoImportado(u) {
+  const recebido = resumirCampoDocumentalHubSpot(u._hubspotDocumentsReceived)
+  const pendente = resumirCampoDocumentalHubSpot(u._hubspotDocumentsPending)
+  const emRevisao = u._hubspotReviewRequired || u._hubspotDocumentStatus === "pending_review"
+  return [
+    "📎 *Documentação do caso*",
+    "",
+    emRevisao ? "🔎 A documentação importada está em conferência pela equipe." : "✅ A documentação importada já foi analisada pela equipe.",
+    "",
+    `*Já registrado:* ${recebido}`,
+    "",
+    `*Pendências ou conferências:* ${pendente}`
+  ].join("\n")
+}
+
 async function telaStatusCliente(from, u) {
   let stageAtualHS = u.negocioStageId || null
   let negocioAtual = null
@@ -9261,7 +9318,10 @@ async function telaStatusCliente(from, u) {
 
   // Documentos
   const statusDocs = calcularStatusDocumentos(u)
-  const temFaltantesCriticos = statusDocs.faltantesCriticos.length > 0
+  const importadoSemSnapshot = casoImportadoSemSnapshot(u)
+  const temFaltantesCriticos = importadoSemSnapshot
+    ? Boolean(u._hubspotReviewRequired || u._hubspotDocumentStatus === "pending_review")
+    : statusDocs.faltantesCriticos.length > 0
   const todosDocsEnviados = !temFaltantesCriticos
 
   const barra = montarBarraStatusCliente({
@@ -9280,7 +9340,9 @@ async function telaStatusCliente(from, u) {
   const blocoAgendamento = montarBlocoAgendamentoStatus(temAgendamentoAtivo, consultaDataHora)
 
   // Bloco de documentos — sempre aparece
-  const blocoDocumentos = montarBlocoDocumentosStatus(statusDocs, temFaltantesCriticos)
+  const blocoDocumentos = importadoSemSnapshot
+    ? blocoDocumentosCasoImportado(u)
+    : montarBlocoDocumentosStatus(statusDocs, temFaltantesCriticos)
 
   const iconeArea = iconeAreaJuridica(u.area || "")
 
@@ -9295,19 +9357,22 @@ async function telaStatusCliente(from, u) {
   })
 
   // Áudio — narra o estado completo para quem não lê
-  const nomesDocStatus = statusDocs.faltantesCriticos.map(d => d.label)
-  const listaAudioStatus = temFaltantesCriticos
+  const nomesDocStatus = importadoSemSnapshot ? [] : statusDocs.faltantesCriticos.map(d => d.label)
+  const listaAudioStatus = temFaltantesCriticos && nomesDocStatus.length
     ? (nomesDocStatus.length === 1
       ? nomesDocStatus[0]
       : nomesDocStatus.slice(0, -1).join(", ") + " e " + nomesDocStatus[nomesDocStatus.length - 1])
     : ""
-  const acaoAudio = montarAudioStatusCliente({
+  const acaoAudioBase = montarAudioStatusCliente({
     stageAtualHS,
     temAgendamentoAtivo,
     consultaDataHoraAudio: temAgendamentoAtivo && consultaDataHora ? formatarSlotAudio(consultaDataHora) : "",
     documentosFaltantesQtd: temFaltantesCriticos ? nomesDocStatus.length : 0,
     documentosFaltantesAudio: removerFormatacaoParaAudio(listaAudioStatus)
   })
+  const acaoAudio = importadoSemSnapshot
+    ? `${acaoAudioBase} A documentação já registrada no escritório está em conferência pela equipe.`
+    : acaoAudioBase
 
   const telaStatus = criarTela({
     id: "status_cliente",
@@ -9439,12 +9504,23 @@ async function confirmarAberturaNovoCasoCliente(from, u) {
 }
 
 async function abrirNovoCasoCliente(from, u) {
+  const clienteAnteriorSemCasoAtivo = Boolean(u._clienteAnteriorSemCasoAtivo)
+  const casosFinalizadosAnteriores = Array.isArray(u._casosFinalizadosDisponiveis)
+    ? [...u._casosFinalizadosDisponiveis]
+    : []
   const nomeExibicao = u.nome
   const cidadeExibicao = u.cidade
   const ufExibicao = u.uf
   const regiaoExibicao = u.regiao
-  if (!u._casoAnteriorCliente) u._casoAnteriorCliente = criarSnapshotCasoCliente(u)
+  const contatoIdExibicao = u.contatoId || u.contactId || null
+  if (!clienteAnteriorSemCasoAtivo && !u._casoAnteriorCliente) u._casoAnteriorCliente = criarSnapshotCasoCliente(u)
   limparDadosCasoAtual(u)
+  if (contatoIdExibicao) {
+    definirContatoId(u, contatoIdExibicao)
+    u._hubspotSemContato = false
+  }
+  u._clienteAnteriorSemCasoAtivo = false
+  if (clienteAnteriorSemCasoAtivo) u._casosFinalizadosDisponiveis = casosFinalizadosAnteriores
   u._novoCasoDeCliente = true
   u.atendimentoParaTerceiro = false
   u.nomeContato = null
@@ -9465,11 +9541,13 @@ async function abrirNovoCasoCliente(from, u) {
   await enviarAudioModoVoz(
     from,
     u,
-    `Vamos abrir um novo caso. O caso atual continua registrado. ${textoAudioOpcoes(opcoesNovoCasoCliente)}`,
+    clienteAnteriorSemCasoAtivo
+      ? `Vamos iniciar um novo atendimento. Seus casos anteriores continuam preservados no histórico. ${textoAudioOpcoes(opcoesNovoCasoCliente)}`
+      : `Vamos abrir um novo caso. O caso atual continua registrado. ${textoAudioOpcoes(opcoesNovoCasoCliente)}`,
     "novo caso cliente"
   )
   return {
-    texto: `➕ *Abrir novo caso*\n\nPara quem é este novo atendimento?\n\nSeu caso atual continuará registrado. Se for para outra pessoa, pediremos os dados e o WhatsApp dela.\n\n*Seus dados atuais:*\n👤 *${nomeExibicao || "Nome não informado"}*\n📍 ${cidadeExibicao || "Cidade não informada"}${ufExibicao ? " - " + ufExibicao : ""}`,
+    texto: `➕ *Abrir novo caso*\n\nPara quem é este novo atendimento?\n\n${clienteAnteriorSemCasoAtivo ? "Seus casos anteriores continuarão preservados no histórico." : "Seu caso atual continuará registrado."} Se for para outra pessoa, pediremos os dados e o WhatsApp dela.\n\n*Seus dados atuais:*\n👤 *${nomeExibicao || "Nome não informado"}*\n📍 ${cidadeExibicao || "Cidade não informada"}${ufExibicao ? " - " + ufExibicao : ""}`,
     opcoes: opcoesNovoCasoCliente
   }
 }
@@ -9626,6 +9704,24 @@ async function executarIntencaoCliente(from, u, intencao, textoOriginal = "") {
   if (intencao === "menu") return await menuClienteComAudio(from, u)
   if (intencao === "status") return await telaStatusCliente(from, u)
   if (intencao === "documentos") {
+    if (casoImportadoSemSnapshot(u)) {
+      iniciarTimer(from)
+      const telaImportado = {
+        texto: `${blocoDocumentosCasoImportado(u)}\n\nVocê pode enviar um documento adicional sem substituir o material que já está no caso.`,
+        opcoes: [
+          { id: "docs_confirmar_envio_extra", title: "📎 Enviar adicional" },
+          { id: "m_adv", title: "👩‍⚖️ Falar com advogado" },
+          { id: "m_inicio", title: "🏠 Menu do cliente" }
+        ]
+      }
+      await enviarAudioModoVoz(
+        from,
+        u,
+        "A documentação já registrada no escritório está preservada e em conferência. Você pode enviar um documento adicional ou falar com um advogado.",
+        "documentos caso importado"
+      )
+      return telaImportado
+    }
     garantirListasDocumentos(u)
     const pendentes = getDocsPendentes(u)
     const faltantes = getDocsFaltantesReenviaveis(u)
@@ -9796,8 +9892,89 @@ async function respostaAposConfirmarDescricao(from, u) {
   return await telaConfirmacaoComImagem(from, u)
 }
 
+function telaClienteAnteriorSemCasoAtivo(u) {
+  const nomeExib = getPrimeiroNomeRetomada(u)
+  const historico = Array.isArray(u._casosFinalizadosDisponiveis)
+    ? u._casosFinalizadosDisponiveis.slice(0, 5)
+    : []
+  const linhas = historico.map(caso => {
+    const closedate = String(caso.closedate || "").trim()
+    const data = closedate
+      ? (/^\d+$/.test(closedate) ? new Date(Number(closedate)) : new Date(closedate))
+      : null
+    const dataTexto = data && !Number.isNaN(data.getTime())
+      ? ` · encerrado em ${data.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}`
+      : ""
+    return `• *${caso.numeroCaso}* · ${caso.area || "Atendimento"}${dataTexto}`
+  })
+  const complemento = historico.length
+    ? `\n\n📚 *Histórico preservado:*\n${linhas.join("\n")}`
+    : ""
+  return {
+    texto: `Que bom falar com você novamente, *${nomeExib}* 😊\n\nSeus atendimentos anteriores estão encerrados e permanecem preservados no nosso histórico.${complemento}\n\nComo posso ajudar agora?`,
+    opcoes: [
+      { id: "ret_novo", title: "➕ Novo atendimento" },
+      { id: "hist_equipe", title: "👩‍⚖️ Falar com a equipe" },
+      { id: "m_encerrar", title: "👋 Encerrar" }
+    ]
+  }
+}
+
+async function processarClienteAnteriorSemCasoAtivo(from, u, acao, text, { ehAudio = false, ehDoc = false } = {}) {
+  if (!u?._clienteAnteriorSemCasoAtivo || u.numeroCaso) return null
+
+  if (u._aguardandoMensagemHistorico && (text || ehAudio || ehDoc)) {
+    if (ehAudio || ehDoc) {
+      iniciarTimer(from)
+      return {
+        texto: "Para eu registrar corretamente, envie uma mensagem curta em texto dizendo sobre qual caso encerrado deseja falar.",
+        opcoes: [{ id: "hist_equipe", title: "👩‍⚖️ Falar com a equipe" }]
+      }
+    }
+    const mensagem = normalizarTextoCRM(text)
+    const numeros = (u._casosFinalizadosDisponiveis || []).map(caso => caso.numeroCaso).filter(Boolean).join(", ")
+    await hsCriarNota(
+      u.contatoId,
+      "CONTATO SOBRE HISTÓRICO DE CASOS",
+      `Mensagem recebida pelo WhatsApp sobre caso(s) encerrado(s).\nCasos: ${numeros || "não identificado"}\nDe: ${u.nome || u.nomeHubspot || "Cliente"} (${from})\n\n${mensagem}`
+    )
+    await enviarWhatsAppAdmin(`📚 *Contato sobre caso encerrado*\n\nCliente: ${u.nome || u.nomeHubspot || "Cliente"}\nCasos: ${numeros || "não identificado"}\nMensagem: ${mensagem}`)
+    u._aguardandoMensagemHistorico = false
+    iniciarTimer(from)
+    return {
+      texto: "✅ *Mensagem registrada.*\n\nNossa equipe recebeu seu contato e poderá consultar o histórico antes de responder.",
+      opcoes: [
+        { id: "ret_novo", title: "➕ Novo atendimento" },
+        { id: "m_encerrar", title: "👋 Encerrar" }
+      ]
+    }
+  }
+
+  if (acao === "ret_novo") return await abrirNovoCasoCliente(from, u)
+  if (acao === "hist_equipe") {
+    u._aguardandoMensagemHistorico = true
+    iniciarTimer(from)
+    return {
+      texto: "👩‍⚖️ *Falar com a equipe*\n\nEscreva uma mensagem curta e, se souber, informe o número do caso encerrado. Vou registrar tudo para a equipe.",
+      opcoes: null
+    }
+  }
+  if (acao === "m_encerrar") {
+    u._aguardandoMensagemHistorico = false
+    return { texto: "Tudo bem 😊 Quando precisar, é só chamar novamente.", opcoes: null, registrarPergunta: false }
+  }
+
+  setStage(u, STAGES.INICIO_RETORNO)
+  iniciarTimer(from)
+  return telaClienteAnteriorSemCasoAtivo(u)
+}
+
 async function flowInicio(u, ctx) {
   const from = ctx?.from || u._numero || ""
+  if (u._clienteAnteriorSemCasoAtivo && !u.numeroCaso) {
+    setStage(u, STAGES.INICIO_RETORNO)
+    return telaClienteAnteriorSemCasoAtivo(u)
+  }
   if (podeMostrarMenuCliente(u)) {
     setStage(u, STAGES.INICIO_RETORNO)
     const nomeExib = getPrimeiroNomeRetomada(u)
@@ -9819,6 +9996,10 @@ async function flowInicio(u, ctx) {
 }
 
 async function flowInicioRetorno(u, ctx) {
+  if (u._clienteAnteriorSemCasoAtivo && !u.numeroCaso) {
+    setStage(u, STAGES.INICIO_RETORNO)
+    return telaClienteAnteriorSemCasoAtivo(u)
+  }
   setStage(u, STAGES.INICIO_RETORNO)
   const nomeExib = getPrimeiroNomeRetomada(u)
   await enviarAudioModoVoz(
@@ -10734,7 +10915,7 @@ async function flowConfirmacao(u, ctx) {
 }
 
 async function flowCliente(u, ctx) {
-  if (!podeMostrarMenuCliente(u) || !u.numeroCaso) {
+  if (!podeMostrarMenuCliente(u)) {
     logDebug('[BLOCK] acesso indevido ao menu cliente sem numeroCaso | USER:', u._numero)
     salvarEtapa(u._numero, STAGES.AUDIO_AGUARDANDO)
     return respostaRecomecoMenuPrincipal(u)
@@ -12687,7 +12868,8 @@ async function processarUrgenciaOuCorrecao(from, u, text, msgObj, ehDoc, ehAudio
     } else {
       const mensagemUrgente = normalizarTextoCRM(text)
       await hsCriarNota(u.contatoId, "MENSAGEM URGENTE", `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\nArea: ${u.area}\n\n${mensagemUrgente}`)
-      await hsMoverStage(u.negocioId, HS_STAGE.ANALISE)
+      const moveuUrgenteTexto = await hsMoverStageSeguro(u.negocioId, HS_STAGE.ANALISE, u.negocioStageId, u.consultaStatus === "agendada")
+      if (moveuUrgenteTexto) u.negocioStageId = HS_STAGE.ANALISE
       notificarMensagemUrgente(u, mensagemUrgente, u.negocioId).catch(e => console.error("[notif] urgente:", e.message))
       setStage(u, STAGES.CLIENTE)
       return await respostaUrgenteRegistradaComAudio(from, u, "mensagem urgente texto registrada")
@@ -13779,6 +13961,16 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
   const textoRetomada = sanitizarTextoEntrada(msgObj?.text?.body || msgObj?.interactive?.button_reply?.title || msgObj?.interactive?.list_reply?.title || text).toLowerCase()
   const usuarioRespondendoAgora = Boolean(u.aguardandoResposta) && Boolean(text || buttonId || ehAudio || ehDoc)
   const ctx = criarCtx({ from, nomeWA, text, msgObj, buttonId, tipo, ehAudio, ehDoc, timestamp: Date.now() })
+
+  if (u._clienteAnteriorSemCasoAtivo && !u.numeroCaso) {
+    return await processarClienteAnteriorSemCasoAtivo(
+      from,
+      u,
+      buttonId || text,
+      text,
+      { ehAudio, ehDoc }
+    )
+  }
 
   // Invariante global: um caso oficial jamais retorna ao pré-atendimento.
   // Estados pós-cadastro legítimos são preservados; qualquer estado perdido,
@@ -17398,7 +17590,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         "ÁUDIO URGENTE",
         `De: ${u.nome} (${from})\nCaso: ${u.numeroCaso}\n\nTranscrição:\n"${u._urgenteAudioTexto || "Transcrição indisponível"}"`
       )
-      await hsMoverStage(u.negocioId, HS_STAGE.ANALISE)
+      const moveuUrgenteAudio = await hsMoverStageSeguro(u.negocioId, HS_STAGE.ANALISE, u.negocioStageId, u.consultaStatus === "agendada")
+      if (moveuUrgenteAudio) u.negocioStageId = HS_STAGE.ANALISE
       const _textoAudio = u._urgenteAudioTexto || "Transcrição indisponível"
       notificarMensagemUrgente(u, _textoAudio, u.negocioId).catch(e => console.error("[notif] urgente-audio:", e.message))
       u._urgenteAudioBuffer = null
@@ -17501,7 +17694,8 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
         `De: ${u.nome || "-"} (${from})\nCaso: ${u.numeroCaso || "-"}\n\n${textoAudio}${u._audioClientePendenteArquivo ? `\nDrive: ${u._audioClientePendenteArquivo}` : ""}`
       )
       if (urgente) {
-        await hsMoverStage(u.negocioId, HS_STAGE.ANALISE)
+        const moveuUrgenteCliente = await hsMoverStageSeguro(u.negocioId, HS_STAGE.ANALISE, u.negocioStageId, u.consultaStatus === "agendada")
+        if (moveuUrgenteCliente) u.negocioStageId = HS_STAGE.ANALISE
         notificarMensagemUrgente(u, textoAudio, u.negocioId).catch(e => console.error("[notif] urgente-audio-cliente:", e.message))
       }
       u._audioClientePendenteTexto = null

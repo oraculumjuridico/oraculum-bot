@@ -31,6 +31,59 @@ let deps = {
 }
 let HS_STAGES_FINALIZADOS = new Set()
 const filasMutacaoNegocio = new Map()
+const JANELA_LEAD_INCOMPLETO_MS = 30 * 24 * 60 * 60 * 1000
+const HUBSPOT_CASE_PROPERTIES = [
+  "dealstage", "dealname", "createdate", "closedate", "hs_lastmodifieddate",
+  "description", "resumo_cliente", "descricao_completa", "area_juridica", "urgencia",
+  "pasta_drive", "estado_bot_snapshot", "etapa_do_bot", "tipo_de_caso",
+  "oraculum_case_subtype", "temperatura_lead", "hs_priority", "numero_de_caso",
+  "origem_atendimento", "oraculum_document_status", "oraculum_documents_received",
+  "oraculum_documents_pending", "oraculum_analysis_status", "oraculum_review_required",
+  "oraculum_next_action"
+].join(",")
+
+function dataAtualizacaoNegocio(negocio = {}) {
+  const props = negocio.properties || {}
+  const valor = props.hs_lastmodifieddate || negocio.updatedAt || props.createdate || negocio.createdAt
+  const texto = sanitizarTextoEntrada(valor)
+  const ts = texto
+    ? (/^\d+$/.test(texto) ? Number(texto) : new Date(texto).getTime())
+    : NaN
+  return Number.isFinite(ts) ? ts : null
+}
+
+function leadIncompletoRetomavel(negocio, agora = Date.now()) {
+  if (!negocio || sanitizarTextoEntrada(negocio?.properties?.numero_de_caso)) return false
+  const atualizadoEm = dataAtualizacaoNegocio(negocio)
+  return atualizadoEm !== null && agora - atualizadoEm >= 0 && agora - atualizadoEm <= JANELA_LEAD_INCOMPLETO_MS
+}
+
+function selecionarLeadRetomavel(leads = [], agora = Date.now()) {
+  return [...leads]
+    .filter(lead => leadIncompletoRetomavel(lead, agora))
+    .sort((a, b) => (dataAtualizacaoNegocio(b) || 0) - (dataAtualizacaoNegocio(a) || 0))[0] || null
+}
+
+function ordemStageHubSpot(stage) {
+  const ordem = [
+    deps.HS_STAGE?.LEAD,
+    deps.HS_STAGE?.CADASTRO,
+    deps.HS_STAGE?.ANALISE,
+    deps.HS_STAGE?.AGUARDANDO_DOCS,
+    deps.HS_STAGE?.DOCS,
+    deps.HS_STAGE?.AGENDAMENTO,
+    deps.HS_STAGE?.PROTOCOLO,
+    deps.HS_STAGE?.PROCESSO,
+    deps.HS_STAGE?.FINAL
+  ].filter(Boolean)
+  return ordem.indexOf(stage)
+}
+
+function movimentoRegressivoHubSpot(stageAtual, novoStage) {
+  const atual = ordemStageHubSpot(stageAtual)
+  const novo = ordemStageHubSpot(novoStage)
+  return atual >= 0 && novo >= 0 && novo < atual
+}
 
 function classificacaoGenerica(valor = "") {
   const normalizado = sanitizarTextoEntrada(valor).toLowerCase()
@@ -132,6 +185,10 @@ async function atualizarDealstageSemLock(u, contextoAtual = undefined) {
   const stagePendente = sanitizarTextoEntrada(u._negocioStageIdPendente)
   const stageEfetivo = stagePendente || stageAtual
   if (stageEfetivo === dealstage) return null
+  if (movimentoRegressivoHubSpot(stageEfetivo, dealstage)) {
+    logDebug(`[HUBSPOT] Movimento regressivo ignorado: ${stageEfetivo} -> ${dealstage}`)
+    return null
+  }
 
   logDebug(`[HUBSPOT] Atualizando estágio do negócio: ${stageAtual || "-"} ? ${dealstage}`)
   u._negocioStageIdPendente = dealstage
@@ -231,9 +288,22 @@ function restaurarEstadoNegocioHubSpot(u, negocio) {
   const area = sanitizarTextoEntrada(negocio.properties.area_juridica)
   const etapa = normalizarStageKey(negocio.properties.etapa_do_bot)
   const numeroCasoOficial = deps.getNumeroCasoOficialDoNegocio(negocio)
+  const pastaDrive = sanitizarTextoEntrada(negocio.properties.pasta_drive)
+  const origemAtendimento = sanitizarTextoEntrada(negocio.properties.origem_atendimento)
 
   u.numeroCaso = numeroCasoOficial
   if (area) u.area = area
+  if (pastaDrive) u.pastaDriveLink = pastaDrive
+  if (origemAtendimento) u.origemCaptacao = origemAtendimento
+
+  u._hubspotCaseHasSnapshot = Boolean(estadoSnapshot)
+  u._hubspotImportedCase = origemAtendimento === "importacao_arquivo"
+  u._hubspotDocumentStatus = sanitizarTextoEntrada(negocio.properties.oraculum_document_status) || null
+  u._hubspotDocumentsReceived = sanitizarTextoEntrada(negocio.properties.oraculum_documents_received) || null
+  u._hubspotDocumentsPending = sanitizarTextoEntrada(negocio.properties.oraculum_documents_pending) || null
+  u._hubspotAnalysisStatus = sanitizarTextoEntrada(negocio.properties.oraculum_analysis_status) || null
+  u._hubspotReviewRequired = sanitizarTextoEntrada(negocio.properties.oraculum_review_required).toLowerCase() === "true"
+  u._hubspotNextAction = sanitizarTextoEntrada(negocio.properties.oraculum_next_action) || null
 
   if (descricao && !u.descricao) {
     const descricaoNormalizada = normalizarTextoCRM(descricao)
@@ -340,18 +410,22 @@ async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
     for (const dealId of dealIds) {
       try {
         const res = await axios.get(
-          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=dealstage,dealname,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso`,
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=${HUBSPOT_CASE_PROPERTIES}`,
           { headers: HS() }
         )
         const stage = res.data?.properties?.dealstage
-        if (stage && !HS_STAGES_FINALIZADOS.has(stage)) {
+        const numeroCaso = sanitizarTextoEntrada(res.data?.properties?.numero_de_caso)
+        const negocio = {
+          id: dealId,
+          stageId: stage,
+          dealname: res.data?.properties?.dealname || null,
+          createdAt: res.data?.createdAt || null,
+          updatedAt: res.data?.updatedAt || null,
+          properties: res.data?.properties || {}
+        }
+        if (stage && !HS_STAGES_FINALIZADOS.has(stage) && (numeroCaso || leadIncompletoRetomavel(negocio))) {
           logDebug("Negócio existente encontrado:", dealId)
-          return {
-            id: dealId,
-            stageId: stage,
-            dealname: res.data?.properties?.dealname || null,
-            properties: res.data?.properties || {}
-          }
+          return negocio
         }
       } catch {}
     }
@@ -363,28 +437,40 @@ async function hsBuscarNegocioAbertoInfoDoContato(contactId) {
 }
 
 async function hsBuscarNegociosComCasoDoContato(contactId) {
-  if (!contactId) return { casosOficiais: [], leads: [], finalizados: [] }
+  if (!contactId) return { casosOficiais: [], casosAtivos: [], casosFinalizados: [], leads: [], finalizados: [] }
   try {
     const dealIds = await hsBuscarNegociosDoContato(contactId)
-    if (!dealIds.length) return { casosOficiais: [], leads: [], finalizados: [] }
+    if (!dealIds.length) return { casosOficiais: [], casosAtivos: [], casosFinalizados: [], leads: [], finalizados: [] }
 
     const casosOficiais = []
+    const casosAtivos = []
+    const casosFinalizados = []
     const leads = []
     const finalizados = []
 
     for (const dealId of dealIds) {
       try {
         const res = await axios.get(
-          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=dealstage,dealname,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso`,
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=${HUBSPOT_CASE_PROPERTIES}`,
           { headers: HS() }
         )
         const props = res.data?.properties || {}
         const stage = props.dealstage
         const numeroCaso = sanitizarTextoEntrada(props.numero_de_caso) || null
-        const info = { id: dealId, stageId: stage, dealname: props.dealname || null, properties: props }
+        const info = {
+          id: dealId,
+          stageId: stage,
+          dealname: props.dealname || null,
+          createdAt: res.data?.createdAt || null,
+          updatedAt: res.data?.updatedAt || null,
+          properties: props
+        }
 
         if (numeroCaso) {
-          casosOficiais.push({ ...info, numeroCaso, finalizado: !stage || HS_STAGES_FINALIZADOS.has(stage) })
+          const caso = { ...info, numeroCaso, finalizado: !stage || HS_STAGES_FINALIZADOS.has(stage) }
+          casosOficiais.push(caso)
+          if (caso.finalizado) casosFinalizados.push(caso)
+          else casosAtivos.push(caso)
         } else if (!stage || HS_STAGES_FINALIZADOS.has(stage)) {
           finalizados.push(info)
         } else {
@@ -395,10 +481,10 @@ async function hsBuscarNegociosComCasoDoContato(contactId) {
       }
     }
 
-    return { casosOficiais, leads, finalizados }
+    return { casosOficiais, casosAtivos, casosFinalizados, leads, finalizados }
   } catch (e) {
     logErroHubSpot(e, { operation: "buscarNegociosComCaso", contactId })
-    return { casosOficiais: [], leads: [], finalizados: [] }
+    return { casosOficiais: [], casosAtivos: [], casosFinalizados: [], leads: [], finalizados: [] }
   }
 }
 
@@ -411,7 +497,7 @@ async function hsListarNegociosAtivosDoContato(contactId) {
     for (const dealId of dealIds) {
       try {
         const res = await axios.get(
-          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso`,
+          `https://api.hubapi.com/crm/v3/objects/deals/${dealId}?properties=${HUBSPOT_CASE_PROPERTIES}`,
           { headers: HS() }
         )
         const stage = res.data?.properties?.dealstage
@@ -440,7 +526,7 @@ async function hsListarNegociosAtivosDoContato(contactId) {
   }
 }
 
-const ADMIN_ACTIVE_DEAL_PROPERTIES = "dealstage,dealname,createdate,closedate,description,resumo_cliente,descricao_completa,area_juridica,urgencia,pasta_drive,estado_bot_snapshot,etapa_do_bot,tipo_de_caso,temperatura_lead,hs_priority,numero_de_caso"
+const ADMIN_ACTIVE_DEAL_PROPERTIES = HUBSPOT_CASE_PROPERTIES
 
 // Consulta administrativa: ao contrário do helper legado acima, falhas de
 // associação/leitura não podem ser confundidas com um contato sem negócios.
@@ -504,7 +590,7 @@ async function hsMoverStage(nId, stage) {
 // Impede que ações de documentos regridam o pipeline após agendamento.
 async function hsMoverStageSeguro(nId, novoStage, stageAtual, temEventoCalendar = false) {
   const stagesProtegidos = [deps.HS_STAGE.AGENDAMENTO, deps.HS_STAGE.PROTOCOLO, deps.HS_STAGE.PROCESSO, deps.HS_STAGE.FINAL]
-  if (stagesProtegidos.includes(stageAtual) || temEventoCalendar) return false
+  if (stagesProtegidos.includes(stageAtual) || temEventoCalendar || movimentoRegressivoHubSpot(stageAtual, novoStage)) return false
   await hsMoverStage(nId, novoStage)
   return true
 }
@@ -528,6 +614,8 @@ module.exports = {
   hsBuscarNegocioAbertoDoContato,
   hsBuscarNegocioAbertoInfoDoContato,
   hsBuscarNegociosComCasoDoContato,
+  leadIncompletoRetomavel,
+  selecionarLeadRetomavel,
   hsListarNegociosAtivosDoContato,
   hsListarNegociosAtivosDoContatoEstrito,
   hsAtualizarEtapaNegocio,

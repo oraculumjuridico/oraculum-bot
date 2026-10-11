@@ -60,6 +60,12 @@ A identidade operacional é conjunta:
 
 Quando existem múltiplos casos, o cliente seleciona um caso permitido entre os seus próprios negócios. Ambiguidade não é resolvida por aproximação. O título segue a nomenclatura jurídica canônica e o número do caso.
 
+Na entrada pelo WhatsApp, somente casos oficiais ativos podem ser restaurados para o menu operacional. Casos finalizados permanecem preservados como histórico; um cliente que possui apenas histórico recebe as opções de abrir novo atendimento ou deixar uma mensagem para a equipe. Negócios unificados e substituídos não aparecem como casos independentes.
+
+Pré-atendimentos sem número podem ser retomados por até 30 dias corridos desde a última atualização no HubSpot. Depois desse prazo, o registro continua disponível para a equipe, mas o bot inicia um atendimento novo e não reutiliza o Deal antigo.
+
+Casos importados ativos sem `estado_bot_snapshot` são reconstruídos a partir das propriedades canônicas do Deal. O bot apresenta os documentos já registrados e as pendências do HubSpot sem fabricar uma lista nova de documentos ausentes.
+
 Módulos principais: `identity.js`, `crm-identity/*`, `canonical-case*`, `case-number*`, `legal-case-nomenclature.js` e `client-menu-ui.js`.
 
 ## 6. Menu e atendimento do cliente
@@ -83,6 +89,8 @@ No WhatsApp Admin, a opção **Credenciais** apresenta o CPF confirmado e o link
 Cada Negócio possui um registro isolado. Abrir o link exige a senha mestre, cria uma sessão segura de dez minutos e permite visualizar/copiar ou atualizar a senha. O link sozinho não revela dados. A rotação da senha administrativa requer recriptografia planejada dos registros existentes; não se deve trocar essa variável diretamente em produção.
 
 O HubSpot recebe propriedades permitidas pelo contrato. Divergência entre valor manual e extração automática não autoriza sobrescrita silenciosa.
+
+O estágio do Deal é a fonte oficial do andamento. O bot pode avançá-lo em eventos objetivos do fluxo, mas bloqueia movimentos regressivos e preserva protocolo, processo em andamento e caso finalizado. Mensagens urgentes e novos documentos não rebaixam um estágio mais avançado definido pela equipe.
 
 Módulos principais: `name-normalization.js`, `phone-name.js`, `address-facts.js`, `geo-search.js`, `hubspot-contract.js`, `hubspot-sync.js` e handlers de revalidação.
 

@@ -10,6 +10,11 @@ function criarClientNavigationRouter({
   return async function processarNavegacaoCliente({ from, u, text }) {
     if (u.stage === "inicio") {
       if (podeMostrarMenuCliente(u)) {
+        if (!u.numeroCaso && Array.isArray(u._casosDisponiveis) && u._casosDisponiveis.length) {
+          u._mostrarPainelCasosCliente = true
+          setStage(u, "cliente"); iniciarTimer(from)
+          return { handled: true, response: await menuClienteComAudio(from, u) }
+        }
         // Cliente retornando — perguntar se quer acompanhar ou abrir novo caso
         setStage(u, "inicio_retorno"); iniciarTimer(from)
         const nomeExib = getPrimeiroNomeRetomada(u)

@@ -11,7 +11,7 @@ function criarHarness() {
     novosCasos: []
   }
   const processar = criarClientNavigationRouter({
-    podeMostrarMenuCliente: u => Boolean(u?.numeroCaso),
+    podeMostrarMenuCliente: u => Boolean(u?.numeroCaso) || Boolean(u?._casosDisponiveis?.length),
     setStage: (u, stage) => {
       chamadas.stages.push(stage)
       u.stage = stage
@@ -41,6 +41,22 @@ async function main() {
       await processar({ from: "5511", u: { stage: "cliente" }, text: "m_inicio" }),
       { handled: false, response: null }
     )
+  }
+
+  {
+    const { processar, chamadas } = criarHarness()
+    const u = {
+      stage: "inicio",
+      nome: "Maria Silva",
+      _casosDisponiveis: [{ id: "a", numeroCaso: "ORA-1" }, { id: "b", numeroCaso: "ORA-2" }]
+    }
+    assert.deepEqual(
+      await processar({ from: "5511", u, text: "oi" }),
+      { handled: true, response: { texto: "menu do cliente", opcoes: [] } }
+    )
+    assert.equal(u.stage, "cliente")
+    assert.equal(u._mostrarPainelCasosCliente, true)
+    assert.equal(chamadas.menus.length, 1)
   }
 
   {
