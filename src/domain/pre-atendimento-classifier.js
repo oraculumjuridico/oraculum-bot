@@ -101,6 +101,31 @@ function pareceRelatoJuridicoAntecipado(texto = "") {
   return /\b(fui|estou|tenho|tive|me|minha|meu|ela|ele)\b.{0,45}\b(demitid|mandad|cortad|bloquead|negad|afastad|acident|cobrad|ameac|processad|pres[oa]|despejad)\b/.test(t)
 }
 
+function detectarCampoCorrecaoPreAtendimento(texto = "") {
+  const t = textoNormalizadoPreAtendimento(texto)
+  if (!t) return null
+  const campos = [
+    ["whatsapp", /\b(whatsapp|telefone|numero|celular|contato)\b/],
+    ["cidade", /\b(cidade|municipio|localidade|cep|onde moro|onde reside)\b/],
+    ["nome", /\b(nome|sobrenome)\b/],
+    ["urgencia", /\b(urgencia|prioridade|urgente)\b/],
+    ["situacao", /\b(situacao|beneficio|tipo do caso)\b/],
+    ["detalhe", /\b(detalhe|subtipo)\b/],
+    ["descricao", /\b(descricao|relato|historia|texto|area juridica|assunto do caso)\b/]
+  ]
+  const campo = campos.find(([, padrao]) => padrao.test(t))
+  return campo ? campo[0] : null
+}
+
+function detectarCorrecaoPreAtendimento(texto = "") {
+  const t = textoNormalizadoPreAtendimento(texto)
+  if (!t) return null
+
+  const sinalCorrecao = /\b(corrig\w*|alter\w*|mud\w*|troc\w*|errad[oa]?|incorret[oa]?|nao e (?:esse|essa|este|esta)|(?:esse|essa|este|esta) nao e|nao esta cert[oa]|corret[oa] e|na verdade)\b/.test(t)
+  if (!sinalCorrecao) return null
+  return detectarCampoCorrecaoPreAtendimento(t) || "outro"
+}
+
 function temaJuridicoPreAtendimento(texto = "") {
   const t = textoNormalizadoPreAtendimento(texto)
   if (/\b(inss|aposentadoria|beneficio|benefício|bpc|loas|auxilio|auxílio|pericia|perícia)\b/.test(t)) return "INSS"
@@ -161,6 +186,8 @@ async function classificarEntradaPreAtendimento(stage, texto = "", opcoes = {}) 
   const entrada = sanitizarTextoEntrada(texto)
   const usarIA = opcoes.usarIA !== false
   if (!entrada) return { tipo: "desconhecido", confianca: 0, origem: "vazio" }
+  const campoCorrecao = detectarCorrecaoPreAtendimento(entrada)
+  if (campoCorrecao) return { tipo: "correcao", confianca: 1, tema: campoCorrecao, origem: "regra" }
   if (pareceCasoParaTerceiroPreAtendimento(entrada)) return { tipo: "terceiro", confianca: 1, origem: "regra" }
   if (parecePedidoAdvogadoDiretoPreAtendimento(entrada)) return { tipo: "advogado_direto", confianca: 1, origem: "regra" }
   if (pareceDuvidaPreAtendimento(entrada)) return { tipo: "duvida", confianca: 1, origem: "regra" }
@@ -229,6 +256,8 @@ module.exports = {
   parecePerguntaFuncionalPreAtendimento,
   pareceDuvidaPreAtendimento,
   pareceRelatoJuridicoAntecipado,
+  detectarCampoCorrecaoPreAtendimento,
+  detectarCorrecaoPreAtendimento,
   temaJuridicoPreAtendimento,
   classificarImprevistoPreAtendimentoIA,
   classificarEntradaPreAtendimento,

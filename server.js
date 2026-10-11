@@ -134,9 +134,11 @@ const {
   relacaoTerceiroPreAtendimento,
   parecePedidoAdvogadoDiretoPreAtendimento,
   parecePerguntaFuncionalPreAtendimento,
+  detectarCampoCorrecaoPreAtendimento,
   classificarEntradaPreAtendimento,
   respostaCurtaDuvidaPreAtendimento
 } = require("./src/domain/pre-atendimento-classifier")
+const { interpretarResultadoFinalizacaoCanonica } = require("./src/domain/canonical-finalization-outcome")
 const {
   classificarAreaAudio
 } = require("./src/domain/area-audio-classifier")
@@ -8331,6 +8333,7 @@ async function finalizarCadastro(from, u) {
   })
   const telefoneContato = getTelefoneContato(from, u)
   const ehTerceiro = u.telefoneEhDoCliente === false
+  const nomeTerceiro = ehTerceiro ? sanitizarTextoEntrada(u.nome) : ""
   const ehNovoCasoCliente = Boolean(u._novoCasoDeCliente)
   if (u.numeroCaso) {
     logDebug("? Sessão já possui número de caso, reutilizando existente")
@@ -8413,51 +8416,35 @@ async function finalizarCadastro(from, u) {
         }
       ]
     }
-    if (ehTerceiro) {
-      canonicalContext.internalNotifications.push({
-        type: "hubspot_note",
-        subject: "DIVERGENCIA DE NOME - CASO PARA TERCEIRO",
-        message: [
-          "Caso para terceiro com telefone ja existente no HubSpot.",
-          `Nome atual do contato: ${existente?.properties?.firstname || "nao informado"}`,
-          `Nome informado neste atendimento: ${nomeTerceiro || "nao informado"}`,
-          `Telefone informado: ${telefoneContato}`,
-          "O nome do contato foi preservado para evitar sobrescrever o verdadeiro dono do numero."
-        ].join("\n")
-      })
-    }
-
     const canonicalResult = await liveCaseFlow.executeLiveCaseFlow(u, canonicalContext)
-    if (canonicalResult?.result?.completed) {
+    const canonicalOutcome = interpretarResultadoFinalizacaoCanonica(canonicalResult)
+    if (canonicalOutcome.completed) {
       canonicalExecuted = true
       if (!u.pastaDriveId && u._canonicalCheckpoint?.steps?.drive?.result?.id) {
         u.pastaDriveId = u._canonicalCheckpoint.steps.drive.result.id
       }
-    } else if (canonicalResult?.result?.error) {
-      const partial = canonicalResult.result.partialResources || {}
-      const hasPartial = canonicalResult.result.hasPartialWrites
-      const interruptedStep = canonicalResult.result.interruptedStep
-      logErro("canonical_executor", `fallback para legado: ${canonicalResult.result.error}`, {
-        canonicalError: canonicalResult.result.error,
-        canonicalErrorCode: canonicalResult.result.code,
-        interruptedStep,
-        hasPartialWrites: hasPartial,
-        partialResources: partial,
-        planHash: canonicalResult.result.planHash
+    } else if (canonicalOutcome.error) {
+      logErro("canonical_executor", `fallback para legado: ${canonicalOutcome.error}`, {
+        canonicalError: canonicalOutcome.error,
+        canonicalErrorCode: canonicalOutcome.code,
+        interruptedStep: canonicalOutcome.interruptedStep,
+        hasPartialWrites: canonicalOutcome.hasPartialWrites,
+        partialResources: canonicalOutcome.partialResources,
+        planHash: canonicalOutcome.planHash
       })
-      if (hasPartial) {
-        if (partial.contactId) u.contatoId = u.contatoId || partial.contactId
-        if (partial.dealId) u.negocioId = u.negocioId || partial.dealId
-        if (partial.caseFolderId && !u.pastaDriveId) {
-          u.pastaDriveId = partial.caseFolderId
+      if (canonicalOutcome.hasPartialWrites) {
+        if (canonicalOutcome.partialResources.contactId) u.contatoId = u.contatoId || canonicalOutcome.partialResources.contactId
+        if (canonicalOutcome.partialResources.dealId) u.negocioId = u.negocioId || canonicalOutcome.partialResources.dealId
+        if (canonicalOutcome.partialResources.caseFolderId && !u.pastaDriveId) {
+          u.pastaDriveId = canonicalOutcome.partialResources.caseFolderId
         }
       }
       canonicalExecuted = false
     }
 
   if (!canonicalExecuted) {
-    if (hasPartial) {
-      logErro("canonical_executor", "FALLBACK_BLOCKED_PARTIAL_WRITES", { hasPartialWrites: hasPartial, interruptedStep, partialResources: partial })
+    if (!canonicalOutcome.fallbackAllowed) {
+      logErro("canonical_executor", "FALLBACK_BLOCKED_PARTIAL_WRITES", { hasPartialWrites: canonicalOutcome.hasPartialWrites, interruptedStep: canonicalOutcome.interruptedStep, partialResources: canonicalOutcome.partialResources })
       throw new Error("FALLBACK_BLOCKED_PARTIAL_WRITES: require admin-assisted resolution")
     }
     var driveCalled = !u.pastaDriveId
@@ -15800,24 +15787,26 @@ Preciso do nome completo. Por favor, informe também o *sobrenome*.`, opcoes: nu
       })
     }
 
-    // Groq identifica qual campo corrigir (com todos os 7 campos suportados)
-    let campoDetectado = null
-    try {
-      const res = await axios.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          model: "llama-3.1-8b-instant",
-          messages: [{
-            role: "user",
-            content: `O usuário quer corrigir um dado do cadastro. Analise a mensagem e responda com UMA palavra apenas, sendo exatamente uma destas opções: nome, whatsapp, cidade, situacao, detalhe, urgencia, descricao, outro.\n\nRegras:\n- nome ? nome da pessoa está errado\n- whatsapp ? telefone, WhatsApp ou número de contato está errado\n- cidade ? cidade ou localidade está errada\n- situacao ? tipo de benefício, situação do caso\n- detalhe ? subtipo, detalhe específico do caso\n- urgencia ? urgência, prioridade, está sem receber\n- descricao ? descrição livre, relato do caso, inclusive quando a pessoa disser que a área jurídica está errada\n- outro ? não identificou\n\nMensagem: "${textoCorrecao}"\n\nResponda somente a palavra, sem mais nada.`
-          }],
-          max_tokens: 10,
-          temperature: 0
-        },
-        { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
-      )
-      campoDetectado = res.data.choices[0].message.content.trim().toLowerCase()
-    } catch (e) { logErro("groq", "Falha ao detectar campo correcao", e) }
+    // Regras locais resolvem pedidos simples; a IA fica como apoio para frases ambíguas.
+    let campoDetectado = detectarCampoCorrecaoPreAtendimento(textoCorrecao)
+    if (!campoDetectado) {
+      try {
+        const res = await axios.post(
+          "https://api.groq.com/openai/v1/chat/completions",
+          {
+            model: "llama-3.1-8b-instant",
+            messages: [{
+              role: "user",
+              content: `O usuário quer corrigir um dado do cadastro. Analise a mensagem e responda com UMA palavra apenas, sendo exatamente uma destas opções: nome, whatsapp, cidade, situacao, detalhe, urgencia, descricao, outro.\n\nRegras:\n- nome ? nome da pessoa está errado\n- whatsapp ? telefone, WhatsApp ou número de contato está errado\n- cidade ? cidade ou localidade está errada\n- situacao ? tipo de benefício, situação do caso\n- detalhe ? subtipo, detalhe específico do caso\n- urgencia ? urgência, prioridade, está sem receber\n- descricao ? descrição livre, relato do caso, inclusive quando a pessoa disser que a área jurídica está errada\n- outro ? não identificou\n\nMensagem: "${textoCorrecao}"\n\nResponda somente a palavra, sem mais nada.`
+            }],
+            max_tokens: 10,
+            temperature: 0
+          },
+          { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+        )
+        campoDetectado = res.data.choices[0].message.content.trim().toLowerCase()
+      } catch (e) { logErro("groq", "Falha ao detectar campo correcao", e) }
+    }
 
     // Helper interno: ir para mini-stage de edição
     const irParaEditar = async (stage, textoMsg, textoAudio) => {

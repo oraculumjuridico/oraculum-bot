@@ -92,13 +92,19 @@ const server = fs.readFileSync(
   path.join(__dirname, "..", "server.js"),
   "utf8"
 )
-const inicio = server.indexOf("async function finalizarCadastro")
+const inicio = server.indexOf("async function finalizarCadastro(from, u) {")
 const telefone = server.indexOf("const telefoneContato", inicio)
 const guarda = server.indexOf("assertFinalizationInvariants", inicio)
 const primeiroEfeito = server.indexOf("u.numeroCaso =", inicio)
 assert.ok(inicio >= 0)
 assert.ok(guarda > inicio && guarda < telefone)
 assert.ok(guarda < primeiroEfeito)
+const fimFinalizacao = server.indexOf("async function finalizarCadastroAssistidoAdmin", inicio)
+const trechoFinalizacao = server.slice(inicio, fimFinalizacao)
+assert.match(trechoFinalizacao, /const nomeTerceiro = ehTerceiro \? sanitizarTextoEntrada\(u\.nome\) : ""/)
+assert.match(trechoFinalizacao, /const canonicalOutcome = interpretarResultadoFinalizacaoCanonica\(canonicalResult\)/)
+assert.match(trechoFinalizacao, /if \(!canonicalOutcome\.fallbackAllowed\)/)
+assert.doesNotMatch(trechoFinalizacao, /const hasPartial =/)
 
 configurarStatePersistence({
   gerarBriefingCaso: u => ({

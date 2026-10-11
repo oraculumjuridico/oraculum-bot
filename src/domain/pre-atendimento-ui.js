@@ -135,16 +135,16 @@ function perguntaAtualPreAtendimento(stage, u = {}) {
 
 function gerarMensagemAcolhimento(texto = "") {
   const t = normalizarTextoGatilho(texto)
-  if (/\x08(desesperad|nao aguento|não aguento|nao consigo mais|não consigo mais|to mal|estou mal|chorando)\x08/.test(t)) {
+  if (/\b(desesperad[oa]?|nao aguento|nao consigo mais|to mal|estou mal|chorando)\b/.test(t)) {
     return "💙 Antes de qualquer coisa: obrigada por confiar em nós nesse momento difícil.\n\nEstou aqui com você. Vamos cuidar disso juntos, com calma e atenção."
   }
-  if (/\x08(sem dinheiro|sem renda|passando fome|sem comer|sem comida|despejad|vou perder minha casa)\x08/.test(t)) {
+  if (/\b(sem dinheiro|sem renda|passando fome|sem comer|sem comida|despejad[oa]?|vou perder minha casa)\b/.test(t)) {
     return "💙 Entendo que você está passando por uma situação muito séria.\n\nPode continuar me contando. Nossa equipe vai analisar isso com prioridade."
   }
-  if (/\x08(ameacad|ameaçad|violencia|violência|agredid|medo de|com medo)\x08/.test(t)) {
+  if (/\b(ameacad[oa]?|violencia|agredid[oa]?|medo de|com medo)\b/.test(t)) {
     return "💙 Entendo que isso é muito assustador.\n\nVocê não está sozinho. Nossa equipe vai analisar o que pode ser feito para te proteger."
   }
-  if (/\x08(amanha perco|amanhã perco|prazo vence hoje|audiencia amanha|intimad|preso|vao me prender)\x08/.test(t)) {
+  if (/\b(amanha perco|prazo vence hoje|audiencia amanha|intimad[oa]?|pres[oa]|vao me prender)\b/.test(t)) {
     return "💙 Entendi a urgência da sua situação.\n\nVou garantir que nossa equipe receba isso com prioridade máxima."
   }
   return "💙 Entendo que o que você está passando é muito difícil.\n\nPode contar com a gente. Vamos cuidar do seu caso com toda a atenção."

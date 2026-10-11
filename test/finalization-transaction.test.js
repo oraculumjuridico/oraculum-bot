@@ -24,7 +24,7 @@ for (const operation of [
 assert.equal(assertFinalizationOperation("hubspot_state", "deal-1"), "deal-1")
 
 const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8")
-const inicio = server.indexOf("async function finalizarCadastro")
+const inicio = server.indexOf("async function finalizarCadastro(from, u) {")
 const fim = server.indexOf("async function tela_confirmacao", inicio)
 assert.ok(inicio >= 0 && fim > inicio)
 const finalizacao = server.slice(inicio, fim)

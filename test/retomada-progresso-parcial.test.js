@@ -1,6 +1,9 @@
 const { describe, it } = require("node:test")
 const assert = require("node:assert")
 
+const axios = require("axios")
+axios.get = async () => ({ data: { properties: {} } })
+
 delete require.cache[require.resolve("../src/domain/hubspot-core")]
 const hubspotCore = require("../src/domain/hubspot-core")
 hubspotCore.hsBuscarPorPhone = async () => ({ id: "999" })
@@ -39,7 +42,9 @@ function makeUser(overrides = {}) {
     urgencia: "normal",
     _casoAnteriorCliente: false,
     atendimentoParaTerceiro: false,
-    modoTexto: null,
+    modoTexto: Object.prototype.hasOwnProperty.call(overrides, "modoTexto")
+      ? overrides.modoTexto
+      : (overrides.stage || overrides._fluxoEncerrado ? true : null),
     contatoId: null,
     negocioId: null,
     numeroCaso: null,

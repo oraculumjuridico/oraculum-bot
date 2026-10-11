@@ -18,7 +18,8 @@ assert.match(serverSource, /persistirSessoesAdminAssistidasAgora\(sessoesAdminWh
 assert.match(serverSource, /async function finalizarCadastroAssistidoAdmin\(from, u\)/)
 assert.match(serverSource, /finalizarCadastroAssistido:\s*finalizarCadastroAssistidoAdmin/)
 assert.match(serverSource, /await finalizarCadastro\(telefone, u\)/)
-assert.match(serverSource, /filasMensagens\.get\(from\)\.push\(\{ nomeWA, text, msgObj, resolve \}\)/)
+assert.match(serverSource, /const fila = filasMensagens\.get\(from\)/)
+assert.match(serverSource, /fila\.push\(\{ nomeWA, text, msgObj, resolve \}\)/)
 assert.match(serverSource, /executarComLockUsuario\(\s*from,\s*\(\) => ehWhatsAppAdmin\(from\)/)
 assert.doesNotMatch(serverSource, /async function processar\(from, nomeWA, text, msgObj\) \{\s*if \(ehWhatsAppAdmin\(from\)\)/)
 
