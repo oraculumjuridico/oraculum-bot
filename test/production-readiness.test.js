@@ -2,6 +2,18 @@
 
 const assert = require("node:assert/strict")
 const { avaliarProntidaoProducao } = require("../src/config/production-readiness")
+const {
+  DEFAULT_META_GRAPH_VERSION,
+  normalizarMetaGraphVersion,
+  metaGraphUrl
+} = require("../src/config/meta-graph")
+
+assert.equal(DEFAULT_META_GRAPH_VERSION, "v23.0")
+assert.equal(normalizarMetaGraphVersion("23.0"), "v23.0")
+assert.equal(normalizarMetaGraphVersion("v24.0"), "v24.0")
+assert.equal(normalizarMetaGraphVersion("v19.0"), "v23.0")
+assert.equal(normalizarMetaGraphVersion("valor-invalido"), "v23.0")
+assert.match(metaGraphUrl("123/messages"), /^https:\/\/graph\.facebook\.com\/v\d+\.\d+\/123\/messages$/)
 
 const complete = {
   NODE_ENV: "production",

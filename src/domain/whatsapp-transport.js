@@ -1,5 +1,6 @@
 const axios = require("axios")
 const { validatePublicImageUrl } = require("./public-image-validator")
+const { metaGraphUrl } = require("../config/meta-graph")
 const {
   logDebug,
   logErro
@@ -24,7 +25,7 @@ async function digitando(to, messageId = null, texto = "") {
   if (!messageId) return
   try {
     await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      metaGraphUrl(`${PHONE_NUMBER_ID}/messages`),
       {
         messaging_product: "whatsapp",
         status: "read",
@@ -155,7 +156,7 @@ async function enviarComResultado(to, texto, opcoes = null, comDelay = true, mes
       }
     }
 
-    const resp = await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, body, {
+    const resp = await axios.post(metaGraphUrl(`${PHONE_NUMBER_ID}/messages`), body, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
     })
 
@@ -182,7 +183,7 @@ async function enviarComResultado(to, texto, opcoes = null, comDelay = true, mes
             type: "text",
             text: { body: validacaoTexto.texto + "\n\nNao consegui carregar o menu completo agora. Tente novamente em alguns segundos." }
           }
-          const fallbackResp = await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, bodyTexto, {
+          const fallbackResp = await axios.post(metaGraphUrl(`${PHONE_NUMBER_ID}/messages`), bodyTexto, {
             headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" }
           })
           logDebug("[WHATSAPP_FALLBACK] Fallback texto enviado com sucesso")
@@ -217,7 +218,7 @@ async function enviarTemplateComResultado(to, templateName, params = [], languag
     })
   }
 
-  const url = `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`
+  const url = metaGraphUrl(`${PHONE_NUMBER_ID}/messages`)
   const payload = {
     messaging_product: "whatsapp",
     to,
@@ -266,7 +267,7 @@ async function enviarAudioComResultado(to, audioUrl) {
   const destinationMasked = mascararTelefoneLog(to)
   if (!audioUrl) return resultadoEnvio({ channel: "audio", destinationMasked, immediateError: "audio_url_missing" })
   try {
-    const resp = await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
+    const resp = await axios.post(metaGraphUrl(`${PHONE_NUMBER_ID}/messages`), {
       messaging_product: "whatsapp",
       to,
       type: "audio",
@@ -335,7 +336,7 @@ async function enviarImagemComResultado(to, imageUrl, caption = "", opcoes = nul
     }
 
     const resp = await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      metaGraphUrl(`${PHONE_NUMBER_ID}/messages`),
       body,
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     )

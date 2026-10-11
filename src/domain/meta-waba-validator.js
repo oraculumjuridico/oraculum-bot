@@ -1,8 +1,6 @@
 const axios = require("axios")
 const { META_TEMPLATES } = require("./meta-templates")
-
-const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v19.0"
-const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_VERSION}`
+const { META_GRAPH_VERSION: GRAPH_VERSION, META_GRAPH_BASE_URL: GRAPH_BASE_URL } = require("../config/meta-graph")
 
 function obterWabaConfigurada(env = process.env) {
   return env.WHATSAPP_BUSINESS_ACCOUNT_ID || env.WABA_ID || env.WHATSAPP_WABA_ID || ""

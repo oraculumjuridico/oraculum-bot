@@ -3,6 +3,14 @@ const assert = require("node:assert")
 
 const axios = require("axios")
 axios.get = async () => ({ data: { properties: {} } })
+const mensagensWhatsApp = []
+axios.post = async (url, body) => {
+  if (String(url).includes("graph.facebook.com")) {
+    mensagensWhatsApp.push(body)
+    return { status: 200, data: { messages: [{ id: "wamid.test" }] } }
+  }
+  return { status: 200, data: { results: [] } }
+}
 
 delete require.cache[require.resolve("../src/domain/hubspot-core")]
 const hubspotCore = require("../src/domain/hubspot-core")
@@ -14,6 +22,7 @@ const server = require("../server")
 const {
   processarInterno,
   processarRetomadaOuReinicio,
+  sessaoPersistidaExpirada,
   usuarioTemProgressoParaRetomada,
   STAGES,
 } = server
@@ -62,6 +71,95 @@ async function callInternal(overridesUser = {}, text = "", buttonId = "", msgTyp
 }
 
 describe("retomada de progresso parcial", () => {
+  describe("saudacao depois de sessao antiga", () => {
+    it("considera as mesmas janelas usadas na restauracao dos timers", () => {
+      const agora = Date.now()
+      assert.strictEqual(sessaoPersistidaExpirada(makeUser({
+        ultimaMsg: agora - (16 * 60 * 1000)
+      }), agora), true)
+      assert.strictEqual(sessaoPersistidaExpirada(makeUser({
+        numeroCaso: "CASO.001.2026",
+        ultimaMsg: agora - (16 * 60 * 1000)
+      }), agora), false)
+      assert.strictEqual(sessaoPersistidaExpirada(makeUser({
+        numeroCaso: "CASO.001.2026",
+        ultimaMsg: agora - (31 * 60 * 1000)
+      }), agora), true)
+    })
+
+    it("oferece retomada para pre-atendimento antigo com progresso real", async () => {
+      const perguntaAntiga = {
+        texto: "Qual é a sua cidade?",
+        opcoes: null,
+        perguntaId: STAGES.ACOLHIMENTO_CIDADE,
+      }
+      const { result, u } = await callInternal({
+        stage: STAGES.ACOLHIMENTO_CIDADE,
+        nome: "Maria Silva",
+        nomeConfirmado: true,
+        ultimaMsg: Date.now() - (16 * 60 * 1000),
+        lastPerguntaPayload: perguntaAntiga,
+      }, "oi")
+
+      assert.strictEqual(u.stage, STAGES.RETOMADA_MENU)
+      assert.strictEqual(u._stageRetomadaOriginal, STAGES.ACOLHIMENTO_CIDADE)
+      assert.ok(result?.texto?.includes("Atendimento pausado"))
+      assert.deepStrictEqual(result.opcoes.map(opcao => opcao.id), [
+        "rm_continuar",
+        "rm_recomecar",
+        "m_encerrar",
+      ])
+    })
+
+    it("mantem a pergunta atual quando a conversa ainda e recente", async () => {
+      const perguntaAtual = {
+        texto: "Qual é a sua cidade?",
+        opcoes: null,
+        perguntaId: STAGES.ACOLHIMENTO_CIDADE,
+      }
+      const { result, u } = await callInternal({
+        stage: STAGES.ACOLHIMENTO_CIDADE,
+        nome: "Maria Silva",
+        nomeConfirmado: true,
+        ultimaMsg: Date.now() - (14 * 60 * 1000),
+        lastPerguntaPayload: perguntaAtual,
+      }, "oi")
+
+      assert.strictEqual(u.stage, STAGES.ACOLHIMENTO_CIDADE)
+      assert.deepStrictEqual(result, perguntaAtual)
+    })
+
+    it("leva cliente com caso oficial antigo ao menu em vez de repetir a etapa", async () => {
+      mensagensWhatsApp.length = 0
+      const { u } = await callInternal({
+        stage: STAGES.DOCUMENTOS,
+        numeroCaso: "CASO.001.2026",
+        nome: "Cliente Teste",
+        nomeConfirmado: true,
+        area: "Previdenciário",
+        situacao: "Benefício do INSS",
+        ultimaMsg: Date.now() - (31 * 60 * 1000),
+        lastPerguntaPayload: {
+          texto: "Envie o documento antigo.",
+          opcoes: null,
+          perguntaId: STAGES.DOCUMENTOS,
+        },
+      }, "oi")
+
+      assert.strictEqual(u.stage, STAGES.CLIENTE)
+      assert.ok(mensagensWhatsApp.length > 0)
+      const textosEnviados = mensagensWhatsApp
+        .map(payload => payload?.text?.body || payload?.interactive?.body?.text || "")
+        .join("\n")
+      assert.ok(textosEnviados.includes("CASO.001.2026"))
+      assert.ok(!textosEnviados.includes("Envie o documento antigo"))
+      const idsEnviados = mensagensWhatsApp.flatMap(payload => (
+        payload?.interactive?.action?.buttons || []
+      ).map(botao => botao?.reply?.id))
+      assert.ok(idsEnviados.includes("m_status"))
+    })
+  })
+
   describe("gate: usuarioTemProgressoParaRetomada", () => {
     it("abandono sem nenhuma resposta real -> sem progresso", async () => {
       const u = makeUser()

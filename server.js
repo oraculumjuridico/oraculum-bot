@@ -20,6 +20,7 @@ require("dotenv").config()
 const express    = require("express")
 const axios      = require("axios")
 const { google } = require("googleapis")
+const { metaGraphUrl } = require("./src/config/meta-graph")
 const { privacyPolicyPage, dataDeletionPage } = require("./src/domain/public-lgpd-pages")
 const { INSTITUTIONAL_CALENDAR_ID: CALENDAR_ID } = require("./src/config/institutional-calendar")
 const { avaliarProntidaoProducao } = require("./src/config/production-readiness")
@@ -912,7 +913,7 @@ async function enviarWhatsAppAdmin(mensagem) {
   }
   try {
     await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      metaGraphUrl(`${PHONE_NUMBER_ID}/messages`),
       { messaging_product: "whatsapp", to: validacaoDestino.numero, type: "text", text: { body: textoValidado.texto } },
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     )
@@ -937,7 +938,7 @@ async function enviarWhatsAppAdmin_para(numero, mensagem) {
   }
   try {
     await axios.post(
-      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      metaGraphUrl(`${PHONE_NUMBER_ID}/messages`),
       { messaging_product: "whatsapp", to: validacaoDestino.numero, type: "text", text: { body: textoValidado.texto } },
       { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     )
@@ -4024,6 +4025,18 @@ function iniciarTimer(from) {
   }), t1)
 }
 
+const JANELA_SESSAO_CLIENTE_MS = 30 * 60 * 1000
+const JANELA_SESSAO_PRE_ATENDIMENTO_MS = 15 * 60 * 1000
+
+function sessaoPersistidaExpirada(u, agora = Date.now()) {
+  const ultimaMsg = Number(u?.ultimaMsg || 0)
+  if (!Number.isFinite(ultimaMsg) || ultimaMsg <= 0) return false
+  const janelaAtiva = podeMostrarMenuCliente(u)
+    ? JANELA_SESSAO_CLIENTE_MS
+    : JANELA_SESSAO_PRE_ATENDIMENTO_MS
+  return agora - ultimaMsg > janelaAtiva
+}
+
 function restaurarTimersPersistidos() {
   const agora = Date.now()
   let restaurados = 0
@@ -4036,7 +4049,9 @@ function restaurarTimersPersistidos() {
 
     const ultimaMsg = Number(u.ultimaMsg || 0)
     const idade = ultimaMsg ? agora - ultimaMsg : Infinity
-    const janelaRecente = u.numeroCaso ? 30 * 60 * 1000 : 15 * 60 * 1000
+    const janelaRecente = podeMostrarMenuCliente(u)
+      ? JANELA_SESSAO_CLIENTE_MS
+      : JANELA_SESSAO_PRE_ATENDIMENTO_MS
     if (idade > janelaRecente) continue
 
     iniciarTimer(from)
@@ -8066,7 +8081,7 @@ function getCalendar() {
 
 async function baixarMidia(mediaId) {
   try {
-    const info = await axios.get(`https://graph.facebook.com/v19.0/${mediaId}`, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } })
+    const info = await axios.get(metaGraphUrl(mediaId), { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } })
     if (Number(info.data.file_size || 0) > WHATSAPP_MEDIA_MAX_BYTES) throw Object.assign(new Error("midia excede limite"), { code: "MEDIA_SIZE_LIMIT" })
     const file = await axios.get(info.data.url, {
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
@@ -13694,7 +13709,9 @@ const processarNavegacaoCliente = criarClientNavigationRouter({
 
 async function processarInterno(from, nomeWA, text, msgObj, u) {
   text = sanitizarTextoEntrada(text)
-  u.ultimaMsg = Date.now()
+  const agoraEntrada = Date.now()
+  const sessaoEstavaExpirada = sessaoPersistidaExpirada(u, agoraEntrada)
+  u.ultimaMsg = agoraEntrada
   u.modoDigitando = false
   u.temCadastroCompleto = Boolean(u.temCadastroCompleto || podeMostrarMenuCliente(u))
   limparTimer(u)
@@ -14008,6 +14025,55 @@ async function processarInterno(from, nomeWA, text, msgObj, u) {
     const respostaEncerrarAudio = await detectarEncerramentoPorAudio(from, u, msgObj, tipo)
     if (respostaEncerrarAudio) return respostaEncerrarAudio
   }
+
+  const saudacaoDeNovaEntrada = !ehAudio && !ehDoc && (
+    buttonId === "m_inicio" || ehMensagemEntradaGlobal(text)
+  )
+  if (sessaoEstavaExpirada && saudacaoDeNovaEntrada) {
+    logInfo({
+      event: "session.stale_greeting",
+      status: "rerouted",
+      reasonCode: podeMostrarMenuCliente(u)
+        ? "stale_session_client_menu"
+        : "stale_session_resume_or_restart"
+    })
+
+    if (podeMostrarMenuCliente(u)) {
+      setStage(u, STAGES.CLIENTE)
+      u._fluxoEncerrado = false
+      u._stageRetomadaOriginal = null
+      u.aguardandoRetomada = false
+      u.jaOfereceuRetomada = false
+      u.aguardandoResposta = false
+      u.lastPergunta = null
+      u.lastPerguntaPayload = null
+      iniciarTimer(from)
+      return await menuClienteComAudio(from, u)
+    }
+
+    u._fluxoEncerrado = false
+    u.jaOfereceuRetomada = false
+    if (usuarioTemProgressoParaRetomada(u)) {
+      const stagePreservado = u._stageRetomadaOriginal || obterStageRetomadaOriginal(u)
+      u._stageRetomadaOriginal = stagePreservado
+      u.aguardandoRetomada = true
+      u._retomadaEhLeadFrio = false
+      u.atendente = u.atendente || sortearAtendente()
+      iniciarTimer(from)
+      return await flowRetomadaMenu(u, ctx)
+    }
+
+    u.aguardandoRetomada = false
+    u._retomadaEhLeadFrio = false
+    u._stageRetomadaOriginal = null
+    u.etapa = null
+    u.lastPergunta = null
+    u.lastPerguntaPayload = null
+    u.aguardandoResposta = false
+    setStage(u, STAGES.ACOLHIMENTO)
+    return processarInterno(from, nomeWA, "", { type: "text", text: { body: "" } }, u)
+  }
+
   const entradaPrioritariaRetomadaMenu = buttonId || text
   const devePriorizarHandlerRetomadaMenu = (
     u.stage === STAGES.RETOMADA_MENU &&
@@ -20150,6 +20216,7 @@ module.exports = {
   formatarCpfAdmin,
   sessoesAdminWhatsApp,
   users,
+  sessaoPersistidaExpirada,
   usuarioTemProgressoParaRetomada,
   usuarioTemRelatoParaRetomada,
   processarInterno,
