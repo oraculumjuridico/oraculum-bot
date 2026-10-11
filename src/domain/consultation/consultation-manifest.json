@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "domainVersion": "9.0.0",
-  "domainVersionSeal": "ba1fd44bb05686d67f1162a13ca67371334a1e9766e6796f87dd2db127546253",
-  "structuralRevision": 4,
+  "domainVersion": "10.0.0",
+  "domainVersionSeal": "158ea7c298f947d94f7220e8b9712f9fb98e0cfb1c751d296a7d4bbfb83a6e81",
+  "structuralRevision": 5,
   "consultationVersion": 3,
   "facade": "src/domain/consultation/index.js",
   "firewall": "src/domain/consultation/consultation-dependency-firewall.js",
@@ -60,7 +60,10 @@
     "listConsultasAtivasViews",
     "persistirMetricasConsulta",
     "selecionarEventoConsultaMaisRecente",
-    "vincularEventoConsulta"
+    "vincularEventoConsulta",
+    "montarParametrosLembreteConsulta",
+    "montarMensagemLembreteConsulta",
+    "resolveConsultationReminderContact"
   ],
   "allowedFiles": [
     "src/domain/consultation/index.js",
@@ -92,13 +95,15 @@
     "src/scripts/consultation-export-legal.js",
     "src/scripts/consultation-export-dossier.js",
     "consultation-architecture-baseline.json",
-    "consultation-architecture-snapshot.json"
+    "consultation-architecture-snapshot.json",
+    "src/domain/consultation/consultation-reminder-message.js",
+    "src/domain/consultation/consultation-reminder-contact-resolver.js"
   ],
   "checksums": {
-    "src/domain/consultation/index.js": "fa3079f852f8013ba2a8218e71fcd7b8a7ce12c03a45f4f38365deb1145b4260",
+    "src/domain/consultation/index.js": "1eadb3cd09036cdbc45b2fa827b094665889eee933896c31af76e1ea5a51c209",
     "src/domain/consultation/consultation-dependency-firewall.js": "ed2d386db8b58690fd6da216faf528dacf0b7f23662132773a311c4058e8741e",
     "src/domain/consultation/event-versioning.js": "544ab34afb9c7d14c47aebb2e1b508bfffdf0290d50457d093c6ad2dfe0cb4fe",
-    "src/domain/consultation/consultation-change-control.js": "e2e46748c0bfca764b31677a3d84ba641834e59e579bba54a7d9ecf690613e5e",
+    "src/domain/consultation/consultation-change-control.js": "2d3270826bce06d15f11f2790a1e327b112b4b350c989749c4fe111f554bbbad",
     "src/domain/consultation/consultation-integrity-check.js": "42d061994da229719cf24becf76ee116c8d133fd69e75519ccca87674505e19d",
     "src/domain/consultation/consultation-replay-engine.js": "85ed2655202b8fe091d9ee202caf5733e4ac6bbbaa53ae9db77a3cb3e0a10f3d",
     "src/domain/consultation/consultation-decision-audit.js": "975cda5fe22cc2b23b5156485750eacc9410440fd5d1171c54051777d2bab224",
@@ -119,18 +124,20 @@
     "src/domain/calendar-scheduling.js": "072830db949a7b5c30ae3e6ae787a1ad33eccc54fbc6c1ea63c58249c3a9ea48",
     "src/domain/consultation-metrics.js": "b1c8e20adddb2a3dafdad0783b4baf325b20b55cba574c631c94e97137d7df92",
     "src/domain/consultation-guards.js": "3ec6036dea60bb83c3bd53b8a4530b30f166c0e3b00109407ac2bc5a66075f67",
-    "src/scripts/consultation-architecture-audit.js": "7166149eee67e14e106728dac2e277c43a0819743388d605590f1fabb5a9a870",
+    "src/scripts/consultation-architecture-audit.js": "6fb2de44f269d54e7f3386cbd68253af7f8a7bec3058fa671e612ba02049f69e",
     "src/scripts/consultation-release-check.js": "436a327960ca45f089fec63522bdbbeb59badf6bbae81f4a2c24591821ed4789",
     "src/scripts/consultation-export-legal.js": "1b93711fedd9fbed571edeca4fafa442502dfdabd6f8733853ba3207488258bb",
     "src/scripts/consultation-export-dossier.js": "d510469965b0dce561f023efb60ef2828b858e73217b2739cd0800c9c7037534",
-    "consultation-architecture-baseline.json": "2d6fa49e50184b1067a1a66a16c9c46720b8cfddca44eadd05f7fe1dc2f78518",
-    "consultation-architecture-snapshot.json": "9bc25304b856f8fff9025289b433db477ede2c0f7c2ba3f7137c72d39e55f266"
+    "consultation-architecture-baseline.json": "f62e0f0783b10719188dd93519803c88c5b78fed4ca5bcea45791615ea266af8",
+    "consultation-architecture-snapshot.json": "930199be696954ee8f3182275ce0867e40c57e75300b13fa19a9ee7dd08afd58",
+    "src/domain/consultation/consultation-reminder-message.js": "f5944bdb6130138aaf6c29b00bef11a22b7d7239cf0eafb80a2b9579d104ad3f",
+    "src/domain/consultation/consultation-reminder-contact-resolver.js": "69797fcc23828c7d360745a04f6262987c0154168199a5fd15051c0132233abf"
   },
   "approval": {
     "approved": true,
-    "approvedBy": "user-requested-consultation-reminder-fix",
-    "approvedAt": "2026-08-15T16:08:04-03:00",
-    "changeId": "FIX-CONSULTATION-REMINDER-PILOT-IDENTITY",
-    "structuralDigest": "68b4c208fba84ffe6c66fa3e0bf1dba238ee2911eb71b3fc6570fbf1a404446c"
+    "approvedBy": "user-requested-pre-atendimento-publication",
+    "approvedAt": "2026-10-11T11:16:25.099Z",
+    "changeId": "FIX-CONSULTATION-REMINDER-FACADE-20261011",
+    "structuralDigest": "7c3c89cb35da0dceb5efdfc2d1ae0a739bfcccd24484ea5d14efe7999fb1636e"
   }
 }

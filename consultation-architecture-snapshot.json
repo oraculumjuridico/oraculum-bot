@@ -32,7 +32,10 @@
     "listConsultasAtivasViews",
     "persistirMetricasConsulta",
     "selecionarEventoConsultaMaisRecente",
-    "vincularEventoConsulta"
+    "vincularEventoConsulta",
+    "montarParametrosLembreteConsulta",
+    "montarMensagemLembreteConsulta",
+    "resolveConsultationReminderContact"
   ],
   "externalImportWhitelist": {
     "server.js": ["./src/domain/consultation"],

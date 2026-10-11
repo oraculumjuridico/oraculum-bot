@@ -42,7 +42,8 @@ const APPROVED_DOMAIN_VERSION_SEALS = Object.freeze({
   "6.0.0": "f6b3c09c4a498e2044cd98bfeee3cc41709e99c16eceece7e1881ad327907e2b",
   "7.0.0": "6bf9d0f64100d8d3d943983fe6ef70c0bf26bf0c01b3fd68403ce962bb255a1f",
   "8.0.0": "a830b13364bb9b1ddcc75ba70ae22094fd4363583faf2a1141b0a85bc34ee4db",
-  "9.0.0": "ba1fd44bb05686d67f1162a13ca67371334a1e9766e6796f87dd2db127546253"
+  "9.0.0": "ba1fd44bb05686d67f1162a13ca67371334a1e9766e6796f87dd2db127546253",
+  "10.0.0": "158ea7c298f947d94f7220e8b9712f9fb98e0cfb1c751d296a7d4bbfb83a6e81"
 })
 
 function assertDomainVersionSeal(manifest) {

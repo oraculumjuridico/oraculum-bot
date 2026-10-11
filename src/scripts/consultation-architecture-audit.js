@@ -30,6 +30,8 @@ function nomeModulo(requisicao) {
     "consultation-session-recovery",
     "consultation-integrity-event-store",
     "consultation-self-healed-event",
+    "consultation-reminder-message",
+    "consultation-reminder-contact-resolver",
     "consultation"
   ]) {
     if (requisicao.endsWith(nome) || requisicao.endsWith(`${nome}.js`)) return nome
@@ -61,6 +63,8 @@ function moduloInternoProtegido(modulo) {
     ,"consultation-session-recovery"
     ,"consultation-integrity-event-store"
     ,"consultation-self-healed-event"
+    ,"consultation-reminder-message"
+    ,"consultation-reminder-contact-resolver"
   ].includes(modulo)
 }
 

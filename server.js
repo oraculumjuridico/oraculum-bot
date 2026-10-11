@@ -295,7 +295,10 @@ const {
   criarEventoConsulta,
   definirResultadoConsulta,
   cancelarEventosAtivosDoDeal,
-  appendConsultaEvent
+  appendConsultaEvent,
+  montarParametrosLembreteConsulta,
+  montarMensagemLembreteConsulta,
+  resolveConsultationReminderContact
 } = require("./src/domain/consultation")
 const {
   estadoPorExtenso,
@@ -366,10 +369,6 @@ const {
   validarOpcoesWhatsApp
 } = require("./src/domain/whatsapp-transport")
 const templateService = require("./src/domain/template-service")
-const {
-  montarParametrosLembreteConsulta,
-  montarMensagemLembreteConsulta
-} = require("./src/domain/consultation-reminder-message")
 const { enviarAudioPedidoDocumentos } = require("./src/domain/admin-document-request-audio")
 const { validarMetaWabaNoBoot } = require("./src/domain/meta-waba-validator")
 const {
@@ -460,9 +459,6 @@ const {
   consultationLifecycleScope,
   reengagementScope
 } = require("./src/domain/internal-scheduler-plans")
-const {
-  resolveConsultationReminderContact
-} = require("./src/domain/consultation-reminder-contact-resolver")
 const {
   dispatchConversationContext
 } = require("./src/domain/conversation-context-dispatcher")

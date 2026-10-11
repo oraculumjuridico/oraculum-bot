@@ -49,10 +49,13 @@
     ,"generateConsultaNarrative"
     ,"verifyConsultaLegalDossier"
     ,"refreshConsultationSessionProjection"
+    ,"montarParametrosLembreteConsulta"
+    ,"montarMensagemLembreteConsulta"
+    ,"resolveConsultationReminderContact"
   ],
   "allowedDependencies": {
     "server.js": {
-      "consultation": ["assertConsultationArchitecture", "assertConsultationReleaseIntegrity", "getConsultaView", "listConsultasAtivasViews", "findConsultaCalendarEventInRange", "getConsultaCalendarEventState", "listConsultaCalendarEventsForReconciliation", "classificarEstadoCalendar", "buscarHorariosDisponiveis", "criarEventoConsulta", "definirResultadoConsulta", "cancelarEventosAtivosDoDeal", "appendConsultaEvent"]
+      "consultation": ["assertConsultationArchitecture", "assertConsultationReleaseIntegrity", "getConsultaView", "listConsultasAtivasViews", "findConsultaCalendarEventInRange", "getConsultaCalendarEventState", "listConsultaCalendarEventsForReconciliation", "classificarEstadoCalendar", "buscarHorariosDisponiveis", "criarEventoConsulta", "definirResultadoConsulta", "cancelarEventosAtivosDoDeal", "appendConsultaEvent", "montarParametrosLembreteConsulta", "montarMensagemLembreteConsulta", "resolveConsultationReminderContact"]
     },
     "src/domain/consultation/index.js": {
       "consultation-read-model": ["*"],
@@ -64,6 +67,8 @@
       "consultation-narrative-generator": ["generateConsultaNarrative"],
       "consultation-audit-verifier": ["verifyConsultaLegalDossier"]
       ,"consultation-session-recovery": ["refreshConsultationSessionProjection"]
+      ,"consultation-reminder-message": ["montarParametrosLembreteConsulta", "montarMensagemLembreteConsulta"]
+      ,"consultation-reminder-contact-resolver": ["resolveConsultationReminderContact"]
     },
     "src/domain/consultation/consultation-replay-engine.js": {
       "consultation-events": ["getConsultaHistory"]

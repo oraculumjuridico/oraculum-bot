@@ -6,7 +6,7 @@ const {
   formatarHora,
   montarParametrosLembreteConsulta,
   montarMensagemLembreteConsulta
-} = require("../src/domain/consultation-reminder-message")
+} = require("../src/domain/consultation/consultation-reminder-message")
 
 const datetime = "2026-08-14T16:30:00.000Z"
 

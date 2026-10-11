@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict")
 const {
   resolveConsultationReminderContact
-} = require("../src/domain/consultation-reminder-contact-resolver")
+} = require("../src/domain/consultation/consultation-reminder-contact-resolver")
 
 function httpError(status) {
   return Object.assign(new Error(`HTTP_${status}`), { response: { status } })

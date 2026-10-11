@@ -36,6 +36,13 @@ const {
 const {
   refreshConsultationSessionProjection
 } = require("./projections/consultation-session-recovery")
+const {
+  montarParametrosLembreteConsulta,
+  montarMensagemLembreteConsulta
+} = require("./consultation-reminder-message")
+const {
+  resolveConsultationReminderContact
+} = require("./consultation-reminder-contact-resolver")
 
 function assertConsultationArchitecture({
   root = path.join(__dirname, "..", "..", "..")
@@ -209,6 +216,9 @@ module.exports = Object.freeze({
   generateConsultaNarrative,
   verifyConsultaLegalDossier,
   refreshConsultationSessionProjection,
+  montarParametrosLembreteConsulta,
+  montarMensagemLembreteConsulta,
+  resolveConsultationReminderContact,
   listConsultasAtivasViews: readModel.listConsultasAtivasViews,
   getConsultaCalendarEventState: readModel.getConsultaCalendarEventState,
   findConsultaCalendarEvent: readModel.findConsultaCalendarEvent,
