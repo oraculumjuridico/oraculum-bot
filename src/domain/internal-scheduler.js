@@ -10,6 +10,7 @@ async function processInternalSchedule({
   planners = [],
   dispatchers = {},
   limit = 25,
+  claimPasses = 1,
   logger = () => {}
 } = {}) {
   if (!repository || typeof repository.claimDue !== "function") throw new Error("SCHEDULER_REPOSITORY_MISSING")
@@ -24,22 +25,29 @@ async function processInternalSchedule({
     }
   }
 
-  const jobs = await repository.claimDue(limit)
-  summary.claimed = jobs.length
-  for (const job of jobs) {
-    try {
-      const dispatch = dispatchers[job.kind]
-      if (typeof dispatch !== "function") throw Object.assign(new Error("DISPATCHER_MISSING"), { retryable: false })
-      const result = await dispatch(job)
-      const outcome = result?.outcome === "sent" ? "sent" : "skipped"
-      await repository.complete(job, outcome, result || {})
-      summary[outcome] += 1
-      logger("scheduler_job_completed", { kind: job.kind, outcome, attempts: job.attempts })
-    } catch (error) {
-      const failed = await repository.failJob(job, sanitizedCode(error), error?.retryable !== false)
-      summary[failed.retrying ? "retried" : "failed"] += 1
-      logger("scheduler_job_failed", { kind: job.kind, retrying: failed.retrying, errorCode: sanitizedCode(error) })
+  const passes = Math.max(1, Math.min(3, Number(claimPasses) || 1))
+  for (let pass = 0; pass < passes; pass++) {
+    const jobs = await repository.claimDue(limit)
+    summary.claimed += jobs.length
+    if (!jobs.length) break
+    let continueClaim = false
+    for (const job of jobs) {
+      try {
+        const dispatch = dispatchers[job.kind]
+        if (typeof dispatch !== "function") throw Object.assign(new Error("DISPATCHER_MISSING"), { retryable: false })
+        const result = await dispatch(job)
+        if (result?.continueClaim === true) continueClaim = true
+        const outcome = result?.outcome === "sent" ? "sent" : "skipped"
+        await repository.complete(job, outcome, result || {})
+        summary[outcome] += 1
+        logger("scheduler_job_completed", { kind: job.kind, outcome, attempts: job.attempts })
+      } catch (error) {
+        const failed = await repository.failJob(job, sanitizedCode(error), error?.retryable !== false)
+        summary[failed.retrying ? "retried" : "failed"] += 1
+        logger("scheduler_job_failed", { kind: job.kind, retrying: failed.retrying, errorCode: sanitizedCode(error) })
+      }
     }
+    if (!continueClaim) break
   }
   return summary
 }

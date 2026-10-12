@@ -193,7 +193,7 @@ Módulos principais: `post-human-action-context-repository.js`, `post-human-cycl
 
 O Google Calendar é a fonte dos compromissos. O Oráculum mantém planos e jobs duráveis no Neon/PostgreSQL, com tentativa, idempotência, histórico e reconciliação. Alteração direta no Calendar é refletida na leitura/reconciliação seguinte.
 
-O endpoint `POST /internal/processar-agendamentos` executa o lote. O GitHub Actions ou Google Apps Script pode apenas acordar o serviço; a lógica pertence ao Oráculum. O Make.com é legado/fallback e não é fonte de verdade.
+O endpoint `POST /internal/processar-agendamentos` executa o lote. Em produção gratuita, o GitHub Actions acorda o serviço a cada vinte minutos entre 06h e 21h, no fuso de Fortaleza. O laço interno permanece desligado para o Neon suspender entre execuções. A criação, remarcação e o cancelamento feitos pelo bot atualizam a fila imediatamente; uma reconciliação diária recupera alterações manuais no Calendar. Google Apps Script é apenas fallback e não deve operar ao mesmo tempo. A lógica pertence ao Oráculum; o Make.com é legado/fallback e não é fonte de verdade.
 
 O agendador só opera quando `INTERNAL_SCHEDULER_ENABLED=true` e o escopo foi explicitado por allowlist ou autorização consciente para todos.
 
@@ -201,7 +201,7 @@ Módulos principais: `calendar-scheduling.js`, `consultation-*`, `internal-sched
 
 ## 15. Persistência e recuperação
 
-Arquivos operacionais são gravados atomicamente em `ORACULUM_DATA_DIR` e espelhados no Neon quando `EXTERNAL_STATE_PROVIDER=neon`. Em produção, falha da persistência externa bloqueia a inicialização. Inbox, deduplicação, callbacks e ciclos possuem recuperação própria.
+Arquivos operacionais são gravados atomicamente em `ORACULUM_DATA_DIR` e espelhados no Neon quando `EXTERNAL_STATE_PROVIDER=neon`. Conteúdo com checksum idêntico não é regravado. Em produção, falha da persistência externa bloqueia a inicialização. O health público usa o último estado conhecido e não consulta o banco; a prova real permanece no health interno autenticado. Inbox, deduplicação, callbacks e ciclos possuem recuperação própria.
 
 Estado transitório que não pode sobreviver ao reinício deve sempre resultar em retomada segura ou solicitação de reenvio, nunca em avanço presumido.
 

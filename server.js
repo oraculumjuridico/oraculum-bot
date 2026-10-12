@@ -293,7 +293,7 @@ const {
   listConsultaCalendarEventsForReconciliation,
   classificarEstadoCalendar,
   buscarHorariosDisponiveis,
-  criarEventoConsulta,
+  criarEventoConsulta: criarEventoConsultaDominio,
   definirResultadoConsulta,
   cancelarEventosAtivosDoDeal,
   appendConsultaEvent,
@@ -458,6 +458,7 @@ const { verifyGitHubActionsOidc, bearerToken } = require("./src/domain/github-oi
 const {
   consultationScope,
   consultationLifecycleScope,
+  dailyCalendarReconciliationScope,
   reengagementScope
 } = require("./src/domain/internal-scheduler-plans")
 const {
@@ -7581,6 +7582,9 @@ async function cancelarEventoConsultaUsuario(u, motivo = "consulta_cancelada", e
       origem,
       chaveIdempotencia: `calendar:${idEvento}:cancelada`
     })
+    await cancelarEscopoConsultaNoAgendador(idEvento).catch(error =>
+      logErro("internal_scheduler", `consulta cancelada; fila será reconciliada: ${error.code || error.message}`)
+    )
   }
 
   return await liberarAgendamentoERecalcularStage(u, motivo)
@@ -18995,7 +18999,10 @@ app.get("/", (_, res) => res.send("Oraculum v6.4"))
 app.get("/politica-de-privacidade", (_, res) => res.status(200).type("html").send(privacyPolicyPage()))
 app.get("/exclusao-de-dados", (_, res) => res.status(200).type("html").send(dataDeletionPage()))
 app.get("/health", async (_, res) => {
-  const persistence = await externalStateHealth({ probe: true })
+  // O health público pode receber monitores externos frequentes. Ele usa o
+  // último estado conhecido para não acordar o Neon a cada ping. O diagnóstico
+  // autenticado /health-interno continua executando a prova real do banco.
+  const persistence = await externalStateHealth({ probe: false })
   const healthy = !persistence.required || persistence.database === "ok"
   return res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "degraded", version: "Oraculum v6.4" })
 })
@@ -19475,6 +19482,7 @@ app.post("/consulta-lembrete-dados", validarWebhookInterno, async (req, res) => 
       numeroCaso: numeroCaso || null,
       casoId: numeroCaso || dealId || null,
       datetime: inicioConsulta,
+      end: evento.fim || evento.end?.dateTime || evento.end?.date || null,
       reminders: {
         "24h": new Date(new Date(inicioConsulta).getTime() - 24 * 60 * 60 * 1000).toISOString(),
         "1h": new Date(new Date(inicioConsulta).getTime() - 60 * 60 * 1000).toISOString()
@@ -19904,6 +19912,9 @@ const INTERNAL_SCHEDULER_INTERVAL_MS = Math.max(
   60000,
   Number(process.env.INTERNAL_SCHEDULER_INTERVAL_MS || 300000)
 )
+const INTERNAL_SCHEDULER_LOOP_ENABLED = String(
+  process.env.INTERNAL_SCHEDULER_LOOP_ENABLED || "false"
+).trim().toLowerCase() === "true"
 const INTERNAL_SCHEDULER_TODAY_HOUR = Math.max(
   0,
   Math.min(23, Number(process.env.CONSULTA_LEMBRETE_HOJE_HORA || 9))
@@ -19929,11 +19940,76 @@ async function postRotaInterna(pathname, payload) {
   return { status: response.status, body: response.data || {} }
 }
 
+async function obterEscopoConsultaNoAgendador(eventId, now = new Date()) {
+  const id = sanitizarTextoEntrada(eventId)
+  if (!id) return null
+  const response = await postRotaInterna("/consulta-lembrete-dados", { eventId: id })
+  if (response.status !== 200 || !automationTargetAllowed(response.body)) {
+    logInfo({
+      event: "consultation_planning_skipped",
+      queue: "internal_scheduler",
+      status: response.status === 200 ? "target_not_allowed" : "data_unavailable",
+      httpStatus: response.status,
+      reasonCode: sanitizarTextoEntrada(response.body?.reason || response.body?.erro || "")
+    })
+    return null
+  }
+  return consultationScope(response.body, { todayHour: INTERNAL_SCHEDULER_TODAY_HOUR, now })
+}
+
+async function planejarConsultaPorEventoNoAgendador(eventId) {
+  if (!INTERNAL_SCHEDULER_ENABLED || !internalSchedulerRepository) {
+    return { planned: false, reason: "scheduler_unavailable" }
+  }
+  const scope = await obterEscopoConsultaNoAgendador(eventId)
+  if (!scope) return { planned: false, reason: "scope_unavailable" }
+  const result = await internalSchedulerRepository.replaceScope(scope)
+  return { planned: true, jobs: result.planned }
+}
+
+async function cancelarEscopoConsultaNoAgendador(eventId) {
+  const id = sanitizarTextoEntrada(eventId)
+  if (!id || !INTERNAL_SCHEDULER_ENABLED || !internalSchedulerRepository) {
+    return { cancelled: false, reason: "scheduler_unavailable" }
+  }
+  await internalSchedulerRepository.replaceScope({
+    scopeType: "consultation",
+    scopeId: id,
+    jobs: []
+  })
+  return { cancelled: true }
+}
+
+async function criarEventoConsulta(cliente, ...args) {
+  let eventoAnterior = null
+  if (cliente?.negocioId) {
+    try {
+      eventoAnterior = sanitizarTextoEntrada((await getConsultaView(cliente.negocioId))?.eventId)
+    } catch (error) {
+      logErro("internal_scheduler", `consulta anterior indisponível antes do agendamento: ${error.code || error.message}`)
+    }
+  }
+  const eventId = await criarEventoConsultaDominio(cliente, ...args)
+  try {
+    if (eventoAnterior && eventoAnterior !== eventId) {
+      await cancelarEscopoConsultaNoAgendador(eventoAnterior)
+    }
+    await planejarConsultaPorEventoNoAgendador(eventId)
+  } catch (error) {
+    // O Calendar continua sendo confirmado mesmo se a fila estiver
+    // temporariamente indisponível; a reconciliação diária recupera o job.
+    logErro("internal_scheduler", `agendamento criado; fila será reconciliada: ${error.code || error.message}`)
+  }
+  return eventId
+}
+
 async function planejarConsultasNoAgendador() {
   const now = new Date()
   const events = await listConsultaCalendarEventsForReconciliation({
     timeMin: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    timeMax: new Date(now.getTime() + 370 * 24 * 60 * 60 * 1000).toISOString()
+    // Os primeiros lembretes vencem 24 horas antes. Três dias dão margem
+    // suficiente e evitam reler/regravar um ano inteiro de agenda a cada ciclo.
+    timeMax: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString()
   })
   const scopes = []
   for (const event of events) {
@@ -19941,21 +20017,7 @@ async function planejarConsultasNoAgendador() {
     if (!state?.eventId) continue
     let scope = null
     if (state.status === "agendada") {
-      const response = await postRotaInterna("/consulta-lembrete-dados", { eventId: state.eventId })
-      if (response.status === 200 && automationTargetAllowed(response.body)) {
-        scope = consultationScope(
-          { ...response.body, end: state.fim || null },
-          { todayHour: INTERNAL_SCHEDULER_TODAY_HOUR, now }
-        )
-      } else {
-        logInfo({
-          event: "consultation_planning_skipped",
-          queue: "internal_scheduler",
-          status: response.status === 200 ? "target_not_allowed" : "data_unavailable",
-          httpStatus: response.status,
-          reasonCode: sanitizarTextoEntrada(response.body?.reason || response.body?.erro || "")
-        })
-      }
+      scope = await obterEscopoConsultaNoAgendador(state.eventId, now)
     } else if (state.status === "cancelada" && automationTargetAllowed({ dealId: state.metadata?.dealId })) {
       scope = consultationLifecycleScope({
         action: "cancel",
@@ -19975,6 +20037,21 @@ async function planejarConsultasNoAgendador() {
     if (scope) scopes.push(scope)
   }
   return scopes
+}
+
+function planejarReconciliacaoDiariaNoAgendador() {
+  const scope = dailyCalendarReconciliationScope(new Date(), 6)
+  return scope ? [scope] : []
+}
+
+async function reconciliarCalendarNoAgendador() {
+  const scopes = await planejarConsultasNoAgendador()
+  let plannedJobs = 0
+  for (const scope of scopes) {
+    const result = await internalSchedulerRepository.replaceScope(scope)
+    plannedJobs += result.planned
+  }
+  return { outcome: "sent", continueClaim: true, plannedScopes: scopes.length, plannedJobs }
 }
 
 async function planejarReengajamentosNoAgendador() {
@@ -20134,8 +20211,9 @@ async function executarAgendadorInterno() {
   }
   internalSchedulerExecution = processInternalSchedule({
     repository: internalSchedulerRepository,
-    planners: [planejarConsultasNoAgendador, planejarReengajamentosNoAgendador],
+    planners: [planejarReconciliacaoDiariaNoAgendador, planejarReengajamentosNoAgendador],
     dispatchers: {
+      calendar_reconciliation: () => reconciliarCalendarNoAgendador(),
       consultation_reminder: job => despacharRotaAgendada("/lembrete", job.payload),
       consultation_sync: job => sincronizarConsultaNoAgendador(job.payload),
       consultation_lifecycle: job => despacharRotaAgendada(
@@ -20145,6 +20223,9 @@ async function executarAgendadorInterno() {
       reengagement: job => despacharRotaAgendada("/reengajamento", job.payload)
     },
     limit: Number(process.env.INTERNAL_SCHEDULER_BATCH_SIZE || 25),
+    // A segunda passagem processa imediatamente lembretes vencidos que a
+    // reconciliação diária acabou de inserir, sem esperar mais vinte minutos.
+    claimPasses: 2,
     logger: (event, data) => logInfo({ event, queue: "internal_scheduler", ...data })
   }).then(summary => {
     logInfo({ event: "scheduler_cycle_completed", queue: "internal_scheduler", ...summary })
@@ -20363,12 +20444,14 @@ async function iniciarServidor() {
       setImmediate(() => executarAgendadorInterno().catch(error =>
         logErro("internal_scheduler", error.message, error)
       ))
-      internalSchedulerTimer = setInterval(() => {
-        executarAgendadorInterno().catch(error =>
-          logErro("internal_scheduler", error.message, error)
-        )
-      }, INTERNAL_SCHEDULER_INTERVAL_MS)
-      internalSchedulerTimer.unref()
+      if (INTERNAL_SCHEDULER_LOOP_ENABLED) {
+        internalSchedulerTimer = setInterval(() => {
+          executarAgendadorInterno().catch(error =>
+            logErro("internal_scheduler", error.message, error)
+          )
+        }, INTERNAL_SCHEDULER_INTERVAL_MS)
+        internalSchedulerTimer.unref()
+      }
     }
     setImmediate(() => {
       drenarWebhookInbox().catch(err =>

@@ -4,9 +4,23 @@ const assert = require("node:assert/strict")
 const {
   consultationScope,
   consultationLifecycleScope,
+  dailyCalendarReconciliationScope,
+  schedulerLocalDateKey,
   reengagementScope,
   reminderToday
 } = require("../src/domain/internal-scheduler-plans")
+
+{
+  const now = "2026-10-12T13:30:00.000Z"
+  assert.equal(schedulerLocalDateKey(now), "2026-10-12")
+  const scope = dailyCalendarReconciliationScope(now, 6)
+  assert.equal(scope.scopeType, "scheduler_maintenance")
+  assert.equal(scope.scopeId, "calendar:2026-10-12")
+  assert.equal(scope.jobs.length, 1)
+  assert.equal(scope.jobs[0].kind, "calendar_reconciliation")
+  assert.equal(scope.jobs[0].scheduledFor, "2026-10-12T09:00:00.000Z")
+  assert.equal(scope.jobs[0].dedupeKey, "maintenance:calendar:2026-10-12")
+}
 
 {
   const start = "2026-08-20T15:00:00.000Z"

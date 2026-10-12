@@ -20,6 +20,7 @@ function job() {
 
 (async () => {
   assert.equal(validateJob(job()).maxAttempts, 5)
+  assert.equal(validateJob({ ...job(), kind: "calendar_reconciliation" }).kind, "calendar_reconciliation")
   assert.throws(() => validateJob({ ...job(), kind: "unknown" }), /SCHEDULER_JOB_INVALID/)
   assert.throws(() => validateJob({ ...job(), payload: [] }), /SCHEDULER_PAYLOAD_INVALID/)
 

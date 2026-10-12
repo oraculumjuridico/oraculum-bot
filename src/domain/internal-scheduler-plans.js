@@ -16,6 +16,36 @@ function reminderToday(inicio, hour = 9) {
   const earliest = new Date(`${map.year}-${map.month}-${map.day}T07:00:00-03:00`)
   return new Date(Math.max(earliest.getTime(), date.getTime() - 2 * 60 * 60 * 1000))
 }
+
+function schedulerLocalDateKey(value = new Date()) {
+  const date = validDate(value)
+  if (!date) return null
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Fortaleza", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(date)
+  const map = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${map.year}-${map.month}-${map.day}`
+}
+
+function dailyCalendarReconciliationScope(now = new Date(), hour = 6) {
+  const dateKey = schedulerLocalDateKey(now)
+  if (!dateKey) return null
+  const safeHour = Math.max(0, Math.min(23, Number(hour) || 6))
+  const scheduledFor = new Date(`${dateKey}T${String(safeHour).padStart(2, "0")}:00:00-03:00`).toISOString()
+  const scopeId = `calendar:${dateKey}`
+  return {
+    scopeType: "scheduler_maintenance",
+    scopeId,
+    jobs: [{
+      kind: "calendar_reconciliation",
+      dedupeKey: `maintenance:${scopeId}`,
+      scopeType: "scheduler_maintenance",
+      scopeId,
+      scheduledFor,
+      payload: { dateKey }
+    }]
+  }
+}
 function consultationScope(data, { todayHour = 9, now = new Date(), maxReminderDelayMs = 30 * 60 * 1000 } = {}) {
   const start = validDate(data?.datetime)
   const current = validDate(now)
@@ -96,4 +126,11 @@ function consultationLifecycleScope(data) {
   }
 }
 
-module.exports = { reminderToday, consultationScope, consultationLifecycleScope, reengagementScope }
+module.exports = {
+  reminderToday,
+  schedulerLocalDateKey,
+  dailyCalendarReconciliationScope,
+  consultationScope,
+  consultationLifecycleScope,
+  reengagementScope
+}

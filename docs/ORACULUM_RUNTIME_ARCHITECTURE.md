@@ -62,8 +62,9 @@ Estados de transporte incertos ou já iniciados bloqueiam novo outbound inclusiv
 ## Agenda e automação
 
 - Google Calendar é a fonte dos compromissos; planos, tentativas, idempotência e histórico ficam no Neon/PostgreSQL.
-- O agendador interno pertence ao Oráculum. GitHub Actions ou Google Apps Script apenas acordam o endpoint protegido.
-- Alterações diretas no Calendar entram pela leitura/reconciliação; Make.com não é fonte de verdade e permanece apenas como legado de contingência.
+- O agendador interno pertence ao Oráculum. No plano gratuito, GitHub Actions acorda o endpoint protegido a cada vinte minutos entre 06h e 21h; Google Apps Script é fallback exclusivo.
+- `INTERNAL_SCHEDULER_LOOP_ENABLED=false` permite que o Neon suspenda o compute entre execuções. O laço interno só deve ser usado em uma instância paga sempre ativa.
+- Criação, remarcação e cancelamento feitos no bot atualizam os jobs imediatamente. Alterações diretas no Calendar entram pela reconciliação diária; Make.com não é fonte de verdade e permanece apenas como legado de contingência.
 - `INTERNAL_SCHEDULER_ENABLED=true` exige escopo explícito por allowlist ou `AUTOMATION_ALLOW_ALL=true` consciente.
 
 ## Admin e Atendimento Assistido

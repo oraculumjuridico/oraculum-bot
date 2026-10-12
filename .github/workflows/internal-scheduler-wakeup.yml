@@ -2,7 +2,12 @@ name: Acordar agendador interno
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # GitHub cron usa UTC. Estas duas faixas correspondem a 06h07-21h47 em
+    # Fortaleza. Os minutos 07/27/47 evitam a maior carga do início da hora.
+    # A cadência de vinte minutos preserva a tolerância dos lembretes e deixa
+    # Render e Neon suspenderem entre as execuções.
+    - cron: "7,27,47 9-23 * * *"
+    - cron: "7,27,47 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -16,7 +21,7 @@ concurrency:
 jobs:
   wakeup:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 8
     steps:
       - name: Chamar Oraculum com identidade GitHub
         uses: actions/github-script@v7
@@ -34,3 +39,8 @@ jobs:
             const body = await response.text()
             core.info(`HTTP ${response.status}: ${body.slice(0, 500)}`)
             if (!response.ok) core.setFailed(`Agendador respondeu HTTP ${response.status}`)
+            let parsed = null
+            try { parsed = JSON.parse(body) } catch {}
+            if (response.ok && parsed?.status !== 'ok') {
+              core.setFailed(`Agendador não confirmou execução: ${parsed?.status || 'resposta inválida'}`)
+            }

@@ -5,6 +5,7 @@
  * ORACULUM_BASE_URL=https://SEU-SERVICO.onrender.com
  * INTERNAL_WEBHOOK_SECRET=o-mesmo-segredo-do-Render
  *
+ * Use somente como fallback quando o workflow GitHub estiver desligado.
  * Execute instalarTrigger() uma única vez.
  */
 function processarAgendamentosOraculum() {
@@ -30,6 +31,6 @@ function instalarTrigger() {
     .forEach(trigger => ScriptApp.deleteTrigger(trigger));
   ScriptApp.newTrigger("processarAgendamentosOraculum")
     .timeBased()
-    .everyMinutes(5)
+    .everyMinutes(30)
     .create();
 }
