@@ -20,7 +20,7 @@ assert.match(server, /if \(INTERNAL_SCHEDULER_LOOP_ENABLED\) \{\s*internalSchedu
 assert.match(server, /timeMax: new Date\(now\.getTime\(\) \+ 3 \* 24 \* 60 \* 60 \* 1000\)/)
 assert.doesNotMatch(server, /timeMax: new Date\(now\.getTime\(\) \+ 370 \* 24/)
 
-assert.match(workflow, /cron: "\*\/20 6-19 \* \* \*"/)
+assert.match(workflow, /cron: "7,27,47 6-19 \* \* \*"/)
 assert.match(workflow, /timezone: "America\/Fortaleza"/)
 assert.match(workflow, /parsed\?\.status !== 'ok'/)
 assert.match(appsScriptFallback, /everyMinutes\(30\)/)
