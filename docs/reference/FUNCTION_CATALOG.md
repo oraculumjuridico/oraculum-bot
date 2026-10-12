@@ -4,7 +4,7 @@
 
 Este índice cobre as funções nomeadas de `server.js`, `tts.js` e `src/`. A explicação conceitual dos fluxos está em `docs/ORACULUM_SYSTEM_GUIDE.md`.
 
-Total: **2579 funções** em **247 módulos**.
+Total: **2580 funções** em **247 módulos**.
 
 - **pública**: aparece no contrato `module.exports` do módulo;
 - **interna**: detalhe de implementação usado dentro do próprio módulo.
@@ -480,7 +480,7 @@ Composição principal, rotas HTTP e orquestração dos fluxos WhatsApp.
 | `sincronizarPagamentosNativosDoNegocio` | 20161 | interna | Executa a responsabilidade interna “sincronizar pagamentos nativos do negocio”. |
 | `sincronizarPagamentosNativosHubSpot` | 20183 | interna | Executa a responsabilidade interna “sincronizar pagamentos nativos hub spot”. |
 | `executarAgendadorInterno` | 20201 | interna | Executa agendador interno. |
-| `iniciarServidor` | 20278 | pública | Inicia servidor. |
+| `iniciarServidor` | 20286 | pública | Inicia servidor. |
 
 ## `src/adapters/drive-single-case-adapter.js`
 
@@ -3096,7 +3096,8 @@ Regra de domínio: internal scheduler.
 | Função | Linha | Visibilidade | Responsabilidade |
 | --- | ---: | --- | --- |
 | `sanitizedCode` | 2 | pública | Executa a responsabilidade interna “sanitized code”. |
-| `processInternalSchedule` | 7 | pública | Executa a responsabilidade interna “process internal schedule”. |
+| `withSchedulerPhase` | 7 | pública | Executa a responsabilidade interna “with scheduler phase”. |
+| `processInternalSchedule` | 13 | pública | Executa a responsabilidade interna “process internal schedule”. |
 
 ## `src/domain/lead-temperature.js`
 

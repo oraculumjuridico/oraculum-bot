@@ -1,7 +1,7 @@
 "use strict"
 
 const assert = require("node:assert/strict")
-const { processInternalSchedule, sanitizedCode } = require("../src/domain/internal-scheduler");
+const { processInternalSchedule, sanitizedCode, withSchedulerPhase } = require("../src/domain/internal-scheduler");
 
 (async () => {
   const completed = []
@@ -38,6 +38,7 @@ const { processInternalSchedule, sanitizedCode } = require("../src/domain/intern
   assert.deepEqual(completed.map(item => item.outcome), ["sent", "skipped"])
   assert.equal(failed[0].code, "TEMPORARY_FAILURE")
   assert.equal(sanitizedCode(new Error("contains private detail: 123")), "DISPATCH_FAILED")
+  assert.equal(withSchedulerPhase(new Error("PRIVATE_DETAIL"), "planner").schedulerPhase, "planner")
 
   const claimedByPass = [
     [{ id: "maintenance", kind: "calendar_reconciliation", attempts: 1, maxAttempts: 5 }],

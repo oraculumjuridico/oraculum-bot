@@ -433,7 +433,7 @@ const {
   initializeInternalScheduler,
   createInternalSchedulerRepository
 } = require("./src/infrastructure/internal-scheduler-postgres")
-const { processInternalSchedule } = require("./src/domain/internal-scheduler")
+const { processInternalSchedule, sanitizedCode } = require("./src/domain/internal-scheduler")
 const {
   FINANCE_STATUS,
   FINANCE_PROPERTIES,
@@ -20241,7 +20241,11 @@ app.post("/internal/processar-agendamentos", validarWebhookInterno, async (_req,
     return res.json({ status: "ok", ...result })
   } catch (error) {
     logErro("internal_scheduler", error.message, error)
-    return res.status(503).json({ status: "unavailable" })
+    return res.status(503).json({
+      status: "unavailable",
+      errorCode: sanitizedCode(error),
+      phase: error.schedulerPhase || "execution"
+    })
   }
 })
 
@@ -20259,7 +20263,11 @@ app.post("/internal/processar-agendamentos-github", async (req, res) => {
     return res.json({ status: "ok", ...result })
   } catch (error) {
     logErro("internal_scheduler", error.message, error)
-    return res.status(503).json({ status: "unavailable" })
+    return res.status(503).json({
+      status: "unavailable",
+      errorCode: sanitizedCode(error),
+      phase: error.schedulerPhase || "execution"
+    })
   }
 })
 

@@ -5,6 +5,12 @@ function sanitizedCode(error) {
   return /^[A-Z][A-Z0-9_]{2,99}$/.test(value) ? value : "DISPATCH_FAILED"
 }
 
+function withSchedulerPhase(error, phase) {
+  const normalized = error instanceof Error ? error : new Error("SCHEDULER_OPERATION_FAILED")
+  if (!normalized.schedulerPhase) normalized.schedulerPhase = phase
+  return normalized
+}
+
 async function processInternalSchedule({
   repository,
   planners = [],
@@ -17,9 +23,19 @@ async function processInternalSchedule({
   const summary = { plannedScopes: 0, plannedJobs: 0, claimed: 0, sent: 0, skipped: 0, retried: 0, failed: 0 }
 
   for (const planner of planners) {
-    const scopes = await planner()
+    let scopes
+    try {
+      scopes = await planner()
+    } catch (error) {
+      throw withSchedulerPhase(error, "planner")
+    }
     for (const scope of scopes || []) {
-      const result = await repository.replaceScope(scope)
+      let result
+      try {
+        result = await repository.replaceScope(scope)
+      } catch (error) {
+        throw withSchedulerPhase(error, "planning_persistence")
+      }
       summary.plannedScopes += 1
       summary.plannedJobs += result.planned
     }
@@ -27,7 +43,12 @@ async function processInternalSchedule({
 
   const passes = Math.max(1, Math.min(3, Number(claimPasses) || 1))
   for (let pass = 0; pass < passes; pass++) {
-    const jobs = await repository.claimDue(limit)
+    let jobs
+    try {
+      jobs = await repository.claimDue(limit)
+    } catch (error) {
+      throw withSchedulerPhase(error, "claim")
+    }
     summary.claimed += jobs.length
     if (!jobs.length) break
     let continueClaim = false
@@ -42,7 +63,12 @@ async function processInternalSchedule({
         summary[outcome] += 1
         logger("scheduler_job_completed", { kind: job.kind, outcome, attempts: job.attempts })
       } catch (error) {
-        const failed = await repository.failJob(job, sanitizedCode(error), error?.retryable !== false)
+        let failed
+        try {
+          failed = await repository.failJob(job, sanitizedCode(error), error?.retryable !== false)
+        } catch (persistenceError) {
+          throw withSchedulerPhase(persistenceError, "job_result_persistence")
+        }
         summary[failed.retrying ? "retried" : "failed"] += 1
         logger("scheduler_job_failed", { kind: job.kind, retrying: failed.retrying, errorCode: sanitizedCode(error) })
       }
@@ -52,4 +78,4 @@ async function processInternalSchedule({
   return summary
 }
 
-module.exports = { sanitizedCode, processInternalSchedule }
+module.exports = { sanitizedCode, withSchedulerPhase, processInternalSchedule }
