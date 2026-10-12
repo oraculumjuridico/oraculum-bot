@@ -6,7 +6,7 @@ on:
     # às 06h para cobrir os lembretes de uma hora das primeiras consultas.
     # Vinte minutos preserva a tolerância de 30 minutos dos lembretes e deixa
     # Render e Neon suspenderem entre execuções.
-    - cron: "7,27,47 6-19 * * *"
+    - cron: "*/20 6-19 * * *"
       timezone: "America/Fortaleza"
   workflow_dispatch:
 
