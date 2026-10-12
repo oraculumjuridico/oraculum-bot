@@ -2,6 +2,10 @@
 
 function sanitizedCode(error) {
   const value = String(error?.code || error?.message || "DISPATCH_FAILED").toUpperCase()
+  // PostgreSQL uses five-character SQLSTATE values, and several start with a
+  // digit (for example 42P01). Prefixing them keeps the response safe while
+  // retaining enough information to diagnose production persistence failures.
+  if (/^[0-9A-Z]{5}$/.test(value)) return `PG_${value}`
   return /^[A-Z][A-Z0-9_]{2,99}$/.test(value) ? value : "DISPATCH_FAILED"
 }
 

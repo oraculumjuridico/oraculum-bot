@@ -39,6 +39,7 @@ const { processInternalSchedule, sanitizedCode, withSchedulerPhase } = require("
   assert.equal(failed[0].code, "TEMPORARY_FAILURE")
   assert.equal(sanitizedCode(new Error("contains private detail: 123")), "DISPATCH_FAILED")
   assert.equal(withSchedulerPhase(new Error("PRIVATE_DETAIL"), "planner").schedulerPhase, "planner")
+  assert.equal(sanitizedCode({ code: "42P01" }), "PG_42P01")
 
   const claimedByPass = [
     [{ id: "maintenance", kind: "calendar_reconciliation", attempts: 1, maxAttempts: 5 }],
