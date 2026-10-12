@@ -2,7 +2,12 @@ name: Acordar agendador interno
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # As consultas do bot ocorrem entre 08h e 19h. A janela adicional inicia
+    # às 06h para cobrir os lembretes de uma hora das primeiras consultas.
+    # Vinte minutos preserva a tolerância de 30 minutos dos lembretes e deixa
+    # Render e Neon suspenderem entre execuções.
+    - cron: "*/20 6-19 * * *"
+      timezone: "America/Fortaleza"
   workflow_dispatch:
 
 permissions:
@@ -34,3 +39,8 @@ jobs:
             const body = await response.text()
             core.info(`HTTP ${response.status}: ${body.slice(0, 500)}`)
             if (!response.ok) core.setFailed(`Agendador respondeu HTTP ${response.status}`)
+            let parsed = null
+            try { parsed = JSON.parse(body) } catch {}
+            if (response.ok && parsed?.status !== 'ok') {
+              core.setFailed(`Agendador não confirmou execução: ${parsed?.status || 'resposta inválida'}`)
+            }

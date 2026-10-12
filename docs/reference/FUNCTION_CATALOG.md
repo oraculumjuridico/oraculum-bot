@@ -463,18 +463,18 @@ Composição principal, rotas HTTP e orquestração dos fluxos WhatsApp.
 | `resumirWebhookInbox` | 18939 | interna | Executa a responsabilidade interna “resumir webhook inbox”. |
 | `agruparUltimosErrosPorCategoria` | 18960 | interna | Executa a responsabilidade interna “agrupar ultimos erros por categoria”. |
 | `montarHealthInternoOperacional` | 18968 | interna | Monta health interno operacional. |
-| `processarMensagemWebhook` | 19032 | interna | Processa mensagem webhook. |
-| `drenarWebhookInbox` | 19070 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
-| `postRotaInterna` | 19915 | interna | Executa a responsabilidade interna “post rota interna”. |
-| `planejarConsultasNoAgendador` | 19931 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
-| `planejarReengajamentosNoAgendador` | 19979 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
-| `despacharRotaAgendada` | 19995 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
-| `sincronizarConsultaNoAgendador` | 20024 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
-| `aplicarPagamentoNativoAoAcordo` | 20048 | interna | Aplica pagamento nativo ao acordo. |
-| `sincronizarPagamentosNativosDoNegocio` | 20084 | interna | Executa a responsabilidade interna “sincronizar pagamentos nativos do negocio”. |
-| `sincronizarPagamentosNativosHubSpot` | 20106 | interna | Executa a responsabilidade interna “sincronizar pagamentos nativos hub spot”. |
-| `executarAgendadorInterno` | 20124 | interna | Executa agendador interno. |
-| `iniciarServidor` | 20197 | pública | Inicia servidor. |
+| `processarMensagemWebhook` | 19035 | interna | Processa mensagem webhook. |
+| `drenarWebhookInbox` | 19073 | interna | Executa a responsabilidade interna “drenar webhook inbox”. |
+| `postRotaInterna` | 19921 | interna | Executa a responsabilidade interna “post rota interna”. |
+| `planejarConsultasNoAgendador` | 19937 | interna | Executa a responsabilidade interna “planejar consultas no agendador”. |
+| `planejarReengajamentosNoAgendador` | 19987 | interna | Executa a responsabilidade interna “planejar reengajamentos no agendador”. |
+| `despacharRotaAgendada` | 20003 | interna | Executa a responsabilidade interna “despachar rota agendada”. |
+| `sincronizarConsultaNoAgendador` | 20032 | interna | Executa a responsabilidade interna “sincronizar consulta no agendador”. |
+| `aplicarPagamentoNativoAoAcordo` | 20056 | interna | Aplica pagamento nativo ao acordo. |
+| `sincronizarPagamentosNativosDoNegocio` | 20092 | interna | Executa a responsabilidade interna “sincronizar pagamentos nativos do negocio”. |
+| `sincronizarPagamentosNativosHubSpot` | 20114 | interna | Executa a responsabilidade interna “sincronizar pagamentos nativos hub spot”. |
+| `executarAgendadorInterno` | 20132 | interna | Executa agendador interno. |
+| `iniciarServidor` | 20205 | pública | Inicia servidor. |
 
 ## `src/adapters/drive-single-case-adapter.js`
 
@@ -4050,13 +4050,13 @@ Infraestrutura e persistência: external state repository.
 | `hydrateLocalCache` | 94 | interna | Executa a responsabilidade interna “hydrate local cache”. |
 | `initializeExternalStateRepository` | 110 | pública | Executa a responsabilidade interna “initialize external state repository”. |
 | `upsertContent` | 139 | interna | Executa a responsabilidade interna “upsert content”. |
-| `enqueue` | 157 | interna | Executa a responsabilidade interna “enqueue”. |
-| `mirrorStateFile` | 168 | pública | Executa a responsabilidade interna “mirror state file”. |
-| `flushExternalState` | 177 | pública | Executa a responsabilidade interna “flush external state”. |
-| `migrateLocalState` | 183 | pública | Executa a responsabilidade interna “migrate local state”. |
-| `externalStateHealth` | 208 | pública | Executa a responsabilidade interna “external state health”. |
-| `closeExternalStateRepository` | 225 | pública | Executa a responsabilidade interna “close external state repository”. |
-| `getPool` | 231 | pública | Executa a responsabilidade interna “get pool”. |
+| `enqueue` | 160 | interna | Executa a responsabilidade interna “enqueue”. |
+| `mirrorStateFile` | 171 | pública | Executa a responsabilidade interna “mirror state file”. |
+| `flushExternalState` | 180 | pública | Executa a responsabilidade interna “flush external state”. |
+| `migrateLocalState` | 186 | pública | Executa a responsabilidade interna “migrate local state”. |
+| `externalStateHealth` | 211 | pública | Executa a responsabilidade interna “external state health”. |
+| `closeExternalStateRepository` | 230 | pública | Executa a responsabilidade interna “close external state repository”. |
+| `getPool` | 236 | pública | Executa a responsabilidade interna “get pool”. |
 
 ## `src/infrastructure/graceful-shutdown.js`
 
@@ -4080,10 +4080,10 @@ Infraestrutura e persistência: internal scheduler postgres.
 | `initializeInternalScheduler` | 37 | pública | Executa a responsabilidade interna “initialize internal scheduler”. |
 | `createInternalSchedulerRepository` | 68 | pública | Executa a responsabilidade interna “create internal scheduler repository”. |
 | `replaceScope` | 71 | interna | Executa a responsabilidade interna “replace scope”. |
-| `claimDue` | 109 | interna | Executa a responsabilidade interna “claim due”. |
-| `complete` | 146 | interna | Executa a responsabilidade interna “complete”. |
-| `failJob` | 156 | interna | Executa a responsabilidade interna “fail job”. |
-| `health` | 171 | interna | Executa a responsabilidade interna “health”. |
+| `claimDue` | 112 | interna | Executa a responsabilidade interna “claim due”. |
+| `complete` | 149 | interna | Executa a responsabilidade interna “complete”. |
+| `failJob` | 159 | interna | Executa a responsabilidade interna “fail job”. |
+| `health` | 174 | interna | Executa a responsabilidade interna “health”. |
 
 ## `src/infrastructure/single-case-authorization-postgres.js`
 

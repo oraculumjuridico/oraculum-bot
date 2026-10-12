@@ -95,7 +95,10 @@ function createInternalSchedulerRepository({ pool, clock = () => new Date() } = 
             scheduled_for=EXCLUDED.scheduled_for,
             max_attempts=EXCLUDED.max_attempts,
             updated_at=CURRENT_TIMESTAMP
-          WHERE ${TABLE}.status='pending'`,
+          WHERE ${TABLE}.status='pending'
+            AND (${TABLE}.payload IS DISTINCT FROM EXCLUDED.payload
+              OR ${TABLE}.scheduled_for IS DISTINCT FROM EXCLUDED.scheduled_for
+              OR ${TABLE}.max_attempts IS DISTINCT FROM EXCLUDED.max_attempts)`,
         [crypto.randomUUID(), job.kind, job.dedupeKey, job.scopeType, job.scopeId,
           JSON.stringify(job.payload), job.scheduledFor, job.maxAttempts])
       }

@@ -18995,7 +18995,10 @@ app.get("/", (_, res) => res.send("Oraculum v6.4"))
 app.get("/politica-de-privacidade", (_, res) => res.status(200).type("html").send(privacyPolicyPage()))
 app.get("/exclusao-de-dados", (_, res) => res.status(200).type("html").send(dataDeletionPage()))
 app.get("/health", async (_, res) => {
-  const persistence = await externalStateHealth({ probe: true })
+  // O health público pode receber monitores externos frequentes. Ele usa o
+  // último estado conhecido para não acordar o Neon a cada ping. O diagnóstico
+  // autenticado /health-interno continua executando a prova real do banco.
+  const persistence = await externalStateHealth({ probe: false })
   const healthy = !persistence.required || persistence.database === "ok"
   return res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "degraded", version: "Oraculum v6.4" })
 })
@@ -19904,6 +19907,9 @@ const INTERNAL_SCHEDULER_INTERVAL_MS = Math.max(
   60000,
   Number(process.env.INTERNAL_SCHEDULER_INTERVAL_MS || 300000)
 )
+const INTERNAL_SCHEDULER_LOOP_ENABLED = String(
+  process.env.INTERNAL_SCHEDULER_LOOP_ENABLED || "false"
+).trim().toLowerCase() === "true"
 const INTERNAL_SCHEDULER_TODAY_HOUR = Math.max(
   0,
   Math.min(23, Number(process.env.CONSULTA_LEMBRETE_HOJE_HORA || 9))
@@ -19933,7 +19939,9 @@ async function planejarConsultasNoAgendador() {
   const now = new Date()
   const events = await listConsultaCalendarEventsForReconciliation({
     timeMin: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    timeMax: new Date(now.getTime() + 370 * 24 * 60 * 60 * 1000).toISOString()
+    // Os primeiros lembretes vencem 24 horas antes. Três dias dão margem
+    // suficiente e evitam reler/regravar um ano inteiro de agenda a cada ciclo.
+    timeMax: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString()
   })
   const scopes = []
   for (const event of events) {
@@ -20363,12 +20371,14 @@ async function iniciarServidor() {
       setImmediate(() => executarAgendadorInterno().catch(error =>
         logErro("internal_scheduler", error.message, error)
       ))
-      internalSchedulerTimer = setInterval(() => {
-        executarAgendadorInterno().catch(error =>
-          logErro("internal_scheduler", error.message, error)
-        )
-      }, INTERNAL_SCHEDULER_INTERVAL_MS)
-      internalSchedulerTimer.unref()
+      if (INTERNAL_SCHEDULER_LOOP_ENABLED) {
+        internalSchedulerTimer = setInterval(() => {
+          executarAgendadorInterno().catch(error =>
+            logErro("internal_scheduler", error.message, error)
+          )
+        }, INTERNAL_SCHEDULER_INTERVAL_MS)
+        internalSchedulerTimer.unref()
+      }
     }
     setImmediate(() => {
       drenarWebhookInbox().catch(err =>
