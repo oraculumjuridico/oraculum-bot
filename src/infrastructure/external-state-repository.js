@@ -149,9 +149,6 @@ async function upsertContent(namespace, format, content) {
       content = EXCLUDED.content,
       checksum = EXCLUDED.checksum,
       updated_at = CURRENT_TIMESTAMP
-    WHERE oraculum_state_documents.checksum IS DISTINCT FROM EXCLUDED.checksum
-       OR oraculum_state_documents.schema_version IS DISTINCT FROM EXCLUDED.schema_version
-       OR oraculum_state_documents.format IS DISTINCT FROM EXCLUDED.format
   `, [namespace, SCHEMA_VERSION, format, content, checksum(content)])
   lastSuccessAt = new Date().toISOString()
   lastError = null
@@ -210,9 +207,7 @@ async function migrateLocalState({ force = false } = {}) {
 }
 
 async function externalStateHealth({ probe = false } = {}) {
-  let database = enabled && pool
-    ? (lastSuccessAt ? "ok" : (lastError ? "error" : "configured"))
-    : "disabled"
+  let database = enabled && pool ? "configured" : "disabled"
   let databaseBytes = null
   let freePlanUsagePercent = null
   if (probe && pool) {
