@@ -54,6 +54,31 @@ function job() {
   assert.match(transactionQueries.join("\n"), /ON CONFLICT\(dedupe_key\)/)
   assert.match(transactionQueries.join("\n"), /COMMIT/)
 
+  await repository.claimDue()
+  const claimQueries = transactionQueries.join("\n")
+  assert.match(claimQueries, /\$1::timestamptz/)
+  assert.match(claimQueries, /LIMIT \$2::integer/)
+
+  const typedClaimQueries = []
+  const typedClaimClient = {
+    async query(sql) {
+      const query = String(sql)
+      typedClaimQueries.push(query)
+      if (query.includes(`SELECT id FROM`)) return { rows: [{ id: "00000000-0000-4000-8000-000000000001" }], rowCount: 1 }
+      if (query.includes(`UPDATE oraculum_scheduled_jobs`)) return { rows: [{ id: "00000000-0000-4000-8000-000000000001" }], rowCount: 1 }
+      return { rows: [], rowCount: 0 }
+    },
+    release() {}
+  }
+  const typedClaimRepository = createInternalSchedulerRepository({
+    pool: { async connect() { return typedClaimClient } }
+  })
+  await typedClaimRepository.claimDue()
+  const typedClaimSql = typedClaimQueries.join("\n")
+  assert.match(typedClaimSql, /lease_id=\$2::uuid/)
+  assert.match(typedClaimSql, /\$3::integer \* INTERVAL/)
+  assert.match(typedClaimSql, /ANY\(\$4::uuid\[\]\)/)
+
   await repository.complete({ id: "job-1", leaseId: "lease-1" }, "sent", { ok: true })
   assert.match(direct[0], /lease_id=\$2/)
   console.log("internal-scheduler-postgres.test.js: ok")

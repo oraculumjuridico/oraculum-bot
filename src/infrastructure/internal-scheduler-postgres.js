@@ -125,21 +125,21 @@ function createInternalSchedulerRepository({ pool, clock = () => new Date() } = 
       await client.query("BEGIN")
       const selected = await client.query(`SELECT id FROM ${TABLE}
         WHERE (
-          status='pending' AND scheduled_for <= $1
-          AND (next_attempt_at IS NULL OR next_attempt_at <= $1)
+          status='pending' AND scheduled_for <= $1::timestamptz
+          AND (next_attempt_at IS NULL OR next_attempt_at <= $1::timestamptz)
         ) OR (
-          status='processing' AND lease_expires_at <= $1
+          status='processing' AND lease_expires_at <= $1::timestamptz
         )
         ORDER BY scheduled_for, created_at
-        FOR UPDATE SKIP LOCKED LIMIT $2`, [clock().toISOString(), safeLimit])
+        FOR UPDATE SKIP LOCKED LIMIT $2::integer`, [clock().toISOString(), safeLimit])
       if (!selected.rows.length) {
         await client.query("COMMIT")
         return []
       }
       const ids = selected.rows.map(row => row.id)
       const claimed = await client.query(`UPDATE ${TABLE}
-        SET status='processing', attempts=attempts+1, lease_id=$2,
-            lease_expires_at=$1 + ($3 * INTERVAL '1 second'), updated_at=CURRENT_TIMESTAMP
+        SET status='processing', attempts=attempts+1, lease_id=$2::uuid,
+            lease_expires_at=$1::timestamptz + ($3::integer * INTERVAL '1 second'), updated_at=CURRENT_TIMESTAMP
         WHERE id = ANY($4::uuid[])
         RETURNING id,kind,dedupe_key AS "dedupeKey",scope_type AS "scopeType",
           scope_id AS "scopeId",payload,scheduled_for AS "scheduledFor",
